@@ -7,6 +7,7 @@ import type {
   Settings,
 } from "@/types";
 import { deepClone } from "@/utils/deepClone";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   createHighlightedSnippet,
   findTextMatches,
@@ -270,8 +271,25 @@ export const resetProviderState = () => {
   appConfigDirOverride = null;
 };
 
-export const getProviders = (appType: AppId) =>
-  cloneProviders(providers)[appType] ?? {};
+const isAgyDesktopEligible = (provider: Provider): boolean =>
+  (provider.category === "official" ||
+    provider.meta?.partnerPromotionKey === "google-official") &&
+  Boolean(resolveManagedAccountId(provider.meta, "agy_oauth")?.trim());
+
+export const getProviders = (appType: AppId) => {
+  if (appType === "agy-desktop") {
+    const eligibleFromAgy = Object.fromEntries(
+      Object.entries(providers.agy ?? {}).filter(([, provider]) =>
+        isAgyDesktopEligible(provider),
+      ),
+    );
+    return deepClone({
+      ...eligibleFromAgy,
+      ...(providers["agy-desktop"] ?? {}),
+    }) as Record<string, Provider>;
+  }
+  return cloneProviders(providers)[appType] ?? {};
+};
 
 export const getCurrentProviderId = (appType: AppId) => current[appType] ?? "";
 
@@ -298,6 +316,14 @@ export const setProviders = (
 };
 
 export const addProvider = (appType: AppId, provider: Provider) => {
+  if (appType === "agy-desktop") {
+    providers.agy = providers.agy ?? {};
+    providers.agy[provider.id] = provider;
+    if (providers["agy-desktop"]) {
+      delete providers["agy-desktop"][provider.id];
+    }
+    return;
+  }
   providers[appType] = providers[appType] ?? {};
   providers[appType][provider.id] = provider;
 };
@@ -311,6 +337,15 @@ export const updateProvider = (appType: AppId, provider: Provider) => {
 };
 
 export const deleteProvider = (appType: AppId, providerId: string) => {
+  if (appType === "agy-desktop") {
+    if (providers.agy) {
+      delete providers.agy[providerId];
+    }
+    if (providers["agy-desktop"]) {
+      delete providers["agy-desktop"][providerId];
+    }
+    return;
+  }
   if (!providers[appType]) return;
   delete providers[appType][providerId];
   if (current[appType] === providerId) {
@@ -323,6 +358,20 @@ export const updateSortOrder = (
   appType: AppId,
   updates: { id: string; sortIndex: number }[],
 ) => {
+  if (appType === "agy-desktop") {
+    updates.forEach(({ id, sortIndex }) => {
+      if (providers.agy?.[id]) {
+        providers.agy[id] = { ...providers.agy[id], sortIndex };
+      }
+      if (providers["agy-desktop"]?.[id]) {
+        providers["agy-desktop"][id] = {
+          ...providers["agy-desktop"][id],
+          sortIndex,
+        };
+      }
+    });
+    return;
+  }
   if (!providers[appType]) return;
   updates.forEach(({ id, sortIndex }) => {
     const provider = providers[appType][id];

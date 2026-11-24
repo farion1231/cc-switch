@@ -169,7 +169,10 @@ function isOfficialProvider(provider: Provider, appId: AppId): boolean {
       (!apiKey || (typeof apiKey === "string" && apiKey.trim() === ""))
     );
   }
-  if (appId === "gemini" || appId === "agy") {
+  if (appId === "agy" || appId === "agy-desktop") {
+    if (provider.meta?.partnerPromotionKey === "google-official") return true;
+  }
+  if (appId === "gemini" || appId === "agy" || appId === "agy-desktop") {
     // 无 GEMINI_API_KEY 且无 GOOGLE_GEMINI_BASE_URL → Google OAuth 官方模式
     const apiKey = config?.env?.GEMINI_API_KEY;
     const baseUrl = config?.env?.GOOGLE_GEMINI_BASE_URL;

@@ -1,5 +1,9 @@
 import { useRef } from "react";
-import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import {
+  useQuery,
+  type QueryClient,
+  type UseQueryResult,
+} from "@tanstack/react-query";
 import {
   providersApi,
   settingsApi,
@@ -73,6 +77,23 @@ export const providersQueryOptions = (appId: AppId) => ({
     };
   },
 });
+
+function relatedProviderAppIds(appId: AppId): AppId[] {
+  if (appId === "agy") return ["agy", "agy-desktop"];
+  if (appId === "agy-desktop") return ["agy-desktop", "agy"];
+  return [appId];
+}
+
+export async function invalidateProvidersQueries(
+  queryClient: QueryClient,
+  appId: AppId,
+): Promise<void> {
+  await Promise.all(
+    relatedProviderAppIds(appId).map((target) =>
+      queryClient.invalidateQueries({ queryKey: ["providers", target] }),
+    ),
+  );
+}
 
 export const useProvidersQuery = (
   appId: AppId,

@@ -18,6 +18,7 @@ import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import { invalidateProvidersQueries } from "@/lib/query/queries";
 import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { appHas } from "@/config/appSpecs";
@@ -113,7 +114,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       return newProvider;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await invalidateProvidersQueries(queryClient, appId);
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -202,7 +203,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       return provider;
     },
     onSuccess: async (provider, variables) => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await invalidateProvidersQueries(queryClient, appId);
       await queryClient.invalidateQueries({
         queryKey: usageKeys.script(provider.id, appId),
       });
@@ -272,7 +273,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       await providersApi.delete(providerId, appId);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await invalidateProvidersQueries(queryClient, appId);
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({
@@ -355,7 +356,7 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       return await providersApi.switch(providerId, appId);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      await invalidateProvidersQueries(queryClient, appId);
       if (appId === "claude") {
         // 切到绑了账号的官方卡时，后端可能把原来的默认登录收成了新账号：授权中心要重读
         await queryClient.invalidateQueries({

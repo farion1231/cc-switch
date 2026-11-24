@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 import {
   KeyboardSensor,
   PointerSensor,
@@ -14,30 +14,15 @@ import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
 import { appHas } from "@/config/appSpecs";
 import { getLocaleFromLanguage } from "@/components/usage/format";
-import { readLocalCache, writeLocalCache } from "@/lib/localCache";
-
-const DESKTOP_ACCOUNT_ORDER = "agy-desktop-account-order";
+import { invalidateProvidersQueries } from "@/lib/query";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
-  const [desktopOrder, setDesktopOrder] = useState<string[]>(() => {
-    const cached =
-      appId === "agy-desktop"
-        ? readLocalCache<string[]>(DESKTOP_ACCOUNT_ORDER)
-        : undefined;
-    return Array.isArray(cached) ? cached : [];
-  });
 
   const sortedProviders = useMemo(() => {
     const locale = getLocaleFromLanguage(i18n.language ?? "");
-    const positions = new Map(desktopOrder.map((id, index) => [id, index]));
     return Object.values(providers).sort((a, b) => {
-      if (appId === "agy-desktop") {
-        const positionA = positions.get(a.id) ?? Infinity;
-        const positionB = positions.get(b.id) ?? Infinity;
-        if (positionA !== positionB) return positionA - positionB;
-      }
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;
       }
@@ -52,7 +37,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
 
       return a.name.localeCompare(b.name, locale);
     });
-  }, [providers, i18n.language, appId, desktopOrder]);
+  }, [providers, i18n.language]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -82,13 +67,6 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
       }
 
       const reordered = arrayMove(sortedProviders, oldIndex, newIndex);
-      // Desktop cards come from managed OAuth accounts, outside the provider database.
-      if (appId === "agy-desktop") {
-        const ids = reordered.map(({ id }) => id);
-        writeLocalCache(DESKTOP_ACCOUNT_ORDER, ids);
-        setDesktopOrder(ids);
-        return;
-      }
       const updates = reordered.map((provider, index) => ({
         id: provider.id,
         sortIndex: index,
@@ -96,9 +74,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
 
       try {
         await providersApi.updateSortOrder(updates, appId);
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", appId],
-        });
+        await invalidateProvidersQueries(queryClient, appId);
 
         // Routing apps derive failover order from sort_index.
         if (appHas(appId, "localProxy")) {
@@ -124,7 +100,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
       } catch (error) {
         console.error("Failed to update provider sort order", error);
         // 排序可能已经存下、只是聚合名单没发布成：按库里的顺序重画，再拖一次会重试发布。
-        void queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+        void invalidateProvidersQueries(queryClient, appId);
         toast.error(
           t("provider.sortUpdateFailed", {
             defaultValue: "排序更新失败",

@@ -651,7 +651,7 @@ export interface LaunchInput {
   providers: Provider[];
   openTerminal: (provider: Provider) => void;
   desktop?: {
-    currentProviderId: string;
+    currentProviderIds: ReadonlySet<string>;
     onSwitch: (provider: Provider) => void;
     switching: boolean;
     requiresReauth: ReadonlySet<string>;
@@ -668,7 +668,7 @@ export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
     {
       key: "all",
       items: providers.map((p) => {
-        const current = desktop?.currentProviderId === p.id;
+        const current = desktop ? desktop.currentProviderIds.has(p.id) : false;
         return {
           provider: p,
           presentation: {

@@ -101,6 +101,12 @@ export function isOfficialAccount(
   }
   // Copilot CLI：没有自带模型（provider 节点）的卡用 Copilot 自己的 GitHub 登录
   if (appId === "copilot") return isCopilotOfficialCard(provider);
+  if (
+    (appId === "agy" || appId === "agy-desktop") &&
+    provider.meta?.partnerPromotionKey === "google-official"
+  ) {
+    return true;
+  }
   return (
     provider.category === "official" ||
     resolveCodexOfficialIdentity(appId, provider) !== null

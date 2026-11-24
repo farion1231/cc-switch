@@ -3,7 +3,7 @@ use serde_json::json;
 use cc_switch_lib::{
     get_claude_settings_path, import_default_config_test_hook, read_json_file,
     write_codex_live_atomic, AppError, AppType, McpApps, McpServer, MultiAppConfig, Provider,
-    ProviderMeta, ProviderService,
+    ProviderMeta, ProviderService, ProviderSortUpdate,
 };
 
 use crate::support::{
@@ -3844,4 +3844,281 @@ fn provider_service_switch_missing_provider_returns_error() {
         }
         other => panic!("expected Message error for provider not found, got {other:?}"),
     }
+}
+
+fn agy_official(id: &str, name: &str, account: Option<&str>) -> Provider {
+    let mut provider = Provider::with_id(id.to_string(), name.to_string(), json!({}), None);
+    provider.category = Some("official".to_string());
+    if let Some(account) = account {
+        provider.meta = Some(
+            serde_json::from_value(json!({
+                "authBinding": {
+                    "source": "managed_account",
+                    "authProvider": "agy_oauth",
+                    "accountId": account
+                }
+            }))
+            .expect("meta"),
+        );
+    }
+    provider
+}
+
+fn agy_api_key(id: &str, name: &str) -> Provider {
+    Provider::with_id(
+        id.to_string(),
+        name.to_string(),
+        json!({
+            "env": {
+                "GEMINI_API_KEY": "sk-agy-test",
+                "GOOGLE_GEMINI_BASE_URL": "https://relay.example.com"
+            }
+        }),
+        None,
+    )
+}
+
+#[test]
+fn agy_desktop_lists_cli_bound_oauth_and_excludes_key_and_unbound() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    ProviderService::add(
+        &state,
+        AppType::Agy,
+        agy_official("cli-bound-uuid", "CLI Work", Some("acct-work")),
+        false,
+    )
+    .expect("add bound oauth");
+    ProviderService::add(
+        &state,
+        AppType::Agy,
+        agy_official("cli-unbound", "CLI Follow", None),
+        false,
+    )
+    .expect("add unbound official");
+    ProviderService::add(
+        &state,
+        AppType::Agy,
+        agy_api_key("cli-key", "CLI Relay Key"),
+        false,
+    )
+    .expect("add api key");
+
+    let cli_list = ProviderService::list(&state, AppType::Agy).expect("list agy");
+    assert_eq!(cli_list.len(), 3);
+
+    let desktop_list =
+        ProviderService::list(&state, AppType::AgyDesktop).expect("list agy-desktop");
+    assert_eq!(desktop_list.len(), 1);
+    assert!(desktop_list.contains_key("cli-bound-uuid"));
+    assert!(!desktop_list.contains_key("cli-unbound"));
+    assert!(!desktop_list.contains_key("cli-key"));
+}
+
+#[test]
+fn agy_desktop_add_saves_into_shared_agy_and_surfaces_on_both() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    ProviderService::add(
+        &state,
+        AppType::AgyDesktop,
+        agy_official("acct-desktop", "Desktop Account", Some("acct-desktop")),
+        false,
+    )
+    .expect("add agy-desktop provider");
+
+    let cli_list = ProviderService::list(&state, AppType::Agy).expect("list agy");
+    let desktop_list =
+        ProviderService::list(&state, AppType::AgyDesktop).expect("list agy-desktop");
+    assert!(cli_list.contains_key("acct-desktop"));
+    assert!(desktop_list.contains_key("acct-desktop"));
+    assert!(state
+        .db
+        .get_provider_by_id("acct-desktop", &AppType::Agy)
+        .expect("read agy row")
+        .is_some());
+    assert!(state
+        .db
+        .get_provider_by_id("acct-desktop", &AppType::AgyDesktop)
+        .expect("read legacy agy-desktop row")
+        .is_none());
+}
+
+#[test]
+fn agy_desktop_reflects_agy_updates_and_unbinding() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    ProviderService::add(
+        &state,
+        AppType::Agy,
+        agy_official("cli-uuid", "Original", Some("acct-1")),
+        false,
+    )
+    .expect("add provider");
+
+    let mut renamed = agy_official("cli-uuid", "Renamed Work", Some("acct-1"));
+    renamed.website_url = Some("https://work.example.com".to_string());
+    ProviderService::update(&state, AppType::Agy, None, renamed).expect("rename provider");
+
+    let desktop_list =
+        ProviderService::list(&state, AppType::AgyDesktop).expect("list agy-desktop");
+    let card = desktop_list.get("cli-uuid").expect("card visible");
+    assert_eq!(card.name, "Renamed Work");
+    assert_eq!(
+        card.website_url.as_deref(),
+        Some("https://work.example.com")
+    );
+
+    let unbound = agy_official("cli-uuid", "Follow CLI", None);
+    ProviderService::update(&state, AppType::Agy, None, unbound).expect("unbind provider");
+
+    let cli_list = ProviderService::list(&state, AppType::Agy).expect("list agy");
+    let desktop_after_unbind =
+        ProviderService::list(&state, AppType::AgyDesktop).expect("list agy-desktop");
+    assert!(cli_list.contains_key("cli-uuid"));
+    assert!(desktop_after_unbind.is_empty());
+}
+
+#[test]
+fn agy_desktop_delete_removes_shared_provider_and_refuses_cli_key_card() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    ProviderService::add(
+        &state,
+        AppType::Agy,
+        agy_official("shared-id", "Shared OAuth", Some("acct-shared")),
+        false,
+    )
+    .expect("add shared oauth");
+    ProviderService::add(
+        &state,
+        AppType::Agy,
+        agy_api_key("cli-key", "CLI Key"),
+        false,
+    )
+    .expect("add cli key");
+
+    let err = ProviderService::delete(&state, AppType::AgyDesktop, "cli-key")
+        .expect_err("desktop cannot delete cli key card");
+    assert!(
+        matches!(err, AppError::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+    assert!(ProviderService::list(&state, AppType::Agy)
+        .expect("list agy")
+        .contains_key("cli-key"));
+
+    ProviderService::delete(&state, AppType::AgyDesktop, "shared-id")
+        .expect("delete shared oauth from desktop");
+    assert!(!ProviderService::list(&state, AppType::Agy)
+        .expect("list agy")
+        .contains_key("shared-id"));
+    assert!(ProviderService::list(&state, AppType::AgyDesktop)
+        .expect("list agy-desktop")
+        .is_empty());
+}
+
+#[test]
+fn agy_desktop_update_sort_order_preserves_cli_only_slots() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    let mut key_card = agy_api_key("cli-key", "CLI Key");
+    key_card.sort_index = Some(0);
+    let mut oauth_a = agy_official("oauth-a", "OAuth A", Some("acct-a"));
+    oauth_a.sort_index = Some(1);
+    let mut oauth_b = agy_official("oauth-b", "OAuth B", Some("acct-b"));
+    oauth_b.sort_index = Some(2);
+    let mut unbound = agy_official("cli-unbound", "Unbound", None);
+    unbound.sort_index = Some(3);
+
+    for provider in [key_card, oauth_a, oauth_b, unbound] {
+        ProviderService::add(&state, AppType::Agy, provider, false).expect("add provider");
+    }
+
+    ProviderService::update_sort_order(
+        &state,
+        AppType::AgyDesktop,
+        vec![
+            ProviderSortUpdate {
+                id: "oauth-b".to_string(),
+                sort_index: 0,
+            },
+            ProviderSortUpdate {
+                id: "oauth-a".to_string(),
+                sort_index: 1,
+            },
+        ],
+    )
+    .expect("update desktop sort order");
+
+    let agy_rows = ProviderService::list(&state, AppType::Agy).expect("list agy");
+    assert_eq!(agy_rows["cli-key"].sort_index, Some(0));
+    assert_eq!(agy_rows["oauth-b"].sort_index, Some(1));
+    assert_eq!(agy_rows["oauth-a"].sort_index, Some(2));
+    assert_eq!(agy_rows["cli-unbound"].sort_index, Some(3));
+}
+
+#[test]
+fn agy_desktop_migrates_legacy_rows_into_agy_without_duplicating_accounts() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let _home = ensure_test_home();
+
+    let state = create_test_state().expect("create test state");
+    // Already present in Agy via CLI UUID bound to acct-1
+    state
+        .db
+        .save_provider(
+            &AppType::Agy,
+            &agy_official("cli-uuid-1", "CLI One", Some("acct-1")),
+        )
+        .expect("save cli row");
+    // Legacy AgyDesktop rows: one duplicate account (acct-1) and one unique account (acct-2)
+    state
+        .db
+        .save_provider(
+            &AppType::AgyDesktop,
+            &agy_official("acct-1", "Legacy Dup", Some("acct-1")),
+        )
+        .expect("save legacy dup");
+    state
+        .db
+        .save_provider(
+            &AppType::AgyDesktop,
+            &agy_official("acct-2", "Legacy Unique", Some("acct-2")),
+        )
+        .expect("save legacy unique");
+
+    let desktop_list =
+        ProviderService::list(&state, AppType::AgyDesktop).expect("list agy-desktop");
+    assert_eq!(desktop_list.len(), 2);
+    assert!(desktop_list.contains_key("cli-uuid-1"));
+    assert!(desktop_list.contains_key("acct-2"));
+    assert!(!desktop_list.contains_key("acct-1"));
+
+    let cli_list = ProviderService::list(&state, AppType::Agy).expect("list agy");
+    assert_eq!(cli_list.len(), 2);
+    assert!(cli_list.contains_key("cli-uuid-1"));
+    assert!(cli_list.contains_key("acct-2"));
+    assert!(state
+        .db
+        .get_provider_rows(&AppType::AgyDesktop)
+        .expect("read legacy table")
+        .readable
+        .is_empty());
 }

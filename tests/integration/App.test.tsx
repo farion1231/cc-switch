@@ -309,6 +309,74 @@ describe("App integration with MSW", () => {
     );
   });
 
+  it("syncs shared Google OAuth providers between Antigravity CLI and Antigravity Desktop", async () => {
+    windowMocks.isLinux.mockReturnValue(true);
+    localStorage.setItem("cc-switch-last-app", "agy-desktop");
+    setProviders("agy", {
+      "cli-uuid": {
+        id: "cli-uuid",
+        name: "CLI Shared OAuth",
+        category: "official",
+        settingsConfig: {},
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "agy_oauth",
+            accountId: "google-account",
+          },
+        },
+      },
+      "cli-key": {
+        id: "cli-key",
+        name: "CLI Third-Party Key",
+        category: "third_party",
+        settingsConfig: {
+          env: {
+            GEMINI_API_KEY: "sk-cli-only",
+            GOOGLE_GEMINI_BASE_URL: "https://relay.example.com",
+          },
+        },
+      },
+    });
+    server.use(
+      http.post("http://tauri.local/auth_get_status", async () =>
+        HttpResponse.json({
+          provider: "agy_oauth",
+          authenticated: true,
+          default_account_id: "google-account",
+          accounts: [
+            {
+              id: "google-account",
+              login: "work@example.com",
+              requires_reauth: false,
+            },
+          ],
+        }),
+      ),
+    );
+
+    const { default: App } = await import("@/App");
+    renderApp(App);
+    await waitFor(() => {
+      const list = screen.getByTestId("provider-list").textContent ?? "";
+      expect(list).toContain("CLI Shared OAuth");
+      expect(list).not.toContain("CLI Third-Party Key");
+    });
+
+    fireEvent.click(screen.getByText("delete"));
+    fireEvent.click(await screen.findByText("confirm-delete"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list")).toHaveTextContent("{}"),
+    );
+
+    fireEvent.click(sidebarApp("Antigravity CLI"));
+    await waitFor(() => {
+      const list = screen.getByTestId("provider-list").textContent ?? "";
+      expect(list).toContain("CLI Third-Party Key");
+      expect(list).not.toContain("CLI Shared OAuth");
+    });
+  });
+
   it("covers basic provider flows via real hooks", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);

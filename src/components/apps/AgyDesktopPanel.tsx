@@ -4,7 +4,14 @@ import { ProviderList } from "@/components/providers/ProviderList";
 import { useManagedAuth } from "@/components/providers/forms/hooks/useManagedAuth";
 import { Button } from "@/components/ui/button";
 import { Notice } from "@/components/ui/notice";
+import { resolveManagedAccountId } from "@/lib/authBinding";
 import type { Provider } from "@/types";
+
+function agyDesktopAccountId(provider: Provider): string {
+  return (
+    resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || provider.id
+  );
+}
 
 interface AgyDesktopPanelProps {
   savedProviders?: Record<string, Provider>;
@@ -38,9 +45,24 @@ export function AgyDesktopPanel({
         .map(({ id }) => id),
     );
     return new Set(
-      Object.keys(savedProviders ?? {}).filter((id) => !usableAccounts.has(id)),
+      Object.values(savedProviders ?? {})
+        .filter(
+          (provider) => !usableAccounts.has(agyDesktopAccountId(provider)),
+        )
+        .map(({ id }) => id),
     );
   }, [auth.accounts, savedProviders]);
+
+  const currentProviderIds = useMemo(() => {
+    if (!auth.defaultAccountId) return new Set<string>();
+    return new Set(
+      Object.values(savedProviders ?? {})
+        .filter(
+          (provider) => agyDesktopAccountId(provider) === auth.defaultAccountId,
+        )
+        .map(({ id }) => id),
+    );
+  }, [auth.defaultAccountId, savedProviders]);
 
   return (
     <div
@@ -65,16 +87,19 @@ export function AgyDesktopPanel({
       ) : (
         <ProviderList
           providers={savedProviders ?? {}}
-          currentProviderId={auth.defaultAccountId ?? ""}
+          currentProviderId={Array.from(currentProviderIds)[0] ?? ""}
           appId="agy-desktop"
           isLoading={isLoading || auth.isLoadingStatus}
-          onSwitch={(provider) => auth.setDefaultAccount(provider.id)}
+          onSwitch={(provider) =>
+            auth.setDefaultAccount(agyDesktopAccountId(provider))
+          }
           onDelete={onDelete}
           onOpenWebsite={onOpenWebsite}
           onCreate={onCreate}
           searchOpen={searchOpen}
           onSearchOpenChange={onSearchOpenChange}
           agyDesktopAccounts={{
+            currentProviderIds,
             switching: auth.isSettingDefaultAccount,
             requiresReauth,
           }}

@@ -8,7 +8,6 @@ import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
 import { authApi } from "@/lib/api";
 import type { ManagedAuthStatus } from "@/lib/api/auth";
 import { providersApi } from "@/lib/api";
-import { readLocalCache } from "@/lib/localCache";
 import { useAddProviderMutation } from "@/lib/query/mutations";
 import { toast } from "@/lib/toast";
 import { createTestQueryClient } from "../utils/testQueryClient";
@@ -91,9 +90,14 @@ describe("Antigravity Desktop providers", () => {
       });
     const switched = vi.spyOn(toast, "success");
     const openWebsite = vi.fn();
+    const updateSortOrder = vi
+      .spyOn(providersApi, "updateSortOrder")
+      .mockResolvedValue(true);
+    const client = createTestQueryClient();
+    const invalidateQueries = vi.spyOn(client, "invalidateQueries");
 
     render(
-      <QueryClientProvider client={createTestQueryClient()}>
+      <QueryClientProvider client={client}>
         <AgyDesktopPanel
           savedProviders={{
             first: {
@@ -136,15 +140,19 @@ describe("Antigravity Desktop providers", () => {
         over: { id: "second" },
       } as DragEndEvent),
     );
-    expect(
-      screen
-        .getAllByRole("heading", { level: 3 })
-        .map((node) => node.textContent),
-    ).toEqual(["second@example.com", "Desktop Work"]);
-    expect(readLocalCache("agy-desktop-account-order")).toEqual([
-      "second",
-      "first",
-    ]);
+    expect(updateSortOrder).toHaveBeenCalledWith(
+      [
+        { id: "second", sortIndex: 0 },
+        { id: "first", sortIndex: 1 },
+      ],
+      "agy-desktop",
+    );
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["providers", "agy-desktop"],
+    });
+    expect(invalidateQueries).toHaveBeenCalledWith({
+      queryKey: ["providers", "agy"],
+    });
 
     expect(screen.getByText("providerCard.status.inUse")).toBeInTheDocument();
     expect(getStatus).toHaveBeenCalledWith("agy_oauth", true);
@@ -155,6 +163,117 @@ describe("Antigravity Desktop providers", () => {
     expect(switched).toHaveBeenCalledWith(
       expect.stringMatching(/重启 Antigravity Desktop/),
     );
+  });
+
+  it("resolves bound accountId for CLI-created UUID cards when matching active, reauth, and switch", async () => {
+    vi.spyOn(authApi, "authGetStatus").mockResolvedValue({
+      provider: "agy_oauth",
+      authenticated: true,
+      default_account_id: "acct-1",
+      accounts: [
+        {
+          id: "acct-1",
+          login: "one@example.com",
+          provider: "agy_oauth",
+          avatar_url: null,
+          authenticated_at: 0,
+          is_default: true,
+          github_domain: "google.com",
+          requires_reauth: false,
+        },
+        {
+          id: "acct-2",
+          login: "two@example.com",
+          provider: "agy_oauth",
+          avatar_url: null,
+          authenticated_at: 0,
+          is_default: false,
+          github_domain: "google.com",
+          requires_reauth: false,
+        },
+        {
+          id: "acct-3",
+          login: "three@example.com",
+          provider: "agy_oauth",
+          avatar_url: null,
+          authenticated_at: 0,
+          is_default: false,
+          github_domain: "google.com",
+          requires_reauth: true,
+        },
+      ],
+    });
+    const switchAccount = vi
+      .spyOn(authApi, "authSetDefaultAccount")
+      .mockResolvedValue(undefined);
+
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <AgyDesktopPanel
+          savedProviders={{
+            "cli-uuid-1": {
+              id: "cli-uuid-1",
+              name: "CLI Card One",
+              category: "official",
+              settingsConfig: {},
+              sortIndex: 0,
+              meta: {
+                authBinding: {
+                  source: "managed_account",
+                  authProvider: "agy_oauth",
+                  accountId: "acct-1",
+                },
+              },
+            },
+            "cli-uuid-2": {
+              id: "cli-uuid-2",
+              name: "CLI Card Two",
+              category: "official",
+              settingsConfig: {},
+              sortIndex: 1,
+              meta: {
+                authBinding: {
+                  source: "managed_account",
+                  authProvider: "agy_oauth",
+                  accountId: "acct-2",
+                },
+              },
+            },
+            "cli-uuid-3": {
+              id: "cli-uuid-3",
+              name: "CLI Card Expired",
+              category: "official",
+              settingsConfig: {},
+              sortIndex: 2,
+              meta: {
+                authBinding: {
+                  source: "managed_account",
+                  authProvider: "agy_oauth",
+                  accountId: "acct-3",
+                },
+              },
+            },
+          }}
+          onDelete={vi.fn()}
+          onOpenWebsite={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("CLI Card One")).toBeInTheDocument();
+    expect(screen.getByText("providerCard.status.inUse")).toBeInTheDocument();
+
+    const switchButtons = screen.getAllByRole("button", {
+      name: "providerCard.action.switch",
+    });
+    expect(switchButtons).toHaveLength(2);
+    expect(switchButtons[1]).toHaveAttribute("aria-disabled", "true");
+
+    await userEvent.click(switchButtons[1]);
+    expect(switchAccount).not.toHaveBeenCalled();
+
+    await userEvent.click(switchButtons[0]);
+    expect(switchAccount).toHaveBeenCalledWith("agy_oauth", "acct-2", true);
   });
 
   it("uses the agy provider form and saves its OAuth account binding", async () => {

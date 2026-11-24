@@ -6,6 +6,7 @@ import {
   deeplinkApi,
 } from "@/lib/api/deeplink";
 import { providersApi } from "@/lib/api";
+import { invalidateProvidersQueries } from "@/lib/query";
 import { parseDeepLinkConfigPreview } from "@/utils/deepLinkConfigPreview";
 import {
   Dialog,
@@ -249,9 +250,9 @@ export function DeepLinkImportDialog() {
       const result = await deeplinkApi.importFromDeeplink(payload);
       // Handle different result types
       if (result.type === "provider") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", request.app],
-        });
+        if (request.app) {
+          await invalidateProvidersQueries(queryClient, request.app);
+        }
         if (request.app === "opencode") {
           await queryClient.invalidateQueries({
             queryKey: ["opencodeLiveProviderIds"],

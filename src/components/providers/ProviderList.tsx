@@ -23,6 +23,7 @@ import type { OpenClawProviderConfig, Provider } from "@/types";
 import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { invalidateProvidersQueries } from "@/lib/query";
 import {
   extractErrorMessage,
   translatePiProviderMutationError,
@@ -108,6 +109,7 @@ interface ProviderListProps {
    */
   searchSlot?: HTMLElement | null;
   agyDesktopAccounts?: {
+    currentProviderIds: ReadonlySet<string>;
     switching: boolean;
     requiresReauth: ReadonlySet<string>;
   };
@@ -261,7 +263,7 @@ export function ProviderList({
     },
     onSuccess: (imported) => {
       if (imported) {
-        queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+        void invalidateProvidersQueries(queryClient, appId);
         if (appId === "claude-desktop") {
           queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
         }
@@ -276,7 +278,7 @@ export function ProviderList({
       toast.error(extractErrorMessage(error) || t("settings.importFailed"));
       // 导入失败前也可能已产生需要上屏的副作用：GrokBuild 官方登录态下点
       // 导入，命令层会先补种官方条目、随后才因 live 不可导入而报错。
-      queryClient.invalidateQueries({ queryKey: ["providers", appId] });
+      void invalidateProvidersQueries(queryClient, appId);
     },
   });
 
@@ -390,7 +392,7 @@ export function ProviderList({
         providers: filteredProviders,
         openTerminal: (provider) => onOpenTerminal?.(provider),
         desktop: agyDesktopAccounts && {
-          currentProviderId,
+          currentProviderIds: agyDesktopAccounts.currentProviderIds,
           onSwitch,
           switching: agyDesktopAccounts.switching,
           requiresReauth: agyDesktopAccounts.requiresReauth,
@@ -585,6 +587,9 @@ export function ProviderList({
   // 「当前」只用来决定官方订阅 / OAuth 额度自动刷新：Pi 没有当前项，OMO / Hermes 各看自己的当前项；
   // Antigravity 没有「启用」，每张卡都随时能打开，额度一律照常显示；Copilot CLI 只有官方卡有额度，同理
   const isCurrentFor = (provider: Provider) => {
+    if (agyDesktopAccounts) {
+      return agyDesktopAccounts.currentProviderIds.has(provider.id);
+    }
     if (appHas(appId, "piFamily")) return false;
     if (appId === "agy" || appId === "copilot") return true;
     if (provider.category === "omo") return provider.id === currentOmoId;
