@@ -53,7 +53,7 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/codexConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
-import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { isHermesReadOnlyProvider } from "@/config/hermesProviderMeta";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
 import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
 import {

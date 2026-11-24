@@ -1,15 +1,13 @@
 import { useRef } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
-import {
-  providersApi,
-  settingsApi,
-  usageApi,
-  sessionsApi,
-  type AppId,
-} from "@/lib/api";
-import type { Provider, Settings, UsageResult, SessionMeta } from "@/types";
+import { providersApi } from "@/lib/api/providers";
+import { usageApi } from "@/lib/api/usage";
+import { sessionsApi } from "@/lib/api/sessions";
+import type { AppId } from "@/lib/api/types";
+import type { Provider, UsageResult, SessionMeta } from "@/types";
 import { usageKeys } from "@/lib/query/usage";
 import { extractErrorMessage } from "@/utils/errorUtils";
+export { useSettingsQuery } from "./settings";
 
 const sortProviders = (
   providers: Record<string, Provider>,
@@ -87,13 +85,6 @@ export const useProvidersQuery = (
     // 当代理服务运行时，每 10 秒刷新一次供应商列表
     // 这样可以自动反映后端熔断器自动禁用代理目标的变更
     refetchInterval: isProxyRunning ? 10000 : false,
-  });
-};
-
-export const useSettingsQuery = (): UseQueryResult<Settings> => {
-  return useQuery({
-    queryKey: ["settings"],
-    queryFn: async () => settingsApi.get(),
   });
 };
 

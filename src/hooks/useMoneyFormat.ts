@@ -7,7 +7,7 @@ import {
   resolveMoneyDisplay,
   USD_DISPLAY,
 } from "@/components/usage/format";
-import { useSettingsQuery } from "@/lib/query";
+import { useSettingsQuery } from "@/lib/query/settings";
 
 /**
  * 用量金额的统一出口：用量面板、侧栏「今日」、会话阅读页的费用都经这里显示。

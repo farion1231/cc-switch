@@ -25,19 +25,13 @@ import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
-import {
-  providersQueryOptions,
-  proxyKeys,
-  useProvidersQuery,
-  useSettingsQuery,
-} from "@/lib/query";
-import {
-  piApi,
-  providersApi,
-  settingsApi,
-  type AppId,
-  type ProviderSwitchEvent,
-} from "@/lib/api";
+import { providersQueryOptions, useProvidersQuery } from "@/lib/query/queries";
+import { useSettingsQuery } from "@/lib/query/settings";
+import { proxyKeys } from "@/lib/query/proxy";
+import { piApi } from "@/lib/api/pi";
+import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
+import type { AppId, ProviderSwitchEvent } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";

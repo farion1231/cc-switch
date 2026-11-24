@@ -1,5 +1,5 @@
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { WORKBUDDY_ACCOUNT_AUTH_PROVIDER } from "@/config/workbuddyProviderPresets";
+import { WORKBUDDY_ACCOUNT_AUTH_PROVIDER } from "@/config/workbuddyOfficialMeta";
 import type { Provider } from "@/types";
 
 /** 和授权中心的 WorkBuddy 分组共用缓存 */
