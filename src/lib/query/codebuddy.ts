@@ -11,6 +11,48 @@ const STATUS_KEY = ["managed-auth-status", "codebuddy_oauth"] as const;
 const LIVE_KEY = ["codebuddy-account-live"] as const;
 
 /**
+ * 授权中心账号「⋯」里的「切换 CodeBuddy 到这个账号」：走授权中心的通用切号命令，和官方卡的
+ * 「添加」落到同一个 `switch_to`。官方卡是否「已添加」按当前登录的账号现算，所以从哪边切，
+ * 两边都会跟着变。
+ */
+export function useCodebuddyAccountSwitch() {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { mutate, isPending } = useMutation({
+    mutationFn: ({ accountId }: { accountId: string; login: string }) =>
+      authApi.authSetDefaultAccount("codebuddy_oauth", accountId),
+    onSuccess: (_result, { login }) => {
+      toast.success(
+        t("codebuddy.official.switched", {
+          defaultValue:
+            "CodeBuddy 已切换到 {{name}}。正在运行的 CodeBuddy 会自动换过去，新开的也会用它。",
+          name: login,
+        }),
+        { closeButton: true },
+      );
+    },
+    onError: (error) => {
+      toast.error(
+        t("codebuddy.official.switchFailed", {
+          defaultValue: "切换失败：{{error}}",
+          error: extractErrorMessage(error) || String(error),
+        }),
+        { closeButton: true },
+      );
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: STATUS_KEY });
+      await queryClient.invalidateQueries({ queryKey: LIVE_KEY });
+    },
+  });
+  const switchToAccount = useCallback(
+    (accountId: string, login: string) => mutate({ accountId, login }),
+    [mutate],
+  );
+  return { switchToAccount, switching: isPending };
+}
+
+/**
  * 供应商列表里 CodeBuddy 官方登录卡要的东西：授权中心收录的账号、CodeBuddy 现在登着的号
  * （和授权中心共用同一份查询，15 秒刷新一次，CLI 里 /login 换号也能跟上），以及卡片上的「添加」
  * （切到卡片绑定的账号；同一时间只有一张官方卡算「已添加」）。

@@ -5216,7 +5216,7 @@
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
-      "codebuddyHelp": "CodeBuddy Code 的官方登入（國內版、國際版都在這裡）。要切換帳號，在供應商列表裡為帳號建立一張「CodeBuddy 官方登入」卡並點「新增」。「新增帳號」會開啟終端機執行 codebuddy，登入後這裡自動收錄；已登入時會先讓 CodeBuddy 暫時登出原來的帳號，放棄可恢復。權杖由 CodeBuddy 自己續期。",
+      "codebuddyHelp": "CodeBuddy Code 的官方登入（國內版、國際版都在這裡）。要切換帳號，請在帳號的「…」裡選「將 CodeBuddy 切換到這個帳號」，或在供應商列表裡新增綁定它的「CodeBuddy 官方登入」卡。「新增帳號」會開啟終端機執行 codebuddy，登入後這裡自動收錄；已登入時會先讓 CodeBuddy 暫時登出原來的帳號，放棄可恢復。權杖由 CodeBuddy 自己續期。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在帳號的「…」裡選「將 WorkBuddy 切換到這個帳號」，或在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
       "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
@@ -5479,6 +5479,8 @@
       "adding": "正在新增…",
       "added": "已新增 {{name}}，CodeBuddy 已登入這個帳號。正在執行的 CodeBuddy 會自動換過去，新開的也會使用它。",
       "addFailed": "新增失敗：{{error}}",
+      "switched": "CodeBuddy 已切換到 {{name}}。正在執行的 CodeBuddy 會自動換過去，新開的也會使用它。",
+      "switchFailed": "切換失敗：{{error}}",
       "removeHint": "CodeBuddy 同時只能登入一個帳號，新增另一張官方卡即可切換"
     },
     "login": {

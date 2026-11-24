@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   importCurrent: vi.fn(),
   openTerminal: vi.fn(),
   quota: vi.fn(),
+  setDefault: vi.fn(),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -35,6 +36,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       codebuddyAccountImportCurrent: mocks.importCurrent,
       codebuddyAccountOpenLoginTerminal: mocks.openTerminal,
       codebuddyAccountQuota: mocks.quota,
+      authSetDefaultAccount: mocks.setDefault,
     },
   };
 });
@@ -109,11 +111,13 @@ describe("CodebuddyAccountSection", () => {
     mocks.importCurrent.mockReset();
     mocks.openTerminal.mockReset();
     mocks.quota.mockReset();
+    mocks.setDefault.mockReset();
+    mocks.setDefault.mockResolvedValue(undefined);
     mocks.live.mockResolvedValue(liveState("collected"));
     mocks.quota.mockResolvedValue(quotaResult());
   });
 
-  it("lists accounts with their site and leaves switching to the provider list", async () => {
+  it("lists accounts with their site and switches CodeBuddy from the account menu", async () => {
     const auth = baseAuth();
     auth.accounts = [
       account("100", "www.codebuddy.cn", "alice"),
@@ -141,9 +145,26 @@ describe("CodebuddyAccountSection", () => {
       screen.queryByRole("button", { name: "CodeBuddy Code 的更多操作" }),
     ).not.toBeInTheDocument();
 
-    // 切换改在供应商列表的官方登录卡上做，账号菜单里只剩重新登录、删除
+    // 和 WorkBuddy 一样，账号菜单里能把 CodeBuddy 切到这个号（走通用切号命令）
     await userEvent.click(
       screen.getByRole("button", { name: "carol 的更多操作" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: /删除/ }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "切换 CodeBuddy 到这个账号" }),
+    );
+    await waitFor(() =>
+      expect(mocks.setDefault).toHaveBeenCalledWith(
+        "codebuddy_oauth",
+        "300@www.codebuddy.ai",
+      ),
+    );
+
+    // 正在用的号不给切换
+    await userEvent.click(
+      screen.getByRole("button", { name: "alice 的更多操作" }),
     );
     expect(
       await screen.findByRole("menuitem", { name: /删除/ }),
@@ -151,7 +172,6 @@ describe("CodebuddyAccountSection", () => {
     expect(
       screen.queryByRole("menuitem", { name: /切换/ }),
     ).not.toBeInTheDocument();
-    expect(auth.setDefaultAccount).not.toHaveBeenCalled();
   });
 
   it("offers to collect an uncollected sign-in", async () => {

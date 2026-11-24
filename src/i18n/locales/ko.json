@@ -5216,7 +5216,7 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
-      "codebuddyHelp": "CodeBuddy Code의 공식 로그인입니다(중국 사이트와 국제 사이트 모두). 계정을 전환하려면 공급자 목록에서 해당 계정용 \"CodeBuddy 공식 로그인\" 카드를 만들고 추가를 클릭하세요. \"계정 추가\"는 터미널에서 codebuddy를 열고, 로그인을 마치면 계정을 여기에 추가합니다. CodeBuddy가 이미 로그인되어 있으면 잠시 로그아웃되며, 중단하면 원래 로그인을 복원할 수 있습니다. 토큰은 CodeBuddy가 직접 갱신합니다.",
+      "codebuddyHelp": "CodeBuddy Code의 공식 로그인입니다(중국 사이트와 국제 사이트 모두). 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘CodeBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 \"CodeBuddy 공식 로그인\" 카드의 추가를 클릭하세요. \"계정 추가\"는 터미널에서 codebuddy를 열고, 로그인을 마치면 계정을 여기에 추가합니다. CodeBuddy가 이미 로그인되어 있으면 잠시 로그아웃되며, 중단하면 원래 로그인을 복원할 수 있습니다. 토큰은 CodeBuddy가 직접 갱신합니다.",
       "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 사용자를 대신해 WorkBuddy에 로그인할 수 없으며, 현재 로그인된 계정의 로그인 파일 전체를 스냅샷으로 저장합니다. 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘WorkBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 ‘WorkBuddy 공식 로그인’ 카드의 ‘추가’를 클릭하세요. ‘추가됨’ 상태인 공식 카드는 동시에 하나만 유지됩니다. 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
@@ -5479,6 +5479,8 @@
       "adding": "추가하는 중…",
       "added": "{{name}}을(를) 추가했습니다. 이제 CodeBuddy가 이 계정으로 로그인되어 있습니다. 실행 중인 CodeBuddy는 자동으로 전환되며 새 세션도 이 계정을 사용합니다.",
       "addFailed": "추가하지 못했습니다: {{error}}",
+      "switched": "CodeBuddy를 {{name}}(으)로 전환했습니다. 실행 중인 CodeBuddy는 자동으로 전환되며 새 세션도 이 계정을 사용합니다.",
+      "switchFailed": "전환하지 못했습니다: {{error}}",
       "removeHint": "CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요."
     },
     "login": {
