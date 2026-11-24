@@ -535,11 +535,57 @@ fn replay_caches() -> &'static Mutex<CodexReplayCaches> {
     CODEX_REPLAY_CACHES.get_or_init(|| Mutex::new(CodexReplayCaches::default()))
 }
 
+const MAX_REPLAY_CACHE_ENTRIES: usize = 512;
+
 pub(crate) fn clear_codex_replay_caches() {
     // 清空即丢弃持锁 panic 时可能写了一半的内容，所以顺带解除中毒。
     let mut caches = replay_caches().lock_recover();
     *caches = CodexReplayCaches::default();
     replay_caches().clear_poison();
+}
+
+/// 清理已删除或超上限的 Codex 回放缓存，防止长期运行后在内存中无限累积。
+fn prune_codex_replay_caches(live_files: &[PathBuf]) {
+    let Ok(mut caches) = replay_caches().lock() else {
+        return;
+    };
+    if caches.parent_timelines.is_empty()
+        && caches.replay_prefixes.is_empty()
+        && caches.pending.is_empty()
+    {
+        return;
+    }
+    let live: std::collections::HashSet<&Path> = live_files.iter().map(PathBuf::as_path).collect();
+    caches
+        .parent_timelines
+        .retain(|path, _| live.contains(path.as_path()));
+    caches
+        .replay_prefixes
+        .retain(|path, _| live.contains(path.as_path()));
+    caches
+        .pending
+        .retain(|path, _| live.contains(path.as_path()));
+
+    if caches.parent_timelines.len() > MAX_REPLAY_CACHE_ENTRIES {
+        caches.parent_timelines.clear();
+    }
+    if caches.replay_prefixes.len() > MAX_REPLAY_CACHE_ENTRIES {
+        caches.replay_prefixes.clear();
+    }
+    if caches.pending.len() > MAX_REPLAY_CACHE_ENTRIES {
+        caches.pending.clear();
+    }
+
+    if caches.parent_timelines.capacity() > caches.parent_timelines.len().saturating_mul(4).max(64)
+    {
+        caches.parent_timelines.shrink_to_fit();
+    }
+    if caches.replay_prefixes.capacity() > caches.replay_prefixes.len().saturating_mul(4).max(64) {
+        caches.replay_prefixes.shrink_to_fit();
+    }
+    if caches.pending.capacity() > caches.pending.len().saturating_mul(4).max(64) {
+        caches.pending.shrink_to_fit();
+    }
 }
 
 fn is_rollout_filename(file_name: &str) -> bool {
@@ -1091,6 +1137,8 @@ pub(crate) fn sync_codex_usage_with_cursors(
             }
         }
     }
+
+    prune_codex_replay_caches(&files);
 
     if result.imported > 0 || result.deferred_files > 0 {
         log::info!(

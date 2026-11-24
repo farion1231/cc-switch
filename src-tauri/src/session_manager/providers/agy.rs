@@ -558,6 +558,12 @@ fn db_stamp(db_path: &Path) -> Option<DbStamp> {
 static TRAJECTORY_CACHE: LazyLock<Mutex<HashMap<PathBuf, (DbStamp, bool)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+pub(crate) fn clear_trajectory_cache() {
+    let mut guard = TRAJECTORY_CACHE.lock_recover();
+    guard.clear();
+    guard.shrink_to_fit();
+}
+
 /// Side questions (`/btw`) use `trajectory_meta.trajectory_type = 22` (`SIDE_QUESTION`) and are
 /// excluded. Results are cached by canonical path + `.db`/`-wal` stamp so list refreshes do not
 /// reopen every database while still noticing uncheckpointed WAL updates.

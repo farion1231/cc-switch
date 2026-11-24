@@ -4382,3 +4382,70 @@ fn test_latency_does_not_inherit_the_start_of_an_aborted_request() {
 
     assert_eq!(parsed_latencies(&lines), vec![Some(30_090), Some(10_100)]);
 }
+
+#[test]
+#[serial_test::serial]
+fn test_prune_codex_replay_caches_drops_deleted_and_oversized_entries() {
+    clear_codex_replay_caches();
+
+    let live = PathBuf::from("/tmp/codex-live.jsonl");
+    let stale = PathBuf::from("/tmp/codex-stale.jsonl");
+    {
+        let mut caches = replay_caches().lock().unwrap();
+        caches.replay_prefixes.insert(
+            live.clone(),
+            CachedReplayPrefix {
+                modified: 1,
+                size: 10,
+                prefix: 2,
+            },
+        );
+        caches.replay_prefixes.insert(
+            stale.clone(),
+            CachedReplayPrefix {
+                modified: 1,
+                size: 10,
+                prefix: 1,
+            },
+        );
+        caches.pending.insert(
+            stale.clone(),
+            PendingEntry {
+                modified: 1,
+                size: 10,
+                reason: PendingReason::Stable("stale".to_string()),
+            },
+        );
+    }
+
+    prune_codex_replay_caches(std::slice::from_ref(&live));
+    {
+        let caches = replay_caches().lock().unwrap();
+        assert!(caches.replay_prefixes.contains_key(&live));
+        assert!(!caches.replay_prefixes.contains_key(&stale));
+        assert!(caches.pending.is_empty());
+    }
+
+    // Exceeding MAX_REPLAY_CACHE_ENTRIES clears the oversized map so long-lived
+    // processes never retain unbounded replay state.
+    let many_live: Vec<PathBuf> = (0..=MAX_REPLAY_CACHE_ENTRIES)
+        .map(|i| PathBuf::from(format!("/tmp/codex-live-{i}.jsonl")))
+        .collect();
+    {
+        let mut caches = replay_caches().lock().unwrap();
+        for path in &many_live {
+            caches.replay_prefixes.insert(
+                path.clone(),
+                CachedReplayPrefix {
+                    modified: 1,
+                    size: 10,
+                    prefix: 1,
+                },
+            );
+        }
+    }
+    prune_codex_replay_caches(&many_live);
+    assert!(replay_caches().lock().unwrap().replay_prefixes.is_empty());
+
+    clear_codex_replay_caches();
+}

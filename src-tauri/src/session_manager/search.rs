@@ -920,6 +920,16 @@ fn remove_index_files_with(
     }
 }
 
+/// 在没有后台索引任务运行时关闭常驻的索引写连接，归还 FTS5 页缓存与文件描述符；
+/// 下次搜索或增量索引时会通过 [`with_index`] 自动按需重开。
+pub fn release_idle_connection() {
+    if RUNNING.load(Ordering::SeqCst) {
+        return;
+    }
+    let mut guard = INDEX.lock_recover();
+    *guard = None;
+}
+
 /// 删除整个索引文件（关闭功能时调用）
 pub fn clear() -> Result<(), String> {
     for task in SEARCH_REQUESTS.lock_recover().active.values() {
@@ -1090,6 +1100,7 @@ where
         if RERUN.load(Ordering::SeqCst) && !RUNNING.swap(true, Ordering::SeqCst) {
             continue;
         }
+        release_idle_connection();
         break;
     });
     status()

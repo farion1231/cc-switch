@@ -199,6 +199,7 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
     );
     notify_sync_result(&result);
     record_sync_completed(chrono::Utc::now().timestamp_millis());
+    db.shrink_memory();
     result
 }
 
