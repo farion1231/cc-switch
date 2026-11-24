@@ -2077,7 +2077,7 @@ pub fn run() {
 /// 客户端不能一直指着代理：开机自启默认关闭，CC Switch 一关客户端就连不上了。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
-        state.lan_web_service.stop().await;
+        state.lan_web_service.shutdown().await;
         crate::mode::controller::detach_all(state.inner()).await;
         // 切换后几秒内退出：给开着的 Claude Code 会话写的空值墓碑现在删掉（刚写的最多等 3 秒），
         // 不留到下次启动

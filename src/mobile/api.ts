@@ -6,6 +6,7 @@
 export interface AuthStatus {
   authenticated: boolean;
   allowControl: boolean;
+  remoteControlApps?: string[];
   version: string;
 }
 
@@ -186,6 +187,137 @@ export interface ProxyStatusApiResponse {
   allowControl: boolean;
 }
 
+export type RemoteRunStatus = "running" | "completed" | "error" | "cancelled";
+
+export type RemoteEventKind =
+  | "started"
+  | "init"
+  | "thought"
+  | "text"
+  | "tool_call"
+  | "tool_result"
+  | "stderr"
+  | "completed"
+  | "error"
+  | "cancelled";
+
+export interface RemoteAgentInfo {
+  id: string;
+  installed: boolean;
+  enabled: boolean;
+  supportsResume: boolean;
+  supportsModel: boolean;
+  supportsEffort: boolean;
+  supportsMode: boolean;
+  supportsSandbox: boolean;
+  modes: string[];
+  efforts: string[];
+  activeRunCount: number;
+}
+
+export interface RemoteAgentsResponse {
+  agents: RemoteAgentInfo[];
+  defaultCwd: string;
+  recentWorkspaces: string[];
+}
+
+export interface SafeRemoteSession {
+  app: string;
+  sessionId: string;
+  title?: string;
+  summary?: string;
+  projectDir?: string;
+  createdAt?: number;
+  lastActiveAt?: number;
+  resumable: boolean;
+  activeRunId?: string;
+}
+
+export interface RemoteSessionsResponse {
+  sessions: SafeRemoteSession[];
+}
+
+export interface RemoteSessionBlock {
+  type: string;
+  text?: string;
+  summary?: string;
+  redacted?: boolean;
+  rawName?: string;
+  title?: string;
+  detail?: string;
+  inputPreview?: string;
+  preview?: string;
+  status?: string;
+  kind?: string;
+}
+
+export interface RemoteSessionMessage {
+  role: string;
+  content?: string;
+  ts?: number;
+  id?: string;
+  injected?: boolean;
+  blocks?: RemoteSessionBlock[];
+}
+
+export interface RemoteSessionMessagesResponse {
+  session: SafeRemoteSession;
+  messages: RemoteSessionMessage[];
+}
+
+export interface RemoteStreamEvent {
+  seq: number;
+  ts: number;
+  kind: RemoteEventKind;
+  text?: string;
+  toolName?: string;
+  toolId?: string;
+  isError?: boolean;
+  sessionId?: string;
+  exitCode?: number;
+}
+
+export interface RemoteRunSnapshot {
+  runId: string;
+  app: string;
+  status: RemoteRunStatus;
+  prompt: string;
+  sessionId?: string;
+  conversationId?: string;
+  cwd: string;
+  model?: string;
+  effort?: string;
+  mode?: string;
+  sandbox: boolean;
+  createdAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+  exitCode?: number;
+  error?: string;
+  lastSeq: number;
+}
+
+export interface RemoteRunsResponse {
+  activeRunCount: number;
+  runs: RemoteRunSnapshot[];
+}
+
+export interface RemoteRunDetailResponse {
+  run: RemoteRunSnapshot;
+  events: RemoteStreamEvent[];
+}
+
+export interface StartRemoteRunRequest {
+  app: string;
+  prompt: string;
+  sessionId?: string;
+  cwd?: string;
+  model?: string;
+  effort?: string;
+  mode?: string;
+  sandbox?: boolean;
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -303,4 +435,52 @@ export const mobileApi = {
       status: ProxyStatus;
       takeover: ProxyTakeoverStatus;
     }>("/api/proxy/stop", { method: "POST" }),
+
+  getRemoteAgents: () =>
+    requestJson<RemoteAgentsResponse>("/api/remote/agents"),
+
+  getRemoteSessions: (params?: {
+    app?: string;
+    limit?: number;
+    q?: string;
+  }) => {
+    const q = new URLSearchParams();
+    if (params?.app && params.app !== "all") q.set("app", params.app);
+    if (params?.limit) q.set("limit", String(params.limit));
+    if (params?.q?.trim()) q.set("q", params.q.trim());
+    const qs = q.toString();
+    return requestJson<RemoteSessionsResponse>(
+      `/api/remote/sessions${qs ? `?${qs}` : ""}`,
+    );
+  },
+
+  getRemoteSessionMessages: (app: string, sessionId: string) =>
+    requestJson<RemoteSessionMessagesResponse>(
+      `/api/remote/sessions/${encodeURIComponent(app)}/${encodeURIComponent(sessionId)}/messages`,
+    ),
+
+  getRemoteRuns: (app?: string) => {
+    const qs = app && app !== "all" ? `?app=${encodeURIComponent(app)}` : "";
+    return requestJson<RemoteRunsResponse>(`/api/remote/runs${qs}`);
+  },
+
+  startRemoteRun: (payload: StartRemoteRunRequest) =>
+    requestJson<RemoteRunSnapshot>("/api/remote/runs", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  getRemoteRun: (runId: string, after = 0) =>
+    requestJson<RemoteRunDetailResponse>(
+      `/api/remote/runs/${encodeURIComponent(runId)}?after=${after}`,
+    ),
+
+  cancelRemoteRun: (runId: string) =>
+    requestJson<RemoteRunSnapshot>(
+      `/api/remote/runs/${encodeURIComponent(runId)}/cancel`,
+      { method: "POST" },
+    ),
+
+  remoteRunStreamUrl: (runId: string, after = 0) =>
+    `/api/remote/runs/${encodeURIComponent(runId)}/stream?after=${after}`,
 };

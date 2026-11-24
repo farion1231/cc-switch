@@ -506,7 +506,17 @@
       "lanWarning": "LAN üzerinde şifresiz HTTP kullanılır: güvenilmeyen Wi-Fi ağlarında “Bu bilgisayar” modunu güvenli tünel veya Tailscale ile kullanın.",
       "confirmLanTitle": "Yerel Ağ Erişimi Etkinleştirilsin mi?",
       "confirmLanMessage": "CC Switch, LAN üzerindeki cihazların erişim belirteciyle mobil panele bağlanabilmesi için 0.0.0.0 adresini dinleyecektir. LAN trafiği düz HTTP kullanır — yalnızca güvendiğiniz ağlarda açın.",
-      "confirmLanButton": "LAN Erişimini Aç"
+      "confirmLanButton": "LAN Erişimini Aç",
+      "confirmLanRemoteNote": "Not: Ajan Uzaktan Kontrolü şu anda {{apps}} için etkindir.",
+      "remoteAgentsLabel": "Ajan Uzaktan Kontrolü",
+      "remoteAgentsDescription": "Varsayılan olarak tümü kapalıdır. Mobil panelden başlatılabilecek veya sürdürülebilecek CLI ajanlarını seçin.",
+      "remoteAgentInstalled": "Kurulu",
+      "remoteAgentNotInstalled": "Kurulu değil",
+      "remoteAgentsEnabledCount": "{{count}} etkin",
+      "remoteAgentsAllOff": "Tümü kapalı (salt okunur)",
+      "confirmRemoteTitle": "LAN Üzerinden Uzaktan Ajan Çalıştırma Açılsın mı?",
+      "confirmRemoteMessage": "Bu özellik açıldığında LAN erişim belirtecine sahip cihazlar düz HTTP üzerinden bu bilgisayarda {{app}} CLI komutları çalıştırabilir. Yalnızca güvendiğiniz ağlarda açın veya “Bu bilgisayar” modunu güvenli tünel ya da Tailscale ile kullanın.",
+      "confirmRemoteButton": "{{app}} için Etkinleştir"
     },
     "advanced": {
       "configDir": {

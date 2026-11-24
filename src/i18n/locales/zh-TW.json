@@ -506,7 +506,17 @@
       "lanWarning": "區域網路存取使用明文 HTTP：在不受信任的公共 Wi-Fi 中流量可能被監聽。此類環境請改用「僅本機」並搭配安全通道或 Tailscale。",
       "confirmLanTitle": "開啟區域網路存取？",
       "confirmLanMessage": "CC Switch 將監聽 0.0.0.0，允許區域網路內持有存取權杖的手機與裝置開啟行動端面板。區域網路傳輸為明文 HTTP，請僅於受信任網路中開啟。",
-      "confirmLanButton": "確認開啟區域網路存取"
+      "confirmLanButton": "確認開啟區域網路存取",
+      "confirmLanRemoteNote": "注意：目前已為 {{apps}} 開啟 Agent 遠控。",
+      "remoteAgentsLabel": "Agent 遠控",
+      "remoteAgentsDescription": "預設全部關閉。選擇允許在手機端發起或繼續對話的 CLI Agent。",
+      "remoteAgentInstalled": "已安裝",
+      "remoteAgentNotInstalled": "未安裝",
+      "remoteAgentsEnabledCount": "已啟用 {{count}} 個",
+      "remoteAgentsAllOff": "全部關閉（唯讀）",
+      "confirmRemoteTitle": "在區域網路模式下開啟 Agent 遠控？",
+      "confirmRemoteMessage": "開啟 Agent 遠控後，持有區域網路存取權杖的裝置將能透過明文 HTTP 在本機執行 {{app}} CLI 指令。請僅於受信任網路中開啟，或將網頁存取切換為「僅本機」並搭配安全通道或 Tailscale。",
+      "confirmRemoteButton": "為 {{app}} 開啟遠控"
     },
     "advanced": {
       "configDir": {

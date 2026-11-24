@@ -6,6 +6,8 @@ export interface LanWebStatus {
   mode: LanWebMode;
   port: number;
   allowControl: boolean;
+  remoteControlApps: string[];
+  installedRemoteApps: string[];
   running: boolean;
   listenAddress: string | null;
   localUrl: string | null;
@@ -19,6 +21,7 @@ export interface LanWebConfigUpdate {
   mode: LanWebMode;
   port: number;
   allowControl: boolean;
+  remoteControlApps: string[];
 }
 
 export const lanWebApi = {

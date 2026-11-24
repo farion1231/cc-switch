@@ -10,6 +10,7 @@
 //! - Mutating endpoints (`/switch`, `/proxy/start`, `/proxy/stop`) require
 //!   `allow_control == true` and emit desktop Tauri events + refresh the tray menu.
 
+use super::agent_remote::{AgentRunManager, RemoteAgentError, StartRemoteRunRequest};
 use super::config::{
     derive_session_cookie, verify_access_token, LanWebConfig, SESSION_COOKIE_NAME,
     SESSION_MAX_AGE_SECS,
@@ -28,17 +29,22 @@ use axum::{
     body::Body,
     extract::{Path, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event as SseEvent, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     Json,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::convert::Infallible;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::Emitter;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 
 const APP_ICON_PNG: &[u8] = include_bytes!("../../icons/128x128@2x.png");
 
@@ -48,6 +54,7 @@ pub struct LanWebRouterState {
     pub config: Arc<RwLock<LanWebConfig>>,
     pub app_handle: Option<tauri::AppHandle>,
     pub dist_dir_override: Option<PathBuf>,
+    pub remote_runs: Arc<AgentRunManager>,
 }
 
 impl LanWebRouterState {
@@ -58,6 +65,10 @@ impl LanWebRouterState {
 
     async fn allow_control(&self) -> bool {
         self.config.read().await.allow_control
+    }
+
+    async fn remote_control_apps(&self) -> Vec<String> {
+        self.config.read().await.remote_control_apps.clone()
     }
 }
 
@@ -79,6 +90,18 @@ fn forbidden_readonly_response() -> Response {
         .into_response()
 }
 
+fn remote_agent_error_response(err: RemoteAgentError) -> Response {
+    let (status, msg) = match err {
+        RemoteAgentError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+        RemoteAgentError::Forbidden(m) => (StatusCode::FORBIDDEN, m),
+        RemoteAgentError::NotFound(m) => (StatusCode::NOT_FOUND, m),
+        RemoteAgentError::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
+        RemoteAgentError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m),
+        RemoteAgentError::Internal(m) => (StatusCode::INTERNAL_SERVER_ERROR, m),
+    };
+    error_response(status, msg)
+}
+
 fn error_response(status: StatusCode, msg: impl Into<String>) -> Response {
     (status, Json(json!({ "error": msg.into() }))).into_response()
 }
@@ -92,6 +115,7 @@ fn error_response(status: StatusCode, msg: impl Into<String>) -> Response {
 pub struct AuthStatusResponse {
     pub authenticated: bool,
     pub allow_control: bool,
+    pub remote_control_apps: Vec<String>,
     pub version: String,
 }
 
@@ -107,6 +131,11 @@ pub async fn get_auth_status(
             cfg.allow_control
         } else {
             false
+        },
+        remote_control_apps: if authenticated {
+            cfg.remote_control_apps.clone()
+        } else {
+            Vec::new()
         },
         version: env!("CARGO_PKG_VERSION").to_string(),
     })
@@ -140,6 +169,7 @@ pub async fn create_session(
         Json(AuthStatusResponse {
             authenticated: true,
             allow_control: cfg.allow_control,
+            remote_control_apps: cfg.remote_control_apps,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }),
     )
@@ -909,6 +939,254 @@ pub async fn stop_proxy(State(state): State<LanWebRouterState>, headers: HeaderM
             .into_response()
         }
         Err(err) => error_response(StatusCode::BAD_REQUEST, err),
+    }
+}
+
+// ============================================================
+// Unified Multi-Agent Remote Control Endpoints
+// ============================================================
+
+#[derive(Deserialize)]
+pub struct RemoteSessionsQuery {
+    pub app: Option<String>,
+    pub limit: Option<usize>,
+    pub q: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct RemoteRunsQuery {
+    pub app: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct RemoteAfterQuery {
+    pub after: Option<u64>,
+}
+
+pub async fn get_remote_agents(
+    State(state): State<LanWebRouterState>,
+    headers: HeaderMap,
+) -> Response {
+    if !state.is_authenticated(&headers).await {
+        return unauthorized_response();
+    }
+    let enabled_apps = state.remote_control_apps().await;
+    let resp = state.remote_runs.list_agents(&enabled_apps).await;
+    Json(resp).into_response()
+}
+
+pub async fn get_remote_sessions(
+    State(state): State<LanWebRouterState>,
+    headers: HeaderMap,
+    Query(query): Query<RemoteSessionsQuery>,
+) -> Response {
+    if !state.is_authenticated(&headers).await {
+        return unauthorized_response();
+    }
+    let limit = query.limit.unwrap_or(50);
+    match state
+        .remote_runs
+        .list_sessions(query.app.as_deref(), limit, query.q.as_deref())
+        .await
+    {
+        Ok(resp) => Json(resp).into_response(),
+        Err(err) => remote_agent_error_response(err),
+    }
+}
+
+pub async fn get_remote_session_messages(
+    State(state): State<LanWebRouterState>,
+    headers: HeaderMap,
+    Path((app, session_id)): Path<(String, String)>,
+) -> Response {
+    if !state.is_authenticated(&headers).await {
+        return unauthorized_response();
+    }
+    match state
+        .remote_runs
+        .get_session_messages(&app, &session_id)
+        .await
+    {
+        Ok(resp) => Json(resp).into_response(),
+        Err(err) => remote_agent_error_response(err),
+    }
+}
+
+pub async fn get_remote_runs(
+    State(state): State<LanWebRouterState>,
+    headers: HeaderMap,
+    Query(query): Query<RemoteRunsQuery>,
+) -> Response {
+    if !state.is_authenticated(&headers).await {
+        return unauthorized_response();
+    }
+    Json(state.remote_runs.list_runs(query.app.as_deref()).await).into_response()
+}
+
+pub async fn start_remote_run(
+    State(state): State<LanWebRouterState>,
+    headers: HeaderMap,
+    Json(payload): Json<StartRemoteRunRequest>,
+) -> Response {
+    if !state.is_authenticated(&headers).await {
+        return unauthorized_response();
+    }
+    let enabled_apps = state.remote_control_apps().await;
+    match state
+        .remote_runs
+        .start_run(&state.app_state, &enabled_apps, payload)
+        .await
+    {
+        Ok(snapshot) => (StatusCode::ACCEPTED, Json(snapshot)).into_response(),
+        Err(err) => remote_agent_error_response(err),
+    }
+}
+
+pub async fn get_remote_run(
+    State(state): State<LanWebRouterState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+    Query(query): Query<RemoteAfterQuery>,
+) -> Response {
+    if !state.is_authenticated(&headers).await {
+        return unauthorized_response();
+    }
+    let after = query.after.unwrap_or(0);
+    match state.remote_runs.get_run(&run_id, after).await {
+        Ok(detail) => Json(detail).into_response(),
+        Err(err) => remote_agent_error_response(err),
+    }
+}
+
+pub async fn stream_remote_run(
+    State(state): State<LanWebRouterState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+    Query(query): Query<RemoteAfterQuery>,
+) -> Response {
+    if !state.is_authenticated(&headers).await {
+        return unauthorized_response();
+    }
+    let after = query.after.unwrap_or(0);
+    let (replay, already_terminal, mut rx) =
+        match state.remote_runs.subscribe_run(&run_id, after).await {
+            Ok(sub) => sub,
+            Err(err) => return remote_agent_error_response(err),
+        };
+
+    let remote_runs = state.remote_runs.clone();
+    let run_id_clone = run_id.clone();
+
+    let stream = async_stream::stream! {
+        let mut last_seq = after;
+        let mut saw_terminal = false;
+
+        for ev in replay {
+            if ev.seq <= last_seq {
+                continue;
+            }
+            last_seq = ev.seq;
+            let terminal = ev.kind.is_terminal();
+            if let Ok(sse) = SseEvent::default()
+                .id(ev.seq.to_string())
+                .event(ev.kind.as_str())
+                .json_data(&ev)
+            {
+                yield Ok::<SseEvent, Infallible>(sse);
+            }
+            if terminal {
+                saw_terminal = true;
+                break;
+            }
+        }
+
+        if already_terminal || saw_terminal {
+            return;
+        }
+
+        loop {
+            match rx.recv().await {
+                Ok(ev) => {
+                    if ev.seq <= last_seq {
+                        continue;
+                    }
+                    last_seq = ev.seq;
+                    let terminal = ev.kind.is_terminal();
+                    if let Ok(sse) = SseEvent::default()
+                        .id(ev.seq.to_string())
+                        .event(ev.kind.as_str())
+                        .json_data(&ev)
+                    {
+                        yield Ok::<SseEvent, Infallible>(sse);
+                    }
+                    if terminal {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    let missed = remote_runs.replay_since(&run_id_clone, last_seq).await;
+                    let mut ended = false;
+                    for ev in missed {
+                        if ev.seq <= last_seq {
+                            continue;
+                        }
+                        last_seq = ev.seq;
+                        let terminal = ev.kind.is_terminal();
+                        if let Ok(sse) = SseEvent::default()
+                            .id(ev.seq.to_string())
+                            .event(ev.kind.as_str())
+                            .json_data(&ev)
+                        {
+                            yield Ok::<SseEvent, Infallible>(sse);
+                        }
+                        if terminal {
+                            ended = true;
+                            break;
+                        }
+                    }
+                    if ended {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    };
+
+    let mut response = Sse::new(stream)
+        .keep_alive(
+            KeepAlive::new()
+                .interval(Duration::from_secs(15))
+                .text("ping"),
+        )
+        .into_response();
+    response
+        .headers_mut()
+        .insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response
+}
+
+pub async fn cancel_remote_run(
+    State(state): State<LanWebRouterState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> Response {
+    if !state.is_authenticated(&headers).await {
+        return unauthorized_response();
+    }
+    let app = match state.remote_runs.get_run_app(&run_id).await {
+        Ok(app) => app,
+        Err(err) => return remote_agent_error_response(err),
+    };
+    let enabled_apps = state.remote_control_apps().await;
+    if !enabled_apps.iter().any(|id| id == &app) {
+        return remote_agent_error_response(RemoteAgentError::Forbidden(format!(
+            "Remote control is disabled for '{app}'. Enable it in desktop Settings → Network."
+        )));
+    }
+    match state.remote_runs.cancel_run(&run_id).await {
+        Ok(snapshot) => Json(snapshot).into_response(),
+        Err(err) => remote_agent_error_response(err),
     }
 }
 

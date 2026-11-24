@@ -2,7 +2,7 @@
  * User-customizable bottom shortcut bar model & localStorage persistence.
  *
  * Design rules:
- * - Total mobile views: 6 (`overview`, `providers`, `logs`, `proxy`, `models`, `preferences`).
+ * - Total mobile views: 7 (`overview`, `providers`, `logs`, `proxy`, `remote`, `models`, `preferences`).
  * - Bottom bar holds at most 5 slots total (iOS tab bar ergonomics on 360px+ phones).
  * - Whenever any view is unpinned (`pinned.length < totalViews`), the rightmost slot is
  *   reserved for the "More" button, so at most 4 views can be pinned simultaneously
@@ -15,6 +15,7 @@ export type MobileViewId =
   | "providers"
   | "logs"
   | "proxy"
+  | "remote"
   | "models"
   | "preferences";
 
@@ -54,6 +55,13 @@ export const ALL_MOBILE_VIEWS: readonly MobileViewMeta[] = [
     labelZh: "本地代理",
     shortEn: "Proxy",
     shortZh: "代理",
+  },
+  {
+    id: "remote",
+    labelEn: "Remote Control",
+    labelZh: "Agent 远控",
+    shortEn: "Remote",
+    shortZh: "远控",
   },
   {
     id: "models",

@@ -506,7 +506,17 @@
       "lanWarning": "局域网访问使用明文 HTTP：在不受信任的公共 Wi-Fi 中流量可能被监听。此类环境请切换为「仅本机」并配合安全隧道或 Tailscale 使用。",
       "confirmLanTitle": "开启局域网访问？",
       "confirmLanMessage": "CC Switch 将监听 0.0.0.0，允许局域网内持有访问令牌的手机和设备打开移动端面板。局域网通信采用明文 HTTP，请仅在受信任网络中开启。",
-      "confirmLanButton": "确认开启局域网访问"
+      "confirmLanButton": "确认开启局域网访问",
+      "confirmLanRemoteNote": "注意：当前已为 {{apps}} 开启 Agent 远控。",
+      "remoteAgentsLabel": "Agent 远控",
+      "remoteAgentsDescription": "默认全部关闭。选择允许在手机端发起或继续对话的 CLI Agent。",
+      "remoteAgentInstalled": "已安装",
+      "remoteAgentNotInstalled": "未安装",
+      "remoteAgentsEnabledCount": "已启用 {{count}} 个",
+      "remoteAgentsAllOff": "全部关闭（只读）",
+      "confirmRemoteTitle": "在局域网模式下开启 Agent 远控？",
+      "confirmRemoteMessage": "开启 Agent 远控后，持有局域网访问令牌的设备将能通过明文 HTTP 在本机执行 {{app}} CLI 指令。请仅在受信任网络中开启，或将网页访问切换为「仅本机」并配合安全隧道或 Tailscale 使用。",
+      "confirmRemoteButton": "为 {{app}} 开启远控"
     },
     "advanced": {
       "configDir": {

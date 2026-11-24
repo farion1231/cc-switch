@@ -5,6 +5,7 @@ import {
   Layers,
   ScrollText,
   SlidersHorizontal,
+  Terminal,
 } from "lucide-react";
 import type { MobileViewId } from "../shortcuts";
 
@@ -24,6 +25,8 @@ export function ViewIcon({
       return <ScrollText className={className} />;
     case "proxy":
       return <Activity className={className} />;
+    case "remote":
+      return <Terminal className={className} />;
     case "models":
       return <Cpu className={className} />;
     case "preferences":

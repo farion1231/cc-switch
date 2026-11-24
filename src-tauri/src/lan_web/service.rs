@@ -1,5 +1,6 @@
 //! Lifecycle manager and Axum router for the opt-in LAN Mobile Web UI server.
 
+use super::agent_remote::{sanitize_remote_control_apps, AgentRunManager};
 use super::config::{
     generate_token, load_config, save_config, validate_port, LanWebConfig, LanWebMode,
 };
@@ -29,6 +30,8 @@ pub struct LanWebStatus {
     pub mode: LanWebMode,
     pub port: u16,
     pub allow_control: bool,
+    pub remote_control_apps: Vec<String>,
+    pub installed_remote_apps: Vec<String>,
     pub running: bool,
     pub listen_address: Option<String>,
     pub local_url: Option<String>,
@@ -44,6 +47,8 @@ pub struct LanWebConfigUpdate {
     pub mode: LanWebMode,
     pub port: u16,
     pub allow_control: bool,
+    #[serde(default)]
+    pub remote_control_apps: Vec<String>,
 }
 
 struct RunningServer {
@@ -59,6 +64,7 @@ pub struct LanWebService {
     config_op_lock: Arc<Mutex<()>>,
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
     last_error: Arc<RwLock<Option<String>>>,
+    remote_runs: Arc<AgentRunManager>,
 }
 
 impl Default for LanWebService {
@@ -69,13 +75,15 @@ impl Default for LanWebService {
 
 impl LanWebService {
     pub fn new() -> Self {
-        let initial = load_config().unwrap_or_default();
+        let mut initial = load_config().unwrap_or_default();
+        initial.remote_control_apps = sanitize_remote_control_apps(&initial.remote_control_apps);
         Self {
             config: Arc::new(RwLock::new(initial)),
             running: Arc::new(Mutex::new(None)),
             config_op_lock: Arc::new(Mutex::new(())),
             app_handle: Arc::new(RwLock::new(None)),
             last_error: Arc::new(RwLock::new(None)),
+            remote_runs: Arc::new(AgentRunManager::new()),
         }
     }
 
@@ -89,6 +97,7 @@ impl LanWebService {
     pub async fn start_if_configured(&self, app_state: AppState) {
         let cfg = match load_config() {
             Ok(mut c) => {
+                c.remote_control_apps = sanitize_remote_control_apps(&c.remote_control_apps);
                 if c.mode != LanWebMode::Off && c.token.is_empty() {
                     c.token = generate_token();
                     let _ = save_config(&c);
@@ -142,6 +151,7 @@ impl LanWebService {
             next.port = update.port;
         }
         next.allow_control = update.allow_control;
+        next.remote_control_apps = sanitize_remote_control_apps(&update.remote_control_apps);
         if next.mode != LanWebMode::Off && next.token.is_empty() {
             next.token = generate_token();
         }
@@ -149,7 +159,7 @@ impl LanWebService {
         save_config(&next)?;
         *self.config.write().await = next.clone();
 
-        // Avoid tearing down and rebinding the TCP listener when only `allow_control` changed.
+        // Avoid tearing down and rebinding the TCP listener when only control flags changed.
         let listener_running = self.running.lock().await.is_some();
         let bind_unchanged =
             prev.mode == next.mode && prev.effective_port() == next.effective_port();
@@ -212,10 +222,14 @@ impl LanWebService {
             (None, Vec::new())
         };
 
+        let installed_remote_apps = self.remote_runs.installed_agent_ids().await;
+
         LanWebStatus {
             mode: cfg.mode,
             port,
             allow_control: cfg.allow_control,
+            remote_control_apps: cfg.remote_control_apps,
+            installed_remote_apps,
             running,
             listen_address,
             local_url,
@@ -227,12 +241,20 @@ impl LanWebService {
     }
 
     pub async fn stop(&self) {
+        self.remote_runs.cancel_all().await;
         let active = self.running.lock().await.take();
         if let Some(srv) = active {
             let _ = srv.shutdown_tx.send(());
             let _ = tokio::time::timeout(std::time::Duration::from_secs(3), srv.handle).await;
             log::info!("[LanWeb] server stopped ({})", srv.listen_address);
         }
+    }
+
+    /// Graceful shutdown hook invoked on app exit: kills all active remote agent
+    /// child processes and stops the HTTP listener.
+    pub async fn shutdown(&self) {
+        self.remote_runs.cancel_all().await;
+        self.stop().await;
     }
 
     async fn start_listener(&self, app_state: AppState, cfg: &LanWebConfig) -> Result<(), String> {
@@ -258,6 +280,7 @@ impl LanWebService {
             config: self.config.clone(),
             app_handle: handle_opt,
             dist_dir_override: None,
+            remote_runs: self.remote_runs.clone(),
         };
         let router = build_router(router_state);
 
@@ -305,6 +328,26 @@ pub fn build_router(state: LanWebRouterState) -> Router {
         .route("/api/proxy/status", get(handlers::get_proxy_status))
         .route("/api/proxy/start", post(handlers::start_proxy))
         .route("/api/proxy/stop", post(handlers::stop_proxy))
+        // Unified Multi-Agent Remote Control API
+        .route("/api/remote/agents", get(handlers::get_remote_agents))
+        .route("/api/remote/sessions", get(handlers::get_remote_sessions))
+        .route(
+            "/api/remote/sessions/:app/:session_id/messages",
+            get(handlers::get_remote_session_messages),
+        )
+        .route(
+            "/api/remote/runs",
+            get(handlers::get_remote_runs).post(handlers::start_remote_run),
+        )
+        .route("/api/remote/runs/:run_id", get(handlers::get_remote_run))
+        .route(
+            "/api/remote/runs/:run_id/stream",
+            get(handlers::stream_remote_run),
+        )
+        .route(
+            "/api/remote/runs/:run_id/cancel",
+            post(handlers::cancel_remote_run),
+        )
         .layer(DefaultBodyLimit::max(MAX_LAN_WEB_BODY_BYTES))
         .layer(middleware::from_fn(origin_guard))
         .layer(middleware::from_fn(security_headers))
@@ -317,11 +360,27 @@ pub(crate) fn build_test_router(
     config: Arc<RwLock<LanWebConfig>>,
     dist_dir_override: Option<PathBuf>,
 ) -> Router {
+    build_test_router_with_remote(
+        app_state,
+        config,
+        dist_dir_override,
+        Arc::new(AgentRunManager::new()),
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn build_test_router_with_remote(
+    app_state: AppState,
+    config: Arc<RwLock<LanWebConfig>>,
+    dist_dir_override: Option<PathBuf>,
+    remote_runs: Arc<AgentRunManager>,
+) -> Router {
     build_router(LanWebRouterState {
         app_state,
         config,
         app_handle: None,
         dist_dir_override,
+        remote_runs,
     })
 }
 
@@ -380,6 +439,7 @@ mod tests {
             mode: LanWebMode::Lan,
             port: 15722,
             allow_control: false,
+            remote_control_apps: Vec::new(),
             token,
         }));
         let router = build_test_router(app_state, cfg, None);
@@ -389,6 +449,9 @@ mod tests {
             "/api/providers",
             "/api/logs",
             "/api/proxy/status",
+            "/api/remote/agents",
+            "/api/remote/sessions",
+            "/api/remote/runs",
         ] {
             let resp = oneshot(
                 router.clone(),
@@ -420,6 +483,7 @@ mod tests {
             mode: LanWebMode::Lan,
             port: 15722,
             allow_control: false,
+            remote_control_apps: Vec::new(),
             token: token.clone(),
         }));
         let router = build_test_router(app_state, cfg.clone(), None);
@@ -507,6 +571,7 @@ mod tests {
             mode: LanWebMode::Lan,
             port: 15722,
             allow_control: true,
+            remote_control_apps: Vec::new(),
             token,
         }));
         let router = build_test_router(app_state, cfg, None);
@@ -560,6 +625,7 @@ mod tests {
             mode: LanWebMode::Lan,
             port: 15722,
             allow_control: false,
+            remote_control_apps: Vec::new(),
             token,
         }));
         let router = build_test_router(app_state, cfg, None);
@@ -601,6 +667,7 @@ mod tests {
             mode: LanWebMode::Local,
             port: 15722,
             allow_control: false,
+            remote_control_apps: Vec::new(),
             token: generate_token(),
         }));
         let router = build_test_router(app_state, cfg, Some(dir.path().to_path_buf()));
@@ -687,6 +754,7 @@ mod tests {
             mode: LanWebMode::Lan,
             port: 15722,
             allow_control: false,
+            remote_control_apps: Vec::new(),
             token,
         }));
         let router = build_test_router(app_state, cfg, None);
@@ -764,6 +832,7 @@ mod tests {
             mode: LanWebMode::Lan,
             port: 15722,
             allow_control: true,
+            remote_control_apps: Vec::new(),
             token,
         }));
         let router = build_test_router(app_state, cfg, None);
@@ -783,5 +852,378 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = body_json(resp).await;
         assert!(body["error"].as_str().unwrap_or("").contains("takeover"));
+    }
+
+    #[cfg(unix)]
+    fn write_mock_script(dir: &std::path::Path, name: &str, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, script).unwrap();
+        let mut perms = std::fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&path, perms).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remote_per_agent_gating_and_input_validation() {
+        let dir = tempdir().unwrap();
+        let mock_agy = write_mock_script(
+            dir.path(),
+            "mock-agy",
+            "#!/bin/sh\necho '{\"init\":{\"conversation_id\":\"conv-agy-1\"}}'\necho '{\"step_update\":{\"text\":\"ok\"}}'\n",
+        );
+        let mock_claude = write_mock_script(
+            dir.path(),
+            "mock-claude",
+            "#!/bin/sh\necho '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s1\"}'\n",
+        );
+
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert("agy".to_string(), mock_agy);
+        overrides.insert("claude".to_string(), mock_claude);
+        let manager = Arc::new(AgentRunManager::with_bin_overrides(overrides));
+
+        let app_state = test_app_state_with_secret_provider();
+        let token = generate_token();
+        let cookie = format!("{SESSION_COOKIE_NAME}={}", derive_session_cookie(&token));
+        let cfg = Arc::new(RwLock::new(LanWebConfig {
+            mode: LanWebMode::Lan,
+            port: 15722,
+            allow_control: false,
+            // Only `agy` is enabled; `claude` is disabled!
+            remote_control_apps: vec!["agy".to_string()],
+            token,
+        }));
+        let router = build_test_router_with_remote(app_state, cfg, None, manager);
+
+        // GET /api/remote/agents reports installed & enabled flags accurately
+        let agents_resp = oneshot(
+            router.clone(),
+            Request::builder()
+                .uri("/api/remote/agents")
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(agents_resp.status(), StatusCode::OK);
+        assert_eq!(
+            agents_resp.headers().get(header::CACHE_CONTROL).unwrap(),
+            "no-store"
+        );
+        let agents_json = body_json(agents_resp).await;
+        let agents = agents_json["agents"].as_array().unwrap();
+        assert_eq!(agents.len(), 10);
+        let agy_info = agents.iter().find(|a| a["id"] == "agy").unwrap();
+        assert_eq!(agy_info["installed"], true);
+        assert_eq!(agy_info["enabled"], true);
+        let claude_info = agents.iter().find(|a| a["id"] == "claude").unwrap();
+        assert_eq!(claude_info["installed"], true);
+        assert_eq!(claude_info["enabled"], false);
+
+        // GET /api/remote/sessions succeeds even for disabled agents (read-only)
+        let sessions_resp = oneshot(
+            router.clone(),
+            Request::builder()
+                .uri("/api/remote/sessions?app=claude")
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(sessions_resp.status(), StatusCode::OK);
+
+        // POST /api/remote/runs for disabled `claude` -> 403 Forbidden
+        let forbidden = oneshot(
+            router.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/api/remote/runs")
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::ORIGIN, "http://192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "app": "claude", "prompt": "hi", "cwd": dir.path() }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+        // Validation rejections -> 400 Bad Request
+        for bad_payload in [
+            json!({ "app": "unknown-agent", "prompt": "hi" }),
+            json!({ "app": "agy", "prompt": "   " }),
+            json!({ "app": "agy", "prompt": "hi", "mode": "dangerously-skip" }),
+            json!({ "app": "agy", "prompt": "hi", "effort": "ultra" }),
+            json!({ "app": "agy", "prompt": "hi", "model": "--dangerously-skip-permissions" }),
+            json!({ "app": "agy", "prompt": "hi", "sessionId": "--gemini_dir=/tmp" }),
+            json!({ "app": "agy", "prompt": "hi", "cwd": "/definitely/does/not/exist/ccswitch-test" }),
+        ] {
+            let bad = oneshot(
+                router.clone(),
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/remote/runs")
+                    .header(header::HOST, "192.168.1.5:15722")
+                    .header(header::ORIGIN, "http://192.168.1.5:15722")
+                    .header(header::COOKIE, &cookie)
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(bad_payload.to_string()))
+                    .unwrap(),
+            )
+            .await;
+            assert_eq!(
+                bad.status(),
+                StatusCode::BAD_REQUEST,
+                "expected 400 for payload {bad_payload}"
+            );
+        }
+
+        // POST /api/remote/runs for enabled `agy` -> 202 Accepted
+        let ok = oneshot(
+            router.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/api/remote/runs")
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::ORIGIN, "http://192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "app": "agy",
+                        "prompt": "hello",
+                        "cwd": dir.path(),
+                        "mode": "plan",
+                        "effort": "high",
+                        "sandbox": true
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(ok.status(), StatusCode::ACCEPTED);
+        let run_json = body_json(ok).await;
+        assert_eq!(run_json["app"], "agy");
+        assert!(run_json["runId"].as_str().is_some());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remote_streaming_sse_polling_session_capture_and_redaction() {
+        let dir = tempdir().unwrap();
+        let mock_agy = write_mock_script(
+            dir.path(),
+            "mock-agy",
+            r#"#!/bin/sh
+echo '{"init":{"conversation_id":"conv-live-42"}}'
+echo '{"step_update":{"thought":"Checking repository"}}'
+echo '{"step_update":{"tool_call":{"id":"tc1","name":"read_file","input":{"path":"README.md"}}}}'
+echo '{"step_update":{"tool_result":{"call_id":"tc1","name":"read_file","output":"ok"}}}'
+echo '{"step_update":{"text":"Done! GEMINI_API_KEY=sk-secret-leak-99999"}}'
+echo 'stderr line GEMINI_API_KEY=sk-stderr-secret-88888' >&2
+echo '{"result":{"conversation_id":"conv-live-42","text":"Done!"}}'
+"#,
+        );
+
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert("agy".to_string(), mock_agy);
+        let manager = Arc::new(AgentRunManager::with_bin_overrides(overrides));
+
+        let app_state = test_app_state_with_secret_provider();
+        let token = generate_token();
+        let cookie = format!("{SESSION_COOKIE_NAME}={}", derive_session_cookie(&token));
+        let cfg = Arc::new(RwLock::new(LanWebConfig {
+            mode: LanWebMode::Lan,
+            port: 15722,
+            allow_control: false,
+            remote_control_apps: vec!["agy".to_string()],
+            token,
+        }));
+        let router = build_test_router_with_remote(app_state, cfg, None, manager);
+
+        let start = oneshot(
+            router.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/api/remote/runs")
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::ORIGIN, "http://192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "app": "agy", "prompt": "check", "cwd": dir.path() }).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(start.status(), StatusCode::ACCEPTED);
+        let run_id = body_json(start).await["runId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Read SSE stream to completion
+        let sse_resp = oneshot(
+            router.clone(),
+            Request::builder()
+                .uri(format!("/api/remote/runs/{run_id}/stream?after=0"))
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(sse_resp.status(), StatusCode::OK);
+        assert!(sse_resp
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("text/event-stream"));
+        let sse_bytes = to_bytes(sse_resp.into_body(), 1024 * 1024).await.unwrap();
+        let sse_text = String::from_utf8(sse_bytes.to_vec()).unwrap();
+        assert!(sse_text.contains("event: init"));
+        assert!(sse_text.contains("event: thought"));
+        assert!(sse_text.contains("event: tool_call"));
+        assert!(sse_text.contains("event: tool_result"));
+        assert!(sse_text.contains("event: text"));
+        assert!(sse_text.contains("event: completed"));
+        assert!(sse_text.contains("conv-live-42"));
+        assert!(!sse_text.contains("sk-secret-leak-99999"));
+        assert!(!sse_text.contains("sk-stderr-secret-88888"));
+        assert!(sse_text.contains("[REDACTED]"));
+
+        // Polling fallback with `?after=<seq>` returns only subsequent events
+        let poll_all = oneshot(
+            router.clone(),
+            Request::builder()
+                .uri(format!("/api/remote/runs/{run_id}?after=0"))
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(poll_all.status(), StatusCode::OK);
+        let detail = body_json(poll_all).await;
+        assert_eq!(detail["run"]["status"], "completed");
+        assert_eq!(detail["run"]["conversationId"], "conv-live-42");
+        let events = detail["events"].as_array().unwrap();
+        assert!(events.len() >= 6);
+        let mid_seq = events[2]["seq"].as_u64().unwrap();
+
+        let poll_after = oneshot(
+            router.clone(),
+            Request::builder()
+                .uri(format!("/api/remote/runs/{run_id}?after={mid_seq}"))
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        let detail_after = body_json(poll_after).await;
+        let tail_events = detail_after["events"].as_array().unwrap();
+        assert!(!tail_events.is_empty());
+        assert!(tail_events
+            .iter()
+            .all(|e| e["seq"].as_u64().unwrap() > mid_seq));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn remote_cancel_kills_running_process_and_emits_cancelled() {
+        let dir = tempdir().unwrap();
+        let mock_claude = write_mock_script(
+            dir.path(),
+            "mock-claude",
+            "#!/bin/sh\necho '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s-cancel\"}'\nsleep 30\n",
+        );
+
+        let mut overrides = std::collections::HashMap::new();
+        overrides.insert("claude".to_string(), mock_claude);
+        let manager = Arc::new(AgentRunManager::with_bin_overrides(overrides));
+
+        let app_state = test_app_state_with_secret_provider();
+        let token = generate_token();
+        let cookie = format!("{SESSION_COOKIE_NAME}={}", derive_session_cookie(&token));
+        let cfg = Arc::new(RwLock::new(LanWebConfig {
+            mode: LanWebMode::Lan,
+            port: 15722,
+            allow_control: false,
+            remote_control_apps: vec!["claude".to_string()],
+            token,
+        }));
+        let router = build_test_router_with_remote(app_state, cfg, None, manager);
+
+        let start = oneshot(
+            router.clone(),
+            Request::builder()
+                .method("POST")
+                .uri("/api/remote/runs")
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::ORIGIN, "http://192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "app": "claude", "prompt": "long task", "cwd": dir.path() })
+                        .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(start.status(), StatusCode::ACCEPTED);
+        let run_id = body_json(start).await["runId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+        let cancel = oneshot(
+            router.clone(),
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/remote/runs/{run_id}/cancel"))
+                .header(header::HOST, "192.168.1.5:15722")
+                .header(header::ORIGIN, "http://192.168.1.5:15722")
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(cancel.status(), StatusCode::OK);
+        let snap = body_json(cancel).await;
+        assert_eq!(snap["status"], "cancelled");
+
+        let detail = body_json(
+            oneshot(
+                router.clone(),
+                Request::builder()
+                    .uri(format!("/api/remote/runs/{run_id}?after=0"))
+                    .header(header::HOST, "192.168.1.5:15722")
+                    .header(header::COOKIE, &cookie)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await,
+        )
+        .await;
+        let kinds: Vec<&str> = detail["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|e| e["kind"].as_str())
+            .collect();
+        assert!(kinds.contains(&"cancelled"));
     }
 }

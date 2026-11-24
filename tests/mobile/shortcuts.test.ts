@@ -27,8 +27,9 @@ function createMemoryStorage() {
 
 describe("mobile customizable bottom shortcut bar", () => {
   it("computes sensible max pinned limits based on total view count", () => {
-    expect(ALL_MOBILE_VIEWS.length).toBe(6);
-    // 6 views > 5 bar slots -> reserve 1 slot for "More", so max 4 pinned
+    expect(ALL_MOBILE_VIEWS.length).toBe(7);
+    // 7 views > 5 bar slots -> reserve 1 slot for "More", so max 4 pinned
+    expect(maxPinnedShortcuts(7)).toBe(4);
     expect(maxPinnedShortcuts(6)).toBe(4);
     // When all views fit in 5 slots, allow pinning all of them
     expect(maxPinnedShortcuts(5)).toBe(5);
@@ -39,20 +40,21 @@ describe("mobile customizable bottom shortcut bar", () => {
     // Default starts at 4 pinned (full)
     expect(DEFAULT_PINNED_VIEWS.length).toBe(4);
     expect(getUnpinnedViews(DEFAULT_PINNED_VIEWS)).toEqual([
+      "remote",
       "models",
       "preferences",
     ]);
 
     // Attempting to pin a 5th view while already at max (4) is a no-op
-    expect(toggleShortcutPin(DEFAULT_PINNED_VIEWS, "models")).toEqual([
+    expect(toggleShortcutPin(DEFAULT_PINNED_VIEWS, "remote")).toEqual([
       ...DEFAULT_PINNED_VIEWS,
     ]);
 
-    // Unpinning one makes room to pin another
+    // Unpinning one makes room to pin another (including "remote")
     const afterRemove = toggleShortcutPin(DEFAULT_PINNED_VIEWS, "proxy");
     expect(afterRemove).toEqual(["overview", "providers", "logs"]);
-    const afterPin = toggleShortcutPin(afterRemove, "models");
-    expect(afterPin).toEqual(["overview", "providers", "logs", "models"]);
+    const afterPin = toggleShortcutPin(afterRemove, "remote");
+    expect(afterPin).toEqual(["overview", "providers", "logs", "remote"]);
 
     // Cannot unpin below MIN_PINNED_SHORTCUTS (1)
     expect(MIN_PINNED_SHORTCUTS).toBe(1);

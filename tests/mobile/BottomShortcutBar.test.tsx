@@ -59,9 +59,10 @@ describe("BottomShortcutBar & CustomizeBarSheet", () => {
     expect(within(nav).getByText("Proxy")).toBeInTheDocument();
     expect(within(nav).getByText("More")).toBeInTheDocument();
 
-    // Open More sheet -> navigate to Models
+    // Open More sheet -> navigate to Remote Control / Models
     fireEvent.click(within(nav).getByText("More"));
     const moreDialog = screen.getByRole("dialog", { name: "More Pages" });
+    expect(within(moreDialog).getByText("Remote Control")).toBeInTheDocument();
     expect(
       within(moreDialog).getByText("Models & Breakdown"),
     ).toBeInTheDocument();
@@ -75,7 +76,7 @@ describe("BottomShortcutBar & CustomizeBarSheet", () => {
     expect(preview.textContent).toContain("Overview");
     expect(preview.textContent).toContain("More");
 
-    // Unpin "Proxy" (4th pinned item) -> unpinned order is [Proxy, Models, Preferences]
+    // Unpin "Proxy" (4th pinned item) -> unpinned order is [Proxy, Remote, Models, Preferences]
     const removeButtons = within(customDialog).getAllByRole("button", {
       name: "Remove",
     });
@@ -85,8 +86,8 @@ describe("BottomShortcutBar & CustomizeBarSheet", () => {
     const pinButtons = within(customDialog).getAllByRole("button", {
       name: "Pin",
     });
-    fireEvent.click(pinButtons[1]); // pins Models & Breakdown
-    expect(preview.textContent).toContain("Models");
+    fireEvent.click(pinButtons[1]); // pins Remote Control
+    expect(preview.textContent).toContain("Remote");
 
     // Reorder: move 2nd item earlier
     const moveEarlierBtns = within(customDialog).getAllByRole("button", {

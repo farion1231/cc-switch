@@ -51,6 +51,8 @@ pub struct LanWebConfig {
     #[serde(default)]
     pub allow_control: bool,
     #[serde(default)]
+    pub remote_control_apps: Vec<String>,
+    #[serde(default)]
     pub token: String,
 }
 
@@ -64,6 +66,7 @@ impl Default for LanWebConfig {
             mode: LanWebMode::Off,
             port: DEFAULT_LAN_WEB_PORT,
             allow_control: false,
+            remote_control_apps: Vec::new(),
             token: String::new(),
         }
     }
@@ -215,6 +218,7 @@ mod tests {
             mode: LanWebMode::Lan,
             port: 15800,
             allow_control: true,
+            remote_control_apps: vec!["claude".to_string(), "agy".to_string()],
             token: generate_token(),
         };
         save_config_to(&path, &cfg).unwrap();

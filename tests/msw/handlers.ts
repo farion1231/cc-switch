@@ -663,6 +663,8 @@ export const handlers = [
       mode: "off",
       port: 15722,
       allowControl: false,
+      remoteControlApps: [],
+      installedRemoteApps: ["claude", "agy"],
       running: false,
       listenAddress: null,
       localUrl: null,
@@ -674,15 +676,23 @@ export const handlers = [
   ),
   http.post(`${TAURI_ENDPOINT}/update_lan_web_config`, async ({ request }) => {
     const body = (await request.json().catch(() => ({}))) as {
-      config?: { mode?: string; port?: number; allowControl?: boolean };
+      config?: {
+        mode?: string;
+        port?: number;
+        allowControl?: boolean;
+        remoteControlApps?: string[];
+      };
     };
     const mode = body.config?.mode ?? "off";
     const port = body.config?.port ?? 15722;
     const allowControl = body.config?.allowControl ?? false;
+    const remoteControlApps = body.config?.remoteControlApps ?? [];
     return success({
       mode,
       port,
       allowControl,
+      remoteControlApps,
+      installedRemoteApps: ["claude", "agy"],
       running: mode !== "off",
       listenAddress:
         mode === "lan"
@@ -703,6 +713,8 @@ export const handlers = [
       mode: "local",
       port: 15722,
       allowControl: false,
+      remoteControlApps: [],
+      installedRemoteApps: ["claude", "agy"],
       running: true,
       listenAddress: "127.0.0.1:15722",
       localUrl: "http://127.0.0.1:15722/#t=rotatedtoken",

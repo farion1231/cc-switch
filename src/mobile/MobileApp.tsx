@@ -32,6 +32,7 @@ import {
 } from "./views/PreferencesView";
 import { ProvidersView } from "./views/ProvidersView";
 import { ProxyView } from "./views/ProxyView";
+import { RemoteControlView } from "./views/RemoteControlView";
 
 const THEME_KEY = "cc-switch-mobile-theme";
 const REFRESH_KEY = "cc-switch-mobile-refresh";
@@ -92,6 +93,7 @@ export function MobileApp() {
   const [viewError, setViewError] = useState<string | null>(null);
   const [switchingKey, setSwitchingKey] = useState<string | null>(null);
   const [proxyMutating, setProxyMutating] = useState(false);
+  const [remoteRefreshSignal, setRemoteRefreshSignal] = useState(0);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const langRef = useRef<MobileLang>(lang);
@@ -224,12 +226,13 @@ export function MobileApp() {
     void loadActiveView();
   }, [loadActiveView]);
 
-  // Auto-refresh polling paused whenever tab is hidden.
+  // Auto-refresh polling paused whenever tab is hidden or on preferences/remote views.
   useEffect(() => {
     if (
       !auth?.authenticated ||
       refreshMs === 0 ||
-      activeView === "preferences"
+      activeView === "preferences" ||
+      activeView === "remote"
     ) {
       return;
     }
@@ -387,7 +390,13 @@ export function MobileApp() {
             {activeView !== "preferences" && (
               <button
                 type="button"
-                onClick={() => void loadActiveView()}
+                onClick={() => {
+                  if (activeView === "remote") {
+                    setRemoteRefreshSignal((n) => n + 1);
+                  } else {
+                    void loadActiveView();
+                  }
+                }}
                 disabled={loading}
                 aria-label={tr(lang, "refresh")}
                 className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-zinc-600 ring-1 ring-zinc-200 transition active:scale-95 dark:bg-[#232328] dark:text-zinc-300 dark:ring-zinc-800"
@@ -460,6 +469,20 @@ export function MobileApp() {
             onRetry={() => void loadActiveView()}
             onStart={() => void handleProxyToggle("start")}
             onStop={() => void handleProxyToggle("stop")}
+          />
+        )}
+        {activeView === "remote" && (
+          <RemoteControlView
+            lang={lang}
+            refreshSignal={remoteRefreshSignal}
+            onAuthExpired={() => {
+              setAuth({
+                authenticated: false,
+                allowControl: false,
+                version: "",
+              });
+              setAuthError(tr(lang, "invalidToken"));
+            }}
           />
         )}
         {activeView === "models" && (

@@ -506,7 +506,17 @@
       "lanWarning": "Unverschlüsseltes HTTP im LAN: In nicht vertrauenswürdigen WLANs kann der Datenverkehr mitgelesen werden. Nutzen Sie dort „Dieser Computer“ mit einem sicheren Tunnel oder Tailscale.",
       "confirmLanTitle": "Zugriff im lokalen Netzwerk aktivieren?",
       "confirmLanMessage": "CC Switch lauscht auf 0.0.0.0, damit Geräte in Ihrem LAN das mobile Dashboard mit dem Zugriffstoken öffnen können. Die Verbindung im LAN nutzt unverschlüsseltes HTTP — nur in vertrauenswürdigen Netzwerken aktivieren.",
-      "confirmLanButton": "LAN-Zugriff aktivieren"
+      "confirmLanButton": "LAN-Zugriff aktivieren",
+      "confirmLanRemoteNote": "Hinweis: Die Agent-Fernsteuerung ist derzeit aktiviert für: {{apps}}.",
+      "remoteAgentsLabel": "Agent-Fernsteuerung",
+      "remoteAgentsDescription": "Standardmäßig alle deaktiviert. Wählen Sie aus, welche CLI-Agenten über das mobile Dashboard gestartet oder fortgesetzt werden dürfen.",
+      "remoteAgentInstalled": "Installiert",
+      "remoteAgentNotInstalled": "Nicht installiert",
+      "remoteAgentsEnabledCount": "{{count}} aktiviert",
+      "remoteAgentsAllOff": "Alle aus (nur Lesen)",
+      "confirmRemoteTitle": "Agent-Fernausführung im LAN aktivieren?",
+      "confirmRemoteMessage": "Mit aktivierter Agent-Fernsteuerung kann jeder mit Ihrem LAN-Zugriffstoken {{app}}-CLI-Befehle über unverschlüsseltes HTTP auf diesem Computer ausführen. Nur in vertrauenswürdigen Netzwerken aktivieren oder auf „Dieser Computer“ mit sicherem Tunnel bzw. Tailscale wechseln.",
+      "confirmRemoteButton": "Für {{app}} aktivieren"
     },
     "advanced": {
       "configDir": {

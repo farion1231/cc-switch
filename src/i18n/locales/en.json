@@ -506,7 +506,17 @@
       "lanWarning": "Plain HTTP over LAN: anyone on an untrusted Wi-Fi could observe traffic. On untrusted networks, use “This computer” with a secure tunnel or Tailscale.",
       "confirmLanTitle": "Enable Local Network Access?",
       "confirmLanMessage": "CC Switch will listen on 0.0.0.0 so phones and devices on your LAN can open the mobile dashboard using the access token. Traffic over LAN uses plain HTTP — only enable this on networks you trust.",
-      "confirmLanButton": "Enable LAN Access"
+      "confirmLanButton": "Enable LAN Access",
+      "confirmLanRemoteNote": "Note: Agent Remote Control is currently enabled for {{apps}}.",
+      "remoteAgentsLabel": "Agent Remote Control",
+      "remoteAgentsDescription": "All off by default. Select which CLI agents can be started or resumed from the mobile dashboard.",
+      "remoteAgentInstalled": "Installed",
+      "remoteAgentNotInstalled": "Not installed",
+      "remoteAgentsEnabledCount": "{{count}} enabled",
+      "remoteAgentsAllOff": "All off (read-only)",
+      "confirmRemoteTitle": "Enable Remote Agent Execution over LAN?",
+      "confirmRemoteMessage": "Enabling remote agent control allows anyone with your LAN access token to run {{app}} CLI commands on this computer over plain HTTP. Only enable this on networks you trust, or switch Web access to “This computer” with a secure tunnel or Tailscale.",
+      "confirmRemoteButton": "Enable for {{app}}"
     },
     "advanced": {
       "configDir": {

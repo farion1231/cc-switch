@@ -160,6 +160,74 @@ const MESSAGES = {
   moreSheetTitle: { en: "More Pages", zh: "更多页面" },
   sessionSection: { en: "Session", zh: "当前会话" },
   signOutBtn: { en: "Sign Out", zh: "退出登录" },
+
+  // Unified Multi-Agent Remote Control
+  remoteTitle: { en: "Remote Control", zh: "Agent 远控" },
+  remoteNewSession: { en: "New Session", zh: "新建会话" },
+  remoteSearchPlaceholder: {
+    en: "Search sessions or folders…",
+    zh: "搜索会话或工作目录…",
+  },
+  remoteNoSessions: {
+    en: "No sessions found for the selected agent.",
+    zh: "当前筛选下暂无历史会话。",
+  },
+  remoteActiveRuns: { en: "Running Now", zh: "正在运行" },
+  remoteBack: { en: "Sessions", zh: "返回列表" },
+  remoteStop: { en: "Stop", zh: "中断" },
+  remoteStopping: { en: "Stopping…", zh: "中断中…" },
+  remoteSend: { en: "Send", zh: "发送" },
+  remotePromptPlaceholder: {
+    en: "Send a message to the agent…",
+    zh: "向 Agent 发送指令…",
+  },
+  remoteChooseAgent: { en: "Agent", zh: "选择 Agent" },
+  remoteWorkspace: { en: "Working Directory", zh: "工作目录" },
+  remoteWorkspacePlaceholder: {
+    en: "/path/to/workspace",
+    zh: "输入工作目录路径…",
+  },
+  remoteRecentWorkspaces: { en: "Recent Workspaces", zh: "最近目录" },
+  remoteStartBtn: { en: "Start Run", zh: "开始执行" },
+  remoteStarting: { en: "Starting…", zh: "启动中…" },
+  remoteModel: { en: "Model", zh: "模型" },
+  remoteModelPlaceholder: { en: "Default model", zh: "默认模型" },
+  remoteMode: { en: "Mode", zh: "模式" },
+  remoteEffort: { en: "Effort", zh: "思考深度" },
+  remoteSandbox: { en: "Sandbox", zh: "沙盒" },
+  remoteOptions: { en: "Options", zh: "参数" },
+  remoteThinking: { en: "Thinking", zh: "思考过程" },
+  remoteToolCall: { en: "Tool Call", zh: "调用工具" },
+  remoteToolResult: { en: "Tool Result", zh: "工具结果" },
+  remoteStderr: { en: "Diagnostics", zh: "诊断输出" },
+  remoteStatusRunning: { en: "Running", zh: "运行中" },
+  remoteStatusCompleted: { en: "Completed", zh: "已完成" },
+  remoteStatusError: { en: "Error", zh: "出错" },
+  remoteStatusCancelled: { en: "Cancelled", zh: "已中断" },
+  remoteReadOnlyAgent: {
+    en: "Remote execution is disabled for this agent. Enable it in desktop Settings → Network → Agent Remote Control.",
+    zh: "该 Agent 尚未开启远控权限。请在桌面端「设置 → 网络 → Agent 远控」中勾选启用。",
+  },
+  remoteNotInstalledAgent: {
+    en: "CLI binary is not installed on the host machine.",
+    zh: "宿主机未检测到该 Agent 的 CLI 程序。",
+  },
+  remoteNotResumable: {
+    en: "This session is read-only and cannot be resumed from CLI.",
+    zh: "该会话为外部托管会话，仅支持只读浏览，无法通过 CLI 继续对话。",
+  },
+  remoteNoEnabledAgents: {
+    en: "No agents enabled for remote control yet. Enable one or more agents in desktop Settings → Network.",
+    zh: "暂未启用任何 Agent 远控。请在桌面端「设置 → 网络」勾选允许远控的 Agent。",
+  },
+  remoteNoMessages: {
+    en: "No transcript messages yet.",
+    zh: "暂无对话记录。",
+  },
+  remoteEnabledTag: { en: "Enabled", zh: "已启用" },
+  remoteReadOnlyTag: { en: "Read-only", zh: "只读" },
+  remoteNotInstalledTag: { en: "Not installed", zh: "未安装" },
+  remoteUntitled: { en: "Untitled Session", zh: "未命名会话" },
 } as const;
 
 export type MobileMessageKey = keyof typeof MESSAGES;

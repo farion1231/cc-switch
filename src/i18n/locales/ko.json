@@ -506,7 +506,17 @@
       "lanWarning": "LAN에서 일반 HTTP를 사용합니다. 신뢰할 수 없는 Wi-Fi에서는 '이 컴퓨터' 모드와 보안 터널 또는 Tailscale을 사용하세요.",
       "confirmLanTitle": "로컬 네트워크 접속을 켜시겠습니까?",
       "confirmLanMessage": "CC Switch가 0.0.0.0에서 수신하여 같은 LAN의 기기가 액세스 토큰으로 모바일 대시보드에 접속할 수 있게 됩니다. LAN 통신은 일반 HTTP이므로 신뢰할 수 있는 네트워크에서만 켜세요.",
-      "confirmLanButton": "LAN 접속 켜기"
+      "confirmLanButton": "LAN 접속 켜기",
+      "confirmLanRemoteNote": "참고: 현재 {{apps}}에 대해 에이전트 원격 제어가 켜져 있습니다.",
+      "remoteAgentsLabel": "에이전트 원격 제어",
+      "remoteAgentsDescription": "기본적으로 모두 꺼져 있습니다. 모바일 대시보드에서 시작하거나 이어서 실행할 CLI 에이전트를 선택하세요.",
+      "remoteAgentInstalled": "설치됨",
+      "remoteAgentNotInstalled": "미설치",
+      "remoteAgentsEnabledCount": "{{count}}개 활성화됨",
+      "remoteAgentsAllOff": "모두 꺼짐 (읽기 전용)",
+      "confirmRemoteTitle": "LAN에서 에이전트 원격 실행을 켜시겠습니까?",
+      "confirmRemoteMessage": "활성화하면 LAN 액세스 토큰이 있는 기기가 일반 HTTP를 통해 이 컴퓨터에서 {{app}} CLI 명령을 실행할 수 있습니다. 신뢰할 수 있는 네트워크에서만 켜거나 '이 컴퓨터' 모드와 보안 터널/Tailscale을 사용하세요.",
+      "confirmRemoteButton": "{{app}} 원격 제어 켜기"
     },
     "advanced": {
       "configDir": {

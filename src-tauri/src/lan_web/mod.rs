@@ -5,6 +5,7 @@
 //! protection, constant-time token auth, `HttpOnly; SameSite=Strict` session
 //! cookies, secret-stripped responses, and read-only default mode.
 
+pub mod agent_remote;
 pub mod config;
 pub mod handlers;
 pub mod net;
