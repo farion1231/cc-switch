@@ -795,6 +795,75 @@ mod tests {
         proxy.stop().await.unwrap();
     }
 
+    #[tokio::test]
+    async fn codex_ultrafast_picker_forwards_real_model_and_service_tier() {
+        let captured = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let capture = captured.clone();
+        let mock = Router::new().route(
+            "/v1/responses",
+            post(move |axum::Json(body): axum::Json<Value>| {
+                let capture = capture.clone();
+                async move {
+                    capture.lock().await.push(body);
+                    axum::Json(json!({"id":"resp_test","object":"response","output":[]}))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+        let db = Arc::new(Database::memory().unwrap());
+        let provider = Provider::with_id(
+            "ultrafast-test".into(),
+            "test".into(),
+            json!({
+                "base_url": format!("http://{upstream}/v1"),
+                "apiFormat": "openai_responses",
+                "auth": {"OPENAI_API_KEY":"test"},
+                "modelCatalog": {"models":[{"model":"gpt-6.2-astra"}], "officialSpeedTiers":true}
+            }),
+            None,
+        );
+        db.save_provider(&AppType::Codex, &provider).unwrap();
+        db.set_current_provider(&AppType::Codex, &provider.id)
+            .unwrap();
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let port = proxy.start().await.unwrap().port;
+        let client = reqwest::Client::new();
+        for model in ["gpt-6.2-astra-ccswitch-ultrafast", "gpt-6.2-astra"] {
+            let response = client
+                .post(format!("http://127.0.0.1:{port}/v1/responses"))
+                .bearer_auth("local-test")
+                .json(&json!({"model":model, "input":"test", "reasoning":{"effort":"high"}}))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "{}",
+                response.text().await.unwrap()
+            );
+        }
+        let requests = captured.lock().await;
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["model"], "gpt-6.2-astra");
+        assert_eq!(requests[0]["service_tier"], "ultrafast");
+        assert_eq!(requests[0]["reasoning"]["effort"], "high");
+        assert_eq!(requests[1]["model"], "gpt-6.2-astra");
+        assert!(requests[1].get("service_tier").is_none());
+        drop(requests);
+        proxy.stop().await.unwrap();
+        server.abort();
+    }
+
     /// A base URL pasted as a complete endpoint with the full-URL switch left off
     /// must derive the sibling standalone endpoint instead of having the
     /// standalone path appended to it.

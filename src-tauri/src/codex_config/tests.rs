@@ -2027,6 +2027,70 @@ fn card_can_keep_official_speed_tiers_on_native_gpt_rows() {
 }
 
 #[test]
+fn card_adds_ultrafast_only_for_api_supported_openai_models() {
+    let mut sol = official_gpt_row("gpt-6.2-sol", "GPT-6.2 Sol prompt");
+    sol["supported_in_api"] = json!(true);
+    let mut astra = official_gpt_row("gpt-6.2-astra", "GPT-6.2 Astra prompt");
+    astra["supported_in_api"] = json!(true);
+    let mut restricted = official_gpt_row("gpt-6.1-sol", "GPT-6.1 Sol prompt");
+    restricted["supported_in_api"] = json!(true);
+    restricted["available_access_programs"] = json!(["limited-preview"]);
+    let official = normalize_codex_native_rows(vec![sol, astra, restricted]).unwrap();
+    with_official_models(official, || {
+        let settings = json!({ "modelCatalog": {
+            "models": [
+                { "model": "gpt-6.2-sol" },
+                { "model": "gpt-6.2-astra" },
+                { "model": "gpt-6.1-sol" }
+            ],
+            "officialSpeedTiers": true
+        }});
+        let catalog = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .unwrap()
+        .unwrap();
+        for index in 0..2 {
+            assert!(catalog["models"][index]["service_tiers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tier| tier["id"] == "ultrafast"));
+            assert!(catalog["models"][index]["additional_speed_tiers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|tier| tier == "ultrafast"));
+        }
+        assert!(catalog["models"][2]["service_tiers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|tier| tier["id"] != "ultrafast"));
+        let mut routed = catalog.clone();
+        append_proxy_ultrafast_aliases(&mut routed);
+        append_proxy_ultrafast_aliases(&mut routed);
+        assert_eq!(routed["models"].as_array().unwrap().len(), 5);
+        assert_eq!(
+            routed["models"][4]["slug"],
+            "gpt-6.2-astra-ccswitch-ultrafast"
+        );
+        assert!(routed["models"][4]["display_name"]
+            .as_str()
+            .unwrap()
+            .ends_with(" · Ultrafast"));
+        assert_eq!(
+            routed["models"][4]["supported_reasoning_levels"],
+            catalog["models"][1]["supported_reasoning_levels"]
+        );
+        let recovered = build_simplified_catalog_from_texts("", &routed.to_string()).unwrap();
+        assert_eq!(recovered["models"].as_array().unwrap().len(), 3);
+    });
+}
+
+#[test]
 fn official_models_match_like_codex() {
     let rows = official_gpt_rows();
     let found = |model: &str| {

@@ -1459,6 +1459,31 @@ impl RequestForwarder {
         let codex_official_auth_passthrough = matches!(app_type, AppType::Codex)
             && super::providers::is_codex_official_provider(provider);
         let codex_stack_request = self.stack_request && matches!(app_type, AppType::Codex);
+        let mut body = body;
+        if let Some(base) = body["model"]
+            .as_str()
+            .filter(|_| matches!(app_type, AppType::Codex))
+            .and_then(crate::codex_config::ultrafast_alias_base)
+        {
+            if codex_official_auth_passthrough
+                || is_copilot
+                || codex_stack_request
+                || !crate::codex_config::codex_card_keeps_official_speed_tiers(
+                    &provider.settings_config,
+                )
+                || super::providers::resolve_codex_catalog_tool_profile(provider)
+                    != crate::codex_config::CodexCatalogToolProfile::NativeResponses
+            {
+                return Err(ProxyError::InvalidRequest("Ultrafast model selection requires a native Responses route with official speed tiers enabled".into()));
+            }
+            body["model"] = Value::String(base.to_owned());
+            if matches!(
+                endpoint.split('?').next(),
+                Some("/responses" | "/v1/responses")
+            ) {
+                body["service_tier"] = Value::from("ultrafast");
+            }
+        }
         let mut quota_token = None;
 
         if codex_official_auth_passthrough {

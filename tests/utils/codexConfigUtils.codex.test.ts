@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parse as parseToml } from "smol-toml";
 import {
+  codexUltrafastDefaultEdit,
   extractCodexAgentsMaxThreads,
   extractCodexAgentsString,
   extractCodexBaseUrl,
@@ -18,6 +19,18 @@ import {
 } from "@/utils/codexConfigUtils";
 
 describe("Codex TOML utils", () => {
+  it("toggles the root Ultrafast default without changing a profile", () => {
+    const input = '[profiles.custom]\r\nservice_tier = "fast"\r\n';
+    const enabled = codexUltrafastDefaultEdit(input)!;
+    expect(parseToml(enabled.next).service_tier).toBe("ultrafast");
+    expect(codexUltrafastDefaultEdit(enabled.next)).toEqual({
+      enabled: true,
+      next: input,
+    });
+    expect(codexUltrafastDefaultEdit('service_tier = "fast"')).toBeUndefined();
+    expect(codexUltrafastDefaultEdit("[invalid")).toBeUndefined();
+  });
+
   it("removes base_url line when set to empty", () => {
     const input = [
       'model_provider = "openai"',

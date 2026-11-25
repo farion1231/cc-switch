@@ -2323,7 +2323,7 @@ fn codex_model_catalog_from_settings(
 
 /// 卡上的「保留官方 Fast 档」（`modelCatalog.officialSpeedTiers`）。和自动审批模型一样只在
 /// 直连、路由下生效，聚合下不看。
-fn codex_card_keeps_official_speed_tiers(settings: &Value) -> bool {
+pub(crate) fn codex_card_keeps_official_speed_tiers(settings: &Value) -> bool {
     settings
         .get("modelCatalog")
         .and_then(|catalog| catalog.get("officialSpeedTiers"))
@@ -2331,10 +2331,11 @@ fn codex_card_keeps_official_speed_tiers(settings: &Value) -> bool {
         .unwrap_or(false)
 }
 
-/// 把官方的速度档还给镜像官方的 GPT 行（[`codex_official_model_entry`] 默认清空）。
+/// 把官方的速度档还给镜像官方的 GPT 行（[`codex_official_model_entry`] 默认清空），
+/// 并为官方 API 开放的 GPT-6 系列补充 Ultrafast 元数据。
 ///
-/// Codex 只在目录行声明了这一档时才发 `service_tier`：没声明时 `config.toml` 里的
-/// `service_tier = "fast"` 会被略过并打一条警告，声明了就照发 `"priority"`（0.166 实测）。
+/// Codex 只在目录行声明了这一档时才发 service_tier：Fast 对应 priority，Ultrafast
+/// 需要同时出现在 service_tiers 和 additional_speed_tiers。
 /// 所以只有后面接官方账号的中转（如 CPA）才该打开，而且打开后之前在官方卡下选过的 Fast
 /// 会立刻在这家生效。只认原生 Responses：Chat 转换会把这个字段原样转给不认识它的上游。
 fn apply_codex_official_speed_tiers(
@@ -2359,8 +2360,48 @@ fn apply_codex_official_speed_tiers(
         let Some(found) = find_codex_official_model(slug, &official) else {
             continue;
         };
-        let tiers =
-            ["service_tiers", "additional_speed_tiers"].map(|key| (key, found.get(key).cloned()));
+        let mut service_tiers = found.get("service_tiers").cloned();
+        let mut additional_speed_tiers = found.get("additional_speed_tiers").cloned();
+        let supports_ultrafast = found
+            .get("slug")
+            .and_then(Value::as_str)
+            .is_some_and(is_ultrafast_model)
+            && found.get("supported_in_api").and_then(Value::as_bool) == Some(true)
+            && found.get("available_access_programs").is_none();
+        if supports_ultrafast {
+            if let Some(tiers) = service_tiers.as_mut().and_then(Value::as_array_mut) {
+                let has_priority = tiers
+                    .iter()
+                    .any(|tier| tier.get("id").and_then(Value::as_str) == Some("priority"));
+                let has_ultrafast = tiers
+                    .iter()
+                    .any(|tier| tier.get("id").and_then(Value::as_str) == Some("ultrafast"));
+                if has_priority && !has_ultrafast {
+                    tiers.push(json!({
+                        "id": "ultrafast",
+                        "name": "Ultrafast",
+                        "description": "The fastest available responses for latency-sensitive work"
+                    }));
+                }
+                if has_priority {
+                    let speeds = additional_speed_tiers
+                        .get_or_insert_with(|| json!([]))
+                        .as_array_mut();
+                    if let Some(speeds) = speeds {
+                        if !speeds
+                            .iter()
+                            .any(|speed| speed.as_str() == Some("ultrafast"))
+                        {
+                            speeds.push(json!("ultrafast"));
+                        }
+                    }
+                }
+            }
+        }
+        let tiers = [
+            ("service_tiers", service_tiers),
+            ("additional_speed_tiers", additional_speed_tiers),
+        ];
         if let Some(obj) = entry.as_object_mut() {
             for (key, value) in tiers {
                 if let Some(value) = value {
@@ -2369,6 +2410,60 @@ fn apply_codex_official_speed_tiers(
             }
         }
     }
+}
+
+const ULTRAFAST_ALIAS_SUFFIX: &str = "-ccswitch-ultrafast";
+
+fn is_ultrafast_model(model: &str) -> bool {
+    matches!(
+        model,
+        "gpt-6.1-sol" | "gpt-6-astra" | "gpt-6.2-sol" | "gpt-6.2-astra"
+    )
+}
+
+pub(crate) fn ultrafast_alias_base(model: &str) -> Option<&str> {
+    model
+        .strip_suffix(ULTRAFAST_ALIAS_SUFFIX)
+        .filter(|base| is_ultrafast_model(base))
+}
+
+/// Publish selectable model rows only in a catalog targeting our Responses proxy.
+pub(crate) fn append_proxy_ultrafast_aliases(catalog: &mut Value) {
+    let Some(rows) = catalog["models"].as_array_mut() else {
+        return;
+    };
+    let mut priority = rows
+        .iter()
+        .filter_map(|r| r["priority"].as_i64())
+        .max()
+        .unwrap_or(0);
+    let mut aliases = Vec::new();
+    for row in rows.iter() {
+        let Some(base) = row["slug"].as_str().filter(|s| is_ultrafast_model(s)) else {
+            continue;
+        };
+        if row["visibility"] != "list"
+            || !row["service_tiers"]
+                .as_array()
+                .is_some_and(|tiers| tiers.iter().any(|t| t["id"] == "ultrafast"))
+        {
+            continue;
+        }
+        let slug = format!("{base}{ULTRAFAST_ALIAS_SUFFIX}");
+        if rows.iter().any(|r| r["slug"].as_str() == Some(&slug)) {
+            continue;
+        }
+        let mut alias = row.clone();
+        alias["slug"] = json!(slug);
+        alias["display_name"] = json!(format!(
+            "{} · Ultrafast",
+            row["display_name"].as_str().unwrap_or(base)
+        ));
+        priority = priority.saturating_add(1);
+        alias["priority"] = json!(priority);
+        aliases.push(alias);
+    }
+    rows.extend(aliases);
 }
 
 /// 卡上选的自动审批模型（`modelCatalog.autoReviewModel`），空串当作没选。只在直连、路由
@@ -3169,6 +3264,9 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
             continue;
         };
         // Stack 模型的行（保留前缀）不属于路由那家，不能进它的编辑表单、再被保存回库里。
+        if ultrafast_alias_base(model).is_some() {
+            continue;
+        }
         if !matches!(
             crate::mode::stack::decode(&crate::app_config::AppType::Codex, model),
             crate::mode::stack::Decoded::Plain

@@ -83,6 +83,7 @@ import {
 } from "./BillingMultiplierField";
 import {
   codexApiFormatFromWireApi,
+  codexUltrafastDefaultEdit,
   extractCodexWireApi,
   setCodexWireApi,
   extractCodexModelName,
@@ -852,6 +853,11 @@ function ProviderFormFull({
     handleCodexConfigChange: originalHandleCodexConfigChange,
     resetCodexConfig,
   } = useCodexConfigState({ initialData });
+  const ultrafastEdit = useMemo(
+    () =>
+      appId === "codex" ? codexUltrafastDefaultEdit(codexConfig) : undefined,
+    [appId, codexConfig],
+  );
 
   const initialCodexApiFormat: CodexApiFormat =
     initialData?.meta?.providerType === "github_copilot"
@@ -2964,6 +2970,10 @@ function ProviderFormFull({
               autoReviewModel={codexAutoReviewModel}
               onAutoReviewModelChange={setCodexAutoReviewModel}
               officialSpeedTiers={codexOfficialSpeedTiers}
+              defaultUltrafast={ultrafastEdit?.enabled}
+              onToggleDefaultUltrafast={() => {
+                if (ultrafastEdit) handleCodexConfigChange(ultrafastEdit.next);
+              }}
               onOfficialSpeedTiersChange={setCodexOfficialSpeedTiers}
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
