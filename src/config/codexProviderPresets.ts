@@ -5091,4 +5091,17 @@ requires_openai_auth = true`,
       },
     ],
   },
+  {
+    name: "UniRoute",
+    websiteUrl: "https://uniroute.app",
+    apiKeyUrl: "https://uniroute.app/console/api-keys",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "uniroute",
+      "https://api.uniroute.app/v1",
+      "gpt-6.1-sol",
+    ),
+    icon: "uniroute",
+  },
 ];

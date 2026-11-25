@@ -6601,4 +6601,35 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
     icon: "aicoming",
   },
+  {
+    name: "UniRoute",
+    websiteUrl: "https://uniroute.app",
+    apiKeyUrl: "https://uniroute.app/console/api-keys",
+    settingsConfig: {
+      baseUrl: "https://api.uniroute.app",
+      apiKey: "",
+      api: "anthropic-messages",
+      models: openModelModels(),
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "uniroute/claude-opus-5-5",
+        fallbacks: ["uniroute/claude-sonnet-5-5"],
+      },
+      modelCatalog: {
+        "uniroute/claude-opus-5-5": { alias: "Opus" },
+        "uniroute/claude-sonnet-5-5": { alias: "Sonnet" },
+        "uniroute/claude-haiku-5-5": { alias: "Haiku" },
+      },
+    },
+    icon: "uniroute",
+  },
 ];

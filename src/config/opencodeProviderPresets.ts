@@ -4513,4 +4513,28 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
     icon: "aicoming",
   },
+  {
+    name: "UniRoute",
+    websiteUrl: "https://uniroute.app",
+    apiKeyUrl: "https://uniroute.app/console/api-keys",
+    settingsConfig: {
+      npm: "@ai-sdk/anthropic",
+      name: "UniRoute",
+      options: {
+        baseURL: "https://api.uniroute.app/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: openModelModels(),
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    icon: "uniroute",
+  },
 ];

@@ -1110,4 +1110,20 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     category: "aggregator",
     icon: "aicoming",
   },
+  {
+    name: "UniRoute",
+    websiteUrl: "https://uniroute.app",
+    apiKeyUrl: "https://uniroute.app/console/api-keys",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.uniroute.app",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.uniroute.app",
+    model: "gemini-3.8-flash",
+    description: "UniRoute",
+    category: "aggregator",
+    icon: "uniroute",
+  },
 ];

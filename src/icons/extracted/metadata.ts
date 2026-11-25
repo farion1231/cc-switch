@@ -2,6 +2,22 @@
 import { IconMetadata } from "@/types/icon";
 
 export const iconMetadata: Record<string, IconMetadata> = {
+  uniroute: {
+    name: "uniroute",
+    displayName: "UniRoute",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: [
+      "uniroute",
+      "aggregator",
+      "gateway",
+      "claude",
+      "codex",
+      "gemini",
+      "deepseek",
+    ],
+    defaultColor: "currentColor",
+  },
   tokenplus: {
     name: "tokenplus",
     displayName: "TokenPlus",

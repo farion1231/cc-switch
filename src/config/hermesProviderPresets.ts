@@ -3582,4 +3582,21 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
     icon: "aicoming",
   },
+  {
+    name: "UniRoute",
+    websiteUrl: "https://uniroute.app",
+    apiKeyUrl: "https://uniroute.app/console/api-keys",
+    settingsConfig: {
+      name: "uniroute",
+      base_url: "https://api.uniroute.app",
+      api_key: "",
+      api_mode: "anthropic_messages",
+      models: packyCodeModels(),
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "claude-sonnet-5-5", provider: "uniroute" },
+    },
+    icon: "uniroute",
+  },
 ];

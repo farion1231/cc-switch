@@ -3258,4 +3258,22 @@ export const providerPresets: ProviderPreset[] = [
     icon: "genesis",
     apiFormat: "openai_chat",
   },
+  {
+    name: "UniRoute",
+    websiteUrl: "https://uniroute.app",
+    apiKeyUrl: "https://uniroute.app/console/api-keys",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.uniroute.app",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5-5",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5-5",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "claude-haiku-5-5",
+      },
+    },
+    endpointCandidates: ["https://api.uniroute.app"],
+    category: "aggregator",
+    icon: "uniroute",
+  },
 ];
