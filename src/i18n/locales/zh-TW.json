@@ -4958,9 +4958,9 @@
       "disableAria": "在這個應用裡停用選中的 {{count}} 個 Skill",
       "uninstall": "解除安裝"
     },
-    "piColumnTitle": "Pi 按 ~/.pi/agent/skills 裡有沒有這個目錄來判斷",
+    "piColumnTitle": "Pi 會讀取 ~/.agents/skills，因此未勾選但存在於該路徑的 skills 仍可直接使用",
     "piHelpTitle": "Pi 怎麼算啟用",
-    "piHelp": "看 ~/.pi/agent/skills 裡有沒有這個目錄。",
+    "piHelp": "Pi 會讀取 ~/.agents/skills，因此未勾選但存在於該路徑的 skills 仍可直接使用。",
     "pop": {
       "onlyApp": "只看在 {{app}} 啟用的",
       "showAll": "顯示全部 Skill"

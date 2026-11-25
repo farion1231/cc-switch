@@ -4887,9 +4887,9 @@
       "disableAria": "{{count}}'de seçilen Becerileri kapatın",
       "uninstall": "Kaldır"
     },
-    "piColumnTitle": "Pi, klasörü ~/.pi/agent/skills konumunda mevcut olduğunda bir Beceriyi etkin olarak sayar",
+    "piColumnTitle": "Pi ayrıca ~/.agents/skills konumunu da okur; bu nedenle işaretlenmemiş olsa bile bu yoldaki beceriler doğrudan kullanılabilir",
     "piHelpTitle": "Pi nasıl etkin olarak sayılır?",
-    "piHelp": "Klasörün ~/.pi/agent/skills konumunda olup olmadığı.",
+    "piHelp": "Pi ayrıca ~/.agents/skills konumunu da okur; bu nedenle işaretlenmemiş olsa bile bu yoldaki beceriler doğrudan kullanılabilir.",
     "pop": {
       "onlyApp": "Yalnızca {{app}}'de etkin olanları göster",
       "showAll": "Tüm Becerileri Göster"

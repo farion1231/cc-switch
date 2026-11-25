@@ -4958,9 +4958,9 @@
       "disableAria": "Die {{count}} ausgewählten Skills ausschalten in",
       "uninstall": "Deinstallieren"
     },
-    "piColumnTitle": "Pi zählt einen Skill als aktiviert, wenn sein Ordner in ~/.pi/agent/skills existiert",
+    "piColumnTitle": "Pi liest auch ~/.agents/skills, daher sind nicht ausgewählte Skills in diesem Pfad weiterhin direkt verfügbar",
     "piHelpTitle": "Wie Pi als aktiviert zählt",
-    "piHelp": "Ob der Ordner in ~/.pi/agent/skills existiert.",
+    "piHelp": "Pi liest auch ~/.agents/skills, daher sind nicht ausgewählte Skills in diesem Pfad weiterhin direkt verfügbar.",
     "pop": {
       "onlyApp": "Nur in {{app}} aktivierte anzeigen",
       "showAll": "Alle Skills anzeigen"
