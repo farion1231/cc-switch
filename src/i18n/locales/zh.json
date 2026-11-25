@@ -235,7 +235,7 @@
         "account": "账号",
         "accountFollow": "跟随 agy 当前登录",
         "accountMissing": "不在这台电脑上的账号",
-        "accountHelp": "选了账号的话，「打开终端」前会先把 agy 的登录切到它（全局生效，之后新开的 agy 都用它）。账号在授权中心添加。"
+        "accountHelp": "保存新的绑定账号后，新开的 agy 会使用它。用这张卡打开终端时也会切回绑定账号。账号在授权中心添加。"
       },
       "gemini": {
         "model": "模型",

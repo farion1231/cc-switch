@@ -235,7 +235,7 @@
         "account": "帳號",
         "accountFollow": "跟隨 agy 目前登入",
         "accountMissing": "不在這台電腦上的帳號",
-        "accountHelp": "選了帳號的話，「開啟終端機」前會先把 agy 的登入切換到它（全域生效，之後新開的 agy 都用它）。帳號在授權中心新增。"
+        "accountHelp": "儲存新的綁定帳號後，新開啟的 agy 會使用它。用這張卡片開啟終端機時也會切回綁定帳號。帳號可在授權中心新增。"
       },
       "gemini": {
         "model": "模型",

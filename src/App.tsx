@@ -1347,6 +1347,9 @@ function App() {
         Object.keys(providers),
       );
       duplicatedProvider.addToLive = false;
+    } else if (activeApp === "agy") {
+      // Copy the launch profile without switching the global agy login.
+      duplicatedProvider.addToLive = false;
     } else if (activeApp === "copilot") {
       // 自带模型卡的 id 就是 providers.json 里的供应商名，副本另起一个；官方卡仍用随机 id。
       // 副本都先不写进 providers.json（官方卡本来就不写）

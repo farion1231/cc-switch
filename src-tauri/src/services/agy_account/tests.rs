@@ -76,6 +76,89 @@ async fn add(manager: &AgyAccountManager, sub: &str) {
 mod switching {
     use super::*;
 
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
+    use crate::services::provider::agy_direct::save_from_editor;
+    use crate::store::AppState;
+
+    fn official_card(account: &str) -> Provider {
+        let mut provider =
+            Provider::with_id("official".into(), "Antigravity".into(), json!({}), None);
+        provider.category = Some("official".into());
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("agy_oauth".into()),
+                account_id: Some(account.into()),
+            }),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn saving_a_new_provider_binding_changes_the_live_login() {
+        let (_dir, login, manager) = manager();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        set_live(&login, &credential("alice", "a1"));
+        tauri::async_runtime::block_on(add(&manager, "bob"));
+        state
+            .db
+            .save_provider(&AppType::Agy, &official_card("alice"))
+            .unwrap();
+
+        let mut card = official_card("bob");
+        save_from_editor(&state, &manager, card.clone()).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        let status = tauri::async_runtime::block_on(manager.status()).unwrap();
+        assert_eq!(status.current_account_id.as_deref(), Some("bob"));
+
+        tauri::async_runtime::block_on(manager.switch_to("alice")).unwrap();
+        card.name = "Renamed card".into();
+        save_from_editor(&state, &manager, card.clone()).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+
+        card.meta = None;
+        save_from_editor(&state, &manager, card).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn a_missing_bound_account_leaves_the_login_and_provider_unchanged() {
+        let (_dir, login, manager) = manager();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        set_live(&login, &credential("alice", "a1"));
+        let previous = official_card("alice");
+        state.db.save_provider(&AppType::Agy, &previous).unwrap();
+
+        let card = official_card("missing");
+        assert!(save_from_editor(&state, &manager, card.clone()).is_err());
+        let saved = state
+            .db
+            .get_provider_by_id(&card.id, &AppType::Agy)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved
+                .meta
+                .unwrap()
+                .managed_account_id_for("agy_oauth")
+                .as_deref(),
+            Some("alice")
+        );
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+
+        let mut new_card = card;
+        new_card.id = "new".into();
+        assert!(save_from_editor(&state, &manager, new_card).is_err());
+        assert!(state
+            .db
+            .get_provider_by_id("new", &AppType::Agy)
+            .unwrap()
+            .is_none());
+    }
+
     #[tokio::test]
     async fn status_collects_the_login_agy_already_has() {
         let (_dir, login, manager) = manager();

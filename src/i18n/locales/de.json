@@ -235,7 +235,7 @@
         "account": "Konto",
         "accountFollow": "Aktueller Anmeldung von agy folgen",
         "accountMissing": "Ein Konto, das nicht auf diesem Computer vorhanden ist",
-        "accountHelp": "Bei ausgewähltem Konto wechselt „Terminal öffnen“ zuerst die Anmeldung von agy zu diesem Konto (das gilt global: danach gestartete agy-Sitzungen verwenden es). Konten fügen Sie in der Kontoverwaltung hinzu."
+        "accountHelp": "Wenn Sie eine neue Kontoverknüpfung speichern, verwenden neue agy-Sitzungen dieses Konto. Auch beim Öffnen eines Terminals über diese Karte wechselt agy zum verknüpften Konto. Konten können Sie in der Kontoverwaltung hinzufügen."
       },
       "gemini": {
         "model": "Modell",
