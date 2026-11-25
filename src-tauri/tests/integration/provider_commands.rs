@@ -550,6 +550,7 @@ command = "say"
                 hermes: false,
                 mcode: false,
                 kimi: false,
+                qwen: false,
                 copilot: false,
                 codebuddy: false,
                 dsh: false,

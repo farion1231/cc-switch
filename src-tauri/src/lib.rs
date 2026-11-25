@@ -52,6 +52,7 @@ mod prompt_files;
 mod provider;
 mod provider_kind;
 mod proxy;
+mod qwen_config;
 mod services;
 mod session_manager;
 mod settings;

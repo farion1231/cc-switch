@@ -2573,6 +2573,21 @@ fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
     }
 }
 
+/// Qwen Code 的 MCP 链接写进 Qwen 的标记
+#[test]
+fn test_parse_mcp_deeplink_accepts_qwen() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    for apps in ["qwen", "claude,qwen", "qwen,dsh"] {
+        let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
+        let request = parse_deeplink_url(&url).expect("qwen is a valid MCP target");
+        assert!(
+            parse_mcp_apps(request.apps.as_deref().unwrap())
+                .unwrap()
+                .qwen
+        );
+    }
+}
+
 // =============================================================================
 // WorkBuddy：卡片形状同 WorkBuddy 页面的编辑器，写入走页面「添加」同一条路径
 // =============================================================================

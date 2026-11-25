@@ -265,7 +265,7 @@ impl ToolSpec {
 static UNKNOWN_TOOL: ToolSpec = ToolSpec::not_on_npm("", "Unknown");
 
 /// 顺序即「应用」页与批量安装 / 升级的顺序。
-static TOOLS: [ToolSpec; 15] = [
+static TOOLS: [ToolSpec; 16] = [
     ToolSpec::npm("claude", "Claude Code", "@anthropic-ai/claude-code")
         .npm_install_args(
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
@@ -289,6 +289,9 @@ static TOOLS: [ToolSpec; 15] = [
         " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
     ),
     ToolSpec::npm("kimi", "Kimi Code", "@moonshot-ai/kimi-code").official_update("upgrade --yes"),
+    // 安装走官方独立 installer（自带 Node，必要时自己退回 npm），npm 包只用来查最新版本
+    // 和识别 npm 安装。
+    ToolSpec::npm("qwen", "Qwen Code", "@qwen-code/qwen-code").official_update("update"),
     ToolSpec::npm("dsh", "DeepSeek Harness", "@deepseek-ai/dsh").npm_install_args(" --engine-strict"),
     ToolSpec::not_on_npm("agy", "Antigravity CLI").official_update("update"),
     ToolSpec::npm("omp", "Oh My Pi", "@oh-my-pi/pi-coding-agent")

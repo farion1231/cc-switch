@@ -54,6 +54,7 @@ import { useLastValidValue } from "@/hooks/useLastValidValue";
 import {
   extractErrorMessage,
   translateKimiProviderMutationError,
+  translateQwenProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
@@ -451,11 +452,11 @@ function App() {
     }
   };
 
-  // Kimi「添加」只写进 config.toml、不改默认模型；「切换」走 switchProvider。
+  // Kimi / Qwen「添加」只写进原生配置、不改默认模型；「设为默认」走 switchProvider。
   // Copilot CLI 的自带模型卡同理：「添加」只写进 providers.json，默认模型在 copilot 里用 /model 选
   const handleAddNativeProvider = async (
     provider: Provider,
-    app: "kimi" | "copilot",
+    app: "kimi" | "qwen" | "copilot",
   ) => {
     try {
       await providersApi.addToLiveConfig(provider.id, app);
@@ -886,6 +887,7 @@ function App() {
           activeApp === "mcode" ||
           activeApp === "dsh" ||
           activeApp === "kimi" ||
+          activeApp === "qwen" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
           activeApp === "workbuddy" ||
@@ -1139,6 +1141,7 @@ function App() {
       app === "mcode" ||
       app === "dsh" ||
       app === "kimi" ||
+      app === "qwen" ||
       app === "copilot" ||
       app === "workbuddy" ||
       app === "codebuddy"
@@ -1163,7 +1166,9 @@ function App() {
             ? translatePiProviderMutationError(detail, t)
             : activeApp === "kimi"
               ? translateKimiProviderMutationError(detail, t)
-              : "") || detail;
+              : activeApp === "qwen"
+                ? translateQwenProviderMutationError(detail, t)
+                : "") || detail;
         // 默认模型可能在客户端里改过、页面还是旧的：失败了也重读，让「默认」和移除按钮跟上
         void refreshAdditiveLiveState(activeApp).catch(() => undefined);
         toast.error(t("notifications.removeFromConfigFailed"), {
@@ -1318,7 +1323,8 @@ function App() {
     } else if (
       activeApp === "mcode" ||
       activeApp === "dsh" ||
-      activeApp === "kimi"
+      activeApp === "kimi" ||
+      activeApp === "qwen"
     ) {
       // The MCode list already includes its live custom nodes; the backend
       // rejects a key that MCode itself owns.
@@ -1337,6 +1343,12 @@ function App() {
             },
           ]),
         );
+        duplicatedProvider.addToLive = false;
+      }
+      if (activeApp === "qwen") {
+        // A native env var identifies the provider it belongs to; the copy gets
+        // its own managed variable instead of claiming the original's models.
+        delete duplicatedProvider.settingsConfig.envKey;
         duplicatedProvider.addToLive = false;
       }
     } else if (activeApp === "workbuddy") {
@@ -1549,6 +1561,7 @@ function App() {
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&
             activeApp !== "kimi" &&
+            activeApp !== "qwen" &&
             activeApp !== "workbuddy" &&
             (settingsData?.showProfileSwitcher ?? false) && (
               <ProfileSwitcher activeApp={activeApp} />
@@ -1711,7 +1724,9 @@ function App() {
             onSwitch={(provider) =>
               void (appHas(activeApp, "piFamily")
                 ? handleEnablePiProvider(provider, activeApp)
-                : activeApp === "kimi" || activeApp === "copilot"
+                : activeApp === "kimi" ||
+                    activeApp === "qwen" ||
+                    activeApp === "copilot"
                   ? handleAddNativeProvider(provider, activeApp)
                   : switchProvider(provider))
             }
@@ -1730,7 +1745,9 @@ function App() {
               activeApp === "openclaw" || activeApp === "opencode"
                 ? (provider, modelId) =>
                     void setAsDefaultModel(provider, modelId)
-                : activeApp === "hermes" || activeApp === "kimi"
+                : activeApp === "hermes" ||
+                    activeApp === "kimi" ||
+                    activeApp === "qwen"
                   ? (provider) => void switchProvider(provider)
                   : undefined
             }

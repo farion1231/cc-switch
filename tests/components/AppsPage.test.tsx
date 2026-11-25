@@ -651,6 +651,7 @@ describe("AppsPage visibility column", () => {
           "agy",
           "omp",
           "copilot",
+          "qwen",
           "workbuddy",
         ].map((app) => [app, false]),
       ),

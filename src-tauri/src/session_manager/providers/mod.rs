@@ -19,4 +19,5 @@ pub mod codebuddy;
 pub mod dsh;
 pub mod kimi;
 pub mod mcode;
+pub mod qwen;
 pub mod workbuddy;

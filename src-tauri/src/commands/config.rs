@@ -80,6 +80,13 @@ pub async fn get_config_status(
 
             Ok(ConfigStatus { exists, path })
         }
+        AppType::Qwen => {
+            let file = crate::qwen_config::config_path();
+            Ok(ConfigStatus {
+                exists: file.exists(),
+                path: file.to_string_lossy().to_string(),
+            })
+        }
         AppType::Dsh => {
             let file = crate::dsh_config::config_path();
             Ok(ConfigStatus {
@@ -170,6 +177,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
         AppType::Pi => crate::pi_config::get_pi_agent_dir()?,
         AppType::Dsh => crate::dsh_config::data_dir(),
         AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Qwen => crate::qwen_config::data_dir(),
         AppType::Omp => crate::omp_config::get_omp_agent_dir()?,
         AppType::Mcode => crate::mcode_config::config_path()
             .parent()

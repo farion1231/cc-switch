@@ -468,6 +468,7 @@ impl SkillService {
             AppType::Mcode,
             AppType::Agy,
             AppType::Kimi,
+            AppType::Qwen,
             AppType::Dsh,
             AppType::Omp,
             AppType::Copilot,
@@ -493,6 +494,7 @@ impl SkillService {
         if !(skill.apps.mcode
             || skill.apps.agy
             || skill.apps.kimi
+            || skill.apps.qwen
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
@@ -505,6 +507,7 @@ impl SkillService {
         let metadata_source = if skill.apps.mcode
             || skill.apps.agy
             || skill.apps.kimi
+            || skill.apps.qwen
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
@@ -552,6 +555,7 @@ impl SkillService {
         let mut updated_skill = if skill.apps.mcode
             || skill.apps.agy
             || skill.apps.kimi
+            || skill.apps.qwen
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
@@ -566,6 +570,7 @@ impl SkillService {
                     AppType::Mcode,
                     AppType::Agy,
                     AppType::Kimi,
+                    AppType::Qwen,
                     AppType::Dsh,
                     AppType::Copilot,
                     AppType::WorkBuddy,
@@ -604,6 +609,7 @@ impl SkillService {
                     | AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot

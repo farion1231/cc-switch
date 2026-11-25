@@ -119,6 +119,14 @@ const KIMI_INSTALL_UNIX: &str =
 #[cfg(target_os = "windows")]
 const KIMI_INSTALL_WINDOWS_SCRIPT: &str = "irm https://code.kimi.com/kimi-code/install.ps1 | iex";
 
+// The standalone installer bundles Node and falls back to npm by itself; it puts
+// the `qwen` wrapper in `~/.local/bin` (`QWEN_INSTALL_BIN_DIR`).
+const QWEN_INSTALL_UNIX: &str =
+    "bash -c 'tmp=$(mktemp) && curl -fsSL https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+#[cfg(target_os = "windows")]
+const QWEN_INSTALL_WINDOWS_SCRIPT: &str =
+    "irm https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone.ps1 | iex";
+
 // Oh My Pi 的 npm 包只能由 bun 运行（入口是 `#!/usr/bin/env bun` 的 TypeScript）。官方
 // installer 有匹配架构的 bun 时走 bun，否则下载并校验预编译二进制到 `~/.local/bin`，
 // 所以新装不要求本机先有 bun。
@@ -186,6 +194,14 @@ fn mcode_install_windows_command() -> String {
     format!(
         "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {}",
         powershell_encoded_command(MCODE_INSTALL_WINDOWS_SCRIPT)
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn qwen_install_windows_command() -> String {
+    format!(
+        "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {}",
+        powershell_encoded_command(QWEN_INSTALL_WINDOWS_SCRIPT)
     )
 }
 
@@ -375,12 +391,15 @@ fn tool_action_shell_command_for_shell(
     action: ToolLifecycleAction,
     shell: LifecycleCommandShell,
 ) -> Option<String> {
-    if matches!(tool, "kimi" | "omp") {
+    if matches!(tool, "kimi" | "omp" | "qwen") {
         let install = match shell {
             LifecycleCommandShell::Posix if tool == "kimi" => KIMI_INSTALL_UNIX.to_string(),
+            LifecycleCommandShell::Posix if tool == "qwen" => QWEN_INSTALL_UNIX.to_string(),
             LifecycleCommandShell::Posix => OMP_INSTALL_UNIX.to_string(),
             #[cfg(target_os = "windows")]
             LifecycleCommandShell::WindowsBatch if tool == "kimi" => kimi_install_windows_command(),
+            #[cfg(target_os = "windows")]
+            LifecycleCommandShell::WindowsBatch if tool == "qwen" => qwen_install_windows_command(),
             #[cfg(target_os = "windows")]
             LifecycleCommandShell::WindowsBatch => omp_install_windows_command(),
             #[cfg(not(target_os = "windows"))]
@@ -1044,7 +1063,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
         LifecycleCommandShell::Posix => {
             matches!(
                 tool,
-                "claude" | "opencode" | "openclaw" | "kimi" | "omp" | "codebuddy"
+                "claude" | "opencode" | "openclaw" | "kimi" | "qwen" | "omp" | "codebuddy"
             )
         }
         LifecycleCommandShell::WindowsBatch => {
@@ -1054,7 +1073,7 @@ fn prefers_official_update(tool: &str, shell: LifecycleCommandShell) -> bool {
                 // 安装方式探测失败弹交互 prompt（spawn npm.cmd 没传 shell:true）；静默
                 // lifecycle 没有 stdin 会挂死，Windows 先锚到包管理器路径，等上游修了
                 // 再把 opencode 加回这里。
-                "claude" | "openclaw" | "kimi" | "omp" | "codebuddy"
+                "claude" | "openclaw" | "kimi" | "qwen" | "omp" | "codebuddy"
             )
         }
     }
@@ -1552,6 +1571,7 @@ fn posix_install_command_for(tool: &str) -> String {
         "mcode" => installer_with_npm_fallback(MCODE_INSTALL_UNIX, tool),
         "hermes" => HERMES_INSTALL_UNIX.to_string(),
         "kimi" => KIMI_INSTALL_UNIX.to_string(),
+        "qwen" => QWEN_INSTALL_UNIX.to_string(),
         "omp" => OMP_INSTALL_UNIX.to_string(),
         "agy" => AGY_INSTALL_UNIX.to_string(),
         _ => static_fallback_command_for(tool, ToolLifecycleAction::Install),
@@ -1872,6 +1892,30 @@ mod tests {
             .as_deref(),
             Some(format!("codebuddy update || call {npm}").as_str())
         );
+    }
+
+    #[test]
+    fn qwen_install_uses_standalone_installer_and_official_update() {
+        let posix = tool_action_shell_command_for_shell(
+            "qwen",
+            ToolLifecycleAction::Install,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(posix, QWEN_INSTALL_UNIX);
+        assert_eq!(posix_install_command_for("qwen"), posix);
+        let update = tool_action_shell_command_for_shell(
+            "qwen",
+            ToolLifecycleAction::Update,
+            LifecycleCommandShell::Posix,
+        )
+        .unwrap();
+        assert_eq!(update, format!("qwen update || {posix}"));
+        assert_eq!(tool_spec("qwen").npm_package, Some("@qwen-code/qwen-code"));
+        assert_eq!(tool_spec("qwen").display_name, "Qwen Code");
+        assert!(build_tool_search_paths("qwen")
+            .iter()
+            .any(|path| path.ends_with(".local/bin")));
     }
 
     #[test]

@@ -134,6 +134,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-violet-500/10 text-violet-700 dark:text-violet-300 hover:bg-violet-500/20 border-0 gap-1.5",
   },
+  qwen: {
+    label: "Qwen Code",
+    icon: <ProviderIcon icon="qwen" name="Qwen Code" size={14} />,
+    activeClass: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+    badgeClass:
+      "bg-purple-500/10 text-purple-700 dark:text-purple-300 border-0 gap-1.5",
+  },
   dsh: {
     label: "DeepSeek Harness",
     icon: <ProviderIcon icon="deepseek" name="DeepSeek Harness" size={14} />,

@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 pub use model::SessionMessage;
 use providers::{
     agy, claude, codebuddy, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp,
-    openclaw, opencode, pi, workbuddy,
+    openclaw, opencode, pi, qwen, workbuddy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 16] = [
+    let scanners: [(&str, Scanner); 17] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -113,6 +113,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("kimi", |_| kimi::scan_sessions()),
         ("dsh", |_| dsh::scan_sessions()),
         ("agy", |_| agy::scan_sessions()),
+        ("qwen", |_| qwen::scan_sessions()),
         ("workbuddy", |_| workbuddy::scan_sessions()),
         ("codebuddy", |_| codebuddy::scan_sessions()),
     ];
@@ -176,6 +177,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
+        "qwen" => qwen::load_messages(path),
         "omp" => omp::load_messages(path),
         "copilot" => copilot::load_messages(path),
         "codebuddy" => codebuddy::load_messages(path),
@@ -229,6 +231,12 @@ fn delete_session_source(
     session_id: &str,
     source_path: &str,
 ) -> Result<bool, String> {
+    if provider_id == "qwen" {
+        return Err(
+            "Delete this session in Qwen Code (qwen sessions) to keep its archive consistent"
+                .into(),
+        );
+    }
     if provider_id == "dsh" {
         return Err(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
@@ -317,6 +325,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "hermes" => vec![crate::hermes_config::get_hermes_dir().join("sessions")],
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
+        "qwen" => qwen::session_roots(),
         "codebuddy" => codebuddy::session_roots(),
         "dsh" => dsh::session_roots(),
         "workbuddy" => workbuddy::session_roots(),

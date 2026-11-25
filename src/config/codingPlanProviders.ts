@@ -173,6 +173,7 @@ export function extractBaseUrlForUsageDetection(
     case "pi":
     case "omp":
     case "openclaw":
+    case "qwen":
       raw = settingsConfig.baseUrl;
       break;
     case "kimi":

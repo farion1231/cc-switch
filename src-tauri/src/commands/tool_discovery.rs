@@ -488,6 +488,19 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             .unwrap_or_else(|| home.join(".kimi-code"));
         push_unique_path(&mut search_paths, install_dir.join("bin"));
     }
+    if tool == "qwen" {
+        let bin_dir = std::env::var_os("QWEN_INSTALL_BIN_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                std::env::var_os("QWEN_INSTALL_ROOT")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| home.join(".local"))
+                    .join("bin")
+            });
+        push_unique_path(&mut search_paths, bin_dir);
+    }
     if tool == "grok" {
         let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
         for path in extra_paths {

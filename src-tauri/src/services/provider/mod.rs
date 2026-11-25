@@ -188,6 +188,7 @@ fn lock_native_provider_operations(
         AppType::Mcode
             | AppType::Kimi
             | AppType::Dsh
+            | AppType::Qwen
             | AppType::Copilot
             | AppType::WorkBuddy
             | AppType::Codebuddy
@@ -5911,11 +5912,12 @@ impl ProviderService {
         }
         if matches!(
             app_type,
-            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Codebuddy
+            AppType::Mcode | AppType::Kimi | AppType::Qwen | AppType::Dsh | AppType::Codebuddy
         ) {
             let native = match app_type {
                 AppType::Dsh => crate::dsh_config::get_providers()?,
                 AppType::Kimi => crate::kimi_config::get_providers()?,
+                AppType::Qwen => crate::qwen_config::get_providers()?,
                 AppType::Codebuddy => crate::codebuddy_config::get_providers()?,
                 _ => crate::mcode_config::get_providers()?,
             };
@@ -6042,6 +6044,9 @@ impl ProviderService {
         if app_type == AppType::Kimi {
             return crate::kimi_config::current_provider();
         }
+        if app_type == AppType::Qwen {
+            return crate::qwen_config::current_provider();
+        }
         if app_type == AppType::Copilot {
             // 读不了 Copilot 的设置或供应商文件时不影响列表显示，只是没有「默认」。
             return Ok(
@@ -6117,6 +6122,22 @@ impl ProviderService {
                 )
             } else {
                 state.db.save_provider(&AppType::Kimi, provider)?;
+                Ok(true)
+            };
+        }
+        if app_type == &AppType::Qwen {
+            return if write_live {
+                crate::qwen_config::save_and_commit(
+                    &provider.id,
+                    Some(provider.settings_config.clone()),
+                    create,
+                    || {
+                        state.db.save_provider(&AppType::Qwen, provider)?;
+                        Ok(true)
+                    },
+                )
+            } else {
+                state.db.save_provider(&AppType::Qwen, provider)?;
                 Ok(true)
             };
         }
@@ -6218,7 +6239,12 @@ impl ProviderService {
 
         if matches!(
             app_type,
-            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Codebuddy | AppType::Copilot
+            AppType::Mcode
+                | AppType::Kimi
+                | AppType::Qwen
+                | AppType::Dsh
+                | AppType::Codebuddy
+                | AppType::Copilot
         ) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
             // The per-app lock also serializes native list refreshes and other mutations;
@@ -6230,6 +6256,7 @@ impl ProviderService {
                 || match app_type {
                     AppType::Dsh => crate::dsh_config::provider_key_exists(&provider.id)?,
                     AppType::Kimi => crate::kimi_config::provider_key_exists(&provider.id)?,
+                    AppType::Qwen => crate::qwen_config::provider_key_exists(&provider.id)?,
                     AppType::Codebuddy => {
                         crate::codebuddy_config::provider_key_exists(&provider.id)?
                     }
@@ -6977,6 +7004,7 @@ impl ProviderService {
                 app_type,
                 AppType::Mcode
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
                     | AppType::Codebuddy
                     | AppType::Copilot
@@ -7173,6 +7201,11 @@ impl ProviderService {
             }
             return Ok(());
         }
+        if app_type == AppType::Qwen {
+            return crate::qwen_config::save_and_commit(id, None, false, || {
+                state.db.delete_provider(&AppType::Qwen, id)
+            });
+        }
 
         if app_type == AppType::Omp {
             return omp::delete(state, id);
@@ -7267,7 +7300,7 @@ impl ProviderService {
         state.db.delete_provider(app_type, id)
     }
 
-    /// Kimi「添加」：把卡片写进 config.toml，但不改 default_model（「切换」才改）。
+    /// Kimi / Qwen「添加」：把卡片写进原生配置，但不改默认模型（「切换」才改）。
     /// Copilot「添加」：把自带模型卡写进 providers.json（不改 Copilot 的默认模型）。
     /// 其他累加式应用的添加就是 `switch`，不走这里。
     pub fn add_to_live_config(
@@ -7276,6 +7309,18 @@ impl ProviderService {
         id: &str,
     ) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if app_type == AppType::Qwen {
+            let mut provider = state
+                .db
+                .get_provider_by_id(id, &AppType::Qwen)?
+                .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+            Self::set_provider_live_config_managed(&mut provider, true);
+            return crate::qwen_config::add_and_commit(
+                id,
+                provider.settings_config.clone(),
+                || state.db.save_provider(&AppType::Qwen, &provider),
+            );
+        }
         if app_type == AppType::Copilot {
             return Self::add_copilot_to_live(state, id);
         }
@@ -7367,6 +7412,15 @@ impl ProviderService {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, &AppType::Kimi)? {
                     Self::set_provider_live_config_managed(&mut provider, false);
                     state.db.save_provider(&AppType::Kimi, &provider)?;
+                }
+                Ok(())
+            });
+        }
+        if app_type == AppType::Qwen {
+            return crate::qwen_config::save_and_commit(id, None, false, || {
+                if let Some(mut provider) = state.db.get_provider_by_id(id, &AppType::Qwen)? {
+                    Self::set_provider_live_config_managed(&mut provider, false);
+                    state.db.save_provider(&AppType::Qwen, &provider)?;
                 }
                 Ok(())
             });
@@ -7559,6 +7613,21 @@ impl ProviderService {
                 |config| {
                     provider.settings_config = config;
                     state.db.save_provider(&AppType::Kimi, &provider)
+                },
+            )?;
+            return Ok(SwitchResult::default());
+        }
+        if app_type == AppType::Qwen {
+            let mut provider = _provider.clone();
+            Self::set_provider_live_config_managed(&mut provider, true);
+            crate::qwen_config::switch_and_commit(
+                id,
+                provider.settings_config.clone(),
+                |config| {
+                    if !config.is_null() {
+                        provider.settings_config = config;
+                    }
+                    state.db.save_provider(&AppType::Qwen, &provider)
                 },
             )?;
             return Ok(SwitchResult::default());
@@ -7983,6 +8052,7 @@ impl ProviderService {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Qwen
             | AppType::Dsh
             | AppType::Agy
             | AppType::Omp
@@ -8009,6 +8079,7 @@ impl ProviderService {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Qwen
             | AppType::Dsh
             | AppType::Agy
             | AppType::Omp
@@ -8792,6 +8863,9 @@ impl ProviderService {
             }
             AppType::Kimi => {
                 crate::kimi_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
+            AppType::Qwen => {
+                crate::qwen_config::validate_provider(&provider.id, &provider.settings_config)?
             }
             AppType::Mcode => {
                 crate::mcode_config::validate_provider(&provider.id, &provider.settings_config)?

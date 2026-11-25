@@ -93,6 +93,7 @@ mod tests {
             AppType::Omp,
             AppType::Copilot,
             AppType::WorkBuddy,
+            AppType::Qwen,
             AppType::Codebuddy,
         ] {
             let mut provider = Provider::with_id(
@@ -143,6 +144,7 @@ mod tests {
             ("oh-my-pi", "official-omp"),
             ("github-copilot", "official-copilot"),
             ("work_buddy", "official-workbuddy"),
+            ("qwen-code", "official-qwen"),
             ("codebuddy-code", "official-codebuddy"),
         ] {
             assert_eq!(check(app_type, provider_id), official, "{app_type}");

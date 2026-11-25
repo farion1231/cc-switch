@@ -56,6 +56,7 @@ impl SkillService {
                 | AppType::Mcode
                 | AppType::Agy
                 | AppType::Kimi
+                | AppType::Qwen
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
@@ -245,6 +246,7 @@ impl SkillService {
                 | AppType::Mcode
                 | AppType::Agy
                 | AppType::Kimi
+                | AppType::Qwen
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
@@ -454,6 +456,7 @@ impl SkillService {
                     | AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
@@ -531,7 +534,7 @@ impl SkillService {
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        // Unselected MCode, Agy, Kimi, Copilot, WorkBuddy and CodeBuddy directories may have been installed outside CC Switch.
+        // Unselected MCode, Agy, Kimi, Qwen, Copilot, WorkBuddy and CodeBuddy directories may have been installed outside CC Switch.
         // Explicit disable/uninstall handles removal of managed deployments.
         if app_dir.exists()
             && !matches!(
@@ -539,6 +542,7 @@ impl SkillService {
                 AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Qwen
                     | AppType::Dsh
                     | AppType::Copilot
                     | AppType::WorkBuddy

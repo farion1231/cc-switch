@@ -9,6 +9,7 @@ import type { Provider, SessionMeta, Settings } from "@/types";
 import {
   extractErrorMessage,
   translateKimiProviderMutationError,
+  translateQwenProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
@@ -154,7 +155,9 @@ export const useAddProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "qwen"
+              ? translateQwenProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -224,7 +227,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "qwen"
+              ? translateQwenProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -311,7 +316,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "qwen"
+              ? translateQwenProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(

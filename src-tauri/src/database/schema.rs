@@ -101,6 +101,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qwen BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
@@ -139,6 +140,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_qwen BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
@@ -742,6 +744,11 @@ impl Database {
                         Self::migrate_v27_to_v28(conn)?;
                         Self::set_user_version(conn, 28)?;
                     }
+                    28 => {
+                        log::info!("迁移数据库从 v28 到 v29（MCP/Skills 添加 Qwen Code 支持）");
+                        Self::migrate_v28_to_v29(conn)?;
+                        Self::set_user_version(conn, 29)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -796,6 +803,29 @@ impl Database {
             }
         }
         Self::add_skill_repo_host_columns(conn)?;
+        Ok(())
+    }
+
+    /// v28 -> v29 迁移：Qwen Code 的 MCP 与 Skills 开关。
+    ///
+    /// Qwen 早期开发版曾把 `enabled_qwen` 记作 v26（无上游 v26 的 `enabled_workbuddy`）、
+    /// v27（无上游 v27 的 GitLab 列）或 v28（无上游 v28 的 `enabled_codebuddy`）发布，
+    /// 这些库会跳过上游对应的迁移步骤，记作 v28 的库更是直接越过 CodeBuddy 的
+    /// v27→v28。这里先复用 [`Self::migrate_v27_to_v28`]（各列“缺失才加”，顺带补齐
+    /// 更早的列和 GitLab 技能仓库列），再按同样方式补上 `enabled_qwen`；上游与任一
+    /// 开发版来源的库都能升到 v29，且不会改动已有开关。
+    fn migrate_v28_to_v29(conn: &Connection) -> Result<(), AppError> {
+        Self::migrate_v27_to_v28(conn)?;
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_qwen",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -4481,7 +4511,7 @@ mod tests {
         Database::create_tables_on_conn(&conn)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 28);
+        assert_eq!(SCHEMA_VERSION, 29);
         assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
         for table in ["mcp_servers", "skills"] {
             assert!(Database::has_column(&conn, table, "enabled_dsh")?);
@@ -4640,6 +4670,91 @@ mod tests {
         db.update_skill_apps("s", &apps)?;
         let saved = &db.get_all_installed_skills()?["s"];
         assert!(saved.apps.codebuddy && !saved.apps.dsh && saved.apps.claude);
+        Ok(())
+    }
+
+    #[test]
+    fn qwen_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        // 上游 v22..v28 以及 Qwen 早期开发版记过的 v26/v27/v28 都要能升到最新版本。
+        for start in 22..=28 {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+            Database::set_user_version(&conn, start)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            for table in ["mcp_servers", "skills"] {
+                let flags = conn.query_row(
+                    &format!("SELECT enabled_kimi, enabled_qwen, enabled_codebuddy FROM {table}"),
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )?;
+                assert_eq!(flags, (1, 0, 0), "v{start} {table}");
+            }
+            assert!(Database::has_column(&conn, "skills", "repo_host")?);
+            Database::apply_schema_migrations_on_conn(&conn)?;
+        }
+        Ok(())
+    }
+
+    /// Qwen 早期开发版把 `enabled_qwen` 记作 v28，没有上游 v28 的 `enabled_codebuddy`；
+    /// v28 -> v29 必须补上它，并保留已有的 Qwen 开关。
+    #[test]
+    fn qwen_dev_v28_database_gains_codebuddy_column_and_keeps_qwen_flags() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            conn.execute_batch(&format!(
+                "ALTER TABLE {table} DROP COLUMN enabled_codebuddy;"
+            ))?;
+        }
+        conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_kimi, enabled_qwen) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1, 1); INSERT INTO skills (id, name, directory, enabled_kimi, enabled_qwen) VALUES ('s', 's', 's', 1, 1);")?;
+        Database::set_user_version(&conn, 28)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, id) in [("mcp_servers", "m"), ("skills", "s")] {
+            let flags = conn.query_row(
+                &format!(
+                    "SELECT enabled_kimi, enabled_qwen, enabled_codebuddy FROM {table} WHERE id = '{id}'"
+                ),
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )?;
+            assert_eq!(flags, (1, 1, 0), "{table}");
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn qwen_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"qwen":true,"kimi":true,"codebuddy":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Qwen, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.qwen);
+        assert!(saved["m"].apps.kimi && saved["m"].apps.codebuddy);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"qwen":true,"claude":true,"codebuddy":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.qwen && saved.apps.claude && saved.apps.codebuddy);
+        let mut apps = saved.apps.clone();
+        apps.qwen = false;
+        db.update_skill_apps("s", &apps)?;
+        let saved = &db.get_all_installed_skills()?["s"];
+        assert!(!saved.apps.qwen && saved.apps.claude && saved.apps.codebuddy);
         Ok(())
     }
 
