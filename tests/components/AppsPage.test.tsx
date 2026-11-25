@@ -647,6 +647,7 @@ describe("AppsPage visibility column", () => {
           "pi",
           "mcode",
           "kimi",
+          "trae",
           "dsh",
           "agy",
           "omp",

@@ -488,6 +488,14 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             .unwrap_or_else(|| home.join(".kimi-code"));
         push_unique_path(&mut search_paths, install_dir.join("bin"));
     }
+    if tool == "traecli" {
+        for var in ["TRAECLI_INSTALL_DIR", "XDG_BIN_HOME"] {
+            if let Some(dir) = std::env::var_os(var).filter(|value| !value.is_empty()) {
+                push_unique_path(&mut search_paths, PathBuf::from(dir));
+            }
+        }
+        push_unique_path(&mut search_paths, home.join(".local").join("bin"));
+    }
     if tool == "grok" {
         let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
         for path in extra_paths {

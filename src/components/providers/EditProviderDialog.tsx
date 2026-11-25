@@ -215,6 +215,7 @@ export function EditProviderDialog({
         appId === "pi" ||
         appId === "mcode" ||
         appId === "kimi" ||
+        appId === "trae" ||
         appId === "dsh" ||
         appId === "omp" ||
         appId === "copilot" ||

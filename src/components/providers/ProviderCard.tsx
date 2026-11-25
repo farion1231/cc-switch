@@ -53,6 +53,7 @@ import {
 } from "@/lib/authBinding";
 import {
   isOfficialAccount,
+  TRAE_OFFICIAL_PROVIDER_ID,
   resolveCodexOfficialIdentity,
   supportsConnectivityCheck,
 } from "@/utils/providerCapabilities";
@@ -149,6 +150,7 @@ function HealthChip({
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
 function isOfficialProvider(provider: Provider, appId: AppId): boolean {
   if (appId === "kimi") return isOfficialAccount(appId, provider);
+  if (appId === "trae") return provider.id === TRAE_OFFICIAL_PROVIDER_ID;
   if (provider.category === "official") {
     return true;
   }
@@ -971,7 +973,7 @@ export function ProviderCard({
               // CodeBuddy 的卡片 ID 就是 models.json 里的模型 id（发给上游的模型名），副本只能换一个
               // 不存在的 id 且编辑时改不了；官方登录卡另建即可，所以 CodeBuddy 不提供复制
               onDuplicate &&
-              !(appId === "kimi" && isOfficial) &&
+              !((appId === "kimi" || appId === "trae") && isOfficial) &&
               appId !== "codebuddy"
                 ? () => onDuplicate(provider)
                 : undefined

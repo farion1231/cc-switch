@@ -1929,6 +1929,7 @@ fn mcode_imported_external_symlink_can_toggle_without_changing_its_source() {
             apps: SkillApps {
                 mcode: true,
                 kimi: false,
+                trae: false,
                 dsh: false,
                 ..Default::default()
             },
@@ -1959,6 +1960,7 @@ fn mcode_imported_external_symlink_can_toggle_without_changing_its_source() {
             apps: SkillApps {
                 mcode: true,
                 kimi: false,
+                trae: false,
                 dsh: false,
                 ..Default::default()
             },
@@ -1996,6 +1998,7 @@ fn mcode_import_checks_native_copies_and_deploys_selected_skills() {
                 apps: SkillApps {
                     mcode: true,
                     kimi: false,
+                    trae: false,
                     dsh: false,
                     ..Default::default()
                 },
@@ -2045,6 +2048,7 @@ fn mcode_skill_import_continues_after_a_conflicting_copy() {
             apps: SkillApps {
                 mcode: true,
                 kimi: false,
+                trae: false,
                 dsh: false,
                 ..Default::default()
             },

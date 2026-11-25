@@ -57,6 +57,7 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Trae
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
@@ -246,6 +247,7 @@ impl SkillService {
                 | AppType::Agy
                 | AppType::Kimi
                 | AppType::Dsh
+                | AppType::Trae
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
@@ -455,6 +457,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Trae
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
@@ -540,6 +543,7 @@ impl SkillService {
                     | AppType::Agy
                     | AppType::Kimi
                     | AppType::Dsh
+                    | AppType::Trae
                     | AppType::Copilot
                     | AppType::WorkBuddy
                     | AppType::Codebuddy
