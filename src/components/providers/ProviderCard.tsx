@@ -449,10 +449,17 @@ export function ProviderCard({
     ...agyAuthStatusQuery,
     enabled: canShowAgyAccount,
   });
-  const activeAgyAccountId = agyAuthStatus?.default_account_id;
-  const agyAccount = agyAuthStatus?.accounts.find(
-    (account) => account.id === (agyBoundAccountId ?? activeAgyAccountId),
-  );
+  // 禁用的 React Query observer 仍会返回已有缓存，非 Antigravity 官方卡必须显式屏蔽。
+  const activeAgyAccountId = canShowAgyAccount
+    ? agyAuthStatus?.default_account_id
+    : undefined;
+  const targetAgyAccountId = agyBoundAccountId ?? activeAgyAccountId;
+  const agyAccount =
+    canShowAgyAccount && targetAgyAccountId
+      ? agyAuthStatus?.accounts.find(
+          (account) => account.id === targetAgyAccountId,
+        )
+      : undefined;
   // 副标题末尾的套餐：读右边额度那个查询的缓存（键和各额度 footer 一致），额度查到才有。
   // Claude 官方卡另有写法（claudeDefaultPlanLabel / ClaudeBoundAccountLine）
   const quotaPlanKey: QueryKey | null = isCopilot
