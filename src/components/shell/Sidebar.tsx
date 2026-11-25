@@ -16,6 +16,7 @@ import {
   KeyRound,
   Layers,
   LayoutGrid,
+  Puzzle,
   Route,
   Server,
   Settings,
@@ -28,7 +29,7 @@ import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
 import { isAppPage } from "@/lib/navigation";
 import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
-import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
+import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useSettingsQuery } from "@/lib/query";
 import {
@@ -68,14 +69,14 @@ type DirectoryProps = SidebarProps & { collapsed: boolean };
 
 /**
  * 主导航（v7）：顶条 44 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
- * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨；
+ * 进入设置后整条侧栏换成设置目录。收起时按界面密度收成紧凑 / 舒适图标轨（见 useSidebarCollapsed）；
  * 展开 / 收起时宽度一步到位，边缘的滑动由盖板的 transform 动画画出（见 useSidebarCollapsed），文字不换行、被裁掉而不是挤成两行。
  * 收起时各行只剩图标，名字由 HoverTip 从右侧报；展开时文字可见，不再挂提示。
  */
 export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
   const navRef = useRef<HTMLElement>(null);
-  const { collapsed, toggle } = useSidebarCollapsed(navRef);
+  const { collapsed, toggle, width } = useSidebarCollapsed(navRef);
   const { view } = props;
   const inSettings = view === "settings";
 
@@ -86,7 +87,7 @@ export function Sidebar(props: SidebarProps) {
       className={cn(
         "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1",
       )}
-      style={{ width: sidebarWidth(collapsed) }}
+      style={{ width }}
     >
       <a
         href="#main-content"
@@ -274,7 +275,8 @@ function MainDirectory({
     alert?: string;
   }[] = [
     { page: "mcp", label: "MCP", icon: Server },
-    { page: "skills", label: "Skills", icon: SkillsIcon },
+    { page: "skills", label: t("nav.skills"), icon: SkillsIcon },
+    { page: "plugins", label: t("nav.plugins"), icon: Puzzle },
     { page: "prompts", label: t("nav.prompts"), icon: BookOpen },
     { page: "sessions", label: t("nav.sessions"), icon: History },
     {
@@ -325,7 +327,7 @@ function MainDirectory({
       <div
         className={cn(
           "h-px shrink-0 bg-border",
-          collapsed ? "mx-[18px] my-1.5" : "mx-4 mb-1.5 mt-0.5",
+          collapsed ? "mx-auto my-1.5 w-rail-item" : "mx-4 mb-1.5 mt-0.5",
         )}
       />
 
@@ -349,7 +351,7 @@ function MainDirectory({
       <div
         className={cn(
           "my-1.5 h-px shrink-0 bg-border",
-          collapsed ? "mx-[18px]" : "mx-4",
+          collapsed ? "mx-auto w-rail-item" : "mx-4",
         )}
       />
 
@@ -452,7 +454,7 @@ function AppNavItem({
           aria-label={tip}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "mx-auto flex h-8 w-rail-item shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
           )}
         >
@@ -482,7 +484,7 @@ function AppNavItem({
       onClick={onSelect}
       aria-current={selected ? "page" : undefined}
       className={cn(
-        "mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+        "mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
         selected && "bg-selected font-medium hover:bg-selected",
       )}
     >
@@ -613,7 +615,7 @@ function NavItem({
           aria-label={title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "mx-auto flex h-8 w-rail-item shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
           )}
         >
@@ -643,8 +645,9 @@ function NavItem({
         aria-label={trailingLabel ? accessibleName : undefined}
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex h-7 shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
-          compact ? "min-w-0 flex-1" : "mx-2 w-[184px]",
+          "flex h-nav-row shrink-0 items-center gap-2 rounded-control px-2 text-start transition-colors hover:bg-subtle",
+          // 底栏两项按各自文字分宽度：「Apps」这类短词不必占满一半，长词（Optionen、Настройки）才放得下
+          compact ? "min-w-0 flex-auto shrink" : "mx-2 w-[184px]",
           selected && "bg-selected font-medium hover:bg-selected",
         )}
       >
@@ -730,7 +733,7 @@ function SettingsDirectory({
         <button
           type="button"
           onClick={onExitSettings}
-          className="mx-2 flex h-7 w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
+          className="mx-2 flex h-nav-row w-[184px] shrink-0 items-center gap-2 rounded-control px-2 text-start text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1"
         >
           <ArrowLeft className="h-4 w-4" strokeWidth={1.5} aria-hidden="true" />
           {t("nav.back")}

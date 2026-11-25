@@ -34,6 +34,16 @@ No gateway host, model alias, or API-version string is hardcoded for the generic
 
 ## Encrypted-content include selector
 
-`normalizeEncryptedInclude: true` changes the unsupported `output.encrypted_content` selector to `reasoning.encrypted_content` before forwarding. It retains all other `include` entries, removes duplicates, and leaves requests that already use only supported selectors unchanged. This setting is useful for Azure-backed Responses gateways that reject `output.encrypted_content` with HTTP 400. It is opt-in because different gateways may expose different schemas.
+`normalizeEncryptedInclude: true` changes the unsupported `output.encrypted_content` selector to `reasoning.encrypted_content` before forwarding. It retains other `include` entries and avoids adding a duplicate `reasoning.encrypted_content` selector. The mainline OpenAI-private-field sanitizer still runs afterwards; with this option disabled, its default removal of `output.encrypted_content` remains in effect. This setting is useful for Azure-backed Responses gateways that reject `output.encrypted_content` with HTTP 400. It is opt-in because different gateways may expose different schemas.
 
 These options run on native Responses forwarding, not on Responses-to-Chat or Responses-to-Anthropic conversion. They do not provision an Azure hosted image deployment. Successful returned function calls do not themselves execute image generation.
+
+## Boundary with native protocol capabilities (#7952)
+
+These settings repair the wire format of individual native Responses requests. They do not declare that a relay implements the official OpenAI protocol. In particular, they do not enable Fast/service tiers, publish official model-catalog capabilities, change authentication or identity headers, enable remote compaction, or bypass the mainline compaction bridge.
+
+PR #7952 proposes `meta.codexOfficialCompatible` for a relay's native protocol capabilities. That is separate from `settings_config.responsesCompatibility`; neither option implies the other. Keep capability declarations in provider metadata and request-format repairs in settings config. A namespace repair must not enable xAI schema/numeric rewriting, including on a Copilot card serving non-Grok models. Existing automatic Copilot/Grok and direct xAI behavior remains model-aware.
+
+All three repair options are independently opt-in. A provider that only needs an API version can omit both boolean options. A relay that supports native compaction does not need namespace flattening unless its own schema requires it. Final naming of the proposed capability option remains subject to maintainer review of #7952; this PR does not add or rename that metadata field.
+
+On current mainline, third-party requests already have OpenAI-private fields removed. With `normalizeEncryptedInclude` disabled, that existing cleanup still applies. With it explicitly enabled, `output.encrypted_content` is converted to `reasoning.encrypted_content` before cleanup; other private fields still follow mainline policy. This selector repair does not grant permission to retain encrypted history or change the compaction policy. Explicit provider body overrides run later and remain authoritative.

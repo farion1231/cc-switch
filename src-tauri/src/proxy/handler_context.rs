@@ -9,7 +9,10 @@ use crate::proxy::{
     extract_session_id,
     forwarder::RequestForwarder,
     server::ProxyState,
-    types::{AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, RectifierConfig},
+    types::{
+        AppProxyConfig, CopilotOptimizerConfig, OptimizerConfig, PrivacyFilterConfig,
+        RectifierConfig,
+    },
     ProxyError,
 };
 use axum::http::HeaderMap;
@@ -47,6 +50,7 @@ pub struct RequestContext {
     /// 这里使用本地 settings 的设备级 current provider。
     /// 代理模式下如果实际使用的 provider 与此不一致，会触发切换以确保 UI 始终准确。
     pub current_provider_id: String,
+    pub(crate) route_revision: u64,
     /// 请求中的模型名称
     pub request_model: String,
     /// 实际发往上游的模型名（路由接管/模型映射后的真值，forward 成功后回填）。
@@ -59,7 +63,6 @@ pub struct RequestContext {
     /// 应用类型字符串（如 "claude"、"codex"、"gemini"）
     pub app_type_str: &'static str,
     /// 应用类型（预留，目前通过 app_type_str 使用）
-    #[allow(dead_code)]
     pub app_type: AppType,
     /// Session ID（从客户端请求提取或新生成）
     pub session_id: String,
@@ -71,6 +74,8 @@ pub struct RequestContext {
     pub optimizer_config: OptimizerConfig,
     /// Copilot 优化器配置
     pub copilot_optimizer_config: CopilotOptimizerConfig,
+    /// 隐私过滤器配置
+    pub privacy_filter_config: PrivacyFilterConfig,
     /// Stack 模型的请求（`mode::stack`）：直达 Stack 里的那一家，不读也不写任何路由状态。
     pub is_stack: bool,
 }
@@ -99,18 +104,45 @@ impl RequestContext {
         stack: Option<StackTarget>,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
+        let route_revision = state.db.route_revision(&app_type);
 
         // 从数据库读取应用级代理配置（per-app）
         let mut app_config = state
             .db
-            .get_proxy_config_for_app(app_type_str)
+            .get_proxy_config_for_app(&app_type)
             .await
             .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
-        // 从数据库读取整流器配置
-        let rectifier_config = state.db.get_rectifier_config().unwrap_or_default();
-        let optimizer_config = state.db.get_optimizer_config().unwrap_or_default();
-        let copilot_optimizer_config = state.db.get_copilot_optimizer_config().unwrap_or_default();
+        let app = app_type.clone();
+        let needs_route = stack.is_none();
+        let check_stack = needs_route && app_config.auto_failover_enabled;
+        let (
+            rectifier_config,
+            optimizer_config,
+            copilot_optimizer_config,
+            privacy_filter_config,
+            current_provider,
+            stack_mode,
+        ) = state
+            .db
+            .run_blocking(move |db| {
+                Ok((
+                    db.get_rectifier_config().unwrap_or_default(),
+                    db.get_optimizer_config().unwrap_or_default(),
+                    db.get_copilot_optimizer_config().unwrap_or_default(),
+                    db.get_privacy_filter_config().unwrap_or_default(),
+                    if needs_route {
+                        crate::mode::current::provider_in_use(db, &app)
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    },
+                    check_stack && crate::mode::stack::stack_mode_now(&app),
+                ))
+            })
+            .await
+            .map_err(|e| ProxyError::DatabaseError(e.to_string()))?;
 
         // 提取 Session ID
         let session_result = extract_session_id(headers, body, app_type_str);
@@ -148,9 +180,6 @@ impl RequestContext {
                 )
             }
             None => {
-                let current_provider = crate::mode::current::provider_in_use(&state.db, &app_type)
-                    .ok()
-                    .flatten();
                 let current_provider_id = current_provider
                     .as_ref()
                     .map(|provider| provider.id.clone())
@@ -165,8 +194,6 @@ impl RequestContext {
 
                 // Stack 模式不做故障转移：只发往默认那家，和故障转移关着时一样跳过熔断器选家；
                 // 队列留着，回到路由模式恢复。故障转移本来就关着时不用读模式。
-                let stack_mode = app_config.auto_failover_enabled
-                    && crate::mode::stack::stack_mode_now(&app_type);
                 let providers = if stack_mode {
                     app_config.auto_failover_enabled = false;
                     vec![current_provider.ok_or(ProxyError::NoProvidersConfigured)?]
@@ -176,7 +203,7 @@ impl RequestContext {
                     state
                         .provider_router
                         .select_providers_with_current(
-                            app_type_str,
+                            &app_type,
                             current_provider,
                             app_config.auto_failover_enabled,
                         )
@@ -215,6 +242,7 @@ impl RequestContext {
             provider,
             providers,
             current_provider_id,
+            route_revision,
             request_model,
             outbound_model: None,
             tag,
@@ -225,6 +253,7 @@ impl RequestContext {
             rectifier_config,
             optimizer_config,
             copilot_optimizer_config,
+            privacy_filter_config,
             is_stack,
         })
     }
@@ -296,6 +325,10 @@ impl RequestContext {
             max_retries,
         )
         .stack_request(self.is_stack)
+        .failover_chain(self.app_config.auto_failover_enabled)
+        .route_revision(self.route_revision)
+        .privacy_filter(self.privacy_filter_config.clone())
+        .copilot_auto_sessions(state.copilot_auto_sessions.clone())
     }
 
     /// 获取 Provider 列表（用于故障转移）
@@ -357,46 +390,52 @@ mod tests {
     use super::extract_gemini_model_from_path;
 
     #[test]
-    fn extract_model_with_action() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro:generateContent").as_deref(),
-            Some("gemini-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_dotted_version() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-1.5-flash:streamGenerateContent")
-                .as_deref(),
-            Some("gemini-1.5-flash"),
-        );
-    }
-
-    #[test]
-    fn extract_model_without_action() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1/models/gemini-1.5-pro").as_deref(),
-            Some("gemini-1.5-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_proxy_prefix() {
-        assert_eq!(
-            extract_gemini_model_from_path("/gemini/v1beta/models/gemini-2.0-flash:countTokens")
-                .as_deref(),
-            Some("gemini-2.0-flash"),
-        );
-    }
-
-    #[test]
-    fn extract_model_with_query_string() {
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro:generateContent?key=abc")
-                .as_deref(),
-            Some("gemini-pro"),
-        );
+    fn extract_model_from_gemini_paths() {
+        for (case, path, model) in [
+            (
+                "extract_model_with_action",
+                "/v1beta/models/gemini-pro:generateContent",
+                "gemini-pro",
+            ),
+            (
+                "extract_model_with_dotted_version",
+                "/v1beta/models/gemini-1.5-flash:streamGenerateContent",
+                "gemini-1.5-flash",
+            ),
+            (
+                "extract_model_without_action",
+                "/v1/models/gemini-1.5-pro",
+                "gemini-1.5-pro",
+            ),
+            (
+                "extract_model_with_proxy_prefix",
+                "/gemini/v1beta/models/gemini-2.0-flash:countTokens",
+                "gemini-2.0-flash",
+            ),
+            (
+                "extract_model_with_query_string",
+                "/v1beta/models/gemini-pro:generateContent?key=abc",
+                "gemini-pro",
+            ),
+            // GET /v1beta/models/<id>?key=... 无 action verb，仅靠 ':' 拆分会把 query 带进 model 名。
+            // 修复后应该把 query 剥掉。
+            (
+                "extract_model_get_with_query_only",
+                "/v1beta/models/gemini-pro?key=abc",
+                "gemini-pro",
+            ),
+            (
+                "extract_model_get_with_proxy_prefix_and_query",
+                "/gemini/v1beta/models/gemini-2.0-flash?key=abc",
+                "gemini-2.0-flash",
+            ),
+        ] {
+            assert_eq!(
+                extract_gemini_model_from_path(path).as_deref(),
+                Some(model),
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -408,24 +447,5 @@ mod tests {
     fn extract_model_trailing_models_segment() {
         // `/v1beta/models` (list endpoint) has no following segment → None.
         assert_eq!(extract_gemini_model_from_path("/v1beta/models"), None);
-    }
-
-    #[test]
-    fn extract_model_get_with_query_only() {
-        // GET /v1beta/models/<id>?key=... 无 action verb，仅靠 ':' 拆分会把 query 带进 model 名。
-        // 修复后应该把 query 剥掉。
-        assert_eq!(
-            extract_gemini_model_from_path("/v1beta/models/gemini-pro?key=abc").as_deref(),
-            Some("gemini-pro"),
-        );
-    }
-
-    #[test]
-    fn extract_model_get_with_proxy_prefix_and_query() {
-        assert_eq!(
-            extract_gemini_model_from_path("/gemini/v1beta/models/gemini-2.0-flash?key=abc")
-                .as_deref(),
-            Some("gemini-2.0-flash"),
-        );
     }
 }

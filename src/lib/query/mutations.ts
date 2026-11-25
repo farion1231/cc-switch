@@ -18,8 +18,12 @@ import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
-import { isPiFamilyApp } from "@/config/appConfig";
+import {
+  invalidateAgyLoginCaches,
+  invalidateGrokCliLoginCaches,
+} from "@/lib/query/subscription";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
+import { appHas } from "@/config/appSpecs";
 
 export const useAddProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
@@ -65,17 +69,14 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       let id: string;
+      let liveTarget = addToLive;
 
-      if (
-        appId === "opencode" ||
-        appId === "openclaw" ||
-        appId === "hermes" ||
-        appId === "pi" ||
-        appId === "mcode" ||
-        appId === "kimi" ||
-        appId === "dsh" ||
-        appId === "omp"
-      ) {
+      if (appId === "copilot") {
+        // Copilot CLI：自带模型卡的 id 就是 providers.json 里的供应商名（表单填的）；官方卡
+        // 没有 provider 节点，用随机 id，也从不写进 providers.json
+        id = providerInput.providerKey || generateUUID();
+        if (!providerInput.providerKey) liveTarget = false;
+      } else if (appHas(appId, "additive")) {
         if (
           providerInput.category === "omo" ||
           providerInput.category === "omo-slim"
@@ -99,7 +100,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       };
       delete (newProvider as any).providerKey;
 
-      await providersApi.add(newProvider, appId, addToLive, editorSave);
+      await providersApi.add(newProvider, appId, liveTarget, editorSave);
       return newProvider;
     },
     onSuccess: async () => {
@@ -152,7 +153,7 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (isPiFamilyApp(appId)
+        (appHas(appId, "piFamily")
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -167,8 +168,10 @@ export const useAddProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
+      if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
+      } else if (appId === "agy") {
+        await invalidateAgyLoginCaches(queryClient);
       }
     },
   });
@@ -222,7 +225,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (parseLiveEditConflict(error)) return;
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (isPiFamilyApp(appId)
+        (appHas(appId, "piFamily")
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -237,13 +240,19 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
+      if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
+      } else if (appId === "agy") {
+        await invalidateAgyLoginCaches(queryClient);
       } else if (appId === "kimi") {
         // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
         await queryClient.invalidateQueries({
           queryKey: ["providers", "kimi"],
         });
+      } else if (appId === "grokbuild") {
+        // 保存当前绑号的 Grok 官方卡会把原 CLI 登录收进授权中心再写入绑定的号；
+        // 写入失败前也可能已经收过：成功失败都重读
+        await invalidateGrokCliLoginCaches(queryClient);
       }
     },
   });
@@ -305,7 +314,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     onError: (error: Error) => {
       const rawDetail = extractErrorMessage(error);
       const detail =
-        (isPiFamilyApp(appId)
+        (appHas(appId, "piFamily")
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
@@ -320,7 +329,7 @@ export const useDeleteProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
+      if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
       } else if (appId === "kimi") {
         // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
@@ -414,8 +423,13 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       );
     },
     onSettled: async () => {
-      if (isPiFamilyApp(appId)) {
+      if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
+      }
+      if (appId === "grokbuild") {
+        // 切到绑号的 Grok 官方卡时，后端可能把原 CLI 登录收成了新账号；
+        // 切换失败前也可能已经收过，所以成功失败都重读授权中心和 CLI 额度
+        await invalidateGrokCliLoginCaches(queryClient);
       }
     },
   });

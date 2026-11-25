@@ -1,5 +1,4 @@
-#![allow(non_snake_case)]
-
+use crate::error::AppError;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -8,6 +7,17 @@ use tauri_plugin_updater::UpdaterExt;
 struct UpdateDownloadProgress {
     downloaded: u64,
     total: Option<u64>,
+}
+
+/// 开启统一会话历史后，后台把官方会话迁进共享组的那一轮跑完了（或失败）。
+const CODEX_UNIFY_MIGRATION_FINISHED_EVENT: &str = "codex-unify-migration-finished";
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexUnifyMigrationFinished {
+    migrated_state_rows: usize,
+    migrated_jsonl_files: usize,
+    error: Option<String>,
 }
 
 fn merge_settings_for_save(
@@ -56,13 +66,11 @@ fn merge_settings_for_save(
     incoming
 }
 
-/// 获取设置
 #[tauri::command]
 pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
     Ok(crate::settings::get_settings_for_frontend())
 }
 
-/// 保存设置
 #[tauri::command]
 pub async fn save_settings(
     app: tauri::AppHandle,
@@ -83,11 +91,31 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
-    crate::settings::update_settings(merged).map_err(|e| e.to_string())?;
+    let auto_update_disabled = existing.auto_update_enabled && !merged.auto_update_enabled;
+    let without_login_changed =
+        merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
+    let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
+        != existing.preserve_codex_official_auth_on_switch;
+    let next_copilot_vscode = merged.copilot_vscode.clone();
+    let previous_copilot_vscode = existing.copilot_vscode.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::copilot_config::save_vscode_settings(
+            &previous_copilot_vscode,
+            &next_copilot_vscode,
+            || crate::settings::update_settings(merged),
+        )
+    })
+    .await
+    .map_err(|error| format!("Settings save task failed: {error}"))??;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
+    }
+
+    // 关闭自动更新时立即释放内存里已下载的安装包字节，避免几十 MB 常驻进程。
+    if auto_update_disabled {
+        crate::app_update::discard_pending(&app);
     }
 
     // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。
@@ -105,6 +133,41 @@ pub async fn save_settings(
             }
             return Err(format!(
                 "聚合设置未生效（Codex 配置重写失败） (The aggregation setting did not take effect: rewriting the Codex config failed): {err}"
+            ));
+        }
+    }
+
+    // 「暂停使用官方登录」只影响路由 / 聚合模式下写给 Codex 的内容：立即重写，失败回滚。
+    if without_login_changed {
+        if let Err(err) = crate::mode::controller::resync_codex_proxy(state.inner()).await {
+            log::warn!("「暂停使用官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.codex_proxy_without_official_login =
+                existing.codex_proxy_without_official_login;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚「暂停使用官方登录」设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "「暂停使用官方登录」未生效（Codex 配置重写失败） (\"Pause the official login\" did not take effect: rewriting the Codex config failed): {err}"
+            ));
+        }
+    }
+
+    // 「非接管切换时保留官方登录」只影响直连切到第三方：当前就是直连第三方时立即重写，
+    // 不必先切回官方卡再切回来；失败回滚。
+    if preserve_login_changed {
+        if let Err(err) =
+            crate::services::provider::reapply_current_codex_third_party_live(state.inner())
+        {
+            log::warn!("「非接管切换时保留官方登录」变更后重写 Codex 配置失败，回滚设置: {err}");
+            let mut rollback = crate::settings::get_settings();
+            rollback.preserve_codex_official_auth_on_switch =
+                existing.preserve_codex_official_auth_on_switch;
+            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+                log::error!("回滚「非接管切换时保留官方登录」设置失败: {rollback_err}");
+            }
+            return Err(format!(
+                "「非接管切换时保留官方登录」未生效（Codex 配置重写失败） (\"Keep official login for direct switches\" did not take effect: rewriting the Codex config failed): {err}"
             ));
         }
     }
@@ -130,24 +193,43 @@ pub async fn save_settings(
         }
 
         if unify_codex_enabled {
-            // 后台执行存量迁移（openai 桶 → custom 桶；仅当用户勾选了迁入既有
+            // 后台把留在 openai 桶的会话迁进 custom 桶（仅当用户勾选了迁入既有
             // 会话，函数内部自门控）。大会话目录可能要读数秒，不能阻塞设置保存；
-            // 失败时不写完成标记，下次启动自动重试。
-            tauri::async_runtime::spawn_blocking(|| {
-                match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+            // 失败时下次启动自动重试。
+            // 迁完（或失败）发事件给前端提示：「开启统一」时前端只说了“后台迁入中”，
+            // 用户要等到这一刻再重启 Codex，旧会话才会解锁。
+            let app = app.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let finished = match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
                     Ok(outcome) => {
                         if let Some(reason) = outcome.skipped_reason {
                             log::debug!("○ Codex official history unify migration skipped: {reason}");
+                            None
                         } else {
                             log::info!(
                                 "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
                                 outcome.migrated_jsonl_files,
                                 outcome.migrated_state_rows
                             );
+                            Some(CodexUnifyMigrationFinished {
+                                migrated_state_rows: outcome.migrated_state_rows,
+                                migrated_jsonl_files: outcome.migrated_jsonl_files,
+                                error: None,
+                            })
                         }
                     }
                     Err(e) => {
                         log::warn!("✗ Codex official history unify migration failed: {e}");
+                        Some(CodexUnifyMigrationFinished {
+                            migrated_state_rows: 0,
+                            migrated_jsonl_files: 0,
+                            error: Some(e.to_string()),
+                        })
+                    }
+                };
+                if let Some(payload) = finished {
+                    if let Err(e) = app.emit(CODEX_UNIFY_MIGRATION_FINISHED_EVENT, payload) {
+                        log::warn!("发送 Codex 统一迁移完成事件失败: {e}");
                     }
                 }
             });
@@ -185,7 +267,7 @@ pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
 /// （这时「经典子 agent 工具」开关不生效，界面上提示）。
 #[tauri::command]
 pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
-    let text = crate::codex_config::read_codex_config_text().map_err(|e| e.to_string())?;
+    let text = crate::codex_config::read_codex_config_text()?;
     Ok(crate::codex_config::codex_config_forces_multi_agent_v2(
         &text,
     ))
@@ -193,8 +275,8 @@ pub async fn codex_forces_multi_agent_v2() -> Result<bool, String> {
 
 /// Codex 会话压缩开关（`[features] local_thread_store_compression`）当前是否开启。
 #[tauri::command]
-pub async fn get_codex_session_compression() -> Result<bool, String> {
-    crate::services::codex_session_compression::is_enabled().map_err(|e| e.to_string())
+pub async fn get_codex_session_compression() -> Result<bool, AppError> {
+    crate::services::codex_session_compression::is_enabled()
 }
 
 /// 开关 Codex 会话压缩，返回写入后的状态。
@@ -204,12 +286,11 @@ pub async fn set_codex_session_compression(
     enabled: bool,
 ) -> Result<bool, String> {
     let db = state.db.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    Ok(tauri::async_runtime::spawn_blocking(move || {
         crate::services::codex_session_compression::set_enabled(&db, enabled)
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())??)
 }
 
 /// Codex 会话目录（sessions + archived_sessions）当前占用的字节数。
@@ -230,8 +311,7 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
         crate::codex_history_migration::restore_codex_official_history_from_backups()
     })
     .await
-    .map_err(|e| e.to_string())?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| e.to_string())??;
 
     if let Some(reason) = &outcome.skipped_reason {
         log::debug!("○ Codex official history restore skipped: {reason}");
@@ -272,51 +352,69 @@ pub async fn restart_app(app: AppHandle) -> Result<bool, String> {
 
 /// 下载并安装应用更新，然后由后端直接重启应用。
 ///
-/// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
-/// `process.relaunch()`，旧进程可能已经处在 bundle 被替换后的不稳定窗口期。
-/// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
+/// 自动更新已经在后台下好同一版本时直接用缓存的包（见 `app_update`）；检查更新失败
+/// （离线）但手里有下好的包，也装那个包。
 #[tauri::command]
 pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> {
-    let builder = app.updater_builder();
-    // Windows 上 updater 以 `msiexec /passive /promptrestart` 安装 MSI。passive 没有模态框、
-    // 未指定重启选项时，安装目录里有文件被占用，Windows Installer 会不经确认直接重启系统
-    // （#8534）。`/promptrestart` 只对应 REBOOTPROMPT，挡不住这一点，因此显式追加
-    // REBOOT=ReallySuppress（即 `/norestart`）。旧版本的 updater 不带这个参数，
-    // 由 MSI 模板自身的 REBOOT 属性兜底。
-    #[cfg(target_os = "windows")]
-    let builder = builder.installer_arg("REBOOT=ReallySuppress");
-    let updater = builder
-        .build()
-        .map_err(|e| format!("初始化更新器失败: {e}"))?;
-
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|e| format!("检查更新失败: {e}"))?
-    else {
+    // 弹窗、关于页、托盘可能先后点了安装：第二次直接拒绝，避免两次安装同时替换应用、做退出清理
+    let Some(_installing) = crate::app_update::begin_install() else {
+        return Err("正在安装更新，请稍候".to_string());
+    };
+    let checked = match crate::app_update::build_updater(&app)?.check().await {
+        Ok(update) => update,
+        Err(e) => {
+            if let Some((update, bytes)) = crate::app_update::any_pending() {
+                log::warn!("检查更新失败（{e}），改装已下载的 {}", update.version);
+                return install_and_restart(app, update, bytes).await;
+            }
+            return Err(format!("检查更新失败: {e}"));
+        }
+    };
+    let Some(update) = checked else {
+        // 已是最新（下好的版本被撤回了）：缓存的包不能再装，提示和托盘入口一起收起
+        crate::app_update::discard_pending(&app);
         return Ok(false);
     };
 
-    log::info!("开始下载应用更新: {}", update.version);
-    let progress_handle = app.clone();
-    let mut downloaded: u64 = 0;
-    let bytes = update
-        .download(
-            move |chunk_len, content_len| {
-                downloaded = downloaded.saturating_add(chunk_len as u64);
-                let _ = progress_handle.emit(
-                    "update-download-progress",
-                    UpdateDownloadProgress {
-                        downloaded,
-                        total: content_len,
+    let bytes = match crate::app_update::pending_bytes_for(&update.version) {
+        Some(bytes) => {
+            log::info!("使用已下载的应用更新: {}", update.version);
+            bytes
+        }
+        None => {
+            log::info!("开始下载应用更新: {}", update.version);
+            let progress_handle = app.clone();
+            let mut downloaded: u64 = 0;
+            update
+                .download(
+                    move |chunk_len, content_len| {
+                        downloaded = downloaded.saturating_add(chunk_len as u64);
+                        let _ = progress_handle.emit(
+                            "update-download-progress",
+                            UpdateDownloadProgress {
+                                downloaded,
+                                total: content_len,
+                            },
+                        );
                     },
-                );
-            },
-            || {},
-        )
-        .await
-        .map_err(|e| format!("下载更新失败: {e}"))?;
+                    || {},
+                )
+                .await
+                .map_err(|e| format!("下载更新失败: {e}"))?
+        }
+    };
 
+    install_and_restart(app, update, bytes).await
+}
+
+/// macOS 更新会原地替换 `.app` bundle。如果先返回前端、再让旧 WebView 调
+/// `process.relaunch()`，旧进程可能已经处在 bundle 被替换后的不稳定窗口期。
+/// 这里把退出清理、安装和重启串在同一个后端流程中，避免依赖旧前端继续执行。
+async fn install_and_restart(
+    app: AppHandle,
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
+) -> Result<bool, String> {
     log::info!("开始安装应用更新: {}", update.version);
 
     #[cfg(target_os = "windows")]
@@ -354,6 +452,27 @@ pub async fn install_update_and_restart(app: AppHandle) -> Result<bool, String> 
     }
 }
 
+/// 自动更新的状态：能不能自动安装、是否在下载、已下好待装的版本。
+#[tauri::command]
+pub async fn get_auto_update_status(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<crate::app_update::AutoUpdateStatus, String> {
+    Ok(crate::app_update::status(crate::tray::routing_in_use(
+        state.inner(),
+    )))
+}
+
+/// 立刻在后台检查并下载最新版本（打开自动更新开关时调用）。不支持自动安装的机器直接返回空。
+#[tauri::command]
+pub async fn download_app_update(
+    app: AppHandle,
+) -> Result<Option<crate::app_update::ReadyUpdate>, String> {
+    if !crate::app_update::auto_install_supported() {
+        return Ok(None);
+    }
+    crate::app_update::download_latest(&app).await
+}
+
 /// 检查是否有可用的应用更新，返回可用的新版本号（无更新时返回 None）。
 ///
 /// 数据库版本过新的恢复界面用它判断：升级应用能否解决问题。若返回 None，说明
@@ -389,7 +508,6 @@ pub async fn set_app_config_dir_override(
     Ok(true)
 }
 
-/// 设置开机自启
 #[tauri::command]
 pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
     if enabled {
@@ -410,63 +528,41 @@ mod tests {
     };
 
     #[test]
-    fn save_settings_should_keep_the_existing_lightweight_mode() {
+    fn save_settings_preserves_backend_owned_fields_and_omitted_sync_configs() {
         let existing = AppSettings {
             lightweight_mode: true,
-            ..AppSettings::default()
-        };
-
-        let merged = merge_settings_for_save(AppSettings::default(), &existing);
-
-        assert!(merged.lightweight_mode);
-    }
-
-    #[test]
-    fn save_settings_should_keep_the_existing_proxy_client_host() {
-        let existing = AppSettings {
             proxy_client_host: Some("172.25.144.1".to_string()),
-            ..AppSettings::default()
-        };
-
-        let merged = merge_settings_for_save(AppSettings::default(), &existing);
-
-        assert_eq!(merged.proxy_client_host.as_deref(), Some("172.25.144.1"));
-    }
-
-    #[test]
-    fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
-        let existing = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.example.com".to_string(),
                 username: "alice".to_string(),
                 password: "secret".to_string(),
                 ..WebDavSyncSettings::default()
             }),
-            ..AppSettings::default()
-        };
-
-        let incoming = AppSettings::default();
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert!(merged.webdav_sync.is_some());
-        assert_eq!(
-            merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
-            Some("https://dav.example.com")
-        );
-    }
-
-    #[test]
-    fn save_settings_should_keep_incoming_webdav_when_present() {
-        let existing = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.old.example.com".to_string(),
-                username: "old".to_string(),
-                password: "old-pass".to_string(),
-                ..WebDavSyncSettings::default()
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "s3-secret".to_string(),
+                ..S3SyncSettings::default()
             }),
             ..AppSettings::default()
         };
 
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+        assert!(merged.lightweight_mode);
+        assert_eq!(merged.proxy_client_host.as_deref(), Some("172.25.144.1"));
+        assert_eq!(
+            merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
+            Some("https://dav.example.com")
+        );
+        assert_eq!(
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
+            Some("s3-secret")
+        );
+
+        // Explicit incoming sync settings replace the previous values.
         let incoming = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.new.example.com".to_string(),
@@ -476,21 +572,21 @@ mod tests {
             }),
             ..AppSettings::default()
         };
-
-        let merged = merge_settings_for_save(incoming, &existing);
-
+        let replaced = merge_settings_for_save(incoming, &existing);
         assert_eq!(
-            merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
+            replaced.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
             Some("https://dav.new.example.com")
+        );
+        assert_eq!(
+            replaced.webdav_sync.as_ref().map(|v| v.password.as_str()),
+            Some("new-pass")
         );
     }
 
-    /// Regression test: frontend always receives empty password from
-    /// get_settings_for_frontend(). If a component accidentally spreads
-    /// the full settings object into save_settings, the empty password
-    /// must NOT overwrite the existing one.
+    /// Frontend receives redacted empty secrets from `get_settings_for_frontend()`;
+    /// saving a spread settings object must never wipe stored credentials.
     #[test]
-    fn save_settings_should_preserve_password_when_incoming_has_empty_password() {
+    fn save_settings_preserves_existing_secrets_when_incoming_is_empty() {
         let existing = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.example.com".to_string(),
@@ -498,332 +594,172 @@ mod tests {
                 password: "secret".to_string(),
                 ..WebDavSyncSettings::default()
             }),
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "s3-secret".to_string(),
+                ..S3SyncSettings::default()
+            }),
             ..AppSettings::default()
         };
-
-        // Simulate frontend sending settings with cleared password
         let incoming = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.example.com".to_string(),
                 username: "alice".to_string(),
-                password: "".to_string(),
+                password: String::new(),
                 ..WebDavSyncSettings::default()
+            }),
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: String::new(),
+                ..S3SyncSettings::default()
             }),
             ..AppSettings::default()
         };
-
-        let merged = merge_settings_for_save(incoming, &existing);
-
+        let merged = merge_settings_for_save(incoming.clone(), &existing);
         assert_eq!(
             merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
-            Some("secret"),
-            "empty password from frontend must not overwrite existing password"
+            Some("secret")
         );
-    }
-
-    /// When both incoming and existing have no password, merge should
-    /// work without panicking and keep the empty state.
-    #[test]
-    fn save_settings_should_handle_both_empty_passwords() {
-        let existing = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let incoming = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let merged = merge_settings_for_save(incoming, &existing);
-
         assert_eq!(
-            merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
+            Some("s3-secret")
+        );
+
+        // Both empty stays empty without panicking.
+        let both_empty = merge_settings_for_save(incoming.clone(), &incoming);
+        assert_eq!(
+            both_empty.webdav_sync.as_ref().map(|v| v.password.as_str()),
             Some("")
         );
     }
 
     #[test]
-    fn save_settings_should_preserve_existing_s3_when_payload_omits_it() {
-        let existing = AppSettings {
-            s3_sync: Some(S3SyncSettings {
-                bucket: "bucket".to_string(),
-                access_key_id: "ak".to_string(),
-                secret_access_key: "secret".to_string(),
-                ..S3SyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let incoming = AppSettings::default();
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert!(merged.s3_sync.is_some());
-        assert_eq!(
-            merged
-                .s3_sync
-                .as_ref()
-                .map(|v| v.secret_access_key.as_str()),
-            Some("secret")
-        );
-    }
-
-    #[test]
-    fn save_settings_should_preserve_s3_secret_when_incoming_has_empty_secret() {
-        let existing = AppSettings {
-            s3_sync: Some(S3SyncSettings {
-                bucket: "bucket".to_string(),
-                access_key_id: "ak".to_string(),
-                secret_access_key: "secret".to_string(),
-                ..S3SyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let incoming = AppSettings {
-            s3_sync: Some(S3SyncSettings {
-                bucket: "bucket".to_string(),
-                access_key_id: "ak".to_string(),
-                secret_access_key: "".to_string(),
-                ..S3SyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert_eq!(
-            merged
-                .s3_sync
-                .as_ref()
-                .map(|v| v.secret_access_key.as_str()),
-            Some("secret")
-        );
-    }
-
-    #[test]
-    fn save_settings_should_preserve_local_migrations_when_payload_omits_it() {
-        let existing = AppSettings {
-            local_migrations: Some(LocalMigrations {
-                codex_third_party_history_provider_bucket_v1: Some(
-                    CodexThirdPartyHistoryProviderBucketMigration {
-                        completed_at: "2026-05-20T00:00:00Z".to_string(),
-                        target_provider_id: "custom".to_string(),
-                        source_provider_ids: vec!["rightcode".to_string()],
-                        migrated_jsonl_files: 2,
-                        migrated_state_rows: 3,
-                        scanned_history_files: true,
-                    },
-                ),
-                codex_provider_template_v1: Some(CodexProviderTemplateMigration {
-                    completed_at: "2026-05-20T00:01:00Z".to_string(),
-                    migrated_provider_ids: vec!["legacy".to_string()],
-                }),
-                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
-                    completed_at: "2026-06-12T00:00:00Z".to_string(),
+    fn save_settings_always_keeps_backend_local_migrations_authoritative() {
+        let sample_migrations = LocalMigrations {
+            codex_third_party_history_provider_bucket_v1: Some(
+                CodexThirdPartyHistoryProviderBucketMigration {
+                    completed_at: "2026-05-20T00:00:00Z".to_string(),
                     target_provider_id: "custom".to_string(),
-                    migrated_jsonl_files: 5,
-                    migrated_state_rows: 7,
-                    codex_config_dir: None,
-                }),
-                ..LocalMigrations::default()
+                    source_provider_ids: vec!["rightcode".to_string()],
+                    migrated_jsonl_files: 2,
+                    migrated_state_rows: 3,
+                    scanned_history_files: true,
+                },
+            ),
+            codex_provider_template_v1: Some(CodexProviderTemplateMigration {
+                completed_at: "2026-05-20T00:01:00Z".to_string(),
+                migrated_provider_ids: vec!["legacy".to_string()],
             }),
-            ..AppSettings::default()
+            codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
+                completed_at: "2026-06-12T00:00:00Z".to_string(),
+                target_provider_id: "custom".to_string(),
+                migrated_jsonl_files: 5,
+                migrated_state_rows: 7,
+                codex_config_dir: None,
+            }),
+            ..LocalMigrations::default()
         };
 
-        let incoming = AppSettings::default();
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        let migration = merged
-            .local_migrations
-            .as_ref()
-            .and_then(|migrations| {
-                migrations
-                    .codex_third_party_history_provider_bucket_v1
-                    .as_ref()
-            })
-            .expect("local migration marker should be preserved");
-        assert_eq!(migration.target_provider_id, "custom");
-        assert_eq!(migration.migrated_jsonl_files, 2);
-        assert_eq!(migration.migrated_state_rows, 3);
-
-        let template_migration = merged
-            .local_migrations
-            .as_ref()
-            .and_then(|migrations| migrations.codex_provider_template_v1.as_ref())
-            .expect("template migration marker should be preserved");
-        assert_eq!(
-            template_migration.migrated_provider_ids,
-            vec!["legacy".to_string()]
-        );
-
-        let unify_migration = merged
-            .local_migrations
-            .as_ref()
-            .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-            .expect("official unify migration marker should be preserved");
-        assert_eq!(unify_migration.migrated_jsonl_files, 5);
-        assert_eq!(unify_migration.migrated_state_rows, 7);
-    }
-
-    /// incoming 带有 local_migrations（哪怕是空的）也不能覆盖后端维护的标记。
-    #[test]
-    fn save_settings_should_keep_backend_migration_markers_over_incoming() {
         let existing = AppSettings {
-            local_migrations: Some(LocalMigrations {
-                codex_third_party_history_provider_bucket_v1: None,
-                codex_provider_template_v1: None,
-                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
-                    completed_at: "2026-06-12T00:00:00Z".to_string(),
-                    target_provider_id: "custom".to_string(),
-                    migrated_jsonl_files: 1,
-                    migrated_state_rows: 2,
-                    codex_config_dir: None,
-                }),
-                ..LocalMigrations::default()
-            }),
+            local_migrations: Some(sample_migrations.clone()),
             ..AppSettings::default()
         };
+        // Both omitted and empty incoming `local_migrations` preserve backend markers.
+        for incoming_migrations in [None, Some(LocalMigrations::default())] {
+            let incoming = AppSettings {
+                local_migrations: incoming_migrations,
+                ..AppSettings::default()
+            };
+            let merged = merge_settings_for_save(incoming, &existing);
+            let m = merged.local_migrations.as_ref().unwrap();
+            assert!(m.codex_third_party_history_provider_bucket_v1.is_some());
+            assert!(m.codex_provider_template_v1.is_some());
+            assert!(m.codex_official_history_unify_v1.is_some());
+        }
 
-        let incoming = AppSettings {
-            local_migrations: Some(LocalMigrations::default()),
+        // Stale incoming markers cannot resurrect cleared backend markers.
+        let stale_incoming = AppSettings {
+            local_migrations: Some(sample_migrations),
             ..AppSettings::default()
         };
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert!(merged
-            .local_migrations
-            .as_ref()
-            .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-            .is_some());
-    }
-
-    /// 后端清掉 marker 后（如关闭统一会话开关）、前端缓存刷新前的全量保存
-    /// 会携带旧 marker；merge 必须忽略它，否则被"复活"的标记会让重新开启
-    /// 时误判已迁移而漏迁。
-    #[test]
-    fn save_settings_should_ignore_stale_incoming_migration_markers() {
-        let existing = AppSettings::default();
-
-        let incoming = AppSettings {
-            local_migrations: Some(LocalMigrations {
-                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
-                    completed_at: "2026-06-12T00:00:00Z".to_string(),
-                    target_provider_id: "custom".to_string(),
-                    migrated_jsonl_files: 1,
-                    migrated_state_rows: 2,
-                    codex_config_dir: None,
-                }),
-                ..LocalMigrations::default()
-            }),
-            ..AppSettings::default()
-        };
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert!(merged.local_migrations.is_none());
+        assert!(
+            merge_settings_for_save(stale_incoming, &AppSettings::default())
+                .local_migrations
+                .is_none()
+        );
     }
 }
 
-/// 获取开机自启状态
-#[tauri::command]
-pub async fn get_auto_launch_status() -> Result<bool, String> {
-    crate::auto_launch::is_auto_launch_enabled().map_err(|e| format!("获取开机自启状态失败: {e}"))
-}
-
-/// 获取整流器配置
 #[tauri::command]
 pub async fn get_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::RectifierConfig, String> {
-    state.db.get_rectifier_config().map_err(|e| e.to_string())
+) -> Result<crate::proxy::types::RectifierConfig, AppError> {
+    state.db.get_rectifier_config()
 }
 
-/// 设置整流器配置
 #[tauri::command]
 pub async fn set_rectifier_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::RectifierConfig,
 ) -> Result<bool, String> {
-    state
-        .db
-        .set_rectifier_config(&config)
-        .map_err(|e| e.to_string())?;
+    state.db.set_rectifier_config(&config)?;
     Ok(true)
 }
 
-/// 获取优化器配置
 #[tauri::command]
 pub async fn get_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::OptimizerConfig, String> {
-    state.db.get_optimizer_config().map_err(|e| e.to_string())
+) -> Result<crate::proxy::types::OptimizerConfig, AppError> {
+    state.db.get_optimizer_config()
 }
 
-/// 设置优化器配置
 #[tauri::command]
 pub async fn set_optimizer_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::OptimizerConfig,
 ) -> Result<bool, String> {
-    state
-        .db
-        .set_optimizer_config(&config)
-        .map_err(|e| e.to_string())?;
+    state.db.set_optimizer_config(&config)?;
     Ok(true)
 }
 
-/// 获取 Copilot 优化器配置
 #[tauri::command]
-pub async fn get_copilot_optimizer_config(
+pub async fn get_privacy_filter_config(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::CopilotOptimizerConfig, String> {
-    state
-        .db
-        .get_copilot_optimizer_config()
-        .map_err(|e| e.to_string())
+) -> Result<crate::proxy::types::PrivacyFilterConfig, AppError> {
+    state.db.get_privacy_filter_config()
 }
 
-/// 设置 Copilot 优化器配置
 #[tauri::command]
-pub async fn set_copilot_optimizer_config(
+pub async fn set_privacy_filter_config(
     state: tauri::State<'_, crate::AppState>,
-    config: crate::proxy::types::CopilotOptimizerConfig,
+    config: crate::proxy::types::PrivacyFilterConfig,
 ) -> Result<bool, String> {
-    state
-        .db
-        .set_copilot_optimizer_config(&config)
-        .map_err(|e| e.to_string())?;
+    state.db.set_privacy_filter_config(&config)?;
+    if config.enabled {
+        // 规则编译有一次性耗时，开关打开时在后台预热，不压到第一个请求上
+        std::thread::spawn(crate::proxy::privacy_filter::warm_up);
+    }
     Ok(true)
 }
 
-/// 获取日志配置
 #[tauri::command]
 pub async fn get_log_config(
     state: tauri::State<'_, crate::AppState>,
-) -> Result<crate::proxy::types::LogConfig, String> {
-    state.db.get_log_config().map_err(|e| e.to_string())
+) -> Result<crate::proxy::types::LogConfig, AppError> {
+    state.db.get_log_config()
 }
 
-/// 设置日志配置
 #[tauri::command]
 pub async fn set_log_config(
     state: tauri::State<'_, crate::AppState>,
     config: crate::proxy::types::LogConfig,
 ) -> Result<bool, String> {
-    state
-        .db
-        .set_log_config(&config)
-        .map_err(|e| e.to_string())?;
+    state.db.set_log_config(&config)?;
     log::set_max_level(config.to_level_filter());
     log::info!(
         "日志配置已更新: enabled={}, level={}",

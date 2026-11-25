@@ -1,0 +1,33 @@
+[
+  {
+    "name": "arize-skills",
+    "enabled": false,
+    "version": "1.4.0",
+    "source": "antigravity-plugins-partners",
+    "path": "C:\\fixture\\home\\.gemini\\config\\plugins\\arize-skills",
+    "skills": [
+      "arize-admin",
+      "arize-trace"
+    ],
+    "mcpServers": [
+      "ax"
+    ]
+  },
+  {
+    "name": "gcalendar",
+    "enabled": true,
+    "version": "0.0.8",
+    "source": "antigravity-plugins-official",
+    "path": "C:\\fixture\\home\\.gemini\\config\\plugins\\gcalendar",
+    "skills": [
+      "gcalendar"
+    ]
+  },
+  {
+    "name": "hello",
+    "enabled": true,
+    "version": "0.1.0",
+    "source": "antigravity",
+    "path": "C:\\fixture\\home\\.gemini\\config\\plugins\\hello"
+  }
+]

@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import {
   OpenTerminalDialog,
   terminalAvailable,
+  terminalNeedsRoute,
 } from "@/components/providers/OpenTerminalDialog";
 import type { Provider } from "@/types";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 const openTerminalMock = vi.fn();
 const pickDirectoryMock = vi.fn();
 const agyStatusMock = vi.fn();
 const agyRunningMock = vi.fn();
+const platform = vi.hoisted(() => ({ linux: false }));
 
 vi.mock("@/lib/api", () => ({
   providersApi: {
@@ -24,7 +27,11 @@ vi.mock("@/lib/api", () => ({
     agyAccountIsRunning: () => agyRunningMock(),
   },
 }));
-vi.mock("@/lib/platform", () => ({ isMac: () => true }));
+vi.mock("@/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform")>()),
+  isMac: () => !platform.linux,
+  isLinux: () => platform.linux,
+}));
 
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -45,11 +52,9 @@ const provider = {
 function renderDialog(
   onClose = vi.fn(),
   target: Provider = provider,
-  appId: "claude" | "codex" | "agy" = "claude",
+  appId: "claude" | "codex" | "agy" | "grokbuild" | "copilot" = "claude",
 ) {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const client = createTestQueryClient();
   render(
     <QueryClientProvider client={client}>
       <OpenTerminalDialog provider={target} appId={appId} onClose={onClose} />
@@ -60,6 +65,7 @@ function renderDialog(
 
 describe("OpenTerminalDialog", () => {
   beforeEach(() => {
+    platform.linux = false;
     window.localStorage.clear();
     openTerminalMock.mockReset().mockResolvedValue(true);
     pickDirectoryMock.mockReset();
@@ -99,6 +105,41 @@ describe("OpenTerminalDialog", () => {
       await screen.findByText(/打开前把 agy 的登录切换到 b@example.com/),
     ).toBeInTheDocument();
     expect(await screen.findByText(/检测到 agy 正在运行/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("checkbox", {
+        name: "provider.openTerminalDialog.agyUseCurrentLogin",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("can use agy's current login once on Linux when a synced binding is missing", async () => {
+    platform.linux = true;
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog(vi.fn(), agyOfficial("remote"), "agy");
+
+    expect(
+      await screen.findByText("provider.openTerminalDialog.agyBindingMissing"),
+    ).toBeInTheDocument();
+    const useCurrent = screen.getByRole("checkbox", {
+      name: "provider.openTerminalDialog.agyUseCurrentLogin",
+    });
+    expect(useCurrent).not.toBeChecked();
+    fireEvent.click(useCurrent);
+    expect(
+      screen.queryByText("provider.openTerminalDialog.agyBindingMissing"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.confirm",
+      }),
+    );
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("agy-official", "agy", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+      agyUseCurrentLogin: true,
+    });
   });
 
   it("stays quiet when the bound account is already signed in, or nothing is bound", async () => {
@@ -228,6 +269,25 @@ describe("OpenTerminalDialog", () => {
     ).toBeNull();
   });
 
+  // 回车直接打开：确认按钮被挤到下面时也能用键盘确认（#9478）；输入法选词的回车不算
+  it("opens on Enter in the extra-arguments field, but not while composing", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+    const input = screen.getByLabelText(
+      "provider.openTerminalDialog.extraArgs",
+    );
+
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    expect(openTerminalMock).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(openTerminalMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: false,
+    });
+  });
+
   it("prefills the remembered extra arguments", () => {
     window.localStorage.setItem(
       "cc-switch:terminal:extra-args:claude",
@@ -328,6 +388,41 @@ describe("OpenTerminalDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  // Copilot 自带模型卡以 --model=<卡片 id>/<模型> 启动；官方登录卡跟着 Copilot 自己的登录走
+  it("explains the Copilot BYOK terminal and hides it for the login card", () => {
+    renderDialog(
+      vi.fn(),
+      {
+        id: "relay",
+        name: "Relay",
+        settingsConfig: {
+          provider: { baseUrl: "https://relay.example/v1" },
+          models: [{ id: "m" }],
+        },
+      } as Provider,
+      "copilot",
+    );
+    expect(
+      screen.getByText("provider.openTerminalDialog.isolationBodyCopilot"),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the isolation notice for the Copilot login card", () => {
+    renderDialog(
+      vi.fn(),
+      {
+        id: "login",
+        name: "GitHub Copilot",
+        category: "official",
+        settingsConfig: { env: { COPILOT_MODEL: "gpt-5.4" } },
+      } as Provider,
+      "copilot",
+    );
+    expect(
+      screen.queryByText("provider.openTerminalDialog.isolationTitle"),
+    ).not.toBeInTheDocument();
+  });
+
   const codexRelay = {
     id: "kimi",
     name: "Kimi",
@@ -349,21 +444,74 @@ describe("OpenTerminalDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("offers a Codex terminal for login or routed cards only when it is current", () => {
+  it("offers a Codex terminal for login cards only when it is current", () => {
     const official = {
       id: "openai",
       name: "OpenAI Official",
       category: "official",
       settingsConfig: { auth: {}, config: "" },
     } as Provider;
+    expect(terminalAvailable(codexRelay, "codex", false)).toBe(true);
+    expect(terminalAvailable(official, "codex", false)).toBe(false);
+    expect(terminalAvailable(official, "codex", true)).toBe(true);
+    expect(terminalAvailable(official, "claude", false)).toBe(true);
+  });
+
+  // 终端直连卡上的地址：要经路由的卡（托管账号、非原生格式）直连不通，托管账号卡没 Key，
+  // Claude Code 的临时文件把凭据置空后只会提示 /login。按钮照样显示（卡片对齐），但置灰
+  it("keeps the terminal button but marks route-only cards, current or not", () => {
+    const copilot = {
+      id: "copilot",
+      name: "GitHub Copilot",
+      settingsConfig: {
+        env: { ANTHROPIC_BASE_URL: "https://api.githubcopilot.com" },
+      },
+      meta: { providerType: "github_copilot", apiFormat: "openai_chat" },
+    } as Provider;
+    const chatFormat = {
+      ...provider,
+      meta: { apiFormat: "openai_chat" },
+    } as Provider;
+    const fullUrl = { ...provider, meta: { isFullUrl: true } } as Provider;
+    for (const card of [copilot, chatFormat, fullUrl]) {
+      expect(terminalAvailable(card, "claude", false)).toBe(true);
+      expect(terminalNeedsRoute(card, "claude")).toBe(true);
+    }
+    expect(terminalNeedsRoute(provider, "claude")).toBe(false);
+    expect(
+      terminalNeedsRoute(
+        { ...provider, meta: { apiFormat: "anthropic" } } as Provider,
+        "claude",
+      ),
+    ).toBe(false);
+
     const routed = {
       ...codexRelay,
       meta: { apiFormat: "anthropic" },
     } as Provider;
-    expect(terminalAvailable(codexRelay, "codex", false)).toBe(true);
-    expect(terminalAvailable(official, "codex", false)).toBe(false);
-    expect(terminalAvailable(official, "codex", true)).toBe(true);
-    expect(terminalAvailable(routed, "codex", true)).toBe(false);
-    expect(terminalAvailable(official, "claude", false)).toBe(true);
+    expect(terminalAvailable(routed, "codex", false)).toBe(true);
+    expect(terminalNeedsRoute(routed, "codex")).toBe(true);
+    expect(terminalNeedsRoute(codexRelay, "codex")).toBe(false);
+  });
+
+  const grokRelay = {
+    id: "grok-relay",
+    name: "Grok Relay",
+    settingsConfig: {
+      config:
+        '[models]\ndefault = "relay"\n[model.relay]\nbase_url = "https://relay.example.com/v1"\napi_key = "sk-grok"\n',
+    },
+  } as Provider;
+
+  // Grok Build 没有只对一个进程换配置的办法：只有当前供应商能打开，跑的就是 live 配置
+  it("offers a Grok Build terminal only for the current card and never calls it isolated", () => {
+    expect(terminalAvailable(grokRelay, "grokbuild", true)).toBe(true);
+    expect(terminalAvailable(grokRelay, "grokbuild", false)).toBe(false);
+
+    renderDialog(vi.fn(), grokRelay, "grokbuild");
+    expect(screen.getByText("--always-approve")).toBeInTheDocument();
+    expect(
+      screen.queryByText("provider.openTerminalDialog.isolationTitle"),
+    ).not.toBeInTheDocument();
   });
 });

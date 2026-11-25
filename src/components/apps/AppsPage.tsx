@@ -36,15 +36,16 @@ import {
   Copy,
   Download,
   GripVertical,
+  Info,
   LayoutGrid,
   Loader2,
   MoreHorizontal,
   RefreshCw,
   Trash2,
 } from "lucide-react";
-import type { AppId } from "@/lib/api";
+import { settingsApi, type AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import type { ToolInstallationReport } from "@/lib/api/settings";
+import type { ToolInstallationOverview } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
@@ -83,6 +84,7 @@ import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
+  isDesktopManagedTool,
   ONE_CLICK_INSTALL_COMMANDS,
   TOOL_APP_IDS,
   TOOL_NAMES,
@@ -105,19 +107,29 @@ const SOURCE_LABEL: Record<string, string> = {
   pnpm: "pnpm",
   scoop: "Scoop",
   pip: "pip",
+  desktop: "OpenCode Desktop",
 };
 
-type Row = { kind: "tool"; tool: ToolName } | { kind: "desktop" };
+// WorkBuddy 是桌面应用、自己负责更新，这里和 Claude Desktop 一样只管侧栏显示
+type Row =
+  | { kind: "tool"; tool: ToolName }
+  | { kind: "desktop" }
+  | { kind: "workbuddy" };
 
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
+  ["workbuddy", { kind: "workbuddy" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
 const rowKey = (row: Row): AppId =>
-  row.kind === "desktop" ? "claude-desktop" : TOOL_APP_IDS[row.tool];
+  row.kind === "desktop"
+    ? "claude-desktop"
+    : row.kind === "workbuddy"
+      ? "workbuddy"
+      : TOOL_APP_IDS[row.tool];
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -142,13 +154,15 @@ type DragHandle = {
 /** 可拖动的行把拖动把手交给里面的 `AppRow`（ToolRow 自己渲染 AppRow，不必逐层传参）。 */
 const DragHandleContext = createContext<DragHandle | null>(null);
 
-/** 本机有这个命令行应用：探到了版本、装了但跑不起来，或探测报告里有安装位置（和「卸载」出现的条件一致）。 */
+/** 本机有这个命令行应用：探到了版本、装了但跑不起来，或安装清单里有安装位置（和「卸载」出现的条件一致）。 */
 function isToolPresent(
   info: { version?: string | null; installed_but_broken?: boolean } | undefined,
-  report: ToolInstallationReport | undefined,
+  report: ToolInstallationOverview | undefined,
 ): boolean {
   return Boolean(
-    info?.version || info?.installed_but_broken || report?.installs.length,
+    info?.version ||
+      info?.installed_but_broken ||
+      (report?.installs?.length ?? 0) > 0,
   );
 }
 
@@ -182,6 +196,12 @@ export function AppsPage() {
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });
+  const { data: workbuddyStatus, isPending: isWorkbuddyStatusPending } =
+    useQuery({
+      queryKey: ["config-status", "workbuddy"],
+      queryFn: () => settingsApi.getConfigStatus("workbuddy"),
+      staleTime: 30_000,
+    });
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
@@ -189,9 +209,22 @@ export function AppsPage() {
     if (row.kind === "desktop") {
       return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
     }
+    // WorkBuddy 同样没有命令可探，按配置目录（~/.workbuddy）在不在判断
+    if (row.kind === "workbuddy") {
+      return isWorkbuddyStatusPending ? null : Boolean(workbuddyStatus?.exists);
+    }
     const info = tools.toolVersionByName.get(row.tool);
+    const report = tools.installReports?.[row.tool];
+    // 安装清单（本机定位、不跑命令，比版本探测快得多）先定分组：有安装 → 已安装；
+    // 清单为空 → 未安装（清单含登录 shell 解析到的默认入口，和版本探测看到的是同一处），
+    // 版本探到「装了但跑不起来」时再归回已安装。跑在 WSL 里的工具本机清单说明不了什么，
+    // 照旧等版本探测。
+    if (report && !report.is_wsl) {
+      return report.installs.length > 0 || isToolPresent(info, report);
+    }
+    // 清单未回（或 WSL）：首次探测还没出结果时先不分组
     if (!info && tools.isLoadingTools) return null;
-    return isToolPresent(info, tools.installReports?.[row.tool]);
+    return isToolPresent(info, report);
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
@@ -336,7 +369,24 @@ export function AppsPage() {
   };
 
   const renderRow = (row: Row) =>
-    row.kind === "desktop" ? (
+    row.kind === "workbuddy" ? (
+      <AppRow
+        key="workbuddy"
+        app="workbuddy"
+        name={<span className="truncate">{APP_DISPLAY_NAME.workbuddy}</span>}
+        version={
+          <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+            {workbuddyStatus?.exists
+              ? t("appsPage.desktopConnected")
+              : t("appsPage.desktopNotConnected")}
+            <HelpTip title={APP_DISPLAY_NAME.workbuddy} align="end">
+              {t("appsPage.workbuddyHelp")}
+            </HelpTip>
+          </span>
+        }
+        visibility={visibilitySwitch("workbuddy")}
+      />
+    ) : row.kind === "desktop" ? (
       <AppRow
         key="claude-desktop"
         app="claude-desktop"
@@ -714,7 +764,7 @@ function ToolRow({
 }) {
   const { t } = useTranslation();
   const info = tools.toolVersionByName.get(tool);
-  const report: ToolInstallationReport | undefined =
+  const report: ToolInstallationOverview | undefined =
     tools.installReports?.[tool];
   const defaultInstall =
     report?.installs.find((install) => install.is_path_default) ??
@@ -728,6 +778,8 @@ function ToolRow({
     (tools.isLoadingTools && !tools.toolVersionByName.has(tool));
   const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
   const nodeGap = isOutdated ? info?.update_blocked_by_node : null;
+  // OpenCode Desktop 自带的命令行随 Desktop 更新，这里不给升级，只说明一句
+  const desktopManaged = isDesktopManagedTool(tool, tools.installReports);
   const broken = Boolean(info?.installed_but_broken);
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
@@ -738,7 +790,7 @@ function ToolRow({
       ? null
       : !info?.version
         ? "install"
-        : isOutdated && !nodeGap
+        : isOutdated && !nodeGap && !desktopManaged
           ? "update"
           : null);
   const sourceLabel = defaultInstall
@@ -799,7 +851,24 @@ function ToolRow({
   ) : null;
 
   const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
-  const meta = defaultInstall ? (
+  // 执行期间副行换成进度：排队中，或已用时间 + 命令最新一行输出
+  const progress = isBusy ? tools.toolProgress.get(tool) : undefined;
+  const progressMeta =
+    progress?.stage === "queued" ? (
+      <span className="truncate">{t("appsPage.toolQueued")}</span>
+    ) : progress?.stage === "running" ? (
+      <>
+        <ElapsedTime since={progress.startedAt} />
+        {progress.line && (
+          <span className="min-w-0 truncate font-mono" title={progress.line}>
+            {progress.line}
+          </span>
+        )}
+      </>
+    ) : null;
+  const meta = progressMeta ? (
+    progressMeta
+  ) : defaultInstall ? (
     <>
       <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
         {defaultInstall.path}
@@ -828,7 +897,7 @@ function ToolRow({
   ) : null;
 
   const wslControls =
-    info?.env_type === "wsl" ? (
+    info?.env_type === "wsl" || report?.is_wsl === true ? (
       <div className="flex items-center gap-2 text-caption text-fg-2">
         <span>Shell</span>
         <Select
@@ -890,6 +959,14 @@ function ToolRow({
       </p>
     ) : null;
 
+  const desktopLine =
+    !isVersionLoading && isOutdated && desktopManaged ? (
+      <p className="flex items-start gap-1 text-caption text-fg-2">
+        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        {t("settings.toolUpgradeDesktopManagedDetail")}
+      </p>
+    ) : null;
+
   const conflictList =
     expanded && installs && installs.length > 1 ? (
       <div className="space-y-1.5 rounded-control bg-warning-soft p-2.5">
@@ -907,10 +984,11 @@ function ToolRow({
     ) : null;
 
   const footer =
-    wslControls || errorLine || nodeLine || conflictList ? (
+    wslControls || errorLine || nodeLine || desktopLine || conflictList ? (
       <div className="space-y-2">
         {errorLine}
         {nodeLine}
+        {desktopLine}
         {wslControls}
         {conflictList}
       </div>
@@ -966,6 +1044,30 @@ function ToolRow({
       }
       footer={footer}
     />
+  );
+}
+
+function formatElapsed(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
+    : `${minutes}:${seconds}`;
+}
+
+function ElapsedTime({ since }: { since: number }) {
+  const { t } = useTranslation();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <span className="shrink-0 tabular-nums">
+      {t("appsPage.toolElapsed", { time: formatElapsed(now - since) })}
+    </span>
   );
 }
 

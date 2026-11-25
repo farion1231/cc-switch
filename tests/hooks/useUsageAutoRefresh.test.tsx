@@ -18,6 +18,7 @@ import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
 import { usageKeys } from "@/lib/query/usage";
 import type { SessionSyncResult } from "@/types/usage";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 vi.mock("@/lib/api/usage", () => ({
   usageApi: { syncSessionUsage: vi.fn() },
@@ -49,7 +50,7 @@ describe("useUsageAutoRefresh", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     focusManager.setFocused(true);
-    client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    client = createTestQueryClient();
     invalidate = vi.spyOn(client, "invalidateQueries");
     syncMock.mockReset().mockResolvedValue(syncResult);
   });
@@ -249,5 +250,23 @@ describe("useUsageAutoRefresh", () => {
     await advance(5000);
     expect(syncMock).toHaveBeenCalledTimes(2);
     expect(invalidate).toHaveBeenCalledTimes(2);
+  });
+
+  it("pauses rolling-range queries during a usage rebuild", async () => {
+    const { rerender } = renderHook(
+      ({ paused }) =>
+        useUsageAutoRefresh({
+          refreshIntervalMs: 5000,
+          sessionAutoSyncEnabled: false,
+          rollingRange: true,
+          paused,
+        }),
+      { wrapper, initialProps: { paused: true } },
+    );
+    await advance(120_000);
+    expect(invalidate).not.toHaveBeenCalled();
+    rerender({ paused: false });
+    await advance(60_000);
+    expect(invalidate).toHaveBeenCalledTimes(1);
   });
 });

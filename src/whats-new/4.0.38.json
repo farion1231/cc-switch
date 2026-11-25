@@ -1,0 +1,33 @@
+{
+  "version": "4.0.38",
+  "items": [
+    {
+      "type": "new",
+      "zh": "一键导入链接支持 WorkBuddy",
+      "zh-TW": "一鍵匯入連結支援 WorkBuddy",
+      "en": "Provider deep links can now import WorkBuddy providers",
+      "ja": "インポートリンクが WorkBuddy のプロバイダーに対応"
+    },
+    {
+      "type": "improve",
+      "zh": "Antigravity：Linux 可切换账号，会话列表去掉空会话",
+      "zh-TW": "Antigravity：Linux 可切換帳號，工作階段列表去掉空工作階段",
+      "en": "Antigravity: account switching on Linux, and no more empty sessions in the list",
+      "ja": "Antigravity：Linux でアカウント切り替えに対応、空セッションを一覧から除外"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 DeepSeek Harness 的第三方供应商突然全部消失",
+      "zh-TW": "修正 DeepSeek Harness 的第三方供應商突然全部消失",
+      "en": "Third-party providers no longer vanish from DeepSeek Harness",
+      "ja": "DeepSeek Harness からサードパーティのプロバイダーが消える問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复用量重复计算，以及主界面变成白条",
+      "zh-TW": "修正用量重複計算，以及主介面變成白條",
+      "en": "Usage is no longer double-counted, and the main window no longer opens as a thin strip",
+      "ja": "使用量の二重計上と、メイン画面が細い帯になる問題を修正"
+    }
+  ]
+}

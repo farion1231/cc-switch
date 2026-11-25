@@ -1,4 +1,5 @@
 import { renderHook, act, waitFor } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import i18n from "i18next";
 import { useSettingsForm } from "@/hooks/useSettingsForm";
@@ -28,7 +29,27 @@ afterEach(() => {
 });
 
 describe("useSettingsForm Hook", () => {
-  it("should normalize settings and sync language on initialization", async () => {
+  it("ignores an unsupported cached language sharing the Chinese prefix", () => {
+    useSettingsQueryMock.mockReturnValue({ data: null, isLoading: false });
+    window.localStorage.setItem("language", "zha");
+    (i18n as any).language = "en";
+    const { result } = renderHook(() => useSettingsForm());
+    expect(result.current.readPersistedLanguage()).toBe("en");
+  });
+
+  it.each([
+    ["zh-TW-u-nu-hanidec", "zh-TW"],
+    ["zh-Hant-TW", "zh-TW"],
+    ["zh-hantx", "zh"],
+    ["zh-hkx", "zh"],
+  ])("normalizes the Chinese tag %s to %s", (language, expected) => {
+    useSettingsQueryMock.mockReturnValue({ data: null, isLoading: false });
+    window.localStorage.setItem("language", language);
+    const { result } = renderHook(() => useSettingsForm());
+    expect(result.current.readPersistedLanguage()).toBe(expected);
+  });
+
+  it("renders normalized cached settings on the first commit", () => {
     useSettingsQueryMock.mockReturnValue({
       data: {
         showInTray: undefined,
@@ -41,33 +62,62 @@ describe("useSettingsForm Hook", () => {
       isLoading: false,
     });
 
-    const { result } = renderHook(() => useSettingsForm());
-
-    await waitFor(() => {
-      expect(result.current.settings).not.toBeNull();
+    const onCommit = vi.fn();
+    renderHook(() => {
+      const { settings, initialLanguage } = useSettingsForm();
+      useLayoutEffect(() => {
+        onCommit(settings, initialLanguage);
+      }, [settings, initialLanguage]);
     });
 
-    const settings = result.current.settings!;
-    expect(settings.showInTray).toBe(true);
-    expect(settings.minimizeToTrayOnClose).toBe(true);
-    expect(settings.enableClaudePluginIntegration).toBe(false);
-    expect(settings.claudeConfigDir).toBe("/Users/demo");
-    expect(settings.codexConfigDir).toBeUndefined();
-    expect(settings.language).toBe("en");
-    expect(result.current.initialLanguage).toBe("en");
+    expect(onCommit).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        showInTray: true,
+        minimizeToTrayOnClose: true,
+        enableClaudePluginIntegration: false,
+        claudeConfigDir: "/Users/demo",
+        codexConfigDir: undefined,
+        language: "en",
+      }),
+      "en",
+    );
     expect(changeLanguageSpy).toHaveBeenCalledWith("en");
   });
 
-  it("preserves Turkish from server settings", async () => {
+  it("waits for the query when the settings cache is empty", () => {
+    useSettingsQueryMock.mockReturnValue({ data: undefined, isLoading: true });
+    const { result, rerender } = renderHook(() => useSettingsForm());
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.settings).toBeNull();
+
     useSettingsQueryMock.mockReturnValue({
-      data: { language: "tr" },
+      data: { showInTray: false, language: "en" },
       isLoading: false,
     });
-    const { result } = renderHook(() => useSettingsForm());
-    await waitFor(() => expect(result.current.settings?.language).toBe("tr"));
-    expect(result.current.initialLanguage).toBe("tr");
-    expect(changeLanguageSpy).toHaveBeenCalledWith("tr");
+    rerender();
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.settings).toMatchObject({
+      showInTray: false,
+      language: "en",
+    });
   });
+
+  it.each(["tr", "ko", "ru", "de"])(
+    "preserves %s from server settings",
+    async (language) => {
+      useSettingsQueryMock.mockReturnValue({
+        data: { language },
+        isLoading: false,
+      });
+      const { result } = renderHook(() => useSettingsForm());
+      await waitFor(() =>
+        expect(result.current.settings?.language).toBe(language),
+      );
+      expect(result.current.initialLanguage).toBe(language);
+      expect(changeLanguageSpy).toHaveBeenCalledWith(language);
+    },
+  );
 
   it("should support japanese language preference from server data", async () => {
     useSettingsQueryMock.mockReturnValue({

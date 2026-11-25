@@ -247,11 +247,34 @@ mod tests {
     }
 
     #[test]
-    fn tolerates_mismatched_tag_pairs() {
-        assert_eq!(
-            run(&["<think>a</thinking>b"]),
-            ("a".to_string(), "b".to_string())
-        );
+    fn think_tag_edge_cases() {
+        let cases: [(&str, &[&str], &str, &str); 3] = [
+            (
+                "tolerates_mismatched_tag_pairs",
+                &["<think>a</thinking>b"],
+                "a",
+                "b",
+            ),
+            (
+                "a_held_back_tail_that_is_not_a_close_tag_is_released",
+                &["<think>a </th", "ree> b</think>c"],
+                "a </three> b",
+                "c",
+            ),
+            (
+                "newlines_held_back_before_a_possible_close_tag_are_released",
+                &["<think>a\n", "\n</th", "ree>b\n", "</think>c"],
+                "a\n\n</three>b",
+                "c",
+            ),
+        ];
+        for (case, chunks, thinking, text) in cases {
+            assert_eq!(
+                run(chunks),
+                (thinking.to_string(), text.to_string()),
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -262,14 +285,6 @@ mod tests {
         // 末尾可能是闭合标签的开头，先扣住
         assert_eq!(splitter.push(" two</th"), (Some(" two".into()), None));
         assert_eq!(splitter.push("ink>done"), (None, Some("done".into())));
-    }
-
-    #[test]
-    fn a_held_back_tail_that_is_not_a_close_tag_is_released() {
-        assert_eq!(
-            run(&["<think>a </th", "ree> b</think>c"]),
-            ("a </three> b".to_string(), "c".to_string())
-        );
     }
 
     #[test]
@@ -288,14 +303,6 @@ mod tests {
             let parts: Vec<&str> = parts.iter().map(String::as_str).collect();
             assert_eq!(run(&parts), expected, "chunk_len {chunk_len}");
         }
-    }
-
-    #[test]
-    fn newlines_held_back_before_a_possible_close_tag_are_released() {
-        assert_eq!(
-            run(&["<think>a\n", "\n</th", "ree>b\n", "</think>c"]),
-            ("a\n\n</three>b".to_string(), "c".to_string())
-        );
     }
 
     #[test]

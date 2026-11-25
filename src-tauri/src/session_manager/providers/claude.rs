@@ -27,7 +27,7 @@ use super::blocks::{
 };
 use super::utils::{
     extract_text, parse_timestamp_to_ms, path_basename, read_head_tail_lines, truncate_summary,
-    FileParseCache, JsonlSpan, LineSpans, TITLE_MAX_CHARS,
+    FileParseCache, JsonlSpan, LineSpans, ScanStatus, TITLE_MAX_CHARS,
 };
 
 const PROVIDER_ID: &str = "claude";
@@ -36,11 +36,19 @@ const PROVIDER_ID: &str = "claude";
 static PARSE_CACHE: LazyLock<FileParseCache> = LazyLock::new(FileParseCache::new);
 
 pub fn scan_sessions() -> Vec<SessionMeta> {
-    let root = get_claude_config_dir().join("projects");
-    let mut files = Vec::new();
-    collect_jsonl_files(&root, &mut files);
+    scan_sessions_with_status(&mut ScanStatus::default())
+}
 
-    PARSE_CACHE.scan(files, scan_session_file)
+pub(crate) fn scan_sessions_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let root = get_claude_config_dir().join("projects");
+    scan_sessions_in_root(&root, status)
+}
+
+pub(crate) fn scan_sessions_in_root(root: &Path, status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let mut files = Vec::new();
+    collect_jsonl_files_with_status(root, &mut files, status);
+
+    PARSE_CACHE.scan_with_status(files, scan_session_file, status)
 }
 
 pub fn delete_session(_root: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
@@ -289,20 +297,11 @@ fn infer_session_id_from_filename(path: &Path) -> Option<String> {
         .map(|stem| stem.to_string())
 }
 
-fn collect_jsonl_files(root: &Path, files: &mut Vec<PathBuf>) {
-    if !root.exists() {
-        return;
-    }
-
-    let entries = match std::fs::read_dir(root) {
-        Ok(entries) => entries,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
+fn collect_jsonl_files_with_status(root: &Path, files: &mut Vec<PathBuf>, status: &mut ScanStatus) {
+    for entry in status.entries(root) {
         let path = entry.path();
-        if path.is_dir() {
-            collect_jsonl_files(&path, files);
+        if status.is_dir(&path) {
+            collect_jsonl_files_with_status(&path, files, status);
         } else if path.extension().and_then(|ext| ext.to_str()) == Some("jsonl") {
             files.push(path);
         }
@@ -1050,6 +1049,10 @@ fn tool_call_block(item: RawItem<'_>, index: usize, line: JsonlSpan) -> SessionB
     }
 }
 
+/// Claude Code desktop 标记章节的 MCP 工具名（完整名形如 `mcp__ccd_session__mark_chapter`）。
+/// 前端 `turns.ts` 的 `MARK_CHAPTER_TOOL` 与此一致。
+const MARK_CHAPTER_TOOL: &str = "mark_chapter";
+
 /// 按 §3.3 提炼 Claude 工具的 kind（Bash 细化为 search）、标题与次要信息。
 fn claude_tool_title(
     raw_name: &str,
@@ -1067,6 +1070,17 @@ fn claude_tool_title(
     if kind == ToolKind::Mcp {
         let (server, tool) = split_mcp_name(raw_name)
             .unwrap_or((normalized.server.as_deref().unwrap_or_default(), raw_name));
+        // Claude Code desktop 的章节标记：标题就是章节名，阅读页据此渲染成章节而不是普通步骤。
+        // 只认工具名，不认 server（`ccd_session` 是桌面端内部名，可能改）
+        if tool == MARK_CHAPTER_TOOL {
+            if let Some(title) = s("title") {
+                return (
+                    kind,
+                    one_line_title(title),
+                    s("summary").map(one_line_title),
+                );
+            }
+        }
         return (kind, title_mcp(server, tool), first_string_field(input));
     }
 
@@ -1874,40 +1888,49 @@ mod tests {
     }
 
     #[test]
-    fn parse_session_uses_first_user_message_as_title() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session-abc.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
+    fn parse_session_title_and_metadata() {
+        for (case, file_name, lines, title) in [
+            ("parse_session_uses_first_user_message_as_title", "session-abc.jsonl", concat!(
                 "{\"sessionId\":\"session-abc\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
                 "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"How do I deploy?\"},\"sessionId\":\"session-abc\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
                 "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Here is how...\"},\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
-    }
-
-    #[test]
-    fn parse_session_custom_title_overrides_first_message() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session-def.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
+            ), "How do I deploy?"),
+            ("parse_session_custom_title_overrides_first_message", "session-def.jsonl", concat!(
                 "{\"sessionId\":\"session-def\",\"cwd\":\"/tmp/project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
                 "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"fix something\"},\"sessionId\":\"session-def\",\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
                 "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"timestamp\":\"2026-03-06T10:02:00Z\"}\n",
                 "{\"type\":\"custom-title\",\"customTitle\":\"fix-login-bug\",\"sessionId\":\"session-def\"}\n",
-            ),
-        )
-        .expect("write");
+            ), "fix-login-bug"),
+            // No user message and no custom-title → falls back to dir basename
+            ("parse_session_falls_back_to_dir_basename", "session-ghi.jsonl", concat!(
+                "{\"sessionId\":\"session-ghi\",\"cwd\":\"/tmp/my-project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
+            ), "my-project"),
+            ("parse_session_new_format_with_snapshot", "session-new.jsonl", concat!(
+                "{\"type\":\"file-history-snapshot\",\"messageId\":\"msg-1\",\"snapshot\":{},\"isSnapshotUpdate\":false}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"请帮我重构这个函数\"},\"sessionId\":\"session-new\",\"timestamp\":\"2026-03-06T10:00:00Z\",\"cwd\":\"/tmp/project\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"OK\"},\"timestamp\":\"2026-03-06T10:01:00Z\",\"cwd\":\"/tmp/project\"}\n",
+            ), "请帮我重构这个函数"),
+            ("parse_session_skips_command_caveat_and_slash_commands", "session-clear.jsonl", concat!(
+                "{\"type\":\"file-history-snapshot\",\"messageId\":\"msg-1\",\"snapshot\":{},\"isSnapshotUpdate\":false}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<local-command-caveat>Caveat: The messages below were generated by the user while running local commands.</local-command-caveat>\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:00:00Z\",\"cwd\":\"/tmp/project\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<command-name>/clear</command-name>\\n<command-message>clear</command-message>\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:00:01Z\",\"cwd\":\"/tmp/project\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"timestamp\":\"2026-03-06T10:00:02Z\",\"cwd\":\"/tmp/project\"}\n",
+                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"帮我看看工作区的改动\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:01:00Z\",\"cwd\":\"/tmp/project\"}\n",
+            ), "帮我看看工作区的改动"),
+        ] {
+            let temp = tempdir().expect("tempdir");
+            let path = temp.path().join(file_name);
+            std::fs::write(
+                &path,
+                lines,
+            )
+            .expect("write");
 
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("fix-login-bug"));
+            let meta = parse_session(&path).unwrap();
+            assert_eq!(meta.title.as_deref(), Some(title), "{case}");
+
+        }
     }
 
     #[test]
@@ -2002,24 +2025,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_session_falls_back_to_dir_basename() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session-ghi.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"sessionId\":\"session-ghi\",\"cwd\":\"/tmp/my-project\",\"timestamp\":\"2026-03-06T10:00:00Z\"}\n",
-                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"timestamp\":\"2026-03-06T10:01:00Z\"}\n",
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        // No user message and no custom-title → falls back to dir basename
-        assert_eq!(meta.title.as_deref(), Some("my-project"));
-    }
-
-    #[test]
     fn parse_session_truncates_long_title() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session-trunc.jsonl");
@@ -2037,44 +2042,6 @@ mod tests {
         let title = meta.title.unwrap();
         assert!(title.len() <= TITLE_MAX_CHARS + 3); // +3 for "..."
         assert!(title.ends_with("..."));
-    }
-
-    #[test]
-    fn parse_session_new_format_with_snapshot() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session-new.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"type\":\"file-history-snapshot\",\"messageId\":\"msg-1\",\"snapshot\":{},\"isSnapshotUpdate\":false}\n",
-                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"请帮我重构这个函数\"},\"sessionId\":\"session-new\",\"timestamp\":\"2026-03-06T10:00:00Z\",\"cwd\":\"/tmp/project\"}\n",
-                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"OK\"},\"timestamp\":\"2026-03-06T10:01:00Z\",\"cwd\":\"/tmp/project\"}\n",
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("请帮我重构这个函数"));
-    }
-
-    #[test]
-    fn parse_session_skips_command_caveat_and_slash_commands() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session-clear.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"type\":\"file-history-snapshot\",\"messageId\":\"msg-1\",\"snapshot\":{},\"isSnapshotUpdate\":false}\n",
-                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<local-command-caveat>Caveat: The messages below were generated by the user while running local commands.</local-command-caveat>\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:00:00Z\",\"cwd\":\"/tmp/project\"}\n",
-                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"<command-name>/clear</command-name>\\n<command-message>clear</command-message>\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:00:01Z\",\"cwd\":\"/tmp/project\"}\n",
-                "{\"type\":\"assistant\",\"message\":{\"role\":\"assistant\",\"content\":\"Done.\"},\"timestamp\":\"2026-03-06T10:00:02Z\",\"cwd\":\"/tmp/project\"}\n",
-                "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"帮我看看工作区的改动\"},\"sessionId\":\"session-clear\",\"timestamp\":\"2026-03-06T10:01:00Z\",\"cwd\":\"/tmp/project\"}\n",
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("帮我看看工作区的改动"));
     }
 
     #[test]
@@ -2104,40 +2071,33 @@ mod tests {
     }
 
     #[test]
-    fn workflow_journal_log_is_excluded_from_sessions() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("journal.jsonl");
-        std::fs::write(
-            &path,
-            "{\"type\":\"started\",\"key\":\"k\",\"agentId\":\"a\"}\n",
-        )
-        .expect("write");
+    fn agent_and_journal_files_are_excluded_from_sessions() {
+        for (case, file_name, content, excluded) in [
+            (
+                "workflow_journal_log_is_excluded_from_sessions",
+                "journal.jsonl",
+                "{\"type\":\"started\",\"key\":\"k\",\"agentId\":\"a\"}\n",
+                true,
+            ),
+            (
+                "agent_session_files_are_still_excluded",
+                "agent-abc123.jsonl",
+                "{\"type\":\"user\",\"isSidechain\":true}\n",
+                true,
+            ),
+            (
+                "real_session_file_is_not_excluded",
+                "8f8e7c8e-0000-0000-0000-000000000000.jsonl",
+                "{\"sessionId\":\"8f8e7c8e-0000-0000-0000-000000000000\"}\n",
+                false,
+            ),
+        ] {
+            let temp = tempdir().expect("tempdir");
+            let path = temp.path().join(file_name);
+            std::fs::write(&path, content).expect("write");
 
-        assert!(is_agent_session(&path));
-    }
-
-    #[test]
-    fn agent_session_files_are_still_excluded() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("agent-abc123.jsonl");
-        std::fs::write(&path, "{\"type\":\"user\",\"isSidechain\":true}\n").expect("write");
-
-        assert!(is_agent_session(&path));
-    }
-
-    #[test]
-    fn real_session_file_is_not_excluded() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp
-            .path()
-            .join("8f8e7c8e-0000-0000-0000-000000000000.jsonl");
-        std::fs::write(
-            &path,
-            "{\"sessionId\":\"8f8e7c8e-0000-0000-0000-000000000000\"}\n",
-        )
-        .expect("write");
-
-        assert!(!is_agent_session(&path));
+            assert_eq!(is_agent_session(&path), excluded, "{case}");
+        }
     }
 }
 
@@ -2570,6 +2530,49 @@ mod transcript_tests {
             &msgs[8].blocks[0],
             SessionBlock::ToolCall { by_user: true, .. }
         ));
+    }
+
+    #[test]
+    fn mark_chapter_call_uses_chapter_title() {
+        let (_t, _p, msgs, _) = parse_lines(&[assistant(
+            "a1",
+            "m1",
+            json!([
+                { "type": "tool_use", "id": "t1", "name": "mcp__ccd_session__mark_chapter", "input": { "title": "接入支付回调", "summary": "验签与幂等\n第二行" } },
+                { "type": "tool_use", "id": "t2", "name": "mcp__other__mark_chapter", "input": { "title": "No summary" } },
+                { "type": "tool_use", "id": "t3", "name": "mcp__ccd_session__mark_chapter", "input": { "title": "  ", "summary": "only summary" } },
+                { "type": "tool_use", "id": "t4", "name": "mcp__ccd_session__mark_chapter", "input": "broken" }
+            ]),
+        )]);
+        let calls: Vec<(String, Option<String>)> = msgs[0]
+            .blocks
+            .iter()
+            .map(|block| match block {
+                SessionBlock::ToolCall {
+                    kind,
+                    title,
+                    detail,
+                    ..
+                } => {
+                    assert_eq!(*kind, ToolKind::Mcp);
+                    (title.clone(), detail.clone())
+                }
+                other => panic!("unexpected {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            calls,
+            [
+                ("接入支付回调".to_string(), Some("验签与幂等…".to_string())),
+                ("No summary".to_string(), None),
+                // 没有可用标题：按普通 MCP 调用处理
+                (
+                    "ccd_session.mark_chapter".to_string(),
+                    Some("only summary".to_string())
+                ),
+                ("ccd_session.mark_chapter".to_string(), None),
+            ]
+        );
     }
 
     #[test]

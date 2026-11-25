@@ -8,6 +8,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ProxyError {
+    #[error("请求体超过大小上限: {0} 字节")]
+    RequestBodyTooLarge(usize),
+
     #[error("上游响应体超过大小上限: {0} 字节")]
     ResponseBodyTooLarge(usize),
 
@@ -38,10 +41,6 @@ pub enum ProxyError {
     #[error("未配置供应商")]
     NoProvidersConfigured,
 
-    #[allow(dead_code)]
-    #[error("Provider不健康: {0}")]
-    ProviderUnhealthy(String),
-
     #[error("上游错误 (状态码 {status}): {body:?}")]
     UpstreamError { status: u16, body: Option<String> },
 
@@ -54,21 +53,14 @@ pub enum ProxyError {
     #[error("配置错误: {0}")]
     ConfigError(String),
 
-    #[allow(dead_code)]
     #[error("格式转换错误: {0}")]
     TransformError(String),
 
-    #[allow(dead_code)]
     #[error("无效的请求: {0}")]
     InvalidRequest(String),
 
     #[error("超时: {0}")]
     Timeout(String),
-
-    /// 流式响应空闲超时
-    #[allow(dead_code)]
-    #[error("流式响应空闲超时: {0}秒无数据")]
-    StreamIdleTimeout(u64),
 
     /// 认证错误
     #[error("认证失败: {0}")]
@@ -78,7 +70,10 @@ pub enum ProxyError {
     #[error("Codex 官方额度保护 (quota protection): {0}")]
     CodexQuotaProtection(String),
 
-    #[allow(dead_code)]
+    /// 「暂停使用官方登录」开着：Codex 不带官方登录，官方请求在本地拒绝。
+    #[error("已暂停使用 Codex 官方登录，官方请求不会发出。请在模型菜单换成第三方模型；官方额度恢复后，在 CC Switch 的 Codex 页面点「恢复官方登录」，然后重启 Codex。 (The Codex official login is paused, so official requests are not sent. Pick a third-party model in the model menu; once the official quota is back, click \"Resume official login\" on the Codex page in CC Switch, then restart Codex.)")]
+    CodexOfficialLoginPaused,
+
     #[error("内部错误: {0}")]
     Internal(String),
 }
@@ -141,9 +136,6 @@ impl IntoResponse for ProxyError {
                     ProxyError::NoProvidersConfigured => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
                     }
-                    ProxyError::ProviderUnhealthy(_) => {
-                        (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
-                    }
                     ProxyError::MaxRetriesExceeded => {
                         (StatusCode::SERVICE_UNAVAILABLE, self.to_string())
                     }
@@ -156,15 +148,15 @@ impl IntoResponse for ProxyError {
                     }
                     ProxyError::InvalidRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
                     ProxyError::Timeout(_) => (StatusCode::GATEWAY_TIMEOUT, self.to_string()),
-                    ProxyError::StreamIdleTimeout(_) => {
-                        (StatusCode::GATEWAY_TIMEOUT, self.to_string())
-                    }
                     ProxyError::AuthError(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
-                    ProxyError::CodexQuotaProtection(_) => {
+                    ProxyError::CodexQuotaProtection(_) | ProxyError::CodexOfficialLoginPaused => {
                         (StatusCode::FORBIDDEN, self.to_string())
                     }
                     ProxyError::Internal(_) => {
                         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+                    }
+                    ProxyError::RequestBodyTooLarge(_) => {
+                        (StatusCode::PAYLOAD_TOO_LARGE, self.to_string())
                     }
                     ProxyError::ResponseBodyTooLarge(_) => {
                         (StatusCode::BAD_GATEWAY, self.to_string())
@@ -194,8 +186,6 @@ pub enum ErrorCategory {
     Retryable, // 网络超时、5xx 错误
     /// 不可重试错误（4xx、认证失败）
     NonRetryable, // 认证失败、参数错误、4xx 错误
-    #[allow(dead_code)]
-    ClientAbort, // 客户端主动中断
 }
 
 /// 把错误连同 `source()` 原因链拼成一行。
@@ -222,24 +212,67 @@ pub fn describe_reqwest_error(error: reqwest::Error) -> String {
     describe_error_chain(&error.without_url())
 }
 
-/// 判断错误是否可重试
-#[allow(dead_code)]
-pub fn categorize_error(error: &reqwest::Error) -> ErrorCategory {
-    if error.is_timeout() || error.is_connect() {
-        return ErrorCategory::Retryable;
-    }
+/// 连不上的原因，给界面挑一句用户看得懂的提示用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NetworkErrorKind {
+    /// 系统拒绝发起连接：多半是防火墙或安全软件拦了本程序（Windows 10013、Unix EACCES/EPERM）
+    Blocked,
+    /// 地址到得了，但端口上没有服务
+    Refused,
+    Timeout,
+    Dns,
+    Tls,
+    Other,
+}
 
-    if let Some(status) = error.status() {
-        if status.is_server_error() {
-            ErrorCategory::Retryable
-        } else if status.is_client_error() {
-            ErrorCategory::NonRetryable
-        } else {
-            ErrorCategory::Retryable
+/// 沿 `source()` 链判断连不上的原因。
+///
+/// 按 `io::ErrorKind` 判断而不是匹配错误文本：系统给的错误文本是本地化的（中文 Windows 上
+/// 10013 是「以一种访问权限不允许的方式…」）。DNS 和 TLS 没有对应的 ErrorKind，只能认
+/// hyper / rustls 自己的英文文本。
+pub fn classify_error_chain(error: &(dyn std::error::Error + 'static)) -> NetworkErrorKind {
+    let (mut dns, mut blocked, mut refused, mut timeout, mut tls) =
+        (false, false, false, false, false);
+    let mut current = Some(error);
+    while let Some(cause) = current {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            match io.kind() {
+                std::io::ErrorKind::PermissionDenied => blocked = true,
+                std::io::ErrorKind::ConnectionRefused => refused = true,
+                std::io::ErrorKind::TimedOut => timeout = true,
+                _ => {}
+            }
         }
-    } else {
-        ErrorCategory::Retryable
+        let text = cause.to_string().to_ascii_lowercase();
+        if text.starts_with("dns error") || text.contains("failed to lookup address") {
+            dns = true;
+        }
+        if text.contains("certificate") || text.contains("tls") || text.contains("handshake") {
+            tls = true;
+        }
+        current = cause.source();
     }
+    if dns {
+        NetworkErrorKind::Dns
+    } else if blocked {
+        NetworkErrorKind::Blocked
+    } else if refused {
+        NetworkErrorKind::Refused
+    } else if timeout {
+        NetworkErrorKind::Timeout
+    } else if tls {
+        NetworkErrorKind::Tls
+    } else {
+        NetworkErrorKind::Other
+    }
+}
+
+pub fn classify_reqwest_error(error: &reqwest::Error) -> NetworkErrorKind {
+    if error.is_timeout() {
+        return NetworkErrorKind::Timeout;
+    }
+    classify_error_chain(error)
 }
 
 #[cfg(test)]
@@ -289,8 +322,77 @@ mod tests {
             .expect_err("connection should be refused");
         assert!(error.is_connect());
 
+        assert_eq!(classify_reqwest_error(&error), NetworkErrorKind::Refused);
         let text = describe_reqwest_error(error);
         assert!(text.starts_with("error sending request: "), "{text}");
         assert!(!text.contains("secret-token"), "{text}");
+    }
+
+    /// 外层文本可指定的错误，模拟 hyper_util 的 ConnectError（「dns error」「tcp connect error」）
+    #[derive(Debug)]
+    struct Labeled(&'static str, Option<std::io::Error>);
+
+    impl std::fmt::Display for Labeled {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Labeled {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.1
+                .as_ref()
+                .map(|e| e as &(dyn std::error::Error + 'static))
+        }
+    }
+
+    fn io(kind: std::io::ErrorKind, text: &str) -> Option<std::io::Error> {
+        Some(std::io::Error::new(kind, text.to_string()))
+    }
+
+    #[test]
+    fn classify_error_chain_reads_io_kind_not_localized_text() {
+        use std::io::ErrorKind;
+        let cases = [
+            (
+                Labeled(
+                    "tcp connect error",
+                    io(
+                        ErrorKind::PermissionDenied,
+                        "以一种访问权限不允许的方式做了一个访问套接字的尝试。 (os error 10013)",
+                    ),
+                ),
+                NetworkErrorKind::Blocked,
+            ),
+            (
+                Labeled("tcp connect error", io(ErrorKind::ConnectionRefused, "x")),
+                NetworkErrorKind::Refused,
+            ),
+            (
+                Labeled("tcp connect error", io(ErrorKind::TimedOut, "x")),
+                NetworkErrorKind::Timeout,
+            ),
+            (
+                Labeled("dns error", io(ErrorKind::Other, "x")),
+                NetworkErrorKind::Dns,
+            ),
+            (
+                Labeled(
+                    "error sending request",
+                    io(
+                        ErrorKind::InvalidData,
+                        "invalid peer certificate: UnknownIssuer",
+                    ),
+                ),
+                NetworkErrorKind::Tls,
+            ),
+            (
+                Labeled("connection reset", io(ErrorKind::ConnectionReset, "x")),
+                NetworkErrorKind::Other,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(classify_error_chain(&error), expected, "{error:?}");
+        }
     }
 }

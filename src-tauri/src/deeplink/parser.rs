@@ -89,20 +89,12 @@ fn parse_provider_deeplink(
         .clone();
 
     // Validate app type.
-    //
-    // Oh My Pi is refused with the same guidance as the import path
-    // (`deeplink/provider.rs`): a models.yml entry needs its models listed, which
-    // the Oh My Pi provider form composes. Accepting the link here would only
-    // fail later with a generic "invalid app" error.
-    if matches!(app.as_str(), "omp" | "ohmypi" | "oh-my-pi" | "oh_my_pi") {
-        return Err(AppError::InvalidInput(
-            "Oh My Pi providers must be added from the Oh My Pi provider page".to_string(),
-        ));
-    }
     if !matches!(
         app.as_str(),
         "agy"
+            | "copilot"
             | "claude"
+            | "claude-desktop"
             | "codex"
             | "gemini"
             | "grokbuild"
@@ -110,6 +102,11 @@ fn parse_provider_deeplink(
             | "openclaw"
             | "hermes"
             | "pi"
+            | "mcode"
+            | "kimi"
+            | "dsh"
+            | "omp"
+            | "workbuddy"
     ) {
         return Err(AppError::InvalidInput(format!(
             "Invalid provider app type: '{app}'"
@@ -144,11 +141,16 @@ fn parse_provider_deeplink(
 
     // Extract optional fields
     let model = params.get("model").cloned();
-    // Pi 的节点没有模型就选不到任何模型（见 `provider::build_pi_settings`）
-    if app == "pi" && model.as_deref().is_none_or(|model| model.trim().is_empty()) {
-        return Err(AppError::InvalidInput(
-            "Pi providers need a model; add 'model' to the link".to_string(),
-        ));
+    // 这几家的节点没有模型就选不到任何模型（见 `provider::build_pi_family_settings`）；
+    // WorkBuddy 的卡至少要一个模型才能保存
+    if matches!(
+        app.as_str(),
+        "pi" | "mcode" | "kimi" | "dsh" | "omp" | "workbuddy"
+    ) && model.as_deref().is_none_or(|model| model.trim().is_empty())
+    {
+        return Err(AppError::InvalidInput(format!(
+            "{app} providers need a model; add 'model' to the link"
+        )));
     }
     let notes = params.get("notes").cloned();
     let haiku_model = params.get("haikuModel").cloned();
@@ -190,6 +192,12 @@ fn parse_provider_deeplink(
     let usage_script = params.get("usageScript").cloned();
     let usage_api_key = params.get("usageApiKey").cloned();
     let usage_base_url = params.get("usageBaseUrl").cloned();
+    if let Some(ref ubu) = usage_base_url {
+        let trimmed = ubu.trim();
+        if !trimmed.is_empty() {
+            validate_url(trimmed, "usageBaseUrl")?;
+        }
+    }
     let usage_access_token = params.get("usageAccessToken").cloned();
     let usage_user_id = params.get("usageUserId").cloned();
     let usage_auto_interval = params
@@ -266,9 +274,10 @@ fn parse_prompt_deeplink(
             | "hermes"
             | "pi"
             | "mcode"
+            | "copilot"
     ) {
         return Err(AppError::InvalidInput(format!(
-            "Invalid app type: must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', or 'mcode', got '{app}'"
+            "Invalid app type: must be 'claude', 'codex', 'gemini', 'agy', 'copilot', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', or 'mcode', got '{app}'"
         )));
     }
 
@@ -355,9 +364,13 @@ fn parse_mcp_deeplink(
                 | "kimi"
                 | "dsh"
                 | "omp"
+                | "copilot"
+                | "workbuddy"
+                | "work-buddy"
+                | "codebuddy"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', or 'omp', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', 'omp', 'copilot', 'workbuddy', or 'codebuddy', got '{trimmed}'"
             )));
         }
     }
@@ -460,4 +473,36 @@ fn parse_skill_deeplink(
         usage_user_id: None,
         usage_auto_interval: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_provider_rejects_invalid_usage_base_url() {
+        for bad in ["javascript:alert(1)", "file:///etc/passwd", "not-a-url"] {
+            let link = Url::parse_with_params(
+                "ccswitch://v1/import",
+                &[
+                    ("resource", "provider"),
+                    ("app", "claude"),
+                    ("name", "Test"),
+                    ("endpoint", "https://api.example.com"),
+                    ("apiKey", "sk-1"),
+                    ("usageBaseUrl", bad),
+                ],
+            )
+            .unwrap()
+            .to_string();
+            let res = parse_deeplink_url(&link);
+            assert!(
+                res.is_err(),
+                "invalid usageBaseUrl '{bad}' must be rejected, got: {res:?}"
+            );
+        }
+
+        let valid = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-1&usageBaseUrl=https%3A%2F%2Fusage.example.com";
+        assert!(parse_deeplink_url(valid).is_ok());
+    }
 }

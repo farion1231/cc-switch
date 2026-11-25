@@ -3,7 +3,7 @@
 //! 包含 Schema 迁移和基本功能的测试。
 
 use super::*;
-use crate::app_config::MultiAppConfig;
+use crate::app_config::{AppType, MultiAppConfig};
 use crate::provider::{Provider, ProviderManager};
 use indexmap::IndexMap;
 use rusqlite::{params, Connection};
@@ -181,6 +181,55 @@ fn existing_skill_repo_selection_is_not_supplemented() {
     assert!(db
         .get_bool_flag("default_skill_repos_initialized")
         .expect("get initialized flag"));
+}
+
+#[test]
+fn migration_v26_to_v27_adds_skill_repo_host() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE skills (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            directory TEXT NOT NULL,
+            repo_owner TEXT,
+            repo_name TEXT
+        );
+        INSERT INTO skills (id, name, directory, repo_owner, repo_name)
+        VALUES ('owner/repo:demo', 'Demo', 'demo', 'owner', 'repo');
+
+        CREATE TABLE skill_repos (
+            owner TEXT NOT NULL, name TEXT NOT NULL, branch TEXT NOT NULL DEFAULT 'main',
+            enabled BOOLEAN NOT NULL DEFAULT 1, PRIMARY KEY (owner, name)
+        );
+        INSERT INTO skill_repos (owner, name, branch, enabled)
+        VALUES ('owner', 'repo', 'develop', 0);
+        "#,
+    )
+    .expect("seed v26 skill tables");
+    Database::set_user_version(&conn, 26).expect("set user_version=26");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+
+    assert_eq!(
+        Database::get_user_version(&conn).expect("version after migration"),
+        SCHEMA_VERSION
+    );
+    // 已有仓库原样保留，主机靠列默认值落成 github.com
+    let (host, branch, enabled): (String, String, bool) = conn
+        .query_row("SELECT host, branch, enabled FROM skill_repos", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .expect("migrated repo");
+    assert_eq!(
+        (host.as_str(), branch.as_str(), enabled),
+        ("github.com", "develop", false)
+    );
+    // 已安装的技能不回填：NULL 就按 github.com 读
+    let repo_host: Option<String> = conn
+        .query_row("SELECT repo_host FROM skills", [], |row| row.get(0))
+        .expect("migrated skill");
+    assert_eq!(repo_host, None);
 }
 
 #[test]
@@ -699,7 +748,7 @@ fn migration_from_v3_8_schema_v1_to_current_schema_v3() {
 }
 
 #[test]
-fn schema_dry_run_does_not_write_to_disk() {
+fn json_migration_accepts_minimal_config() {
     // Create minimal valid config for migration
     let mut apps = HashMap::new();
     apps.insert("claude".to_string(), ProviderManager::default());
@@ -714,16 +763,16 @@ fn schema_dry_run_does_not_write_to_disk() {
         claude_common_config_snippet: None,
     };
 
-    // Dry-run should succeed without any file I/O errors
-    let result = Database::migrate_from_json_dry_run(&config);
+    let db = Database::memory().expect("create memory db");
+    let result = db.migrate_from_json(&config);
     assert!(
         result.is_ok(),
-        "Dry-run should succeed with valid config: {result:?}"
+        "Migration should succeed with valid config: {result:?}"
     );
 }
 
 #[test]
-fn dry_run_validates_schema_compatibility() {
+fn json_migration_imports_provider_data() {
     // Create config with actual provider data
     let mut providers = IndexMap::new();
     providers.insert(
@@ -764,12 +813,16 @@ fn dry_run_validates_schema_compatibility() {
         claude_common_config_snippet: None,
     };
 
-    // Dry-run should validate the full migration path
-    let result = Database::migrate_from_json_dry_run(&config);
+    let db = Database::memory().expect("create memory db");
+    let result = db.migrate_from_json(&config);
     assert!(
         result.is_ok(),
-        "Dry-run should succeed with provider data: {result:?}"
+        "Migration should succeed with provider data: {result:?}"
     );
+    let migrated = db
+        .get_all_providers(&AppType::Claude)
+        .expect("read providers");
+    assert_eq!(migrated["test-provider"].name, "Test Provider");
 }
 
 #[test]
@@ -1068,6 +1121,32 @@ fn model_pricing_seed_covers_deepseek_v41_flash_aliases() {
 }
 
 #[test]
+fn model_pricing_seed_includes_claude_fable_5_2() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'claude-fable-5-2'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Fable 5.2 price");
+
+    assert_eq!(
+        price,
+        (
+            "8".to_string(),
+            "40".to_string(),
+            "0.20".to_string(),
+            "10".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_claude_5_1_and_standard_sonnet_5_prices() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
@@ -1220,6 +1299,32 @@ fn model_pricing_refresh_finishes_old_repair_chains_and_preserves_custom_prices(
 }
 
 #[test]
+fn model_pricing_seed_includes_qwen4_max() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'qwen4-max'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Qwen4 Max price");
+
+    assert_eq!(
+        price,
+        (
+            "1.50".to_string(),
+            "4.50".to_string(),
+            "0.075".to_string(),
+            "1.875".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_gpt_6_astra() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
@@ -1272,6 +1377,32 @@ fn model_pricing_seed_includes_glm_5_3_flash() {
 }
 
 #[test]
+fn model_pricing_seed_includes_gemini_4_neon() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-4-neon'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 4 Neon price");
+
+    assert_eq!(
+        price,
+        (
+            "3.00".to_string(),
+            "15.00".to_string(),
+            "0.15".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
 fn model_pricing_seed_includes_gemini_4_argon() {
     let db = Database::memory().expect("create memory db");
     let conn = db.conn.lock().expect("lock conn");
@@ -1285,6 +1416,32 @@ fn model_pricing_seed_includes_gemini_4_argon() {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .expect("query Gemini 4 Argon price");
+
+    assert_eq!(
+        price,
+        (
+            "2.00".to_string(),
+            "10.00".to_string(),
+            "0.10".to_string(),
+            "0".to_string(),
+        )
+    );
+}
+
+#[test]
+fn model_pricing_seed_includes_gemini_4_carbon() {
+    let db = Database::memory().expect("create memory db");
+    let conn = db.conn.lock().expect("lock conn");
+
+    let price: (String, String, String, String) = conn
+        .query_row(
+            "SELECT input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+             FROM model_pricing WHERE model_id = 'gemini-4-carbon'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .expect("query Gemini 4 Carbon price");
 
     assert_eq!(
         price,
@@ -1496,6 +1653,10 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
     conn.execute_batch(
         "ALTER TABLE mcp_servers DROP COLUMN enabled_dsh;
          ALTER TABLE skills DROP COLUMN enabled_dsh;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
+         ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_codebuddy;
+         ALTER TABLE skills DROP COLUMN enabled_codebuddy;
          INSERT INTO mcp_servers (id, name, server_config, enabled_omp)
          VALUES ('shared', 'Shared MCP', '{}', 1);
          INSERT INTO skills (id, name, directory, enabled_kimi)
@@ -1530,4 +1691,213 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
         .query_row("SELECT enabled_dsh FROM mcp_servers", [], |row| row
             .get::<_, bool>(0))
         .unwrap());
+}
+
+#[test]
+fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_state() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    conn.execute_batch(
+        "ALTER TABLE mcp_servers DROP COLUMN enabled_copilot;
+         ALTER TABLE skills DROP COLUMN enabled_copilot;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
+         ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_codebuddy;
+         ALTER TABLE skills DROP COLUMN enabled_codebuddy;
+         INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
+         VALUES ('shared', 'Shared MCP', '{}', 1);
+         INSERT INTO skills (id, name, directory, enabled_dsh)
+         VALUES ('skill', 'Skill', 'skill', 1);",
+    )
+    .expect("seed v24 database");
+    Database::set_user_version(&conn, 24).expect("set user_version=24");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade v24 database");
+    // v24 → v25（Copilot）→ v26（WorkBuddy）
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    for table in ["mcp_servers", "skills"] {
+        let flags: (bool, bool, bool, bool) = conn
+            .query_row(
+                &format!(
+                    "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_codebuddy FROM {table}"
+                ),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .expect("read migrated flags");
+        assert_eq!(flags, (true, false, false, false), "{table}");
+    }
+
+    conn.execute("UPDATE skills SET enabled_copilot = 1", [])
+        .unwrap();
+    Database::apply_schema_migrations_on_conn(&conn).expect("reopen migrated database");
+    assert!(conn
+        .query_row("SELECT enabled_copilot FROM skills", [], |row| row
+            .get::<_, bool>(0))
+        .unwrap());
+}
+
+#[test]
+fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
+    // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
+    let conn = Connection::open_in_memory().expect("open memory db");
+    Database::create_tables_on_conn(&conn).expect("create tables");
+    Database::apply_schema_migrations_on_conn(&conn).expect("apply migrations");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+    for table in ["mcp_servers", "skills"] {
+        for column in [
+            "enabled_dsh",
+            "enabled_copilot",
+            "enabled_workbuddy",
+            "enabled_codebuddy",
+        ] {
+            assert!(
+                Database::has_column(&conn, table, column).expect("inspect column"),
+                "{table}.{column} missing on fresh install"
+            );
+        }
+    }
+}
+
+#[test]
+fn recovers_after_a_panic_poisons_the_connection_lock() {
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+    db.set_setting("kept", "1").expect("seed");
+
+    let poisoner = std::sync::Arc::clone(&db);
+    let joined = std::thread::spawn(move || {
+        let conn = poisoner.conn.lock().expect("lock conn");
+        conn.execute_batch("BEGIN; INSERT INTO settings (key, value) VALUES ('lost', '1');")
+            .expect("open transaction");
+        panic!("task panics while holding the lock");
+    })
+    .join();
+    assert!(joined.is_err());
+    assert!(db.conn.is_poisoned());
+
+    // 中毒后仍能读写，半截事务被回滚
+    assert_eq!(
+        db.get_setting("kept")
+            .expect("read after poison")
+            .as_deref(),
+        Some("1")
+    );
+    assert_eq!(db.get_setting("lost").expect("read after poison"), None);
+    db.set_setting("after", "1").expect("write after poison");
+    assert!(!db.conn.is_poisoned());
+}
+
+#[test]
+fn keeps_the_lock_poisoned_when_rollback_fails() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization, TransactionOperation};
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+
+    let poisoner = std::sync::Arc::clone(&db);
+    let joined = std::thread::spawn(move || {
+        let conn = poisoner.conn.lock().expect("lock conn");
+        conn.execute_batch("BEGIN").expect("open transaction");
+        conn.authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
+            AuthAction::Transaction {
+                operation: TransactionOperation::Rollback,
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }));
+        panic!("task panics while holding the lock");
+    })
+    .join();
+    assert!(joined.is_err());
+
+    assert!(db.get_setting("kept").is_err());
+    assert!(db.conn.is_poisoned());
+}
+
+#[tokio::test]
+async fn proxy_dao_calls_survive_a_poisoned_lock() {
+    let db = std::sync::Arc::new(Database::memory().expect("memory db"));
+    db.set_proxy_flags_sync(&AppType::Claude, true, true)
+        .expect("set flags");
+    let mut proxy = db.get_global_proxy_config().await.expect("set port");
+    proxy.listen_port = 25721;
+    db.update_global_proxy_config(proxy)
+        .await
+        .expect("set port");
+
+    // 每次调用前都重新毒化，确保每个调用点自己完成恢复
+    let poison = || {
+        let poisoner = std::sync::Arc::clone(&db);
+        let joined = std::thread::spawn(move || {
+            let _conn = poisoner.conn.lock().expect("lock conn");
+            panic!("task panics while holding the lock");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(db.conn.is_poisoned());
+    };
+
+    poison();
+    db.set_proxy_flags_sync(&AppType::Claude, true, false)
+        .expect("set flags after poison");
+    poison();
+    assert_eq!(
+        db.get_proxy_flags_sync(&AppType::Claude),
+        (true, false),
+        "get_proxy_flags_sync after poison"
+    );
+    poison();
+    assert_eq!(
+        db.get_proxy_client_endpoint_sync().1,
+        25721,
+        "get_proxy_client_endpoint_sync after poison"
+    );
+    poison();
+    db.set_pricing_model_source(&AppType::Claude, "request")
+        .await
+        .expect("set pricing source after poison");
+    assert_eq!(
+        db.get_pricing_model_source(&AppType::Claude)
+            .await
+            .expect("read pricing source"),
+        "request"
+    );
+}
+
+/// 早期开发版把 enabled_codebuddy 记作 v27，库里没有上游 v26→v27 的 GitLab 列；
+/// 升到 v28 要把它们补上，并保留已有的 codebuddy 开关。
+#[test]
+fn migration_from_dev_v27_fills_skill_repo_host_and_keeps_codebuddy_flag() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0, enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0);
+        CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0, enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0);
+        CREATE TABLE skill_repos (owner TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (owner, name));
+        INSERT INTO mcp_servers (id, enabled_codebuddy) VALUES ('m', 1);
+        INSERT INTO skills (id, enabled_codebuddy) VALUES ('s', 1);
+        INSERT INTO skill_repos (owner, name) VALUES ('o', 'r');
+        "#,
+    )
+    .expect("seed dev v27 database");
+    Database::set_user_version(&conn, 27).expect("set user_version=27");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade dev v27 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+
+    for table in ["mcp_servers", "skills"] {
+        let enabled: bool = conn
+            .query_row(
+                &format!("SELECT enabled_codebuddy FROM {table}"),
+                [],
+                |row| row.get(0),
+            )
+            .expect("read codebuddy flag");
+        assert!(enabled, "{table}");
+    }
+    let repo_host: Option<String> = conn
+        .query_row("SELECT repo_host FROM skills", [], |row| row.get(0))
+        .expect("skills.repo_host exists");
+    assert_eq!(repo_host, None);
+    let host: String = conn
+        .query_row("SELECT host FROM skill_repos", [], |row| row.get(0))
+        .expect("skill_repos.host exists");
+    assert_eq!(host, "github.com");
 }

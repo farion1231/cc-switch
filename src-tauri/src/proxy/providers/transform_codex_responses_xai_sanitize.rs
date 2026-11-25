@@ -17,6 +17,8 @@
 //! entry points so they cannot be mistaken for "just delete a field". Gated on
 //! [`super::codex::provider_needs_responses_namespace_flatten`], which covers
 //! xAI OAuth *and* API-key cards whose live upstream is `api.x.ai` Responses.
+//! Copilot's native Responses path also reuses these rewrites for resolved
+//! Grok models, without the direct-xAI model fallback.
 //!
 //! Run request sanitizers *after* namespace flattening: by then Codex's
 //! `namespace` tools are already lifted to top-level `function` tools, so the
@@ -674,7 +676,8 @@ pub(crate) fn apply_xai_native_responses_request_compat(
     provider_id: &str,
     upstream_model: Option<&str>,
     settings: &Value,
-) {
+) -> bool {
+    let mut changed = false;
     // Remap the model before sanitizing: grok-4.5-specific field stripping
     // keys off `body.model`, so an unknown subagent SKU must land on its final
     // name first or those fields survive the strip.
@@ -682,24 +685,29 @@ pub(crate) fn apply_xai_native_responses_request_compat(
         let allowed = collect_xai_catalog_model_ids(settings);
         if let Some((from, to)) = rewrite_xai_unknown_request_model(body, upstream_model, &allowed)
         {
+            changed = true;
             log::info!(
                 "[Codex] Rewrote xAI-unknown request model {from} -> {to} (provider={provider_id})"
             );
         }
     }
     if sanitize_xai_responses_request(body) {
+        changed = true;
         log::debug!("[Codex] Sanitized xAI-unsupported Responses fields (provider={provider_id})");
     }
     if rewrite_xai_agent_message_input_items(body) {
+        changed = true;
         log::info!(
             "[Codex] Rewrote xAI-unsupported agent_message input items (provider={provider_id})"
         );
     }
     if rewrite_xai_call_id_less_tool_outputs(body) {
+        changed = true;
         log::info!(
             "[Codex] Rewrote function_call_output items without call_id for xAI (provider={provider_id})"
         );
     }
+    changed
 }
 
 /// Same marker the Responses→Chat bridge uses, so the model reads one wording

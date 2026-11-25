@@ -106,10 +106,21 @@ pub(crate) fn adaptive_thinking_is_default(model: &str) -> bool {
     .any(|needle| normalized.contains(needle))
 }
 
-/// Models that reject `thinking: {"type":"disabled"}`.
+/// Models that reject `thinking: {"type":"disabled"}` at every effort level
+/// (Fable / Mythos 5.x, Opus 5.5 and Sonnet 5.5).
 pub(crate) fn thinking_cannot_be_disabled(model: &str) -> bool {
     let normalized = normalize_model_name(model);
-    ["fable-5", "mythos-5"]
+    ["fable-5", "mythos-5", "opus-5-5", "sonnet-5-5"]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+}
+
+/// Adaptive-only models that accept a replayed tool turn without a thinking
+/// block (adaptive thinking may skip thinking before a tool call), so unsigned
+/// tool history keeps adaptive thinking instead of having to disable it.
+pub(crate) fn accepts_unsigned_tool_history(model: &str) -> bool {
+    let normalized = normalize_model_name(model);
+    ["opus-5-5", "sonnet-5-5"]
         .iter()
         .any(|needle| normalized.contains(needle))
 }
@@ -201,6 +212,20 @@ mod tests {
         }
         assert!(thinking_cannot_be_disabled("claude-fable-5"));
         assert!(!thinking_cannot_be_disabled("claude-sonnet-5"));
+        assert!(!thinking_cannot_be_disabled("claude-opus-5"));
+        for model in [
+            "claude-opus-5-5",
+            "claude-opus-5.5",
+            "claude-opus-5-5[1m]",
+            "claude-opus-5-5@20261101",
+            "claude-sonnet-5-5",
+        ] {
+            assert!(thinking_cannot_be_disabled(model), "model={model}");
+            assert!(accepts_unsigned_tool_history(model), "model={model}");
+        }
+        for model in ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"] {
+            assert!(!accepts_unsigned_tool_history(model), "model={model}");
+        }
     }
 
     #[test]

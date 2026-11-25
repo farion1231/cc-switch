@@ -417,22 +417,30 @@ pub fn commit_target(
     if let Some(id) = target.pointer.as_deref() {
         let app_type: crate::app_config::AppType = app.parse()?;
         crate::settings::set_current_provider(&app_type, Some(id))?;
-        db.set_current_provider(app, id)?;
+        db.set_current_provider(&app_type, id)?;
     }
     // 模式、写入记录和 Stack 模型在同一次状态文件写入里落定。
     if target.state.is_some() || target.written.is_some() || target.stack.is_some() {
+        let mut route_changed = false;
         state::update(store, |live| {
             let entry = live.apps.entry(app.to_string()).or_default();
             if let Some(mode) = &target.state {
+                route_changed |= entry.mode != mode.mode
+                    || entry.attached != mode.attached
+                    || entry.proxy_route != mode.proxy_route;
                 entry.set_mode_state(mode.clone());
             }
             if let Some(written) = &target.written {
                 entry.written = Some(written.clone());
             }
             if let Some(stack) = &target.stack {
+                route_changed |= entry.stack.enabled != stack.enabled;
                 entry.stack = stack.clone();
             }
         })?;
+        if let (true, Ok(app)) = (route_changed, app.parse()) {
+            db.advance_route_revision(&app);
+        }
     }
     if let Some(mode) = &target.state {
         mirror_proxy_flag(db, app, mode.is_proxy())?;
@@ -447,17 +455,18 @@ pub fn mirror_proxy_flag(
     proxy: bool,
 ) -> Result<(), AppError> {
     // Claude Desktop 没有 `proxy_config` 行（表的 CHECK 也不允许），旧版不认它的模式。
-    if !app
+    let Some(app) = app
         .parse::<crate::app_config::AppType>()
-        .is_ok_and(|app| app.supports_local_proxy())
-    {
+        .ok()
+        .filter(|app| app.spec().local_proxy)
+    else {
         return Ok(());
-    }
-    let (enabled, auto_failover) = db.get_proxy_flags_sync(app);
+    };
+    let (enabled, auto_failover) = db.get_proxy_flags_sync(&app);
     if enabled == proxy {
         return Ok(());
     }
-    db.set_proxy_flags_sync(app, proxy, auto_failover)
+    db.set_proxy_flags_sync(&app, proxy, auto_failover)
 }
 
 /// 启动时调用：补完上次崩溃留下的客户端文件写入。要在任何写客户端文件的启动步骤之前。

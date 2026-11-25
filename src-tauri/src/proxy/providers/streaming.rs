@@ -2,6 +2,7 @@
 //!
 //! 实现 OpenAI SSE → Anthropic SSE 格式转换
 
+use super::codex_chat_common::{chat_content_segments, ChatContentSegment};
 use super::inline_think::InlineThinkSplitter;
 use crate::proxy::sse::{strip_sse_field, SseBuffer};
 use bytes::Bytes;
@@ -32,8 +33,9 @@ struct StreamChoice {
 
 #[derive(Debug, Deserialize)]
 struct Delta {
+    /// 字符串或分段数组（Mistral 开思考后两者在同一条流里交替，#9902）。
     #[serde(default)]
-    content: Option<String>,
+    content: Option<Value>,
     // OpenRouter/Kimi/其它 使用 reasoning，DeepSeek 使用 reasoning_content
     #[serde(default, alias = "reasoning_content")]
     reasoning: Option<String>,
@@ -411,25 +413,38 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
                                             }
                                         }
 
-                                        // 处理文本内容。content 里流首内联的 <think>/<thinking>
-                                        // 块（DeepSeek 系、MiniMax M3 等 Chat 兼容上游）先剥离为
+                                        // 处理文本内容。content 可能是分段数组（Mistral 的
+                                        // thinking / text 段），按顺序拆开：thinking 段直接下发为
+                                        // thinking；正文里流首内联的 <think>/<thinking> 块
+                                        // （DeepSeek 系、MiniMax M3 等 Chat 兼容上游）先剥离为
                                         // thinking，剩余正文按原逻辑下发。
-                                        if let Some(content) = &choice.delta.content {
-                                            if !content.is_empty() {
-                                                let (thinking, text) = inline_think.push(content);
-                                                for (block_type, delta) in
-                                                    [("thinking", thinking), ("text", text)]
-                                                {
-                                                    if let Some(delta) = &delta {
-                                                        for sse_data in non_tool_block_events(
-                                                            block_type,
-                                                            delta,
-                                                            &mut next_content_index,
-                                                            &mut current_non_tool_block_type,
-                                                            &mut current_non_tool_block_index,
-                                                        ) {
-                                                            yield Ok(Bytes::from(sse_data));
-                                                        }
+                                        let segments = choice
+                                            .delta
+                                            .content
+                                            .as_ref()
+                                            .map(chat_content_segments)
+                                            .unwrap_or_default();
+                                        for segment in segments {
+                                            let (thinking, text) = match segment {
+                                                ChatContentSegment::Thinking(thinking) => {
+                                                    (Some(thinking), None)
+                                                }
+                                                ChatContentSegment::Text(content) => {
+                                                    inline_think.push(&content)
+                                                }
+                                            };
+                                            for (block_type, delta) in
+                                                [("thinking", thinking), ("text", text)]
+                                            {
+                                                if let Some(delta) = &delta {
+                                                    for sse_data in non_tool_block_events(
+                                                        block_type,
+                                                        delta,
+                                                        &mut next_content_index,
+                                                        &mut current_non_tool_block_type,
+                                                        &mut current_non_tool_block_index,
+                                                    ) {
+                                                        yield Ok(Bytes::from(sse_data));
                                                     }
                                                 }
                                             }
@@ -1506,6 +1521,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_mistral_chunked_content_streams_thinking_and_text() {
+        // #9902：Mistral 开思考后 delta.content 在字符串和分段数组之间切换，
+        // 修复前数组 chunk 反序列化失败被整条丢弃，回复为空。
+        let input = concat!(
+            "data: {\"id\":\"c1\",\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            "data: {\"id\":\"c1\",\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"We \"}]}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"add\"}],\"closed\":true},{\"type\":\"text\",\"text\":\"39\"}]}}]}\n\n",
+            "data: {\"id\":\"c1\",\"model\":\"mistral-large-4\",\"choices\":[{\"delta\":{\"content\":\"1\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n\n",
+            "data: [DONE]\n\n"
+        );
+
+        let events = collect_anthropic_events(input).await;
+
+        let block_starts: Vec<&str> = events
+            .iter()
+            .filter(|event| event_type(event) == Some("content_block_start"))
+            .filter_map(|event| {
+                event
+                    .pointer("/content_block/type")
+                    .and_then(|v| v.as_str())
+            })
+            .collect();
+        assert_eq!(block_starts, vec!["thinking", "text"]);
+        assert_eq!(
+            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+            "We add"
+        );
+        assert_eq!(
+            collect_delta_text(&events, "text_delta", "/delta/text"),
+            "391"
+        );
+    }
+
+    #[tokio::test]
     async fn test_empty_reasoning_alongside_content_does_not_fragment_blocks() {
         // 回归：某些上游输出正文时仍会填充 reasoning_content 字段（值为空字符串）。
         // 修复前 reasoning 分支无空值保护，空字符串会进入分支并与 content 分支轮流
@@ -1637,87 +1686,69 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_streaming_inline_think_block_single_chunk() {
-        // <think> 变体（MiniMax M3 等）在单个 content 增量内完整出现时同样剥离。
-        let input = concat!(
-            "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<think>the ball costs 0.05</think>The ball is $0.05\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
+    async fn test_streaming_inline_think_splitting() {
+        for (case, input, thinking, text) in [
+            // <think> 变体（MiniMax M3 等）在单个 content 增量内完整出现时同样剥离。
+            (
+                "test_streaming_inline_think_block_single_chunk",
+                concat!(
+                    "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{\"content\":\"<think>the ball costs 0.05</think>The ball is $0.05\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ith1\",\"model\":\"minimax-m3\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ),
+                "the ball costs 0.05",
+                "The ball is $0.05",
+            ),
+            // 流结束时 <thinking> 未闭合：缓冲内容按思考内容下发，不再泄漏标签本体。
+            (
+                "test_streaming_unclosed_thinking_flushed_as_thinking",
+                concat!(
+                    "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thinking>partial reasoning\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ),
+                "partial reasoning",
+                "",
+            ),
+            // 流首不是 <thinking> 的正文里出现 "<thinking>" 字样，保持原样不剥离
+            // （只识别流首块，与 Codex Chat 路径语义一致）。
+            (
+                "test_streaming_prose_containing_thinking_tag_not_stripped",
+                concat!(
+                    "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a <thinking> looks like \"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a tag in prose\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ),
+                "",
+                "a <thinking> looks like a tag in prose",
+            ),
+            // 上游偶尔用不配对的标签收尾（<think> 开、</thinking> 闭）。
+            // 只认配对闭合会让整段连正文一起被当推理吞掉；取最早出现的任一闭合标签。
+            (
+                "test_streaming_mismatched_think_tag_pairs_still_split",
+                concat!(
+                    "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<think>checking</thinking>Done\"}}]}\n\n",
+                    "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+                    "data: [DONE]\n\n",
+                ),
+                "checking",
+                "Done",
+            ),
+        ] {
+            let events = collect_anthropic_events(input).await;
 
-        let events = collect_anthropic_events(input).await;
-
-        assert_eq!(
-            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
-            "the ball costs 0.05"
-        );
-        assert_eq!(
-            collect_delta_text(&events, "text_delta", "/delta/text"),
-            "The ball is $0.05"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_streaming_unclosed_thinking_flushed_as_thinking() {
-        // 流结束时 <thinking> 未闭合：缓冲内容按思考内容下发，不再泄漏标签本体。
-        let input = concat!(
-            "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<thinking>partial reasoning\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ithu\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-
-        let events = collect_anthropic_events(input).await;
-
-        assert_eq!(
-            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
-            "partial reasoning"
-        );
-        assert_eq!(collect_delta_text(&events, "text_delta", "/delta/text"), "");
-    }
-
-    #[tokio::test]
-    async fn test_streaming_prose_containing_thinking_tag_not_stripped() {
-        // 流首不是 <thinking> 的正文里出现 "<thinking>" 字样，保持原样不剥离
-        //（只识别流首块，与 Codex Chat 路径语义一致）。
-        let input = concat!(
-            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a <thinking> looks like \"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{\"content\":\"a tag in prose\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ithp\",\"model\":\"gpt-4o\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-
-        let events = collect_anthropic_events(input).await;
-
-        assert_eq!(
-            collect_delta_text(&events, "text_delta", "/delta/text"),
-            "a <thinking> looks like a tag in prose"
-        );
-        assert_eq!(
-            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
-            ""
-        );
-    }
-
-    #[tokio::test]
-    async fn test_streaming_mismatched_think_tag_pairs_still_split() {
-        // 上游偶尔用不配对的标签收尾（<think> 开、</thinking> 闭）。
-        // 只认配对闭合会让整段连正文一起被当推理吞掉；取最早出现的任一闭合标签。
-        let input = concat!(
-            "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{\"content\":\"<think>checking</thinking>Done\"}}]}\n\n",
-            "data: {\"id\":\"chatcmpl_ithm\",\"model\":\"deepseek-v4.1-flash\",\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
-            "data: [DONE]\n\n"
-        );
-
-        let events = collect_anthropic_events(input).await;
-
-        assert_eq!(
-            collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
-            "checking"
-        );
-        assert_eq!(
-            collect_delta_text(&events, "text_delta", "/delta/text"),
-            "Done"
-        );
+            assert_eq!(
+                collect_delta_text(&events, "thinking_delta", "/delta/thinking"),
+                thinking,
+                "{case}"
+            );
+            assert_eq!(
+                collect_delta_text(&events, "text_delta", "/delta/text"),
+                text,
+                "{case}"
+            );
+        }
     }
 
     fn content_chunk(id: &str, content: &str) -> String {

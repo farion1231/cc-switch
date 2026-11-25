@@ -7,14 +7,17 @@ import {
 import {
   buildTurnIndex,
   buildTurns,
+  chapterRowKey,
   effectiveBlocks,
   estimateRowHeight,
   FAILURE_PREVIEW_LINES,
+  findMatchPositionForMessage,
   findMatchRowIndex,
   findSearchHits,
   findTurnRowIndex,
   flattenRows,
   isChangeStep,
+  isChapterCall,
   isTimelineExpanded,
   LEGACY_CALL_PREFIX,
   MAX_PINNED_FAILURES,
@@ -287,6 +290,19 @@ describe("effectiveBlocks · 旧后端兜底", () => {
 });
 
 describe("buildTurns · 分组、配对与最终回复判定", () => {
+  it("轮首事件同条 system 消息里的正文并入事件（#9647 Codex 目标）", () => {
+    const goal = { type: "event", kind: "goal", text: "active" } as const;
+    const turns = buildTurns([
+      msg("system", [goal, text("Migrate the docs site")], { turnId: "t" }),
+      msg("user", [text("go")], { turnId: "t" }),
+      msg("assistant", [text("done")], { turnId: "t" }),
+    ]);
+    expect(turns[0].leadingEvents).toMatchObject([
+      { block: goal, body: "Migrate the docs site" },
+    ]);
+    expect(turns[0].steps).toEqual([]);
+  });
+
   it("同一 turnId 不连续出现时加后缀保证 key 唯一", () => {
     const turns = buildTurns([
       msg("user", [text("a")], { turnId: "x" }),
@@ -584,6 +600,73 @@ describe("搜索", () => {
     // 合并步骤的子步骤命中 → 父步骤也要展开
     expect(hits!.stepIds.has(merged!.id)).toBe(true);
   });
+
+  it("findMatchPositionForMessage 把正文命中的消息换算成查找序号", () => {
+    const turns = buildTurns(
+      [
+        msg("user", [text("ask needle")], { turnId: "t1" }),
+        msg("assistant", [text("note needle"), call("c")], { turnId: "t1" }),
+        msg("tool", [result("c")], { turnId: "t1" }),
+        msg("assistant", [text("final needle")], { turnId: "t1" }),
+        msg("user", [text("second")], { turnId: "t2" }),
+        msg("assistant", [text("answer needle")], { turnId: "t2" }),
+      ],
+      { style: AGENT_READER_STYLES.codex },
+    );
+    const hits = findSearchHits(turns, "needle")!;
+    expect(hits.matches.map((m) => m.target)).toEqual([
+      "question",
+      "step",
+      "final",
+      "final",
+    ]);
+    expect(findMatchPositionForMessage(turns, hits, 0)).toBe(1);
+    expect(findMatchPositionForMessage(turns, hits, 1)).toBe(2);
+    expect(findMatchPositionForMessage(turns, hits, 3)).toBe(3);
+    expect(findMatchPositionForMessage(turns, hits, 5)).toBe(4);
+    // 这条消息本身没有命中：退回同一轮的第一个命中
+    expect(findMatchPositionForMessage(turns, hits, 4)).toBe(4);
+    // 超出范围：第 1 个
+    expect(findMatchPositionForMessage(turns, hits, 99)).toBe(1);
+  });
+
+  it.each([false, true])(
+    "正文摘录优先定位正文，跳过同消息思考块（中途说明：%s）",
+    (intermediate) => {
+      const turns = buildTurns(
+        [
+          msg("user", [text("question")], { turnId: "t1" }),
+          msg(
+            "assistant",
+            [
+              thinking("needle thought"),
+              text("needle body"),
+              ...(intermediate ? [call("c")] : []),
+            ],
+            { turnId: "t1" },
+          ),
+          ...(intermediate
+            ? [
+                msg("tool", [result("c")], { turnId: "t1" }),
+                msg("assistant", [text("done")], { turnId: "t1" }),
+              ]
+            : []),
+        ],
+        { style: AGENT_READER_STYLES.codex },
+      );
+      const hits = findSearchHits(turns, "needle")!;
+      expect(hits.total).toBe(2);
+      expect(findMatchPositionForMessage(turns, hits, 1)).toBe(2);
+      // 只有思考命中时仍有可靠回退。
+      expect(
+        findMatchPositionForMessage(
+          turns,
+          findSearchHits(turns, "thought")!,
+          1,
+        ),
+      ).toBe(1);
+    },
+  );
 
   it("stepSearchText 覆盖每种步骤", () => {
     const [turn] = buildTurns([
@@ -921,5 +1004,152 @@ describe("查找命中在预览可见行之外", () => {
     const row = flattenRows(turns).find((r) => r.kind === "step");
     if (!row || row.kind !== "step") throw new Error("no step row");
     expect(row.previewLines).toBe(FAILURE_PREVIEW_LINES);
+  });
+});
+
+describe("章节（mark_chapter）", () => {
+  const chapterCall = (id: string, title: string, summary?: string) =>
+    call(id, "mcp", {
+      rawName: "mcp__ccd_session__mark_chapter",
+      server: "ccd_session",
+      title,
+      detail: summary,
+    });
+
+  const messages: SessionMessage[] = [
+    msg("user", [text("重构支付模块")], { turnId: "t1" }),
+    msg(
+      "assistant",
+      [
+        chapterCall("ch1", "梳理现状", "读代码"),
+        call("c1"),
+        call("c2"),
+        chapterCall("ch2", "动手改"),
+        call("c3", "edit"),
+      ],
+      { turnId: "t1" },
+    ),
+    msg(
+      "tool",
+      [result("ch1"), result("c1"), result("c2"), result("ch2"), result("c3")],
+      { turnId: "t1" },
+    ),
+    msg("assistant", [text("改完了"), chapterCall("ch3", "收尾")], {
+      turnId: "t1",
+    }),
+    msg("tool", [result("ch3")], { turnId: "t1" }),
+  ];
+  const [turn] = buildTurns(messages);
+
+  it("章节不算步骤，返回值不显示，也不影响最终回复的判定", () => {
+    expect(toolTitles(turn.steps)).toEqual(["cmd c1", "cmd c2", "cmd c3"]);
+    expect(turn.final?.text).toBe("改完了");
+    expect(
+      turn.chapters.map(({ title, summary, beforeStepId }) => ({
+        title,
+        summary,
+        beforeStepId,
+      })),
+    ).toEqual([
+      { title: "梳理现状", summary: "读代码", beforeStepId: turn.steps[0].id },
+      { title: "动手改", summary: undefined, beforeStepId: turn.steps[2].id },
+      { title: "收尾", summary: undefined, beforeStepId: undefined },
+    ]);
+  });
+
+  it("展开时章节行插在对应步骤之前，折叠时排在摘要行之前", () => {
+    expect(rowKinds(flattenRows([turn], { expandAll: true }))).toEqual([
+      "question",
+      "timeline",
+      "chapter",
+      "step",
+      "step",
+      "chapter",
+      "step",
+      "chapter",
+      "final",
+    ]);
+    expect(rowKinds(flattenRows([turn]))).toEqual([
+      "question",
+      "chapter",
+      "chapter",
+      "chapter",
+      "timeline",
+      "final",
+    ]);
+  });
+
+  it("「只看对话」保留章节行，「只看改动」不出章节行", () => {
+    expect(rowKinds(flattenRows([turn], { filter: "conversation" }))).toEqual([
+      "question",
+      "chapter",
+      "chapter",
+      "chapter",
+      "final",
+    ]);
+    expect(rowKinds(flattenRows([turn], { filter: "changes" }))).toEqual([
+      "question",
+      "step",
+    ]);
+  });
+
+  it("合并步骤里的第一步后面有章节时，章节排在合并步骤之前", () => {
+    const [merged] = buildTurns(
+      [
+        msg("user", [text("查一下")], { turnId: "t1" }),
+        msg(
+          "assistant",
+          [
+            call("m1", "mcp", { server: "docs", title: "docs.search" }),
+            chapterCall("ch1", "中途章节"),
+            call("m2", "mcp", { server: "docs", title: "docs.read" }),
+          ],
+          { turnId: "t1" },
+        ),
+        msg("tool", [result("m1"), result("ch1"), result("m2")], {
+          turnId: "t1",
+        }),
+      ],
+      { style: AGENT_READER_STYLES.claude },
+    );
+    expect(merged.steps.map((step) => step.kind)).toEqual(["merged"]);
+    expect(merged.chapters[0].beforeStepId).toBe(merged.steps[0].id);
+  });
+
+  it("查找能命中章节标题和摘要，并定位到章节行", () => {
+    const hits = findSearchHits([turn], "读代码");
+    expect(hits?.matches).toEqual([
+      {
+        turn: 0,
+        target: "chapter",
+        targetId: turn.chapters[0].id,
+        count: 1,
+      },
+    ]);
+    const rows = flattenRows([turn]);
+    expect(rows[findMatchRowIndex(rows, hits!.matches[0])]).toMatchObject({
+      kind: "chapter",
+      key: chapterRowKey(turn, turn.chapters[0]),
+    });
+  });
+
+  it("拿不到章节标题的调用按普通 MCP 步骤显示", () => {
+    const plain = call("x", "mcp", {
+      rawName: "mcp__ccd_session__mark_chapter",
+      server: "ccd_session",
+      title: "ccd_session.mark_chapter",
+    });
+    expect(isChapterCall(plain)).toBe(false);
+    expect(
+      isChapterCall(
+        call("y", "shell", { rawName: "mark_chapter", title: "x" }),
+      ),
+    ).toBe(false);
+    const [only] = buildTurns([
+      msg("assistant", [plain], { turnId: "t1" }),
+      msg("tool", [result("x")], { turnId: "t1" }),
+    ]);
+    expect(only.chapters).toEqual([]);
+    expect(toolTitles(only.steps)).toEqual(["ccd_session.mark_chapter"]);
   });
 });

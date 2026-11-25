@@ -474,8 +474,14 @@ export function loginAccountKey(
       return "xai";
     case "kimi":
       return "kimi";
+    case "copilot":
+      return "github";
     case "dsh":
       return "deepseek";
+    case "workbuddy":
+      return "workbuddy";
+    case "codebuddy":
+      return "codebuddy";
     default:
       return "claude";
   }

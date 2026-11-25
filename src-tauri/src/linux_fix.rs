@@ -31,11 +31,34 @@
 //! single_instance、托盘 show_main、lightweight 退出/重建）都应在现有
 //! `set_focus()` 之后追加一次调用。
 
+use crate::sync_utils::MutexExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{LogicalSize, PhysicalSize, WebviewWindow};
+
+/// Apply the existing Linux software-rendering workaround to every newly created
+/// WebView, including the tray panel and the main window recreated after lightweight
+/// mode. WebKit settings belong to a WebView, not to the application (#9216).
+pub(crate) fn configure_webview(view: &tauri::Webview) {
+    let label = view.label().to_owned();
+    if let Err(error) = view.with_webview(move |webview| {
+        use webkit2gtk::{HardwareAccelerationPolicy, SettingsExt, WebViewExt};
+
+        if let Some(settings) = WebViewExt::settings(&webview.inner()) {
+            settings.set_hardware_acceleration_policy(HardwareAccelerationPolicy::Never);
+            log::info!("Linux: disabled WebKitGTK hardware acceleration for {label}");
+        } else {
+            log::warn!("Linux: WebKitGTK settings unavailable for {label}");
+        }
+    }) {
+        log::warn!(
+            "Linux: failed to configure WebView {}: {error}",
+            view.label()
+        );
+    }
+}
 
 static IS_NUDGING: AtomicBool = AtomicBool::new(false);
 
@@ -83,9 +106,7 @@ impl<T> LatestSlot<T> {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<T>> {
-        self.inner
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.inner.lock_recover()
     }
 }
 

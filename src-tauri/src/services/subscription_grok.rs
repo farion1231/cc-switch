@@ -541,6 +541,56 @@ fn grpc_status_error(
     )
 }
 
+/// Grok CLI 启动时读的设置（`subscription_tier_display` 就是 CLI 里显示的套餐名）
+const GROK_SETTINGS_ENDPOINT: &str = "https://cli-chat-proxy.grok.com/v1/settings";
+
+/// 账号的 SuperGrok 套餐名；问不到（网络、令牌、形状不对）时为 None，不影响额度。
+pub(crate) async fn query_grok_plan(access_token: &str) -> Option<String> {
+    let resp = crate::proxy::http_client::get()
+        .get(GROK_SETTINGS_ENDPOINT)
+        .bearer_auth(access_token)
+        .header("Accept", "application/json")
+        .header("User-Agent", "cc-switch")
+        .timeout(std::time::Duration::from_secs(15))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = serde_json::from_slice(&resp.bytes().await.ok()?).ok()?;
+    parse_grok_plan(&body)
+}
+
+/// 先取 `subscription_tier_display`（「SuperGrok」「SuperGrok Heavy」），没有时把
+/// `subscription_tier`（`SUPERGROK_HEAVY`）规整成同样的写法。字段可能直接在顶层，
+/// 也可能在 `settings` 下（Grok CLI 的缓存就是这样存的）。
+fn parse_grok_plan(body: &serde_json::Value) -> Option<String> {
+    let settings = body.get("settings").unwrap_or(body);
+    let text = |key: &str| {
+        settings
+            .get(key)
+            .or_else(|| body.get(key))?
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    };
+    if let Some(display) = text("subscription_tier_display") {
+        return Some(display.to_string());
+    }
+    let raw = text("subscription_tier")?;
+    let letters: String = raw
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    Some(match letters.as_str() {
+        "supergrokheavy" | "heavy" => "SuperGrok Heavy".to_string(),
+        "supergrok" => "SuperGrok".to_string(),
+        _ => crate::services::subscription::title_case_words(&raw.to_ascii_lowercase()),
+    })
+}
+
 /// 按重置时间距今的天数推断窗口 tier 名（CodexBar `primaryLabel` 的阈值）：
 /// 4–12 天 → 周窗口，20–45 天 → 月窗口，其余 → 通用 credit 额度
 fn tier_name_for_reset(resets_at: Option<i64>, now_secs: i64) -> &'static str {
@@ -693,13 +743,47 @@ pub(crate) async fn query_grok_quota(
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
+        plan_name: None,
         error: None,
         queried_at: Some(now_millis()),
     })
 }
 
+/// 同时查询 Grok 订阅额度与套餐名（`with_plan` 为 true 时并行请求 `/v1/settings`）。
+/// 套餐查询失败不影响额度本身。
+pub(crate) async fn query_grok_quota_with_plan(
+    access_token: &str,
+    tool_label: &str,
+    relogin_hint: &str,
+    with_plan: bool,
+) -> Result<SubscriptionQuota, String> {
+    // 套餐（SuperGrok / Heavy）另问 Grok CLI 的设置接口，和额度并行；问不到只是不显示
+    let (quota, plan) = tokio::join!(
+        query_grok_quota(access_token, tool_label, relogin_hint),
+        async {
+            if with_plan {
+                query_grok_plan(access_token).await
+            } else {
+                None
+            }
+        },
+    );
+    let mut quota = quota?;
+    if quota.success {
+        quota.plan_name = plan;
+    }
+    Ok(quota)
+}
+
 /// grokbuild 的订阅额度入口（由 `subscription::get_subscription_quota` 分发）
 pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, String> {
+    get_grok_subscription_quota_with_plan(false).await
+}
+
+/// grokbuild 的订阅额度入口，`with_plan` 为 true 时顺带查询套餐显示名
+pub(crate) async fn get_grok_subscription_quota_with_plan(
+    with_plan: bool,
+) -> Result<SubscriptionQuota, String> {
     let (token, status, message) = read_grok_credentials();
 
     match status {
@@ -712,7 +796,8 @@ pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, S
         CredentialStatus::Expired | CredentialStatus::RefreshPending => {
             // 即使过期也尝试调用 API（时钟偏差时 token 可能仍有效）
             if let Some(ref token) = token {
-                let result = query_grok_quota(token, "grokbuild", RELOGIN_HINT).await?;
+                let result =
+                    query_grok_quota_with_plan(token, "grokbuild", RELOGIN_HINT, with_plan).await?;
                 if result.success {
                     return Ok(result);
                 }
@@ -727,7 +812,7 @@ pub(crate) async fn get_grok_subscription_quota() -> Result<SubscriptionQuota, S
         }
         CredentialStatus::Valid => {
             let token = token.expect("token must be Some when status is Valid");
-            query_grok_quota(&token, "grokbuild", RELOGIN_HINT).await
+            query_grok_quota_with_plan(&token, "grokbuild", RELOGIN_HINT, with_plan).await
         }
     }
 }
@@ -994,5 +1079,27 @@ mod tests {
             grpc_status_failure(16, "", "xai_oauth", "re-login").expect("auth failure is Ok");
         assert!(matches!(auth.credential_status, CredentialStatus::Expired));
         assert_eq!(auth.tool, "xai_oauth");
+    }
+
+    #[test]
+    fn grok_plan_comes_from_the_cli_settings() {
+        // Grok CLI 缓存里的形状：在 settings 下
+        assert_eq!(
+            parse_grok_plan(&serde_json::json!({
+                "settings": {"subscription_tier": null, "subscription_tier_display": "SuperGrok"}
+            }))
+            .as_deref(),
+            Some("SuperGrok")
+        );
+        assert_eq!(
+            parse_grok_plan(&serde_json::json!({"subscription_tier": "SUPERGROK_HEAVY"}))
+                .as_deref(),
+            Some("SuperGrok Heavy")
+        );
+        assert_eq!(
+            parse_grok_plan(&serde_json::json!({"subscription_tier": "GROK_TEAM"})).as_deref(),
+            Some("Grok Team")
+        );
+        assert_eq!(parse_grok_plan(&serde_json::json!({"settings": {}})), None);
     }
 }

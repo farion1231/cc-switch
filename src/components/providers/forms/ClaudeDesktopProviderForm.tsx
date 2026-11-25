@@ -49,6 +49,7 @@ import {
 } from "@/config/claudeDesktopProviderPresets";
 import {
   fetchCodexOauthModels,
+  claudeModelFetchApiFormat,
   fetchModelsForConfig,
   fetchXaiOauthModels,
   showFetchModelsError,
@@ -58,6 +59,7 @@ import {
   copilotGetModels,
   copilotGetModelsForAccount,
 } from "@/lib/api/copilot";
+import { copilotFetchedModels } from "@/lib/copilot-model-options";
 import {
   providersApi,
   type ClaudeDesktopDefaultRoute,
@@ -324,6 +326,7 @@ export function ClaudeDesktopProviderForm({
     initialMode === "proxy" &&
       Object.keys(initialData?.meta?.claudeDesktopModelRoutes ?? {}).length > 0,
   );
+
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const { data: defaultRoutes = [] } = useQuery({
@@ -400,6 +403,11 @@ export function ClaudeDesktopProviderForm({
     (activeProviderType !== "codex_oauth" &&
       activeProviderType !== "xai_oauth" &&
       baseUrl.includes("githubcopilot.com"));
+  // Copilot 卡的模型下拉统一把虚拟模型作为普通选项带上（上游目录不含它）；
+  // 某一档或全部档选它都按该请求的有效模型走 /auto，其余档照常走具体模型。
+  const dropdownModels: FetchedModel[] = usesAutomaticCopilotFormat
+    ? fetchedModels
+    : fetchedModels.filter((model) => !model.isCopilotAuto);
   const { isAuthenticated: isCopilotAuthenticated, accounts: copilotAccounts } =
     useCopilotAuth();
   const {
@@ -526,6 +534,30 @@ export function ClaudeDesktopProviderForm({
     );
   };
 
+  // 菜单显示名仍等于原来的实际请求模型（保存时自动回落出来的）就跟着模型走，
+  // 否则编辑已有映射卡只换模型，Desktop 菜单和 profile 里仍是旧模型名（#9203）。
+  // 从下拉选模型时，留空的显示名也一并填上。
+  const updateRouteModel = (
+    index: number,
+    model: string,
+    fillEmptyLabel = false,
+  ) => {
+    setRoutes((current) =>
+      current.map((row, i) => {
+        if (i !== index) return row;
+        const label = row.labelOverride.trim();
+        const labelFollowsModel = label
+          ? label === row.model.trim()
+          : fillEmptyLabel;
+        return {
+          ...row,
+          model,
+          labelOverride: labelFollowsModel ? model : row.labelOverride,
+        };
+      }),
+    );
+  };
+
   const handleModelMappingChange = (checked: boolean) => {
     if (usesManagedOAuth) return;
     setMode(checked ? "proxy" : "direct");
@@ -594,8 +626,11 @@ export function ClaudeDesktopProviderForm({
         selectedGitHubAccountId
           ? copilotGetModelsForAccount(selectedGitHubAccountId)
           : copilotGetModels()
-      ).then((models) =>
-        models.map((m) => ({ id: m.id, ownedBy: m.vendor || null })),
+      ).then((options) =>
+        copilotFetchedModels(
+          options,
+          t("copilot.autoModelName", { defaultValue: "GitHub Copilot Auto" }),
+        ),
       );
     } else if (activeProviderType === "codex_oauth") {
       if (!isCodexOauthAuthenticated) {
@@ -628,6 +663,11 @@ export function ClaudeDesktopProviderForm({
       const models = await request;
       if (managedModelsRequestRef.current !== requestId) return;
       setFetchedModels(models);
+      if (models.length === 0 && activeProviderType === "github_copilot") {
+        // Copilot Free 账号的模型都不允许在模型选择器中使用，会被后端过滤成空
+        toast.info(t("copilot.noPickerModelsClaude"));
+        return;
+      }
       toast.success(
         t("providerForm.fetchModelsSuccess", {
           count: models.length,
@@ -668,7 +708,14 @@ export function ClaudeDesktopProviderForm({
 
     setIsFetchingModels(true);
     try {
-      const models = await fetchModelsForConfig(baseUrl.trim(), apiKey.trim());
+      const models = await fetchModelsForConfig(
+        baseUrl.trim(),
+        apiKey.trim(),
+        undefined,
+        undefined,
+        undefined,
+        { apiFormat: claudeModelFetchApiFormat(apiFormat) },
+      );
       setFetchedModels(models);
       toast.success(
         t("providerForm.fetchModelsSuccess", {
@@ -814,7 +861,7 @@ export function ClaudeDesktopProviderForm({
       return;
     }
 
-    const routeEntries = routes
+    let routeEntries = routes
       .map((route) => ({
         ...route,
         route: route.route.trim(),
@@ -827,6 +874,7 @@ export function ClaudeDesktopProviderForm({
       // 固定四档（Sonnet / Opus / Fable / Haiku），route_id 由 UI 生成、恒合法，
       // 因此只要求至少填一个实际请求模型；留空档继承第一个已填档（Sonnet 优先），
       // 对齐 Claude Code 的兜底，保证落库四档齐全、子 agent 不会找不到模型。
+      // 某档可单独填 copilot-fusion-auto 走 /auto，其余档照常填具体模型。
       const primary = routeEntries.find((route) => route.model);
       if (!primary) {
         toast.error(
@@ -1321,21 +1369,16 @@ export function ClaudeDesktopProviderForm({
                             <Input
                               value={route.model}
                               onChange={(event) =>
-                                updateRoute(index, {
-                                  model: event.target.value,
-                                })
+                                updateRouteModel(index, event.target.value)
                               }
                               placeholder={modelPlaceholder}
                               className="flex-1"
                             />
-                            {fetchedModels.length > 0 && (
+                            {dropdownModels.length > 0 && (
                               <ModelDropdown
-                                models={fetchedModels}
+                                models={dropdownModels}
                                 onSelect={(id) =>
-                                  updateRoute(index, {
-                                    model: id,
-                                    labelOverride: route.labelOverride || id,
-                                  })
+                                  updateRouteModel(index, id, true)
                                 }
                               />
                             )}
@@ -1388,7 +1431,7 @@ export function ClaudeDesktopProviderForm({
                   <p className="text-xs leading-relaxed text-fg-2">
                     {t("claudeDesktop.directModelListHint", {
                       defaultValue:
-                        "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空时 Claude Desktop 会自动读取 /v1/models；勾选 1M 会声明支持 1M 上下文。",
+                        "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。直连时留空，Claude Desktop 会自动读取 /v1/models；路由模式下留空只提供默认的 Claude 模型名，要用供应商的模型请在这里填写。勾选 1M 会声明支持 1M 上下文。",
                     })}
                   </p>
 
@@ -1410,9 +1453,9 @@ export function ClaudeDesktopProviderForm({
                               placeholder="claude-sonnet-4-6"
                               className="flex-1"
                             />
-                            {fetchedModels.length > 0 && (
+                            {dropdownModels.length > 0 && (
                               <ModelDropdown
-                                models={fetchedModels}
+                                models={dropdownModels}
                                 onSelect={(id) =>
                                   updateRoute(index, { route: id })
                                 }

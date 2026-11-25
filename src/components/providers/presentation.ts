@@ -2,13 +2,19 @@ import type { TFunction } from "i18next";
 import type { Provider } from "@/types";
 import type { AppId } from "@/lib/api";
 import type { AppMode } from "@/types/proxy";
-import { isPiFamilyApp } from "@/config/appConfig";
+import { resolveManagedAccountId } from "@/lib/authBinding";
+import {
+  boundWorkBuddyAccountId,
+  isWorkBuddyOfficial,
+  type WorkBuddyOfficialState,
+} from "@/components/providers/workbuddyOfficial";
 import {
   isOfficialAccount,
   providerNeedsRouting,
   supportsFailover,
   supportsOfficialProxyTakeover,
 } from "@/utils/providerCapabilities";
+import { appHas } from "@/config/appSpecs";
 
 /**
  * 供应商卡片怎么画（v7）：当前那张的模式色、状态文字或按钮、徽标。由列表按应用和正在查看的
@@ -702,6 +708,12 @@ export interface AdditiveInput {
   piStateUnavailable?: boolean;
   /** Kimi：原生 default_model 别名所属的供应商。 */
   kimiCurrentId?: string | null;
+  /** WorkBuddy 官方登录卡：已收录账号、当前登录、是否在运行 */
+  workbuddyOfficial?: WorkBuddyOfficialState;
+  /** CodeBuddy：官方登录卡绑定账号的状态（授权中心收录的账号 + CodeBuddy 现在登着的号） */
+  codebuddyAccounts?: CodebuddyAccountsState;
+  /** Copilot CLI：settings.json 的 `model`（`<卡片 id>/<模型>`）所属的自带模型卡。 */
+  copilotDefaultId?: string | null;
   /** 「已添加」里列表外另画的卡（DSH 的 DeepSeek 账号卡），计入标题数字 */
   extraAdded?: number;
   actions: {
@@ -709,6 +721,192 @@ export interface AdditiveInput {
     remove: (provider: Provider) => void;
     disableOmo: (provider: Provider) => void;
     setDefault: (provider: Provider, modelId?: string) => void;
+    /** WorkBuddy 官方登录卡的「添加」：把 WorkBuddy 的登录切到卡片绑定的账号 */
+    /** CodeBuddy 官方登录卡的「添加」：把 CodeBuddy 的登录换成卡片绑定的账号 */
+    switchAccount?: (provider: Provider) => void;
+    /** Copilot CLI 官方卡的主按钮 */
+    openTerminal?: (provider: Provider) => void;
+  };
+}
+
+export interface CodebuddyAccountsState {
+  status: "loading" | "error" | "ready";
+  /** CodeBuddy 现在登着的号 */
+  currentAccountId: string | null;
+  accounts: { id: string; requiresReauth: boolean }[];
+  /** 正在添加（切号）的卡 */
+  switchingId?: string | null;
+}
+
+/**
+ * CodeBuddy 官方登录卡：和模型卡一样分在「已添加 / 可添加」，但不进 models.json。
+ * CodeBuddy 同时只能登录一个号，所以「已添加」最多一张：绑定的号就是 CodeBuddy 现在登着的号。
+ * 「添加」把 CodeBuddy 的登录换成卡片绑定的账号（原来那张自动回到「可添加」）；
+ * 已添加那张的「移除」不可用（不替 CodeBuddy 登出），说明添加另一张即可切换。
+ */
+function codebuddyOfficialItem(
+  t: TFunction,
+  p: Provider,
+  state: CodebuddyAccountsState | undefined,
+  switchAccount: ((provider: Provider) => void) | undefined,
+): { added: boolean; item: ProviderSection["items"][number] } {
+  const chips: CardChip[] = [
+    {
+      key: "official",
+      label: t("providerCard.chip.official"),
+      tone: "outline",
+    },
+  ];
+  const accountId = resolveManagedAccountId(p.meta, "codebuddy_oauth");
+  const account = state?.accounts.find((item) => item.id === accountId);
+  const inUse = Boolean(
+    account &&
+      state?.status === "ready" &&
+      state.currentAccountId === account.id,
+  );
+  if (inUse) {
+    return {
+      added: true,
+      item: {
+        provider: p,
+        presentation: {
+          chips,
+          buttons: [
+            {
+              key: "remove",
+              label: t("providerCard.action.remove"),
+              onClick: () => {},
+              disabledReason: t("codebuddy.official.removeHint", {
+                defaultValue:
+                  "CodeBuddy 同时只能登录一个账号，添加另一张官方卡即可切换",
+              }),
+            },
+          ],
+        },
+      },
+    };
+  }
+  let disabledReason: string | undefined;
+  if (!accountId) {
+    disabledReason = t("codebuddy.official.unbound", {
+      defaultValue: "还没有选择账号，请编辑卡片选择一个",
+    });
+  } else if (!state || state.status === "loading") {
+    disabledReason = t("codebuddy.official.statusLoading", {
+      defaultValue: "正在读取账号…",
+    });
+  } else if (state.status === "error") {
+    disabledReason = t("authCenter.codebuddy.statusLoadFailed", {
+      defaultValue: "无法读取 CodeBuddy 账号，请重试。",
+    });
+  } else if (!account) {
+    disabledReason = t("codebuddy.official.accountDeleted", {
+      defaultValue: "账号已删除，请重新选择",
+    });
+    chips.push({
+      key: "accountDeleted",
+      label: t("codebuddy.official.accountDeletedChip", {
+        defaultValue: "账号已删除",
+      }),
+      tone: "warning",
+    });
+  } else if (account.requiresReauth) {
+    disabledReason = t("codebuddy.official.expired", {
+      defaultValue: "这个账号的登录已过期，请在授权中心重新登录后再添加",
+    });
+  } else if (state.switchingId) {
+    disabledReason = t("codebuddy.official.adding", {
+      defaultValue: "正在添加…",
+    });
+  }
+  return {
+    added: false,
+    item: {
+      provider: p,
+      presentation: {
+        chips,
+        buttons: [
+          {
+            key: "add",
+            label: t("providerCard.action.add"),
+            onClick: () => switchAccount?.(p),
+            disabledReason,
+          },
+        ],
+      },
+    },
+  };
+}
+
+/**
+ * WorkBuddy 官方登录卡：和模型卡一样分进「已添加 / 可添加」，但同一时间只有一张在「已添加」——
+ * 绑定的账号就是 WorkBuddy 现在登着的号。「添加」= 把 WorkBuddy 的登录切到这张卡的账号（要先退出
+ * WorkBuddy），原来那张自动回到「可添加」。WorkBuddy 只能登一个号，在用的那张不能单独「移除」
+ * （不登出、不改凭据），按钮禁用并说明添加另一张即可切换。官方卡从不写进 models.json。
+ */
+function workbuddyOfficialCard(
+  input: AdditiveInput,
+  p: Provider,
+): { added: boolean; presentation: CardPresentation } {
+  const { t } = input;
+  const state = input.workbuddyOfficial;
+  const bound = boundWorkBuddyAccountId(p);
+  const missing =
+    !bound || (state?.accountIds != null && !state.accountIds.has(bound));
+  const current = !missing && bound === state?.currentAccountId;
+  const chips: CardChip[] = [
+    {
+      key: "official",
+      label: t("providerCard.chip.official"),
+      tone: "outline",
+    },
+  ];
+  if (missing) {
+    chips.push({
+      key: "accountMissing",
+      label: bound
+        ? t("workbuddy.official.accountDeletedChip")
+        : t("workbuddy.official.accountUnsetChip"),
+      tone: "warning",
+    });
+  }
+  if (current) {
+    return {
+      added: true,
+      presentation: {
+        chips,
+        buttons: [
+          {
+            key: "remove",
+            label: t("providerCard.action.remove"),
+            onClick: () => undefined,
+            disabledReason: t("workbuddy.official.onlyOne"),
+          },
+        ],
+      },
+    };
+  }
+  return {
+    added: false,
+    presentation: {
+      chips,
+      buttons: [
+        {
+          key: "add",
+          label: t("providerCard.action.add"),
+          onClick: () => input.actions.switchAccount?.(p),
+          disabledReason: missing
+            ? bound
+              ? t("workbuddy.official.accountDeleted")
+              : t("workbuddy.official.accountUnset")
+            : state?.running
+              ? t("workbuddy.official.quitFirst")
+              : state?.switching
+                ? t("workbuddy.official.switching")
+                : undefined,
+        },
+      ],
+    },
   };
 }
 
@@ -716,13 +914,93 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
   const { app, t, providers, actions } = input;
   const added: ProviderSection["items"] = [];
   const available: ProviderSection["items"] = [];
+  // Copilot CLI 的官方卡：仍是启动式（只有「打开终端」），并进「已添加」排在最前
+  const official: ProviderSection["items"] = [];
   const piBlocked =
-    isPiFamilyApp(app) && input.piStateUnavailable
+    appHas(app, "piFamily") && input.piStateUnavailable
       ? t(`${app}.current.stateUnavailableHint`)
       : undefined;
 
   for (const p of providers) {
     const chips: CardChip[] = [];
+    if (app === "codebuddy" && p.category === "official") {
+      const { added: isAdded, item } = codebuddyOfficialItem(
+        t,
+        p,
+        input.codebuddyAccounts,
+        actions.switchAccount,
+      );
+      (isAdded ? added : available).push(item);
+      continue;
+    }
+    if (app === "workbuddy" && isWorkBuddyOfficial(p)) {
+      const card = workbuddyOfficialCard(input, p);
+      (card.added ? added : available).push({
+        provider: p,
+        presentation: card.presentation,
+      });
+      continue;
+    }
+    if (app === "copilot") {
+      if (isOfficialAccount(app, p)) {
+        // 官方卡用 Copilot CLI 自己的 GitHub 登录，不写任何文件：没有添加 / 移除，
+        // 主操作就是「打开终端」，哪张都能删
+        official.push({
+          provider: p,
+          presentation: {
+            chips: [
+              {
+                key: "official",
+                label: t("providerCard.chip.official"),
+                tone: "outline",
+              },
+            ],
+            buttons: [
+              {
+                key: "openTerminal",
+                label: t("provider.openTerminalWithProvider"),
+                onClick: () => actions.openTerminal?.(p),
+              },
+            ],
+          },
+        });
+        continue;
+      }
+      // 自带模型卡：「添加」写进 Copilot 的 providers.json，「移除」只删这一家的条目。
+      // 默认那家（settings.json 的 model 指向它）不能移除、不能删；Copilot 里换默认模型用 /model
+      const live = input.isInConfig(p);
+      const isDefault = live && p.id === input.copilotDefaultId;
+      (live ? added : available).push({
+        provider: p,
+        presentation: {
+          tone: isDefault ? "direct" : undefined,
+          status: isDefault
+            ? { label: t("providerCard.status.default"), dot: "direct" }
+            : undefined,
+          chips,
+          buttons: [
+            live
+              ? {
+                  key: "remove",
+                  label: t("providerCard.action.remove"),
+                  disabledReason: isDefault
+                    ? t("copilot.defaultCannotRemove")
+                    : undefined,
+                  onClick: () => actions.remove(p),
+                }
+              : {
+                  key: "add",
+                  label: t("providerCard.action.add"),
+                  onClick: () => actions.add(p),
+                },
+          ],
+          deleteDisabledReason: isDefault
+            ? t("copilot.defaultCannotRemove")
+            : undefined,
+        },
+      });
+      continue;
+    }
     if (app === "kimi") {
       const official = isOfficialAccount(app, p);
       const live = input.isInConfig(p);
@@ -849,7 +1127,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
           buttons: [
             {
               key: "add",
-              label: isPiFamilyApp(app)
+              label: appHas(app, "piFamily")
                 ? t("providerCard.action.enable")
                 : t("providerCard.action.add"),
               onClick: () => actions.add(p),
@@ -955,7 +1233,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
     {
       key: "added",
       title: t("providerCard.section.added", {
-        count: added.length + (input.extraAdded ?? 0),
+        count: official.length + added.length + (input.extraAdded ?? 0),
       }),
       help: {
         title: t("providerCard.section.addedHelpTitle"),
@@ -969,7 +1247,7 @@ export function buildAdditiveSections(input: AdditiveInput): ProviderSection[] {
       },
       note: app === "dsh" ? t("dsh.sharedProvidersNote") : undefined,
       emptyText: t("providerCard.section.addedEmpty"),
-      items: added,
+      items: [...official, ...added],
     },
     {
       key: "available",
