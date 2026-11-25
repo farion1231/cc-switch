@@ -43,10 +43,12 @@ pub use dao::FailoverQueueItem;
 pub use dao::Profile;
 pub use dao::UnreadableEntry;
 
+use crate::app_config::AppType;
 use crate::config::get_app_config_dir;
 use crate::error::AppError;
 use rusqlite::{hooks::Action, Connection};
 use serde::Serialize;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 // DAO 方法通过 impl Database 提供，无需额外导出
@@ -126,6 +128,7 @@ impl RecoverPoisoned for Option<crate::services::usage_stats::LogCountCache> {
 pub struct Database {
     pub(crate) conn: Arc<Mutex<Connection>>,
     pub(crate) read_cache: Arc<read_cache::ProxyReadCache>,
+    pub(crate) route_revisions: Arc<[AtomicU64; AppType::ALL.len()]>,
     /// 请求日志总数缓存，见 `services::usage_stats::LogCountCache`
     pub(crate) log_count_cache: Arc<Mutex<Option<crate::services::usage_stats::LogCountCache>>>,
 }
@@ -178,6 +181,16 @@ fn register_db_change_hook(conn: &Connection, cache: Arc<read_cache::ProxyReadCa
 }
 
 impl Database {
+    /// Requests capture this before reading routing policy so an overlapping
+    /// policy change cannot stamp an old selection with the new revision.
+    pub(crate) fn route_revision(&self, app: &AppType) -> u64 {
+        self.route_revisions[app.clone() as usize].load(Ordering::Acquire)
+    }
+
+    pub(crate) fn advance_route_revision(&self, app: &AppType) {
+        self.route_revisions[app.clone() as usize].fetch_add(1, Ordering::AcqRel);
+    }
+
     fn configure_connection(conn: &Connection) -> Result<(), AppError> {
         conn.execute_batch(
             "PRAGMA busy_timeout = 5000;
@@ -250,6 +263,7 @@ impl Database {
             conn: Arc::new(Mutex::new(conn)),
             log_count_cache: Arc::new(Mutex::new(None)),
             read_cache,
+            route_revisions: Arc::default(),
         };
         db.create_tables()?;
 
@@ -317,6 +331,7 @@ impl Database {
             conn: Arc::new(Mutex::new(conn)),
             log_count_cache: Arc::new(Mutex::new(None)),
             read_cache,
+            route_revisions: Arc::default(),
         };
         db.create_tables()?;
         db.ensure_model_pricing_seeded()?;
