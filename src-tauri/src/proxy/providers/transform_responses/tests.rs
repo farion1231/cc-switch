@@ -3068,3 +3068,28 @@ fn test_responses_thinking_disabled_older_model_omits_reasoning() {
     let result = anthropic_to_responses(input, None, false, false).unwrap();
     assert!(result.get("reasoning").is_none());
 }
+
+#[test]
+fn test_responses_disabled_thinking_respects_required_reasoning_on_both_routes() {
+    for oauth in [false, true] {
+        for model in ["gpt-6-astra", "gpt-6.1-sol"] {
+            for effort in [None, Some("high")] {
+                let mut input = json!({
+                    "model": model,
+                    "max_tokens": 1024,
+                    "thinking": {"type": "disabled"},
+                    "messages": [{"role": "user", "content": "Hello"}]
+                });
+                if let Some(effort) = effort {
+                    input["output_config"] = json!({"effort": effort});
+                }
+                let result = anthropic_to_responses(input, None, oauth, false).unwrap();
+                if effort.is_some() {
+                    assert_eq!(result["reasoning"]["effort"], "low");
+                } else {
+                    assert!(result.get("reasoning").is_none());
+                }
+            }
+        }
+    }
+}

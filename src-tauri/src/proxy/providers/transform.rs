@@ -111,18 +111,19 @@ fn supports_max_reasoning_effort(model: &str) -> bool {
 
 /// Detect models whose OpenAI reasoning effort accepts an explicit `none` tier.
 ///
-/// The GPT 5.6+ family that accepts `max` also accepts `none`; older
-/// whitelisted models (o-series, GPT-5 through 5.5, Grok) do not, so they keep
-/// the previous low/omitted behavior when thinking is disabled.
+/// Keep this independent of `max` support: Astra and GPT-6.1 Sol require reasoning.
 fn supports_none_reasoning_effort(model: &str) -> bool {
-    supports_max_reasoning_effort(model)
+    matches!(
+        model.to_ascii_lowercase().as_str(),
+        "gpt-5.6-sol" | "gpt-5.6-terra" | "gpt-5.6-luna" | "gpt-6-sol" | "gpt-6-luna"
+    )
 }
 
 /// Resolve the appropriate OpenAI `reasoning_effort` from an Anthropic request body.
 ///
 /// Priority:
 /// 1. Explicit `thinking.type = disabled` on a model that accepts `none`
-///    (GPT 5.6+): return `none`. This takes precedence over
+///    return `none`. This takes precedence over
 ///    `output_config.effort` (Workflow subagents send both fields) and is what
 ///    Claude Code's Auto-mode classifier needs to avoid spending its small
 ///    output budget on reasoning. Older models do not accept `none`, so they
@@ -2382,6 +2383,16 @@ mod tests {
             "output_config": {"effort": "max"}
         });
         assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+    }
+
+    #[test]
+    fn test_disabled_thinking_does_not_disable_required_reasoning() {
+        for model in ["gpt-6-astra", "gpt-6.1-sol", "gpt-7-sol"] {
+            let mut body = json!({"model": model, "thinking": {"type": "disabled"}});
+            assert_eq!(resolve_reasoning_effort(&body), None);
+            body["output_config"] = json!({"effort": "high"});
+            assert_eq!(resolve_reasoning_effort(&body), Some("low"));
+        }
     }
 
     #[test]
