@@ -1,7 +1,7 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Sidebar } from "@/components/shell/Sidebar";
 import type { Settings, VisibleApps } from "@/types";
 import { createTestQueryClient } from "../../utils/testQueryClient";
@@ -21,8 +21,10 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+const update = vi.hoisted(() => ({ hasUpdate: false }));
+
 vi.mock("@/contexts/UpdateContext", () => ({
-  useUpdate: () => ({ hasUpdate: false, updateInfo: null }),
+  useUpdate: () => ({ hasUpdate: update.hasUpdate, updateInfo: null }),
 }));
 
 vi.mock("@/hooks/useSidebarStatus", () => ({
@@ -36,7 +38,10 @@ vi.mock("@/hooks/useSidebarStatus", () => ({
   }),
 }));
 
-const renderSidebar = (settings: Partial<Settings>) => {
+const renderSidebar = (
+  settings: Partial<Settings>,
+  view: "usage" | "settings" = "usage",
+) => {
   const client = createTestQueryClient();
   // 不让设置查询回头去 mock 后端重取，盖掉这里给的值
   client.setQueryDefaults(["settings"], { staleTime: Infinity });
@@ -45,13 +50,10 @@ const renderSidebar = (settings: Partial<Settings>) => {
     <QueryClientProvider client={client}>
       <Sidebar
         activeApp="claude"
-        view="usage"
+        view={view}
         visibleApps={{} as VisibleApps}
-        settingsSection="general"
         onSelectApp={vi.fn()}
         onSelectPage={vi.fn()}
-        onSelectSettingsSection={vi.fn()}
-        onExitSettings={vi.fn()}
       />
     </QueryClientProvider>,
   );
@@ -117,5 +119,35 @@ describe("sidebar Today label", () => {
     status.todayTokens = 5_000;
     renderSidebar({});
     expect(screen.queryByText(/^nav\.today/)).not.toBeInTheDocument();
+  });
+});
+
+describe("sidebar Settings update dot", () => {
+  afterEach(() => {
+    update.hasUpdate = false;
+  });
+
+  // 和设置页「关于」页签上的绿点同一个方向：都在右上角
+  it.each(["usage", "settings"] as const)(
+    "puts a green dot at the top-right of the Settings icon on %s",
+    (view) => {
+      update.hasUpdate = true;
+      renderSidebar({}, view);
+
+      const dot = screen
+        .getByRole("button", { name: "nav.settings" })
+        .querySelector(".bg-success");
+      expect(dot).not.toBeNull();
+      expect(dot).toHaveClass("absolute", "-top-[3px]", "-end-1");
+    },
+  );
+
+  it("shows no dot without an update", () => {
+    renderSidebar({});
+    expect(
+      screen
+        .getByRole("button", { name: "nav.settings" })
+        .querySelector(".bg-success"),
+    ).toBeNull();
   });
 });

@@ -4358,6 +4358,7 @@
     "expandSidebar": "展开侧栏",
     "collapseSidebar": "收起侧栏",
     "appsGroup": "应用",
+    "toolsGroup": "工具",
     "today": "今日 {{value}}",
     "todayRequests": "{{value}} 次",
     "todayHitRate": "命中 {{value}}",
@@ -4377,7 +4378,6 @@
       "stack": "聚合"
     },
     "needsAttention": "需要处理",
-    "back": "返回",
     "plugins": "插件"
   },
   "appsPage": {
