@@ -47,4 +47,11 @@ describe("ProviderCard layout", () => {
     expect(listSource).not.toContain("pi.gatewayReason");
     expect(listSource).not.toContain("pi.route");
   });
+
+  it("keeps per-app managed-auth useQuery hooks out of the shared ProviderCard shell", () => {
+    // Per-app auth queries belong inside conditionally mounted subcomponents
+    // using `useManagedAuthStatus` so unrelated cards never subscribe to or
+    // leak cached data from disabled React Query observers (cf. #9945 / #9975).
+    expect(source).not.toMatch(/\buseQuery\s*\(/);
+  });
 });
