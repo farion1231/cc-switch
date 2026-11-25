@@ -44,6 +44,10 @@ import {
 } from "@/lib/api/copilot";
 import type { CopilotModel } from "@/lib/api/copilot";
 import {
+  COPILOT_AUTO_MODEL_ID,
+  copilotFetchedModels as buildCopilotFetchedModels,
+} from "@/lib/copilot-model-options";
+import {
   fetchCodexOauthModels,
   fetchXaiOauthModels,
   claudeModelFetchApiFormat,
@@ -314,6 +318,8 @@ export function ClaudeFormFields({
 
   // Copilot 可用模型列表
   const [copilotModels, setCopilotModels] = useState<CopilotModel[]>([]);
+  const [copilotAutoRoutingSupported, setCopilotAutoRoutingSupported] =
+    useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
   const copilotModelsRequestRef = useRef(0);
 
@@ -410,14 +416,18 @@ export function ClaudeFormFields({
       : copilotGetModels();
 
     fetchModels
-      .then((models) => {
+      .then((options) => {
         if (copilotModelsRequestRef.current !== requestId) return;
+        const models = options.models;
         setCopilotModels(models);
-        if (models.length === 0) {
+        setCopilotAutoRoutingSupported(options.autoRoutingSupported);
+        if (models.length === 0 && !options.autoRoutingSupported) {
           // Copilot Free 账号的模型都不允许在模型选择器中使用，会被后端过滤成空
           toast.info(t("copilot.noPickerModelsClaude"));
         } else {
-          showModelFetchResult(models.length);
+          showModelFetchResult(
+            models.length + Number(options.autoRoutingSupported),
+          );
         }
       })
       .catch((err) => {
@@ -512,6 +522,7 @@ export function ClaudeFormFields({
   useEffect(() => {
     copilotModelsRequestRef.current += 1;
     setCopilotModels(keepEmpty);
+    setCopilotAutoRoutingSupported(false);
     setModelsLoading(false);
   }, [isCopilotPreset, isCopilotAuthenticated, selectedGitHubAccountId]);
 
@@ -541,6 +552,17 @@ export function ClaudeFormFields({
       : isXaiOauthPreset
         ? handleFetchXaiOauthModels
         : handleFetchModels;
+
+  // The response carries account-wide Auto separately from picker-visible model metadata.
+  const copilotFetchedModels: FetchedModel[] = isCopilotPreset
+    ? buildCopilotFetchedModels(
+        {
+          models: copilotModels,
+          autoRoutingSupported: copilotAutoRoutingSupported,
+        },
+        t("copilot.autoModelName", { defaultValue: "GitHub Copilot Auto" }),
+      )
+    : [];
 
   // 模型输入框：支持手动输入 + 下拉选择
   const renderModelInput = (
@@ -579,13 +601,7 @@ export function ClaudeFormFields({
       );
     }
 
-    if (isCopilotPreset && copilotModels.length > 0) {
-      // Reuse the searchable dropdown by mapping Copilot models to FetchedModel.
-      const copilotFetchedModels: FetchedModel[] = copilotModels.map((m) => ({
-        id: m.id,
-        ownedBy: m.vendor || null,
-      }));
-
+    if (isCopilotPreset && copilotFetchedModels.length > 0) {
       return (
         <div className="flex gap-1">
           <Input
@@ -720,9 +736,14 @@ export function ClaudeFormFields({
     handleRoleModelChange(row, setClaudeOneMMarker(row.model, enabled));
   };
 
+  const isCopilotAuto = (model: string) =>
+    isCopilotPreset &&
+    stripClaudeOneMMarker(model).trim() === COPILOT_AUTO_MODEL_ID;
   // Copilot 取到模型列表后才知道哪些模型有 1M 版本；没有的不让勾，已勾的提示取消。
   const copilotLacksOneM = (model: string) =>
-    isCopilotPreset && copilotOneMAvailable(model, copilotModels) === false;
+    isCopilotPreset &&
+    (isCopilotAuto(model) ||
+      copilotOneMAvailable(model, copilotModels) === false);
   // 兜底模型常和某一档相同，去重后再列。
   const copilotOneMMismatches = [
     ...new Set(
@@ -1066,7 +1087,7 @@ export function ClaudeFormFields({
   if (variant === "stack") {
     // 批量勾选模型用当前预设对应的那份上游列表。
     const stackFetchedModels: FetchedModel[] = isCopilotPreset
-      ? copilotModels.map((m) => ({ id: m.id, ownedBy: m.vendor || null }))
+      ? copilotFetchedModels
       : isCodexOauthPreset
         ? codexOauthModels
         : isXaiOauthPreset
@@ -1320,11 +1341,16 @@ export function ClaudeFormFields({
                       row.inputId,
                       modelBase,
                       row.modelField,
-                      t("providerForm.modelPlaceholder", { defaultValue: "" }),
+                      t("providerForm.modelPlaceholder", {
+                        defaultValue: "",
+                      }),
                       (value) =>
                         handleRoleModelChange(
                           row,
-                          setClaudeOneMMarker(value, usesOneM),
+                          setClaudeOneMMarker(
+                            value,
+                            usesOneM && !isCopilotAuto(value),
+                          ),
                         ),
                     )}
                     <label
@@ -1385,7 +1411,10 @@ export function ClaudeFormFields({
                   (value) =>
                     onModelChange(
                       "ANTHROPIC_MODEL",
-                      setClaudeOneMMarker(value, fallbackUsesOneM),
+                      setClaudeOneMMarker(
+                        value,
+                        fallbackUsesOneM && !isCopilotAuto(value),
+                      ),
                     ),
                 )}
                 <label

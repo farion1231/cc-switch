@@ -2057,6 +2057,7 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "例如：company.ghe.com",
+    "autoModelName": "GitHub Copilot 自動選擇",
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登入",
       "officialHint": "「開啟終端機」以這張卡的模型啟動 copilot；綁定授權中心的帳號後改用該帳號啟動。",

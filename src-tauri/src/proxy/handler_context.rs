@@ -328,6 +328,7 @@ impl RequestContext {
         .failover_chain(self.app_config.auto_failover_enabled)
         .route_revision(self.route_revision)
         .privacy_filter(self.privacy_filter_config.clone())
+        .copilot_auto_sessions(state.copilot_auto_sessions.clone())
     }
 
     /// 获取 Provider 列表（用于故障转移）

@@ -2057,6 +2057,7 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "e.g. company.ghe.com",
+    "autoModelName": "GitHub Copilot Auto",
     "form": {
       "officialTitle": "Uses Copilot CLI's GitHub sign-in",
       "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",

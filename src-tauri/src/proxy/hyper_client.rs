@@ -20,6 +20,11 @@ use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use std::future::Future;
 use std::sync::OnceLock;
 
+/// An async action to run immediately before a protocol converter emits a
+/// successful terminal event. Errors, truncation, and client cancellation do
+/// not run this hook.
+pub type SuccessTerminalHook = Box<dyn FnOnce() -> futures::future::BoxFuture<'static, ()> + Send>;
+
 /// Our own header case map: maps lowercase header name → original wire-casing bytes.
 ///
 /// This is a backup mechanism independent of hyper's internal `HeaderCaseMap` (which is
@@ -101,6 +106,10 @@ pub enum ProxyResponse {
         headers: http::HeaderMap,
         stream: std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
     },
+    WithSuccessTerminalHook {
+        response: Box<ProxyResponse>,
+        hook: SuccessTerminalHook,
+    },
 }
 
 impl ProxyResponse {
@@ -124,11 +133,28 @@ impl ProxyResponse {
         }
     }
 
+    pub fn with_success_terminal_hook(self, hook: SuccessTerminalHook) -> Self {
+        Self::WithSuccessTerminalHook {
+            response: Box::new(self),
+            hook,
+        }
+    }
+
+    /// Remove the optional semantic completion callback before a response is
+    /// consumed by a converter.
+    pub fn take_success_terminal_hook(self) -> (Self, Option<SuccessTerminalHook>) {
+        match self {
+            Self::WithSuccessTerminalHook { response, hook } => (*response, Some(hook)),
+            response => (response, None),
+        }
+    }
+
     pub fn status(&self) -> http::StatusCode {
         match self {
             Self::Hyper(r) => r.status(),
             Self::Reqwest(r) => r.status(),
             Self::Buffered { status, .. } | Self::Streamed { status, .. } => *status,
+            Self::WithSuccessTerminalHook { response, .. } => response.status(),
         }
     }
 
@@ -137,6 +163,7 @@ impl ProxyResponse {
             Self::Hyper(r) => r.headers(),
             Self::Reqwest(r) => r.headers(),
             Self::Buffered { headers, .. } | Self::Streamed { headers, .. } => headers,
+            Self::WithSuccessTerminalHook { response, .. } => response.headers(),
         }
     }
 
@@ -176,6 +203,9 @@ impl ProxyResponse {
     /// 而不是先收满再比较——否则超大明文 body 仍会完整进入内存，限制形同虚设。
     pub async fn bytes_with_limit(self, max_bytes: usize) -> Result<Bytes, ProxyError> {
         match self {
+            Self::WithSuccessTerminalHook { response, .. } => {
+                Box::pin(response.bytes_with_limit(max_bytes)).await
+            }
             Self::Buffered { body, .. } => {
                 // 调用方已把 body 完整缓冲，无法中途截停，只能事后比较
                 if body.len() > max_bytes {
@@ -202,10 +232,13 @@ impl ProxyResponse {
     }
 
     /// Consume the response and return a byte-chunk stream (for SSE pass-through).
-    pub fn bytes_stream(self) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    pub fn bytes_stream(
+        self,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> {
         use futures::StreamExt;
 
         match self {
+            Self::WithSuccessTerminalHook { response, .. } => response.bytes_stream(),
             Self::Hyper(r) => {
                 let body = r.into_body();
                 let stream = futures::stream::unfold(body, |mut body| async {

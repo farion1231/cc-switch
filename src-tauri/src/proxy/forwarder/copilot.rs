@@ -1,6 +1,43 @@
 //! GitHub Copilot request context, model resolution and API format selection.
 
 use super::*;
+use crate::proxy::copilot_auto_session::AutoSessionKey;
+use crate::proxy::providers::{
+    copilot_auth::CopilotModel,
+    copilot_auto::{extract_prompt_summary_for_auto, RequestProtocol},
+    copilot_model_map::advertised_transport,
+};
+
+/// True for the supported chat routes that may execute a Copilot Auto choice.
+pub(super) fn is_copilot_auto_chat_endpoint(endpoint: &str) -> bool {
+    let clean = endpoint.split('?').next().unwrap_or(endpoint);
+    clean == "/chat/completions"
+        || clean == "/v1/chat/completions"
+        || clean == "/v1/v1/chat/completions"
+        || clean == "/codex/v1/chat/completions"
+}
+
+pub(super) fn is_copilot_auto_messages_endpoint(endpoint: &str) -> bool {
+    let clean = endpoint.split('?').next().unwrap_or(endpoint);
+    clean == "/v1/messages"
+        || clean == "/claude/v1/messages"
+        || clean == "/claude-desktop/v1/messages"
+}
+
+pub(super) fn is_copilot_auto_compaction_request(
+    app_type: &AppType,
+    endpoint: &str,
+    body: &Value,
+) -> bool {
+    endpoint
+        .split('?')
+        .next()
+        .unwrap_or(endpoint)
+        .ends_with("/responses/compact")
+        || crate::proxy::copilot_optimizer::is_compact_request(body)
+        || (matches!(app_type, AppType::Codex)
+            && crate::proxy::providers::codex_compaction::is_compaction_request(body))
+}
 
 pub(super) struct CopilotRequestContext {
     pub(super) classification: crate::proxy::copilot_optimizer::CopilotClassification,
@@ -79,6 +116,7 @@ pub(super) fn codex_copilot_lookup_error(model_id: &str, error: CopilotAuthError
         | CopilotAuthError::AuthorizationPending
         | CopilotAuthError::AccessDenied
         | CopilotAuthError::ExpiredToken
+        | CopilotAuthError::ModelsUnauthorized
         | CopilotAuthError::GitHubTokenInvalid
         | CopilotAuthError::NoCopilotSubscription
         | CopilotAuthError::AccountNotFound(_) => ProxyError::AuthError(message),
@@ -152,7 +190,168 @@ pub(super) fn copilot_api_format_for_model(
     }
 }
 
+pub(super) struct CopilotAutoRoute {
+    pub(super) key: AutoSessionKey,
+    pub(super) model_id: String,
+    pub(super) transport: CopilotTransport,
+    pub(super) session_token: String,
+    pub(super) access_token: String,
+    pub(super) compaction: bool,
+}
+
 impl RequestForwarder {
+    pub(super) fn copilot_auth(&self) -> Option<Arc<RwLock<CopilotAuthManager>>> {
+        #[cfg(test)]
+        if let Some(auth) = &self.test_copilot_auth {
+            return Some(auth.clone());
+        }
+        self.app_handle
+            .as_ref()
+            .map(|app| app.state::<CopilotAuthState>().0.clone())
+    }
+
+    pub(super) async fn resolve_copilot_auto_route(
+        &self,
+        attempt: &Attempt<'_>,
+        body: &Value,
+        deadline: tokio::time::Instant,
+        retry_auto: &mut bool,
+    ) -> Result<CopilotAutoRoute, ProxyError> {
+        let Attempt {
+            app_type,
+            provider,
+            endpoint,
+            ..
+        } = *attempt;
+        let auth = self.copilot_auth().ok_or_else(|| {
+            ProxyError::AuthError("Copilot Auto requires managed account authentication".into())
+        })?;
+        let auth = auth.read().await;
+        let account_id = match provider
+            .meta
+            .as_ref()
+            .and_then(|m| m.managed_account_id_for("github_copilot"))
+        {
+            Some(id) => id,
+            None => auth.resolve_default_account_id().await.ok_or_else(|| {
+                ProxyError::AuthError("No GitHub Copilot account is available".into())
+            })?,
+        };
+        let (access_token, catalogue, api_base) = tokio::time::timeout_at(deadline, async {
+            let token = auth
+                .get_valid_token_for_account(&account_id)
+                .await
+                .map_err(|err| {
+                    ProxyError::AuthError(format!("GitHub Copilot authentication failed: {err}"))
+                })?;
+            let catalogue = auth
+                .fetch_catalog_for_account(&account_id)
+                .await
+                .map_err(|err| {
+                    if matches!(err, CopilotAuthError::ModelsUnauthorized) {
+                        *retry_auto = true;
+                        ProxyError::UpstreamError {
+                            status: 401,
+                            body: Some(err.to_string()),
+                        }
+                    } else {
+                        ProxyError::ForwardFailed(format!("Copilot catalogue lookup failed: {err}"))
+                    }
+                })?;
+            Ok::<_, ProxyError>((token, catalogue, auth.get_api_endpoint(&account_id).await))
+        })
+        .await
+        .map_err(|_| ProxyError::Timeout("Copilot Auto account lookup timed out".into()))??;
+
+        if !catalogue.iter().any(CopilotModel::supports_auto_routing) {
+            return Err(ProxyError::ConfigError(
+                "This Copilot account does not advertise Auto routing".into(),
+            ));
+        }
+        let protocol = if is_copilot_auto_chat_endpoint(endpoint) {
+            RequestProtocol::ChatCompletions
+        } else if matches!(app_type, AppType::Codex) {
+            RequestProtocol::CodexResponses
+        } else {
+            RequestProtocol::AnthropicMessages
+        };
+        let (prompt, has_image) = extract_prompt_summary_for_auto(body, protocol);
+        let key = AutoSessionKey {
+            app_namespace: if matches!(app_type, AppType::Codex) {
+                "codex"
+            } else {
+                "claude"
+            }
+            .into(),
+            provider_id: provider.id.clone(),
+            account_id,
+            api_base,
+            credential_generation: auth.get_credential_generation(),
+            client_session_id: self.session_id.clone(),
+        };
+        let timeout = deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .min(std::time::Duration::from_secs(15));
+        let snapshot = if self.session_client_provided {
+            self.copilot_auto_sessions
+                .get_or_resolve(&key, &access_token, &prompt, has_image, timeout)
+                .await
+        } else {
+            self.copilot_auto_sessions
+                .resolve_uncached(&key, &access_token, &prompt, has_image, timeout)
+                .await
+        };
+        if matches!(snapshot, Err(ProxyError::UpstreamError { status: 401, .. })) {
+            auth.invalidate_token_if_matches(&key.account_id, &access_token)
+                .await;
+            *retry_auto = true;
+        }
+        let snapshot = snapshot?;
+        let model = catalogue.iter().find(|m| m.id == snapshot.selected_model);
+        let transport = model.and_then(|m| match protocol {
+            RequestProtocol::ChatCompletions => {
+                transport_for(&m.supported_endpoints, CodexCopilotApiFormat::OpenaiChat)
+            }
+            RequestProtocol::CodexResponses => transport_for(
+                &m.supported_endpoints,
+                CodexCopilotApiFormat::from_meta(provider.meta.as_ref()),
+            ),
+            RequestProtocol::AnthropicMessages => {
+                use CopilotProtocol::{Chat, Messages, Responses};
+                let preferred = if m.vendor.eq_ignore_ascii_case("anthropic") {
+                    [Messages, Chat, Responses]
+                } else if m.vendor.eq_ignore_ascii_case("openai") {
+                    [Responses, Chat, Messages]
+                } else {
+                    [Chat, Responses, Messages]
+                };
+                advertised_transport(&m.supported_endpoints, &preferred)
+            }
+        });
+        let Some(transport) = transport else {
+            self.copilot_auto_sessions
+                .invalidate_if_token_matches(&key, &snapshot.session_token)
+                .await;
+            let reason = if model.is_none() {
+                "is absent from the account catalogue"
+            } else {
+                "has no advertised endpoint compatible with the request"
+            };
+            return Err(ProxyError::ConfigError(format!(
+                "Copilot Auto selected model '{}' {reason}",
+                snapshot.selected_model
+            )));
+        };
+        Ok(CopilotAutoRoute {
+            key,
+            model_id: snapshot.selected_model,
+            transport,
+            session_token: snapshot.session_token,
+            access_token,
+            compaction: is_copilot_auto_compaction_request(app_type, endpoint, body),
+        })
+    }
+
     pub(super) fn codex_copilot_request_context(
         &self,
         is_codex_copilot_responses: bool,
@@ -220,11 +419,10 @@ impl RequestForwarder {
         };
         let model_id = model_id.to_string();
 
-        let Some(app_handle) = &self.app_handle else {
+        let Some(auth) = self.copilot_auth() else {
             return;
         };
-        let copilot_state = app_handle.state::<CopilotAuthState>();
-        let copilot_auth = copilot_state.0.read().await;
+        let copilot_auth = auth.read().await;
         let account_id = provider
             .meta
             .as_ref()
@@ -267,14 +465,13 @@ impl RequestForwarder {
                     "Codex Copilot requests require a non-empty string model".to_string(),
                 )
             })?;
-        let app_handle = self.app_handle.as_ref().ok_or_else(|| {
+        let auth = self.copilot_auth().ok_or_else(|| {
             ProxyError::ConfigError(format!(
                 "GitHub Copilot capabilities for model {model_id} cannot be resolved: AppHandle unavailable"
             ))
         })?;
 
-        let copilot_state = app_handle.state::<CopilotAuthState>();
-        let copilot_auth = copilot_state.0.read().await;
+        let copilot_auth = auth.read().await;
         let account_id = provider
             .meta
             .as_ref()
@@ -296,13 +493,12 @@ impl RequestForwarder {
         provider: &Provider,
         model_id: &str,
     ) -> Option<crate::proxy::providers::copilot_auth::CopilotModel> {
-        let Some(app_handle) = &self.app_handle else {
+        let Some(auth) = self.copilot_auth() else {
             log::debug!("[Copilot] AppHandle unavailable, fallback to chat/completions");
             return None;
         };
 
-        let copilot_state = app_handle.state::<CopilotAuthState>();
-        let copilot_auth = copilot_state.0.read().await;
+        let copilot_auth = auth.read().await;
         let account_id = provider
             .meta
             .as_ref()

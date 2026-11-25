@@ -2018,6 +2018,7 @@
     "directModeFormatSwitch": "이 형식은 직접 연결 모드에서 사용할 수 없습니다. 이 카드를 사용하려면 라우팅 또는 통합 모드로 전환하세요."
   },
   "copilot": {
+    "autoModelName": "GitHub Copilot Auto",
     "automaticFormat": "모델에 따라 자동 선택",
     "automaticFormatHint": "Copilot의 업스트림 형식은 라우팅에서 모델에 따라 자동으로 선택합니다. 수동으로 지정한 형식은 적용되지 않습니다.",
     "authSection": "GitHub Copilot 인증",

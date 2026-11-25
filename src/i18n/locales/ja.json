@@ -2057,6 +2057,7 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "例: company.ghe.com",
+    "autoModelName": "GitHub Copilot 自動選択",
     "form": {
       "officialTitle": "Copilot CLI 自身の GitHub ログインを使用",
       "officialHint": "「ターミナルを開く」はこのカードのモデルで copilot を起動します。認証センターのアカウントを紐付けると、そのアカウントで起動します。",
