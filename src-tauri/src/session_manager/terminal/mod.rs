@@ -1,8 +1,7 @@
 #[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
-/// Windows 没有 `osascript`/`open` 这条链路，恢复会话改走和供应商卡片「打开终端」
-/// 相同的 `cmd /C start` + 临时 .bat 实现；首选终端由后端设置读取，`target` 不参与。
+/// Windows session commands use PowerShell encoding inside the selected terminal.
 #[cfg(target_os = "windows")]
 pub fn launch_terminal(
     target: &str,
@@ -14,8 +13,8 @@ pub fn launch_terminal(
         return Err("Resume command is empty".to_string());
     }
 
-    let _ = (target, custom_config);
-    crate::launch_windows_session_command(command, cwd)
+    let _ = custom_config;
+    crate::launch_windows_session_command(command, cwd, target)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -30,7 +29,7 @@ pub fn launch_terminal(
     }
 
     if !cfg!(target_os = "macos") {
-        return Err("Terminal resume is only supported on macOS".to_string());
+        return Err("Terminal resume is only supported on macOS and Windows".to_string());
     }
 
     match target {
@@ -464,8 +463,14 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 ///
 /// 单引号内不做任何展开，唯一的特例是 `'` 自身无法被表示：用「闭合-转义-重开」
 /// 的 `'\''` 序列绕过。
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn shell_escape(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -612,5 +617,16 @@ mod tests {
             build_shell_command("claude --resume x", Some("/tmp/$(id -un)")),
             "cd '/tmp/$(id -un)' && claude --resume x"
         );
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::shell_escape;
+
+    #[test]
+    fn quotes_unicode_paths_and_embedded_apostrophes_for_powershell() {
+        assert_eq!(shell_escape(r"C:\项目\it's"), r"'C:\项目\it''s'");
+        assert_eq!(shell_escape("$(calc); &"), "'$(calc); &'");
     }
 }

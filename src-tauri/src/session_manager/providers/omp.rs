@@ -88,6 +88,14 @@ fn resume_command(source: &str) -> Result<String, String> {
         let value = std::env::var(variable).unwrap_or_default();
         assignments.push(format!("{variable}={}", shell_escape(&value)));
     }
+    #[cfg(target_os = "windows")]
+    let assignments: Vec<String> = assignments
+        .into_iter()
+        .map(|assignment| {
+            let (name, value) = assignment.split_once('=').expect("environment assignment");
+            format!("$env:{name} = {value};")
+        })
+        .collect();
     Ok(format!(
         "{} omp --resume {}",
         assignments.join(" "),

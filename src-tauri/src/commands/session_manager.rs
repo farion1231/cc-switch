@@ -231,7 +231,12 @@ pub async fn launch_session_terminal(
     let target = match preferred.as_deref() {
         Some("iterm2") => "iterm".to_string(),
         Some(t) => t.to_string(),
-        None => "terminal".to_string(), // Default to Terminal.app on macOS
+        None => if cfg!(target_os = "windows") {
+            "cmd"
+        } else {
+            "terminal"
+        }
+        .to_string(),
     };
 
     tauri::async_runtime::spawn_blocking(move || {

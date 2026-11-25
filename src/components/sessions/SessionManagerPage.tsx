@@ -417,7 +417,8 @@ export function SessionManagerPage({
       return label === key ? value : label;
     }
     if (isWindows()) {
-      const value = settings?.preferredTerminal || "cmd";
+      const preferred = settings?.preferredTerminal;
+      const value = preferred && ["cmd", "powershell", "wt"].includes(preferred) ? preferred : "cmd";
       const key = `settings.terminal.options.windows.${value}`;
       const label = t(key);
       return label === key ? value : label;
