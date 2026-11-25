@@ -1152,6 +1152,26 @@ fn package_manager_anchored_command_from_paths(
                 quote_path_if_spaced(&bun)
             ));
         }
+        "pnpm" => {
+            let pnpm = sibling_bin(bin_path, "pnpm")?;
+            let bin_dir = parent_dir(bin_path);
+            // pnpm 11+ puts global binaries in PNPM_HOME/bin; older versions
+            // put them directly in PNPM_HOME. GUI apps may not inherit it.
+            let pnpm_home = if Path::new(&bin_dir)
+                .file_name()
+                .is_some_and(|name| name == "bin")
+            {
+                parent_dir(&bin_dir)
+            } else {
+                bin_dir.clone()
+            };
+            return Some(format!(
+                "PNPM_HOME={} PATH={}:\"$PATH\" {} add -g {pkg}@latest",
+                shell_single_quote(&pnpm_home),
+                shell_single_quote(&bin_dir),
+                shell_single_quote(&pnpm),
+            ));
+        }
         // 自带同级 npm 的 node 管理器：落到下面锚定到那处的 npm。
         "nvm" | "fnm" | "mise" | "homebrew" => {}
         // system / 未知来源通常没有同级 npm，不能拼 `<dir>/npm`。若工具有官方
@@ -1605,6 +1625,75 @@ pub(super) fn is_conflicting(installs: &[ToolInstallation]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn pnpm_default_codex_update_targets_its_own_installation() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        for uses_bin_subdir in [false, true] {
+            let temp = tempfile::Builder::new()
+                .prefix("cc switch '")
+                .tempdir()
+                .unwrap();
+            let pnpm_home = temp.path().join("pnpm");
+            let bin_dir = if uses_bin_subdir {
+                pnpm_home.join("bin")
+            } else {
+                pnpm_home.clone()
+            };
+            std::fs::create_dir_all(&bin_dir).unwrap();
+            let pnpm = bin_dir.join("pnpm");
+            std::fs::write(
+                &pnpm,
+                "#!/bin/sh\nprintf '%s\\n' \"$PNPM_HOME\" \"$@\" > \"$TRACE_FILE\"\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&pnpm, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let codex = bin_dir.join("codex");
+            let install = |path: &Path, source: &str, is_path_default| ToolInstallation {
+                path: path.to_string_lossy().into_owned(),
+                version: Some("0.171.0".to_string()),
+                runnable: true,
+                error: None,
+                exited_with_error: false,
+                source: source.to_string(),
+                is_path_default,
+                real: path.to_path_buf(),
+            };
+            let installs = [
+                install(
+                    Path::new("/Users/me/.nvm/versions/node/v24/bin/codex"),
+                    "nvm",
+                    false,
+                ),
+                install(&codex, "pnpm", true),
+            ];
+            let UpdateCommand::Anchored(command) = resolve_update_command("codex", &installs)
+            else {
+                panic!("pnpm-managed Codex must use an anchored update");
+            };
+            let trace = temp.path().join("trace");
+            let status = Command::new("bash")
+                .args(["-c", &command])
+                .env("TRACE_FILE", &trace)
+                .env_remove("PNPM_HOME")
+                .status()
+                .unwrap();
+            assert!(status.success(), "{command}");
+            let output = std::fs::read_to_string(trace).unwrap();
+            assert_eq!(
+                output.lines().collect::<Vec<_>>(),
+                [
+                    pnpm_home.to_str().unwrap(),
+                    "add",
+                    "-g",
+                    "@openai/codex@latest"
+                ]
+            );
+        }
+    }
 
     #[test]
     fn opencode_desktop_cli_is_unmanaged_only_when_default() {
