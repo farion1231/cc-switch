@@ -164,7 +164,7 @@ impl StreamCheckService {
     /// 没有 cc-switch 能可靠探测的目标——这类供应商的连通检测按钮在前端已隐藏
     /// （见 `ProviderCard.tsx`），故此处对其提取失败直接报错即可，不做官方端点回退。
     fn resolve_base_url(app_type: &AppType, provider: &Provider) -> Result<String, AppError> {
-        if provider.category.as_deref() == Some("official") {
+        if provider.has_official_category() {
             return Err(AppError::Message(
                 "Official providers do not expose a reachability-check target".to_string(),
             ));
@@ -194,6 +194,26 @@ impl StreamCheckService {
                     .ok()
                     .filter(|url| !url.trim().is_empty())
                     .unwrap_or_else(|| DEFAULT_GEMINI_BASE_URL.to_string()))
+            }
+            AppType::Copilot => {
+                if crate::services::provider::copilot_direct::is_official(provider) {
+                    return Err(AppError::Message(
+                        "Official providers do not expose a reachability-check target".to_string(),
+                    ));
+                }
+                provider
+                    .settings_config
+                    .pointer("/provider/baseUrl")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|url| !url.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| {
+                        AppError::Message(
+                            "The bring-your-own-model endpoint (provider.baseUrl) is empty"
+                                .to_string(),
+                        )
+                    })
             }
             _ => get_adapter(app_type)
                 .ok_or_else(|| {
@@ -635,6 +655,20 @@ mod tests {
         let mut official = make_provider(serde_json::json!({ "env": {} }));
         official.category = Some("official".to_string());
         assert!(StreamCheckService::resolve_base_url(&AppType::Agy, &official).is_err());
+    }
+
+    #[test]
+    fn test_resolve_base_url_copilot_uses_byok_endpoint_only() {
+        let custom = make_provider(serde_json::json!({
+            "provider": { "baseUrl": "https://relay.example/v1" },
+            "models": [{ "id": "gpt-5.4" }]
+        }));
+        assert_eq!(
+            StreamCheckService::resolve_base_url(&AppType::Copilot, &custom).unwrap(),
+            "https://relay.example/v1"
+        );
+        let login = make_provider(serde_json::json!({ "env": { "COPILOT_MODEL": "auto" } }));
+        assert!(StreamCheckService::resolve_base_url(&AppType::Copilot, &login).is_err());
     }
 
     #[tokio::test]

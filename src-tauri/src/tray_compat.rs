@@ -8,6 +8,7 @@
 //! 交给 `tray::handle_tray_icon_event`，和正常托盘走同一套面板 / 主界面逻辑；原生菜单模式
 //! 下右键再自己弹出当前菜单。Explorer 下矩形取得到，消息原样交给 tray-icon。
 
+use crate::sync_utils::MutexExt;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -38,12 +39,8 @@ static LAST_RIGHT_CLICK: Mutex<Option<Instant>> = Mutex::new(None);
 /// 当前挂在托盘上的原生菜单（`create_tray_menu` 每次重建都覆盖）。
 static NATIVE_MENU: Mutex<Option<Menu<Wry>>> = Mutex::new(None);
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|p| p.into_inner())
-}
-
 pub fn remember_native_menu(menu: &Menu<Wry>) {
-    *lock(&NATIVE_MENU) = Some(menu.clone());
+    *NATIVE_MENU.lock_recover() = Some(menu.clone());
 }
 
 /// 托盘建好后调用一次（主线程）。
@@ -118,7 +115,7 @@ fn icon_rect_available(hwnd: HWND, id: u32) -> bool {
 
 /// 记下这次右键；离上次不到 `RIGHT_CLICK_DEDUP` 就算同一次，返回 false。
 fn claim_right_click() -> bool {
-    let mut last = lock(&LAST_RIGHT_CLICK);
+    let mut last = LAST_RIGHT_CLICK.lock_recover();
     let duplicate = last.is_some_and(|at| at.elapsed() < RIGHT_CLICK_DEDUP);
     *last = Some(Instant::now());
     !duplicate
@@ -165,7 +162,7 @@ fn click(app: &AppHandle, hwnd: isize, button: MouseButton, x: i32, y: i32) {
 
 /// 和 tray-icon 弹托盘菜单一样：托盘窗口上挂着 muda 的子类，菜单项点击照常派发。
 fn show_native_menu(hwnd: isize, x: i32, y: i32) {
-    let menu = lock(&NATIVE_MENU).clone();
+    let menu = NATIVE_MENU.lock_recover().clone();
     let Some(hmenu) = menu.and_then(|m| m.hpopupmenu().ok()) else {
         return;
     };

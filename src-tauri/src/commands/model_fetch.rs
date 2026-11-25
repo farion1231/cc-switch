@@ -29,7 +29,7 @@ pub async fn get_agy_models(
     // 登录态不在 settings.json 里：首次使用、只用官方登录时它可能还不存在，列模型只依赖
     // CLI 自己。文件在但坏了照样报错，免得静默略过。
     if api_key.is_none() && crate::agy_config::settings_path().exists() {
-        crate::agy_config::read_live_settings().map_err(|e| e.to_string())?;
+        crate::agy_config::read_live_settings()?;
     }
     let path = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
         .await
@@ -117,7 +117,7 @@ pub async fn get_opencode_models() -> Result<Vec<OpenCodeModelRef>, String> {
             ("OPENCODE_CONFIG_DIR", config_dir_env),
             ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
         ];
-        let output = super::misc::run_detected_tool_command_with_timeout(
+        let output = super::misc::tool_process::run_detected_tool_command_with_timeout(
             "opencode",
             &["models"],
             Some(OPENCODE_MODELS_TIMEOUT),
@@ -206,10 +206,10 @@ pub async fn fetch_models_for_config(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_opencode_models, OpenCodeModelRef};
+    use super::{parse_agy_models, parse_opencode_models, OpenCodeModelRef};
 
     #[test]
-    fn parses_sorts_and_deduplicates_models() {
+    fn parse_opencode_models_sorts_deduplicates_and_skips_malformed() {
         assert_eq!(
             parse_opencode_models(
                 "openrouter/vendor/model\nopencode/free-model\ninvalid\nopencode/free-model\n"
@@ -225,34 +225,26 @@ mod tests {
                 },
             ]
         );
-    }
-
-    #[test]
-    fn skips_malformed_output_lines() {
         assert!(parse_opencode_models(
             "notice: loading models\n/model\nprovider/\nbad provider/model\nprovider/bad model\nprovider/bad\u{1b}[0m\n"
         )
         .is_empty());
     }
-}
 
-#[cfg(test)]
-mod agy_tests {
     #[test]
-    fn agy_model_list_returns_native_setting_names_and_deduplicates_aliases() {
-        let models = super::parse_agy_models("Fetching available models...\ngemini-test\tGemini Test\nclaude-test\tClaude Test\ngemini-test\tDuplicate\n");
+    fn parse_agy_models_deduplicates_aliases_and_skips_malformed() {
+        let models = parse_agy_models(
+            "Fetching available models...\ngemini-test\tGemini Test\nclaude-test\tClaude Test\ngemini-test\tDuplicate\n",
+        );
         assert_eq!(
             models.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
             ["Claude Test", "Gemini Test"]
         );
-    }
 
-    #[test]
-    fn agy_model_list_skips_malformed_rows_and_empty_or_control_character_names() {
-        let models = super::parse_agy_models(
+        let filtered = parse_agy_models(
             "notice\n\tNo alias\nbad alias\tName\nempty\t\nspaces\t   \ncontrol\tBad\u{1b}Name\nextra\tName\tColumn\nvalid\t Gemini Test \n",
         );
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0].id, "Gemini Test");
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, "Gemini Test");
     }
 }

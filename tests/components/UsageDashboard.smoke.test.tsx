@@ -1,9 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { emitTauriEvent } from "../msw/tauriMocks";
+import { createTestQueryClient } from "../utils/testQueryClient";
 
 /**
  * 不 mock 子组件，把整页（指标、趋势图、四个页签）真渲染一遍，接口用假数据。
@@ -22,6 +23,7 @@ const usageApiMock = vi.hoisted(() => ({
   saveModelsDevSyncConfig: vi.fn(),
   syncSessionUsage: vi.fn(),
   getSessionUsageLastSync: vi.fn().mockResolvedValue(null),
+  getUsageFirstDate: vi.fn().mockResolvedValue(null),
   rebuildCodexUsage: vi.fn(),
 }));
 
@@ -92,6 +94,8 @@ describe("UsageDashboard (smoke)", () => {
         totalCost: "6.1",
         successRate: 99.4,
         avgLatencyMs: 9000,
+        cacheReadTokens: 3_000_000,
+        cacheableInputTokens: 4_000_000,
         speedOutputTokens: 92_000,
         speedGenerationMs: 1_000_000,
       },
@@ -104,6 +108,8 @@ describe("UsageDashboard (smoke)", () => {
         totalCost: "11.2",
         avgCostPerRequest: "0.0114",
         successRate: 100,
+        cacheReadTokens: 4_000_000,
+        cacheableInputTokens: 5_000_000,
       },
     ]);
     usageApiMock.getRequestLogs.mockResolvedValue({
@@ -142,9 +148,7 @@ describe("UsageDashboard (smoke)", () => {
 
   it("scans session logs on open and shows imported usage via the backend event", async () => {
     vi.useFakeTimers();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     usageApiMock.syncSessionUsage.mockImplementation(async () => {
       usageApiMock.getUsageSummaryByApp.mockResolvedValue([
         { appType: "claude", summary: { ...summary, totalCost: "43.1" } },
@@ -168,9 +172,7 @@ describe("UsageDashboard (smoke)", () => {
 
   it("scans at the interval and re-runs statistics only once a minute for rolling ranges", async () => {
     vi.useFakeTimers();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     usageApiMock.syncSessionUsage.mockResolvedValue({
       imported: 0,
       filesScanned: 1,
@@ -206,9 +208,7 @@ describe("UsageDashboard (smoke)", () => {
 
   it("hides the scan interval and never scans while auto scanning is off", async () => {
     vi.useFakeTimers();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <UsageDashboard
@@ -227,9 +227,7 @@ describe("UsageDashboard (smoke)", () => {
 
   it("renders metrics, trend, every tab and pricing with real children", async () => {
     const user = userEvent.setup();
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     render(
       <QueryClientProvider client={client}>
         <UsageDashboard />

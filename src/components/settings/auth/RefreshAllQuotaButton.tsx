@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DSH_ACCOUNT_STATUS_KEY } from "@/components/providers/DshAccount";
+import { markCodebuddyQuotaForceRefresh } from "@/lib/query/subscription";
 
 /** 授权中心各组账号行的额度缓存：`[服务, "quota", 账号]` */
 const QUOTA_SERVICES = new Set([
@@ -17,6 +18,7 @@ const QUOTA_SERVICES = new Set([
   "xai_oauth",
   "kimi_oauth",
   "agy_oauth",
+  "codebuddy_oauth",
 ]);
 
 function isAccountQuotaQuery({ queryKey }: Query): boolean {
@@ -44,12 +46,13 @@ export function RefreshAllQuotaButton() {
       variant="quiet"
       size="regular"
       disabled={fetching}
-      onClick={() =>
+      onClick={() => {
+        markCodebuddyQuotaForceRefresh();
         void queryClient.refetchQueries({
           type: "active",
           predicate: isAccountQuotaQuery,
-        })
-      }
+        });
+      }}
     >
       <RefreshCw
         className={cn("h-4 w-4", fetching && "motion-safe:animate-spin")}

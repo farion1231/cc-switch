@@ -7,7 +7,14 @@ use crate::proxy::http_client;
 use crate::store::AppState;
 use serde::Serialize;
 use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+/// Inspect the selected outbound route without persisting or changing it.
+#[tauri::command]
+pub async fn diagnose_ip(url: String) -> Result<crate::services::ip_diagnostics::IpReport, String> {
+    crate::services::ip_diagnostics::diagnose(&url).await
+}
 
 /// 获取全局代理 URL
 ///
@@ -16,10 +23,7 @@ use std::time::{Duration, Instant};
 pub async fn get_global_proxy_url(
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<String>, String> {
-    let result = run_db_task(&state, |state| {
-        state.db.get_global_proxy_url().map_err(|e| e.to_string())
-    })
-    .await?;
+    let result = run_db_task(&state, |state| state.db.get_global_proxy_url()).await?;
     log::debug!(
         "[GlobalProxy] [GP-010] Read from database: {}",
         result
@@ -59,18 +63,20 @@ pub async fn set_global_proxy_url(
     // 1. 先验证代理配置是否有效（不应用）
     http_client::validate_proxy(url_opt)?;
 
-    // 2. 验证成功后保存到数据库
+    // 保存和应用必须按相同顺序完成，避免运行态与数据库记录不一致。
+    static PROXY_UPDATE: Mutex<()> = Mutex::new(());
     let stored = url_opt.map(str::to_owned);
     run_db_task(&state, move |state| {
+        let _update = PROXY_UPDATE
+            .lock()
+            .map_err(|_| "Failed to lock global proxy update".to_string())?;
         state
             .db
             .set_global_proxy_url(stored.as_deref())
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        http_client::apply_proxy(stored.as_deref())
     })
     .await?;
-
-    // 3. DB 写入成功后再应用到运行态
-    http_client::apply_proxy(url_opt)?;
 
     log::info!(
         "[GlobalProxy] [GP-009] Configuration updated: {}",
@@ -168,18 +174,6 @@ pub async fn test_proxy_url(url: String) -> Result<ProxyTestResult, String> {
         latency_ms: latency,
         error: Some(error_msg),
     })
-}
-
-/// 获取当前出站代理状态
-///
-/// 返回当前是否启用了出站代理以及代理 URL。
-#[tauri::command]
-pub fn get_upstream_proxy_status() -> UpstreamProxyStatus {
-    let url = http_client::get_current_proxy_url();
-    UpstreamProxyStatus {
-        enabled: url.is_some(),
-        proxy_url: url,
-    }
 }
 
 /// 出站代理状态信息

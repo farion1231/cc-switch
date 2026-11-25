@@ -2,10 +2,11 @@
 
 use super::calculator::{CostBreakdown, CostCalculator, ModelPricing};
 use super::parser::TokenUsage;
+use crate::app_config::AppType;
 use crate::database::{Database, PRICING_SOURCE_REQUEST, PRICING_SOURCE_RESPONSE};
 use crate::error::AppError;
 use crate::services::sql_helpers::{INPUT_TOKEN_SEMANTICS_FRESH, INPUT_TOKEN_SEMANTICS_TOTAL};
-use crate::services::usage_stats::{find_model_pricing_row, is_placeholder_pricing_model};
+use crate::services::usage_stats::is_placeholder_pricing_model;
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
 use sha2::{Digest, Sha256};
@@ -267,47 +268,8 @@ impl<'a> UsageLogger<'a> {
         .map_err(|error| AppError::Database(format!("查询 usage request_id 失败: {error}")))
     }
 
-    /// 记录失败的请求
+    /// 记录失败的请求（带请求上下文）
     ///
-    /// 用于记录无法从上游获取 usage 信息的失败请求
-    #[allow(dead_code, clippy::too_many_arguments)]
-    pub fn log_error(
-        &self,
-        request_id: String,
-        provider_id: String,
-        app_type: String,
-        model: String,
-        status_code: u16,
-        error_message: String,
-        latency_ms: u64,
-    ) -> Result<(), AppError> {
-        let request_model = model.clone();
-        let log = RequestLog {
-            request_id,
-            provider_id,
-            app_type,
-            model,
-            request_model,
-            // 错误行未经过计价，留空（回填的 has_usage 闸门也不会碰全 0 行）
-            pricing_model: String::new(),
-            usage: TokenUsage::default(),
-            cost: None,
-            latency_ms,
-            first_token_ms: None,
-            status_code,
-            error_message: Some(error_message),
-            session_id: None,
-            provider_type: None,
-            is_streaming: false,
-            cost_multiplier: "1.0".to_string(),
-        };
-
-        self.log_request(&log)
-    }
-
-    /// 记录失败的请求（带更多上下文信息）
-    ///
-    /// 相比 log_error，这个方法接受更多参数以提供完整的请求上下文。
     /// `model` 是发往上游的模型名，`request_model` 是客户端请求里的原名（没映射时两者相同）。
     #[allow(clippy::too_many_arguments)]
     pub fn log_error_with_context(
@@ -349,28 +311,20 @@ impl<'a> UsageLogger<'a> {
 
     /// 获取模型定价
     pub fn get_model_pricing(&self, model_id: &str) -> Result<Option<ModelPricing>, AppError> {
-        let conn = crate::database::lock_conn!(self.db.conn);
-        let row = find_model_pricing_row(&conn, model_id)?;
-        match row {
-            Some((input, output, cache_read, cache_creation)) => {
-                ModelPricing::from_strings(&input, &output, &cache_read, &cache_creation)
-                    .map(Some)
-                    .map_err(|e| AppError::Database(format!("解析定价数据失败: {e}")))
-            }
-            None => Ok(None),
-        }
+        self.db.cached_model_pricing(model_id)
     }
 
     /// 获取计费模式来源（按请求模型 / 按返回模型），只读应用级全局配置
-    pub async fn resolve_pricing_model_source(&self, app_type: &str) -> String {
+    pub fn resolve_pricing_model_source(&self, app_type: &str) -> String {
         // Claude Desktop 网关没有独立的全局计费配置（proxy_config 的 CHECK 不含
         // claude-desktop），继承 claude 的设置。
-        let default_app_type = if app_type == "claude-desktop" {
-            "claude"
-        } else {
-            app_type
+        let default_app_type = match app_type.parse::<AppType>() {
+            Ok(AppType::ClaudeDesktop) => AppType::Claude,
+            Ok(app) => app,
+            // 不认识的应用没有 proxy_config 行，和查不到行一样按返回模型计费。
+            Err(_) => return PRICING_SOURCE_RESPONSE.to_string(),
         };
-        match self.db.get_pricing_model_source(default_app_type).await {
+        match self.db.get_pricing_model_source_sync(&default_app_type) {
             Ok(value) if value == PRICING_SOURCE_RESPONSE || value == PRICING_SOURCE_REQUEST => {
                 value
             }
@@ -391,6 +345,7 @@ impl<'a> UsageLogger<'a> {
         &self,
         request_id: String,
         provider_id: String,
+        multiplier: Decimal,
         app_type: String,
         model: String,
         request_model: String,
@@ -414,12 +369,8 @@ impl<'a> UsageLogger<'a> {
             log::warn!("[USG-002] 模型定价未找到，成本将记录为 0: {pricing_model}");
         }
 
-        let cost = CostCalculator::try_calculate_for_app(
-            &app_type,
-            &usage,
-            pricing.as_ref(),
-            Decimal::ONE,
-        );
+        let cost =
+            CostCalculator::try_calculate_for_app(&app_type, &usage, pricing.as_ref(), multiplier);
 
         let log = RequestLog {
             request_id,
@@ -437,7 +388,7 @@ impl<'a> UsageLogger<'a> {
             session_id,
             provider_type,
             is_streaming,
-            cost_multiplier: "1".to_string(),
+            cost_multiplier: multiplier.normalize().to_string(),
         };
 
         self.log_request(&log)
@@ -447,6 +398,126 @@ impl<'a> UsageLogger<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn billing_multiplier_applies_to_all_models_and_preserves_history() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(r#"INSERT INTO providers (id, app_type, name, settings_config, meta)
+              VALUES ('discount', 'claude', 'Discount', '{}', '{"billingMultiplier":"0.5","costMultiplier":"9"}'),
+                     ('discount', 'codex', 'Other app', '{}', '{}');
+              INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+              VALUES ('billing-a', 'A', '2', '10'), ('billing-b', 'B', '4', '20');"#)?;
+        }
+        let logger = UsageLogger::new(&db);
+        for (id, app, model) in [
+            ("first", "claude", "billing-a"),
+            ("second", "claude", "billing-b"),
+            ("other", "codex", "billing-a"),
+            ("missing", "claude", "billing-missing"),
+        ] {
+            logger.log_with_calculation(
+                id.into(),
+                "discount".into(),
+                crate::provider::billing_multiplier(
+                    &db.get_provider_by_id("discount", &app.parse::<AppType>().unwrap())?
+                        .unwrap(),
+                ),
+                app.into(),
+                model.into(),
+                model.into(),
+                model.into(),
+                TokenUsage {
+                    input_tokens: 1000000,
+                    ..Default::default()
+                },
+                1,
+                None,
+                200,
+                None,
+                None,
+                false,
+            )?;
+        }
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            for (id, expected) in [
+                ("first", "1.000000"),
+                ("second", "2.000000"),
+                ("other", "2.000000"),
+            ] {
+                let total: String = conn.query_row(
+                    "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| r.get(0),
+                )?;
+                assert_eq!(
+                    total.parse::<Decimal>().unwrap(),
+                    expected.parse::<Decimal>().unwrap()
+                );
+            }
+            let stored: String = conn.query_row(
+                "SELECT cost_multiplier FROM proxy_request_logs WHERE request_id='missing'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(stored, "0.5");
+            conn.execute(
+                "UPDATE providers SET meta='{}' WHERE id='discount' AND app_type='claude'",
+                [],
+            )?;
+            let old: String = conn.query_row(
+                "SELECT cost_multiplier FROM proxy_request_logs WHERE request_id='first'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(old, "0.5");
+        }
+        logger.log_with_calculation(
+            "reset".into(),
+            "discount".into(),
+            Decimal::ONE,
+            "claude".into(),
+            "billing-a".into(),
+            "billing-a".into(),
+            "billing-a".into(),
+            TokenUsage {
+                input_tokens: 1000000,
+                ..Default::default()
+            },
+            1,
+            None,
+            200,
+            None,
+            None,
+            true,
+        )?;
+        let conn = crate::database::lock_conn!(db.conn);
+        let stored: String = conn.query_row(
+            "SELECT cost_multiplier FROM proxy_request_logs WHERE request_id='reset'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(stored, "1");
+        Ok(())
+    }
+
+    #[test]
+    fn billing_multiplier_validates_decimal_bounds() {
+        for raw in ["-1", "NaN", "inf", "1001", "abc", "", "1e2"] {
+            assert!(
+                crate::provider::parse_billing_multiplier(raw).is_err(),
+                "{raw}"
+            );
+        }
+        for raw in ["0", "0.5", "1", "1.5", "1000"] {
+            assert!(
+                crate::provider::parse_billing_multiplier(raw).is_ok(),
+                "{raw}"
+            );
+        }
+    }
 
     fn request_log(request_id: &str, input_tokens: u32) -> RequestLog {
         RequestLog {
@@ -507,6 +578,7 @@ mod tests {
         logger.log_with_calculation(
             "req-123".to_string(),
             "provider-1".to_string(),
+            Decimal::ONE,
             "claude".to_string(),
             "test-model".to_string(),
             "req-model".to_string(),
@@ -688,14 +760,18 @@ mod tests {
         let db = Database::memory()?;
         let logger = UsageLogger::new(&db);
 
-        logger.log_error(
+        logger.log_error_with_context(
             "req-error".to_string(),
             "provider-1".to_string(),
             "claude".to_string(),
             "unknown-model".to_string(),
+            "unknown-model".to_string(),
             500,
             "Internal Server Error".to_string(),
             50,
+            false,
+            None,
+            None,
         )?;
 
         // 验证错误记录已插入
@@ -737,14 +813,18 @@ mod tests {
         // #6706：中转站返回数 MB 的整页 HTML 报错，不能原样入库
         let prefix = "HTTP 502 Bad Gateway: <html><title>上游错误</title>";
         let body = format!("{prefix}{}", "🦀".repeat(MAX_ERROR_MESSAGE_CHARS * 100));
-        logger.log_error(
+        logger.log_error_with_context(
             "req-huge-error".to_string(),
             "provider-1".to_string(),
             "claude".to_string(),
             "claude-sonnet-4-5".to_string(),
+            "claude-sonnet-4-5".to_string(),
             502,
             body,
             50,
+            false,
+            None,
+            None,
         )?;
 
         let conn = crate::database::lock_conn!(db.conn);

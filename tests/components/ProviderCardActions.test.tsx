@@ -146,6 +146,32 @@ describe("ProviderCardActions — open terminal", () => {
     ).not.toBeInTheDocument();
   });
 
+  // 只能经路由用的卡：按钮留着（卡片对齐），置灰、点了不开终端，原因挂在按钮上
+  it("stays on the card but is disabled with its reason", async () => {
+    const user = userEvent.setup();
+    const onOpenTerminal = vi.fn();
+    render(
+      <ProviderCardActions
+        providerName="GitHub Copilot"
+        presentation={{ buttons: [], chips: [] }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onOpenTerminal={onOpenTerminal}
+        openTerminalDisabledReason="provider.openTerminalNeedsRoute"
+      />,
+    );
+
+    const button = screen.getByRole("button", {
+      name: "providerCard.action.openTerminal",
+    });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    await user.click(button);
+    expect(onOpenTerminal).not.toHaveBeenCalled();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "provider.openTerminalNeedsRoute",
+    );
+  });
+
   it("isn't shown for apps without it", () => {
     render(
       <ProviderCardActions

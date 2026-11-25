@@ -28,7 +28,6 @@
 //! matched; extend [`MOONSHOT_HOST_SUFFIXES`] if such a report shows up.
 
 use serde_json::{json, Map, Value};
-use url::Url;
 
 /// Upstream hosts whose Chat Completions validator rejects `$ref` siblings.
 /// Matched as the host itself or any subdomain of it.
@@ -72,19 +71,7 @@ const SCHEMA_MAP_KEYWORDS: &[&str] = &[
 /// Fails closed on unparsable URLs: no host, no rewrite, and the request goes
 /// out unchanged exactly as it did before this module existed.
 pub fn upstream_requires_ref_sibling_all_of(base_url: &str) -> bool {
-    let Ok(url) = Url::parse(base_url.trim()) else {
-        return false;
-    };
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
-    MOONSHOT_HOST_SUFFIXES.iter().any(|suffix| {
-        host == *suffix
-            || host
-                .strip_suffix(suffix)
-                .is_some_and(|prefix| prefix.ends_with('.'))
-    })
+    super::url_host_is_or_under(base_url, MOONSHOT_HOST_SUFFIXES)
 }
 
 /// Rewrite every `$ref`-with-siblings node inside `tools[].function.parameters`

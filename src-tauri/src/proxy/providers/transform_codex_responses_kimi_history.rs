@@ -15,6 +15,9 @@
 //! 再调工具），空文字的去掉；不在调用组里的空文字助手消息也去掉。改写是确定的，同一
 //! 段历史每轮得到同样的字节，缓存前缀不受影响；请求里没有这些排列时逐字节不变。
 
+use super::transform_codex_responses_reorder::{
+    call_id_of, is_user_message, tool_output_positions,
+};
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -27,23 +30,7 @@ const DEEPSEEK_HOST_SUFFIXES: &[&str] = &["deepseek.com"];
 /// 同一份域名名单）和 DeepSeek。
 pub fn upstream_rejects_messages_inside_tool_calls(base_url: &str) -> bool {
     super::transform_codex_chat_moonshot_schema::upstream_requires_ref_sibling_all_of(base_url)
-        || host_matches(base_url, DEEPSEEK_HOST_SUFFIXES)
-}
-
-fn host_matches(base_url: &str, suffixes: &[&str]) -> bool {
-    let Ok(url) = url::Url::parse(base_url.trim()) else {
-        return false;
-    };
-    let Some(host) = url.host_str() else {
-        return false;
-    };
-    let host = host.to_ascii_lowercase();
-    suffixes.iter().any(|suffix| {
-        host == *suffix
-            || host
-                .strip_suffix(suffix)
-                .is_some_and(|prefix| prefix.ends_with('.'))
-    })
+        || super::url_host_is_or_under(base_url, DEEPSEEK_HOST_SUFFIXES)
 }
 
 /// 理顺 `input` 里这些上游拒收的助手消息排列。返回是否改动过请求体。
@@ -57,36 +44,46 @@ pub fn repair_tool_history(body: &mut Value) -> bool {
 
     let mut changed = false;
     let mut output: Vec<Value> = Vec::with_capacity(input.len());
-    let mut pending: HashSet<String> = HashSet::new();
-    // 当前这组调用里，挪上来的消息该插的位置（组里第一个调用之前，按原顺序往后排）。
-    let mut hoist_at = 0;
+    let mut original = std::mem::take(input);
+    for turn in original.split_inclusive_mut(is_user_message) {
+        let output_positions = tool_output_positions(turn, |kind| OUTPUT_TYPES.contains(&kind));
+        let mut pending = HashSet::new();
+        // 当前这组调用里，挪上来的消息该插的位置（组里第一个调用之前，按原顺序往后排）。
+        let mut hoist_at = 0;
 
-    for item in std::mem::take(input) {
-        let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
-        if is_assistant_message(&item) {
-            if is_empty_text_message(&item) {
-                changed = true;
-                continue;
+        for (index, slot) in turn.iter_mut().enumerate() {
+            let item = slot.take();
+            let item_type = item.get("type").and_then(Value::as_str).unwrap_or_default();
+            if is_assistant_message(&item) {
+                if is_empty_text_message(&item) {
+                    changed = true;
+                    continue;
+                }
+                if !pending.is_empty() {
+                    output.insert(hoist_at, item);
+                    hoist_at += 1;
+                    changed = true;
+                    continue;
+                }
+            } else if CALL_TYPES.contains(&item_type) {
+                if pending.is_empty() {
+                    hoist_at = output.len();
+                }
+                if let Some(id) = call_id_of(&item) {
+                    if output_positions
+                        .get(id)
+                        .is_some_and(|&output| output > index)
+                    {
+                        pending.insert(id.to_owned());
+                    }
+                }
+            } else if OUTPUT_TYPES.contains(&item_type) {
+                if let Some(id) = call_id_of(&item) {
+                    pending.remove(id);
+                }
             }
-            if !pending.is_empty() {
-                output.insert(hoist_at, item);
-                hoist_at += 1;
-                changed = true;
-                continue;
-            }
-        } else if CALL_TYPES.contains(&item_type) {
-            if pending.is_empty() {
-                hoist_at = output.len();
-            }
-            if let Some(call_id) = call_id(&item) {
-                pending.insert(call_id.to_string());
-            }
-        } else if OUTPUT_TYPES.contains(&item_type) {
-            if let Some(call_id) = call_id(&item) {
-                pending.remove(call_id);
-            }
+            output.push(item);
         }
-        output.push(item);
     }
 
     *input = output;
@@ -119,12 +116,6 @@ fn is_empty_text_message(item: &Value) -> bool {
         }
         _ => false,
     }
-}
-
-fn call_id(item: &Value) -> Option<&str> {
-    item.get("call_id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
 }
 
 #[cfg(test)]

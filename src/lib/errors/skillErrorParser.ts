@@ -33,16 +33,21 @@ function getErrorI18nKey(code: string): string {
     SKILL_NOT_FOUND: "skills.error.skillNotFound",
     MISSING_REPO_INFO: "skills.error.missingRepoInfo",
     DOWNLOAD_TIMEOUT: "skills.error.downloadTimeout",
+    DOWNLOAD_STALLED: "skills.error.downloadStalled",
     DOWNLOAD_FAILED: "skills.error.downloadFailed",
     SKILL_DIR_NOT_FOUND: "skills.error.skillDirNotFound",
     SKILL_DIRECTORY_CONFLICT: "skills.error.directoryConflict",
     EMPTY_ARCHIVE: "skills.error.emptyArchive",
+    ARCHIVE_INVALID: "skills.error.archiveInvalid",
     INVALID_REPO_REF: "skills.error.invalidRepoRef",
     ARCHIVE_TOO_LARGE: "skills.error.archiveTooLarge",
     ARCHIVE_DOWNLOAD_TOO_LARGE: "skills.error.archiveDownloadTooLarge",
     ARCHIVE_TOO_MANY_ENTRIES: "skills.error.archiveTooManyEntries",
     GET_HOME_DIR_FAILED: "skills.error.getHomeDirFailed",
     NO_SKILLS_IN_ZIP: "skills.error.noSkillsInZip",
+    INVALID_TOKEN_HOST: "skills.error.invalidTokenHost",
+    INVALID_REPO_TOKEN: "skills.error.invalidRepoToken",
+    REPO_TOKEN_STORAGE_FAILED: "skills.error.repoTokenStorageFailed",
   };
 
   return mapping[code] || "skills.error.unknownError";
@@ -63,6 +68,10 @@ function getSuggestionI18nKey(suggestion: string): string {
     http403: "skills.error.http403",
     http404: "skills.error.http404",
     http429: "skills.error.http429",
+    http401Token: "skills.error.http401Token",
+    http403Token: "skills.error.http403Token",
+    http404Token: "skills.error.http404Token",
+    httpAuthRequired: "skills.error.httpAuthRequired",
   };
 
   return mapping[suggestion] || suggestion;
@@ -113,8 +122,9 @@ export function formatSkillError(
 
 /**
  * 一句话的失败原因，放进「N 个仓库没有读到：owner/name（原因）」这类横幅。
- * HTTP 403 / 404 / 429 用对应的说明（如「GitHub 访问受限，可能是请求频率过高」），
- * 其余结构化错误用错误码的文案，非结构化错误取原文第一行。
+ * HTTP 状态的提示（`http403`、`http401Token`、`httpAuthRequired`…）用对应的说明，
+ * 比「下载失败：HTTP 404」更能说明该怎么办；其余结构化错误用错误码的文案，
+ * 非结构化错误取原文第一行。
  */
 export function skillErrorReason(errorString: string, t: TFunction): string {
   const parsedError = parseSkillError(errorString);
@@ -122,7 +132,7 @@ export function skillErrorReason(errorString: string, t: TFunction): string {
     return (errorString.split("\n")[0] ?? "").trim() || t("common.error");
   }
   const { code, context, suggestion } = parsedError;
-  if (suggestion && /^http\d{3}$/.test(suggestion)) {
+  if (suggestion && /^http(\d{3}|AuthRequired)/.test(suggestion)) {
     return t(getSuggestionI18nKey(suggestion));
   }
   return t(getErrorI18nKey(code), context);

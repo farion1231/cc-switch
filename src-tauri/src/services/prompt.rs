@@ -62,9 +62,9 @@ impl PromptService {
         // A restore replaces the DB before projecting it to live files. Keep
         // backfill outside that window, including calls outside the UI command.
         let Ok(_sync_guard) = super::sync_protocol::sync_mutex().try_lock() else {
-            return state.db.get_prompts(app.as_str());
+            return state.db.get_prompts(&app);
         };
-        let mut prompts = state.db.get_prompts(app.as_str())?;
+        let mut prompts = state.db.get_prompts(&app)?;
         // External editors change the live file without updating the saved
         // selection. Refresh only that selection; inactive templates are separate.
         if let Some(prompt) = prompts.values_mut().find(|prompt| prompt.enabled) {
@@ -72,7 +72,7 @@ impl PromptService {
                 Ok(Some(content)) if !content.trim().is_empty() && prompt.content != content => {
                     prompt.content = content;
                     prompt.updated_at = Some(get_unix_timestamp()?);
-                    state.db.save_prompt(app.as_str(), prompt)?;
+                    state.db.save_prompt(&app, prompt)?;
                 }
                 Ok(_) => {}
                 Err(error) => log::warn!(
@@ -99,7 +99,7 @@ impl PromptService {
         }
 
         validate_prompt_content(&app, &prompt.content)?;
-        let prompts = state.db.get_prompts(app.as_str())?;
+        let prompts = state.db.get_prompts(&app)?;
         // 只有停用最后一条启用中的提示词时才清空文件；新建、导入或重存
         // 停用条目时，文件可能是用户自己写的，必须原样保留
         let clear_live = !prompt.enabled
@@ -107,7 +107,7 @@ impl PromptService {
             && !prompts
                 .iter()
                 .any(|(key, prompt)| key != id && prompt.enabled);
-        state.db.save_prompt(app.as_str(), &prompt)?;
+        state.db.save_prompt(&app, &prompt)?;
 
         if prompt.enabled {
             let target_path = prompt_file_path(&app)?;
@@ -127,11 +127,7 @@ impl PromptService {
             return delete_pi_prompt(state, id);
         }
         let _guard = if app == AppType::Mcode {
-            Some(
-                MCODE_PROMPT_LOCK
-                    .lock()
-                    .map_err(|error| AppError::Message(error.to_string()))?,
-            )
+            Some(crate::sync_utils::lock_file_operation(&MCODE_PROMPT_LOCK))
         } else {
             None
         };
@@ -143,7 +139,7 @@ impl PromptService {
             }
         }
 
-        state.db.delete_prompt(app.as_str(), id)?;
+        state.db.delete_prompt(&app, id)?;
         Ok(())
     }
 
@@ -160,7 +156,7 @@ impl PromptService {
         if target_path.exists() {
             if let Ok(live_content) = std::fs::read_to_string(&target_path) {
                 if !live_content.trim().is_empty() {
-                    let mut prompts = state.db.get_prompts(app.as_str())?;
+                    let mut prompts = state.db.get_prompts(&app)?;
 
                     // 尝试回填到当前已启用的提示词
                     if let Some((enabled_id, enabled_prompt)) = prompts
@@ -172,7 +168,7 @@ impl PromptService {
                         enabled_prompt.content = live_content.clone();
                         enabled_prompt.updated_at = Some(timestamp);
                         log::info!("回填 live 提示词内容到已启用项: {enabled_id}");
-                        state.db.save_prompt(app.as_str(), enabled_prompt)?;
+                        state.db.save_prompt(&app, enabled_prompt)?;
                     } else {
                         // 没有已启用的提示词，则创建一次备份（避免重复备份）
                         let content_exists = prompts
@@ -197,7 +193,7 @@ impl PromptService {
                                 updated_at: Some(timestamp),
                             };
                             log::info!("回填 live 提示词内容，创建备份: {backup_id}");
-                            state.db.save_prompt(app.as_str(), &backup_prompt)?;
+                            state.db.save_prompt(&app, &backup_prompt)?;
                         }
                     }
                 }
@@ -205,7 +201,7 @@ impl PromptService {
         }
 
         // 启用目标提示词并写入文件
-        let mut prompts = state.db.get_prompts(app.as_str())?;
+        let mut prompts = state.db.get_prompts(&app)?;
 
         for prompt in prompts.values_mut() {
             prompt.enabled = false;
@@ -215,14 +211,14 @@ impl PromptService {
             validate_prompt_content(&app, &prompt.content)?;
             prompt.enabled = true;
             write_text_file(&target_path, &prompt.content)?; // 原子写入
-            state.db.save_prompt(app.as_str(), prompt)?;
+            state.db.save_prompt(&app, prompt)?;
         } else {
             return Err(AppError::InvalidInput(format!("提示词 {id} 不存在")));
         }
 
         // Save all prompts to disable others
         for (_, prompt) in prompts.iter() {
-            state.db.save_prompt(app.as_str(), prompt)?;
+            state.db.save_prompt(&app, prompt)?;
         }
 
         Ok(())
@@ -286,15 +282,11 @@ impl PromptService {
         }
 
         let _guard = if app == AppType::Mcode {
-            Some(
-                MCODE_PROMPT_LOCK
-                    .lock()
-                    .map_err(|error| AppError::Message(error.to_string()))?,
-            )
+            Some(crate::sync_utils::lock_file_operation(&MCODE_PROMPT_LOCK))
         } else {
             None
         };
-        let prompts = state.db.get_prompts(app.as_str())?;
+        let prompts = state.db.get_prompts(&app)?;
         let target_path = prompt_file_path(&app)?;
         if let Some(prompt) = prompts.values().find(|prompt| prompt.enabled) {
             validate_prompt_content(&app, &prompt.content)?;
@@ -335,7 +327,7 @@ impl PromptService {
         app: AppType,
     ) -> Result<usize, AppError> {
         // 幂等性保护：该应用已有提示词则跳过
-        let existing = state.db.get_prompts(app.as_str())?;
+        let existing = state.db.get_prompts(&app)?;
         if !existing.is_empty() {
             return Ok(0);
         }
@@ -394,7 +386,7 @@ impl PromptService {
         };
 
         // 保存到数据库
-        state.db.save_prompt(app.as_str(), &prompt)?;
+        state.db.save_prompt(&app, &prompt)?;
 
         log::info!("自动导入完成: {}", app.as_str());
         Ok(1)
@@ -409,11 +401,9 @@ fn upsert_mcode_prompt(
     prompt: Prompt,
     target_path: &Path,
 ) -> Result<(), AppError> {
-    let _guard = MCODE_PROMPT_LOCK
-        .lock()
-        .map_err(|error| AppError::Message(error.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&MCODE_PROMPT_LOCK);
     validate_prompt_content(&AppType::Mcode, &prompt.content)?;
-    let prompts = state.db.get_prompts("mcode")?;
+    let prompts = state.db.get_prompts(&AppType::Mcode)?;
     let clear_live = !prompt.enabled
         && prompts.get(id).is_some_and(|previous| previous.enabled)
         && !prompts
@@ -421,20 +411,18 @@ fn upsert_mcode_prompt(
             .any(|(key, prompt)| key != id && prompt.enabled)
         && target_path.exists();
     if !prompt.enabled && !clear_live {
-        return state.db.save_prompt("mcode", &prompt);
+        return state.db.save_prompt(&AppType::Mcode, &prompt);
     }
     crate::mcode_config::write_and_commit(
         target_path,
         || write_text_file(target_path, if clear_live { "" } else { &prompt.content }),
-        || state.db.save_prompt("mcode", &prompt),
+        || state.db.save_prompt(&AppType::Mcode, &prompt),
     )
 }
 
 fn enable_mcode_prompt(state: &AppState, id: &str, target_path: &Path) -> Result<(), AppError> {
-    let _guard = MCODE_PROMPT_LOCK
-        .lock()
-        .map_err(|error| AppError::Message(error.to_string()))?;
-    let mut prompts = state.db.get_prompts("mcode")?;
+    let _guard = crate::sync_utils::lock_file_operation(&MCODE_PROMPT_LOCK);
+    let mut prompts = state.db.get_prompts(&AppType::Mcode)?;
     let target = prompts
         .get(id)
         .ok_or_else(|| AppError::InvalidInput(format!("提示词 {id} 不存在")))?;
@@ -511,7 +499,7 @@ fn unique_pi_backup_id(prompts: &IndexMap<String, Prompt>, timestamp: i64) -> St
 
 fn get_pi_prompts(state: &AppState) -> Result<IndexMap<String, Prompt>, AppError> {
     let guard = PiAgentsFileGuard::acquire()?;
-    let mut prompts = state.db.get_prompts(AppType::Pi.as_str())?;
+    let mut prompts = state.db.get_prompts(&AppType::Pi)?;
     let snapshot = guard.read()?;
     let active_id = pi_active_prompt_id(&prompts, snapshot.content.as_deref());
 
@@ -529,7 +517,7 @@ fn upsert_pi_prompt(state: &AppState, id: &str, prompt: Prompt) -> Result<(), Ap
     }
 
     let guard = PiAgentsFileGuard::acquire()?;
-    let prompts = state.db.get_prompts(AppType::Pi.as_str())?;
+    let prompts = state.db.get_prompts(&AppType::Pi)?;
     let snapshot = guard.read()?;
     let was_active =
         pi_active_prompt_id(&prompts, snapshot.content.as_deref()).as_deref() == Some(id);
@@ -562,13 +550,14 @@ fn persist_pi_prompt_with_native_update(
     previous: Option<&Prompt>,
     update_native: impl FnOnce() -> Result<(), AppError>,
 ) -> Result<(), AppError> {
-    state.db.save_prompt(AppType::Pi.as_str(), stored)?;
-    if let Err(native_error) = update_native() {
-        let rollback = match previous {
-            Some(previous) => state.db.save_prompt(AppType::Pi.as_str(), previous),
-            None => state.db.delete_prompt(AppType::Pi.as_str(), id),
-        };
-        if let Err(rollback_error) = rollback {
+    state.db.save_prompt(&AppType::Pi, stored)?;
+    let rollback = || match previous {
+        Some(previous) => state.db.save_prompt(&AppType::Pi, previous),
+        None => state.db.delete_prompt(&AppType::Pi, id),
+    };
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(update_native));
+    if let Err(native_error) = crate::sync_utils::resume_after_rollback(outcome, rollback) {
+        if let Err(rollback_error) = rollback() {
             return Err(AppError::Message(format!(
                 "Pi prompt update failed ({native_error}); database rollback also failed: {rollback_error}"
             )));
@@ -580,7 +569,7 @@ fn persist_pi_prompt_with_native_update(
 
 fn enable_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
     let guard = PiAgentsFileGuard::acquire()?;
-    let prompts = state.db.get_prompts(AppType::Pi.as_str())?;
+    let prompts = state.db.get_prompts(&AppType::Pi)?;
     let target = prompts
         .get(id)
         .cloned()
@@ -603,7 +592,7 @@ fn enable_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
                 created_at: Some(timestamp),
                 updated_at: Some(timestamp),
             };
-            state.db.save_prompt(AppType::Pi.as_str(), &backup)?;
+            state.db.save_prompt(&AppType::Pi, &backup)?;
         }
     }
 
@@ -612,18 +601,19 @@ fn enable_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
 
 fn delete_pi_prompt(state: &AppState, id: &str) -> Result<(), AppError> {
     let guard = PiAgentsFileGuard::acquire()?;
-    let prompts = state.db.get_prompts(AppType::Pi.as_str())?;
+    let prompts = state.db.get_prompts(&AppType::Pi)?;
     let snapshot = guard.read()?;
     if pi_active_prompt_id(&prompts, snapshot.content.as_deref()).as_deref() == Some(id) {
         return Err(AppError::InvalidInput("无法删除已启用的提示词".to_string()));
     }
-    state.db.delete_prompt(AppType::Pi.as_str(), id)?;
+    state.db.delete_prompt(&AppType::Pi, id)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::project_prompt_set_to_path;
+    use crate::app_config::AppType;
     use crate::prompt::Prompt;
     use indexmap::IndexMap;
     use tempfile::tempdir;
@@ -651,7 +641,7 @@ mod tests {
         let state = AppState::new(Arc::new(Database::memory().unwrap()));
         state
             .db
-            .save_prompt("mcode", &prompt("active", "original", true))
+            .save_prompt(&AppType::Mcode, &prompt("active", "original", true))
             .unwrap();
         std::fs::write(&path, "native original").unwrap();
         state
@@ -667,7 +657,7 @@ mod tests {
         ] {
             assert!(upsert_mcode_prompt(&state, "active", changed, &path).is_err());
             assert_eq!(std::fs::read_to_string(&path).unwrap(), "native original");
-            let saved = state.db.get_prompts("mcode").unwrap();
+            let saved = state.db.get_prompts(&AppType::Mcode).unwrap();
             assert!(saved["active"].enabled);
             assert_eq!(saved["active"].content, "original");
         }
@@ -676,7 +666,11 @@ mod tests {
             upsert_mcode_prompt(&state, "new", prompt("new", "new content", true), &path).is_err()
         );
         assert!(!path.exists());
-        assert!(!state.db.get_prompts("mcode").unwrap().contains_key("new"));
+        assert!(!state
+            .db
+            .get_prompts(&AppType::Mcode)
+            .unwrap()
+            .contains_key("new"));
         state
             .db
             .conn
@@ -688,7 +682,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "edited");
         upsert_mcode_prompt(&state, "active", prompt("active", "edited", false), &path).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "");
-        assert!(!state.db.get_prompts("mcode").unwrap()["active"].enabled);
+        assert!(!state.db.get_prompts(&AppType::Mcode).unwrap()["active"].enabled);
     }
 
     #[test]
@@ -702,11 +696,11 @@ mod tests {
         let state = AppState::new(Arc::new(Database::memory().unwrap()));
         state
             .db
-            .save_prompt("mcode", &prompt("a-current", "stored", true))
+            .save_prompt(&AppType::Mcode, &prompt("a-current", "stored", true))
             .unwrap();
         state
             .db
-            .save_prompt("mcode", &prompt("z-target", "target", false))
+            .save_prompt(&AppType::Mcode, &prompt("z-target", "target", false))
             .unwrap();
         std::fs::write(&path, "native edit").unwrap();
         state
@@ -721,7 +715,7 @@ mod tests {
             )
             .unwrap();
         assert!(enable_mcode_prompt(&state, "z-target", &path).is_err());
-        let saved = state.db.get_prompts("mcode").unwrap();
+        let saved = state.db.get_prompts(&AppType::Mcode).unwrap();
         assert_eq!(saved["a-current"].content, "stored");
         assert!(saved["a-current"].enabled);
         assert!(!saved["z-target"].enabled);
@@ -734,7 +728,7 @@ mod tests {
             .execute_batch("DROP TRIGGER reject_target;")
             .unwrap();
         enable_mcode_prompt(&state, "z-target", &path).unwrap();
-        let saved = state.db.get_prompts("mcode").unwrap();
+        let saved = state.db.get_prompts(&AppType::Mcode).unwrap();
         assert_eq!(saved["a-current"].content, "native edit");
         assert!(!saved["a-current"].enabled);
         assert!(saved["z-target"].enabled);
@@ -752,7 +746,7 @@ mod tests {
         let state = AppState::new(Arc::new(Database::memory().unwrap()));
         state
             .db
-            .save_prompt("mcode", &prompt("target", "managed", false))
+            .save_prompt(&AppType::Mcode, &prompt("target", "managed", false))
             .unwrap();
         std::fs::write(&path, "unmanaged").unwrap();
         state
@@ -763,8 +757,8 @@ mod tests {
             .execute_batch("PRAGMA query_only = ON")
             .unwrap();
         assert!(enable_mcode_prompt(&state, "target", &path).is_err());
-        assert_eq!(state.db.get_prompts("mcode").unwrap().len(), 1);
-        assert!(!state.db.get_prompts("mcode").unwrap()["target"].enabled);
+        assert_eq!(state.db.get_prompts(&AppType::Mcode).unwrap().len(), 1);
+        assert!(!state.db.get_prompts(&AppType::Mcode).unwrap()["target"].enabled);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "unmanaged");
         state
             .db
@@ -774,7 +768,7 @@ mod tests {
             .execute_batch("PRAGMA query_only = OFF")
             .unwrap();
         enable_mcode_prompt(&state, "target", &path).unwrap();
-        let saved = state.db.get_prompts("mcode").unwrap();
+        let saved = state.db.get_prompts(&AppType::Mcode).unwrap();
         assert_eq!(saved.len(), 2);
         assert!(saved
             .values()
@@ -864,7 +858,7 @@ mod pi_prompt_tests {
         ));
         state
             .db
-            .save_prompt(AppType::Pi.as_str(), &prompt(true))
+            .save_prompt(&AppType::Pi, &prompt(true))
             .expect("save prompt");
 
         let saved = PromptService::get_prompts(&state, AppType::Pi).expect("load prompts");
@@ -902,7 +896,7 @@ mod pi_prompt_tests {
         ));
         state
             .db
-            .save_prompt(AppType::Pi.as_str(), &prompt(false))
+            .save_prompt(&AppType::Pi, &prompt(false))
             .expect("save Pi prompt");
 
         let path = prompt_file_path(&AppType::Pi).expect("prompt path");
@@ -930,11 +924,11 @@ mod pi_prompt_tests {
         duplicate.created_at = Some(2);
         state
             .db
-            .save_prompt(AppType::Pi.as_str(), &first)
+            .save_prompt(&AppType::Pi, &first)
             .expect("save first prompt");
         state
             .db
-            .save_prompt(AppType::Pi.as_str(), &duplicate)
+            .save_prompt(&AppType::Pi, &duplicate)
             .expect("save duplicate prompt");
         let path = prompt_file_path(&AppType::Pi).expect("prompt path");
         write_text_file(&path, "managed content").expect("write AGENTS.md");
@@ -966,7 +960,7 @@ mod pi_prompt_tests {
         let previous = prompt(false);
         state
             .db
-            .save_prompt(AppType::Pi.as_str(), &previous)
+            .save_prompt(&AppType::Pi, &previous)
             .expect("save previous prompt");
         let mut edited = previous.clone();
         edited.content = "edited content".to_string();
@@ -980,11 +974,33 @@ mod pi_prompt_tests {
         );
 
         assert!(result.is_err());
-        let saved = state
-            .db
-            .get_prompts(AppType::Pi.as_str())
-            .expect("reload prompts");
+        let saved = state.db.get_prompts(&AppType::Pi).expect("reload prompts");
         assert_eq!(saved["test-prompt"].content, "managed content");
+    }
+
+    #[test]
+    #[serial]
+    fn panicking_pi_native_update_restores_the_database_prompt() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let previous = prompt(false);
+        state.db.save_prompt(&AppType::Pi, &previous).unwrap();
+        let mut edited = previous.clone();
+        edited.content = "interrupted edit".to_string();
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = persist_pi_prompt_with_native_update(
+                &state,
+                &edited.id,
+                &edited,
+                Some(&previous),
+                || panic!("native write interrupted"),
+            );
+        }))
+        .is_err());
+        assert_eq!(
+            state.db.get_prompts(&AppType::Pi).unwrap()[&previous.id].content,
+            previous.content
+        );
     }
 
     #[test]

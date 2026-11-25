@@ -351,32 +351,47 @@ describe("useDirectorySettings", () => {
     );
   });
 
-  it("resets directories to computed defaults", async () => {
-    const { result } = renderHook(() =>
-      useDirectorySettings({
-        settings: createSettings({
-          claudeConfigDir: "/custom/claude",
-          codexConfigDir: "/custom/codex",
+  it.each([
+    ["claude", "claudeConfigDir", "/home/mock/.claude"],
+    ["codex", "codexConfigDir", "/home/mock/.codex"],
+    ["gemini", "geminiConfigDir", "/home/mock/.gemini"],
+    ["grokbuild", "grokConfigDir", "/home/mock/.grok"],
+    ["opencode", "opencodeConfigDir", "/home/mock/.config/opencode"],
+    ["openclaw", "openclawConfigDir", "/home/mock/.openclaw"],
+    ["hermes", "hermesConfigDir", "/home/mock/.hermes"],
+    ["pi", "piConfigDir", "/home/mock/.pi/agent"],
+    ["omp", "ompConfigDir", "/home/mock/.omp/agent"],
+    ["dsh", "dshConfigDir", "/home/mock/.dsh"],
+  ] as const)(
+    "resets the %s directory to its default under home",
+    async (app, field, expected) => {
+      const { result } = renderHook(() =>
+        useDirectorySettings({
+          settings: createSettings({ [field]: "/custom/dir" }),
+          onUpdateSettings,
         }),
-        onUpdateSettings,
-      }),
+      );
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+      await act(async () => {
+        await result.current.resetDirectory(app);
+      });
+
+      expect(onUpdateSettings).toHaveBeenCalledWith({ [field]: undefined });
+      expect(result.current.resolvedDirs[app]).toBe(expected);
+    },
+  );
+
+  it("resets the app config directory to its default under home", async () => {
+    const { result } = renderHook(() =>
+      useDirectorySettings({ settings: createSettings(), onUpdateSettings }),
     );
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
     await act(async () => {
-      await result.current.resetDirectory("claude");
-      await result.current.resetDirectory("codex");
       await result.current.resetAppConfigDir();
     });
 
-    expect(onUpdateSettings).toHaveBeenCalledWith({
-      claudeConfigDir: undefined,
-    });
-    expect(onUpdateSettings).toHaveBeenCalledWith({
-      codexConfigDir: undefined,
-    });
-    expect(result.current.resolvedDirs.claude).toBe("/home/mock/.claude");
-    expect(result.current.resolvedDirs.codex).toBe("/home/mock/.codex");
     expect(result.current.resolvedDirs.appConfig).toBe("/home/mock/.cc-switch");
   });
 

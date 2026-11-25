@@ -1,19 +1,10 @@
 import type { OpenCodeModel, OpenCodeProviderConfig } from "@/types";
+import { PI_THINKING_LEVELS } from "@/config/piThinkingProfiles";
 import { isPlainObject } from "@/lib/requestOverrides";
 
 // ── Default configs ──────────────────────────────────────────────────
 
 export const CLAUDE_DEFAULT_CONFIG = JSON.stringify({ env: {} }, null, 2);
-export const CLAUDE_DESKTOP_DEFAULT_CONFIG = JSON.stringify(
-  {
-    env: {
-      ANTHROPIC_BASE_URL: "",
-      ANTHROPIC_AUTH_TOKEN: "",
-    },
-  },
-  null,
-  2,
-);
 export const CODEX_DEFAULT_CONFIG = JSON.stringify(
   { auth: {}, config: "" },
   null,
@@ -262,13 +253,19 @@ function isModalities(value: unknown): value is Modalities {
   );
 }
 
+const REASONING_EFFORT_LEVEL_SET = new Set<string>(PI_THINKING_LEVELS);
+
 export function isReasoningEffortMap(
   value: unknown,
 ): value is Record<string, string | null> {
+  if (!isPlainObject(value)) return false;
+  const entries = Object.entries(value);
   return (
-    isPlainObject(value) &&
-    Object.values(value).every(
-      (item) => item === null || typeof item === "string",
+    entries.length > 0 &&
+    entries.every(
+      ([key, item]) =>
+        REASONING_EFFORT_LEVEL_SET.has(key) &&
+        (item === null || typeof item === "string"),
     )
   );
 }
@@ -450,5 +447,3 @@ export function mergeOpencodeExtraOptionRows(
     }
   }
 }
-
-export { buildOmoProfilePreview } from "@/types/omo";
