@@ -95,6 +95,42 @@ impl SkillService {
             })
     }
 
+    /// A root skill uses the repository name as its install alias, not its source path.
+    pub(super) fn is_repo_root_skill(skill: &DiscoverableSkill) -> bool {
+        let Some(readme_url) = skill.readme_url.as_deref() else {
+            return false;
+        };
+        skill.directory == skill.repo_name
+            && [
+                RepoPlatform::GitHub,
+                RepoPlatform::GitLab,
+                RepoPlatform::Gitea,
+            ]
+            .into_iter()
+            .any(|platform| {
+                Self::build_skill_doc_url(
+                    platform,
+                    &skill.repo_host,
+                    &skill.repo_owner,
+                    &skill.repo_name,
+                    &skill.repo_branch,
+                    "SKILL.md",
+                )
+                .as_deref()
+                    == Some(readme_url)
+            })
+    }
+
+    pub(super) fn resolve_discoverable_skill_source_dir(
+        root: &Path,
+        skill: &DiscoverableSkill,
+    ) -> Option<PathBuf> {
+        if Self::is_repo_root_skill(skill) && root.join("SKILL.md").is_file() {
+            return Some(root.to_path_buf());
+        }
+        Self::resolve_skill_source_dir(root, &skill.directory)
+    }
+
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
     ///
     /// **核心原则：返回的目录必定含 `SKILL.md`**（以 SKILL.md 为锚点）。解析顺序：
@@ -256,6 +292,11 @@ impl SkillService {
         )
         .await?;
         if temp_path.join(".gitmodules").is_file() {
+            // The probe is no longer needed; do not hold two parent checkouts
+            // while the pinned snapshot and its submodules are extracted.
+            temp_dir
+                .close()
+                .context("Failed to remove temporary repository probe")?;
             let (snapshot, mounts) = self
                 .download_with_submodules(repo, &branch, platform, token)
                 .await?;
@@ -407,6 +448,9 @@ impl SkillService {
     ) -> Result<()> {
         #[cfg(test)]
         if let Some(responses) = &self.submodule_http_fixture {
+            if let Some(observer) = &self.submodule_fixture_observer {
+                observer(url, dest);
+            }
             let bytes = responses
                 .get(url)
                 .ok_or_else(|| anyhow!("Missing archive fixture: {url}"))?;

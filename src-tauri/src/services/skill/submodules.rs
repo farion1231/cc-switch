@@ -225,6 +225,9 @@ impl SkillService {
         mounts: &[SubmoduleMount],
     ) {
         for skill in skills {
+            if Self::is_repo_root_skill(skill) {
+                continue;
+            }
             if let Some(url) = Self::submodule_doc_url(&root.join(&skill.directory), mounts) {
                 skill.readme_url = Some(url);
             }
@@ -869,6 +872,174 @@ mod tests {
             "updated child content"
         );
         assert!(!installed_dir.join("scripts/shared/tool.txt").exists());
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn root_skill_keeps_its_source_when_a_submodule_uses_its_alias() {
+        let test_home = crate::test_support::TestHome::new();
+        let modules = "[submodule \"child\"]\n path = catalog\n url = ../child.git\n";
+        let parent = archive(
+            &[
+                ("catalog/.gitmodules", modules),
+                ("catalog/SKILL.md", "---\nname: parent\n---\n"),
+                ("catalog/version.txt", "parent content"),
+            ],
+            &["catalog/catalog/"],
+        );
+        let child = archive(
+            &[
+                ("child/SKILL.md", "---\nname: child\n---\n"),
+                ("child/version.txt", "child content"),
+            ],
+            &[],
+        );
+        let mut responses = HashMap::new();
+        responses.insert(
+            "https://github.com/example/catalog/archive/refs/heads/main.zip".into(),
+            parent.clone(),
+        );
+        responses.insert(
+            format!("https://github.com/example/catalog/archive/{PARENT_SHA}.zip"),
+            parent,
+        );
+        responses.insert(
+            "https://api.github.com/repos/example/catalog/branches/main".into(),
+            serde_json::json!({"commit":{"sha": PARENT_SHA}})
+                .to_string()
+                .into_bytes(),
+        );
+        responses.insert(
+            format!(
+                "https://api.github.com/repos/example/catalog/git/trees/{PARENT_SHA}?recursive=1"
+            ),
+            serde_json::json!({"truncated":false,"tree":[
+                {"path":"catalog","mode":"160000","type":"commit","sha":CHILD_SHA}
+            ]})
+            .to_string()
+            .into_bytes(),
+        );
+        responses.insert(
+            format!("https://github.com/example/child/archive/{CHILD_SHA}.zip"),
+            child,
+        );
+        let credentials_dir = tempfile::tempdir().unwrap();
+        let (store, _) =
+            crate::services::skill_repo_tokens::tests::memory_store(credentials_dir.path());
+        let mut service = SkillService::new().with_repo_tokens(store);
+        service.submodule_http_fixture = Some(Arc::new(responses));
+
+        let discovery = service.discover_repo(&repo()).await;
+        assert!(discovery.failures.is_empty(), "{:?}", discovery.failures);
+        assert_eq!(discovery.skills.len(), 1);
+        let skill = &discovery.skills[0];
+        assert_eq!(skill.name, "parent");
+        assert_eq!(skill.directory, "catalog");
+        assert_eq!(
+            skill.readme_url.as_deref(),
+            Some("https://github.com/example/catalog/blob/main/SKILL.md")
+        );
+
+        let db = Arc::new(Database::memory().unwrap());
+        let installed = service.install(&db, skill, &AppType::Claude).await.unwrap();
+        let installed_dir = SkillService::get_installed_skill_dir(&installed.directory).unwrap();
+        assert!(installed_dir.starts_with(test_home.path()));
+        assert_eq!(
+            fs::read_to_string(installed_dir.join("version.txt")).unwrap(),
+            "parent content"
+        );
+        assert_eq!(
+            fs::read_to_string(installed_dir.join("catalog/version.txt")).unwrap(),
+            "child content"
+        );
+        let report = service.check_updates_report(&db).await.unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(report.updates.is_empty(), "{:?}", report.updates);
+        let updated = service.update_skill(&db, &installed.id).await.unwrap();
+        assert_eq!(updated.readme_url, skill.readme_url);
+        assert_eq!(
+            fs::read_to_string(installed_dir.join("version.txt")).unwrap(),
+            "parent content"
+        );
+    }
+
+    #[test]
+    fn root_source_identification_does_not_misclassify_a_child_root() {
+        let root = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("SKILL.md"), "parent").unwrap();
+        fs::create_dir(root.path().join("catalog")).unwrap();
+        fs::write(root.path().join("catalog/SKILL.md"), "child").unwrap();
+        let mut skill = DiscoverableSkill {
+            key: "example/catalog:catalog".into(),
+            name: "child".into(),
+            description: String::new(),
+            directory: "catalog".into(),
+            readme_url: Some(format!(
+                "https://github.com/example/child/blob/{CHILD_SHA}/SKILL.md"
+            )),
+            repo_host: GITHUB_HOST.into(),
+            repo_owner: "example".into(),
+            repo_name: "catalog".into(),
+            repo_branch: "feature/nested".into(),
+        };
+        assert_eq!(
+            SkillService::resolve_discoverable_skill_source_dir(root.path(), &skill),
+            Some(root.path().join("catalog"))
+        );
+        skill.readme_url =
+            Some("https://github.com/example/catalog/blob/feature/nested/SKILL.md".into());
+        assert_eq!(
+            SkillService::resolve_discoverable_skill_source_dir(root.path(), &skill),
+            Some(root.path().to_path_buf())
+        );
+    }
+
+    #[tokio::test]
+    async fn probe_checkout_is_removed_before_pinned_archive_download() {
+        let parent = archive(&[("catalog/.gitmodules", "")], &[]);
+        let initial_url = "https://github.com/example/catalog/archive/refs/heads/main.zip";
+        let pinned_url = format!("https://github.com/example/catalog/archive/{PARENT_SHA}.zip");
+        let mut responses = HashMap::new();
+        responses.insert(initial_url.into(), parent.clone());
+        responses.insert(pinned_url.clone(), parent);
+        responses.insert(
+            "https://api.github.com/repos/example/catalog/branches/main".into(),
+            serde_json::json!({"commit":{"sha": PARENT_SHA}})
+                .to_string()
+                .into_bytes(),
+        );
+        responses.insert(
+            format!(
+                "https://api.github.com/repos/example/catalog/git/trees/{PARENT_SHA}?recursive=1"
+            ),
+            serde_json::json!({"truncated":false,"tree":[]})
+                .to_string()
+                .into_bytes(),
+        );
+        let credentials_dir = tempfile::tempdir().unwrap();
+        let (store, _) =
+            crate::services::skill_repo_tokens::tests::memory_store(credentials_dir.path());
+        let mut service = SkillService::new().with_repo_tokens(store);
+        service.submodule_http_fixture = Some(Arc::new(responses));
+        let initial_path = Arc::new(Mutex::new(None::<PathBuf>));
+        let pinned_seen = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_path = Arc::clone(&initial_path);
+        let observed_pinned = Arc::clone(&pinned_seen);
+        service.submodule_fixture_observer = Some(Arc::new(move |url, dest| {
+            if url == initial_url {
+                *observed_path.lock().unwrap() = Some(dest.to_path_buf());
+            } else if url == pinned_url {
+                let path = observed_path.lock().unwrap().clone().unwrap();
+                assert!(
+                    !path.exists(),
+                    "probe checkout still exists during pinned download"
+                );
+                observed_pinned.store(true, Ordering::SeqCst);
+            }
+        }));
+        let (snapshot, _, _) = service.download_repo_bounded(&repo()).await.unwrap();
+        assert!(snapshot.path().join(".gitmodules").is_file());
+        assert!(pinned_seen.load(Ordering::SeqCst));
     }
 
     #[tokio::test]

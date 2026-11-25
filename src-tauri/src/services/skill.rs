@@ -617,11 +617,16 @@ struct LocalSkillMetadataCandidate {
     new_hash: String,
 }
 
+#[cfg(test)]
+type SubmoduleFixtureObserver = Arc<dyn Fn(&str, &Path) + Send + Sync>;
+
 pub struct SkillService {
     #[cfg(test)]
     repo_fixture: Option<PathBuf>,
     #[cfg(test)]
     submodule_http_fixture: Option<Arc<HashMap<String, Vec<u8>>>>,
+    #[cfg(test)]
+    submodule_fixture_observer: Option<SubmoduleFixtureObserver>,
     /// 发现结果按仓库缓存（键是 owner/name/branch），只存读成功的仓库。
     /// 发现要把每个仓库的归档整包下下来，添加、启用仓库或导入后的重拉不该把
     /// 没变的仓库再下一遍；手动刷新会绕过它（`force_refresh`）。
@@ -654,6 +659,8 @@ impl SkillService {
             repo_fixture: None,
             #[cfg(test)]
             submodule_http_fixture: None,
+            #[cfg(test)]
+            submodule_fixture_observer: None,
             discovery_cache: Mutex::new(HashMap::new()),
             platform_cache: Mutex::new(HashMap::new()),
             credential_epoch: AtomicU64::new(0),
@@ -1042,7 +1049,7 @@ impl SkillService {
 
             // 复制到 SSOT
             let source =
-                Self::resolve_skill_source_dir(temp_dir, &skill.directory).ok_or_else(|| {
+                Self::resolve_discoverable_skill_source_dir(temp_dir, skill).ok_or_else(|| {
                     let missing = temp_dir.join(&source_rel).display().to_string();
                     anyhow!(format_skill_error(
                         "SKILL_DIR_NOT_FOUND",

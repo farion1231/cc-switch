@@ -254,7 +254,7 @@ impl SkillService {
                     skill.readme_url.as_deref(),
                 );
                 let remote_skill_dir = match remote_match {
-                    Some(rs) => match Self::resolve_skill_source_dir(temp_dir, &rs.directory) {
+                    Some(rs) => match Self::resolve_discoverable_skill_source_dir(temp_dir, rs) {
                         Some(path) => path,
                         None => continue,
                     },
@@ -425,8 +425,8 @@ impl SkillService {
             ))
         })?;
 
-        let source =
-            Self::resolve_skill_source_dir(temp_dir, &remote_match.directory).ok_or_else(|| {
+        let source = Self::resolve_discoverable_skill_source_dir(temp_dir, remote_match)
+            .ok_or_else(|| {
                 let missing = temp_dir.join(&remote_match.directory).display().to_string();
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
