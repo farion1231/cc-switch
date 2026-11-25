@@ -390,6 +390,7 @@ describe("UsageDashboard", () => {
         agy: false,
         omp: false,
         copilot: false,
+        liveagent: false,
         workbuddy: false,
         codebuddy: false,
       },

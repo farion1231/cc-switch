@@ -553,6 +553,7 @@ command = "say"
                 copilot: false,
                 codebuddy: false,
                 dsh: false,
+                liveagent: false,
                 workbuddy: false,
                 pi: false,
                 omp: false,

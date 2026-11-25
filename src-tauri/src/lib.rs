@@ -36,6 +36,7 @@ mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
 pub mod live;
+mod liveagent_config;
 #[cfg(target_os = "macos")]
 mod macos_tray_window;
 mod mcode_config;
@@ -1673,6 +1674,9 @@ pub fn run() {
             commands::delete_pi_prompt_template,
             // Pi native provider and session views
             commands::get_pi_current_state,
+            commands::liveagent::get_liveagent_status,
+            commands::liveagent::get_liveagent_settings,
+            commands::liveagent::set_liveagent_default_model,
             commands::update_pi_provider_usage_script,
             commands::get_pi_session_discovery,
             // Oh My Pi native provider and session views

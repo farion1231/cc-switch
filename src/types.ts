@@ -845,6 +845,7 @@ export interface McpApps {
   workbuddy?: boolean;
   agy?: boolean;
   copilot?: boolean;
+  liveagent?: boolean;
   claude: boolean;
   "claude-desktop"?: boolean;
   codex: boolean;

@@ -36,6 +36,9 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
+        AppType::LiveAgent => {
+            crate::liveagent_config::get_providers().map(|p| p.contains_key(provider_id))
+        }
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
@@ -55,7 +58,7 @@ pub(crate) fn provider_exists_in_live_config(
 
 /// 只从累加式应用的 live 配置里删掉这家供应商的条目，不动 DB。
 ///
-/// Pi、Omp、Kimi、DSH、Copilot 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
+/// Pi、Omp、Kimi、DSH、Copilot、LiveAgent 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
 /// 这里之前就分流了；切换式应用没有按标识存的条目。这些应用都报错，不静默跳过。
 pub(crate) fn remove_provider_from_live(
     app_type: &AppType,
@@ -78,7 +81,8 @@ pub(crate) fn remove_provider_from_live(
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
-        | AppType::Copilot => Err(AppError::Message(format!(
+        | AppType::Copilot
+        | AppType::LiveAgent => Err(AppError::Message(format!(
             "App {} does not support remove from live config",
             app_type.as_str()
         ))),
@@ -349,6 +353,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::LiveAgent
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
@@ -432,6 +437,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::OpenClaw
         | AppType::Hermes
         | AppType::Pi
+        | AppType::LiveAgent
         | AppType::Mcode
         | AppType::Kimi
         | AppType::Dsh
@@ -771,6 +777,22 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::LiveAgent => {
+            crate::liveagent_config::validate_provider(&provider.id, &provider.settings_config)?;
+            crate::liveagent_config::update_and_commit(
+                |doc| {
+                    crate::liveagent_config::check_routes(
+                        doc,
+                        &provider.id,
+                        Some(&provider.settings_config),
+                    )?;
+                    crate::liveagent_config::provider_map(doc)?
+                        .insert(provider.id.clone(), provider.settings_config.clone());
+                    Ok(())
+                },
+                || Ok(()),
+            )?;
+        }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -1011,6 +1033,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
                 | AppType::Omp
                 | AppType::Codebuddy
                 | AppType::Copilot
+                | AppType::LiveAgent
         ) {
             continue;
         }
@@ -1169,6 +1192,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
+        AppType::LiveAgent => crate::liveagent_config::read(),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
         AppType::Codebuddy => Ok(json!(crate::codebuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
@@ -1315,6 +1339,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
+        | AppType::LiveAgent
         | AppType::WorkBuddy
         | AppType::Codebuddy => {
             unreachable!("additive mode apps are handled by early return")

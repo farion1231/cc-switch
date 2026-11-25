@@ -35,6 +35,11 @@ export interface AppsPageMocks {
     installed: boolean;
     configured: boolean;
   };
+  liveagentStatus: {
+    installed: boolean;
+    configured: boolean;
+    configPath: string;
+  };
 }
 
 export interface AppsPageToolState {
@@ -192,6 +197,11 @@ export function resetAppsPageMocks(
     supported: true,
     installed: true,
     configured: true,
+  };
+  mocks.liveagentStatus = {
+    installed: true,
+    configured: true,
+    configPath: "",
   };
   mocks.getConfigStatus.mockReset().mockResolvedValue({
     exists: true,

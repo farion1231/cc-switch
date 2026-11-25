@@ -103,6 +103,7 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
+            enabled_liveagent BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
@@ -141,6 +142,7 @@ impl Database {
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
+            enabled_liveagent BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
@@ -742,6 +744,11 @@ impl Database {
                         Self::migrate_v27_to_v28(conn)?;
                         Self::set_user_version(conn, 28)?;
                     }
+                    28 => {
+                        log::info!("迁移数据库从 v28 到 v29（MCP/Skills 添加 LiveAgent 支持）");
+                        Self::migrate_v28_to_v29(conn)?;
+                        Self::set_user_version(conn, 29)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -796,6 +803,28 @@ impl Database {
             }
         }
         Self::add_skill_repo_host_columns(conn)?;
+        Ok(())
+    }
+
+    /// v28 -> v29 迁移：LiveAgent 的 MCP 与 Skills 开关。
+    ///
+    /// LiveAgent 早期开发版曾把 `enabled_liveagent` 记作 v26、v27 或 v28 发布；记作
+    /// v28 的库会跳过上游 v27→v28（CodeBuddy），记作 v26/v27 的库也可能缺上游
+    /// v25→v26（WorkBuddy）或 v26→v27（GitLab 技能仓库）的列。这里先重跑一遍
+    /// 幂等的 v27→v28 补齐上游各列，再按“缺失才加”添加 `enabled_liveagent`，
+    /// 上游与任一开发版来源的库都能升到 v29，且不会改动已有开关。
+    fn migrate_v28_to_v29(conn: &Connection) -> Result<(), AppError> {
+        Self::migrate_v27_to_v28(conn)?;
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_liveagent",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -4481,7 +4510,7 @@ mod tests {
         Database::create_tables_on_conn(&conn)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 28);
+        assert_eq!(SCHEMA_VERSION, 29);
         assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
         for table in ["mcp_servers", "skills"] {
             assert!(Database::has_column(&conn, table, "enabled_dsh")?);
@@ -5111,6 +5140,66 @@ mod tests {
         let read = db.get_all_installed_skills()?;
         assert!(!read["s"].apps.agy);
         assert!(read["s"].apps.gemini);
+        Ok(())
+    }
+
+    #[test]
+    fn liveagent_migration_preserves_existing_flags() -> Result<(), AppError> {
+        // 上游 v26/v27 库，以及本分支早期开发版记作 v28、但没有 enabled_codebuddy 的库：
+        // 升到 v29 后补齐 enabled_codebuddy 与 enabled_liveagent，已有开关保持不变。
+        for start in [26, 27, 28] {
+            let conn = Connection::open_in_memory()?;
+            conn.execute_batch("CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_pi BOOLEAN DEFAULT 0, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_mcode BOOLEAN DEFAULT 0, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1,1); INSERT INTO skills VALUES ('s',1,1);")?;
+            Database::set_user_version(&conn, start)?;
+            Database::apply_schema_migrations_on_conn(&conn)?;
+            for (table, previous) in [("mcp_servers", "enabled_pi"), ("skills", "enabled_mcode")] {
+                let values: (i64, i64, i64, i64) = conn.query_row(
+                    &format!(
+                        "SELECT {previous}, enabled_workbuddy, enabled_codebuddy, enabled_liveagent FROM {table}"
+                    ),
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )?;
+                assert_eq!(values, (1, 1, 0, 0), "start={start} table={table}");
+            }
+            assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+            assert_eq!(SCHEMA_VERSION, 29);
+            // 重入：再跑一次不应报错
+            Database::apply_schema_migrations_on_conn(&conn)?;
+        }
+
+        // 上游 v28：已打开的 CodeBuddy 开关升级后保持不变
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 28)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            let values: (i64, i64) = conn.query_row(
+                &format!("SELECT enabled_codebuddy, enabled_liveagent FROM {table}"),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!(values, (1, 0), "table={table}");
+        }
+        Ok(())
+    }
+
+    /// 早期 LiveAgent 开发版把 enabled_liveagent 记作 v26：版本号是 26，但缺上游 v26 的 enabled_workbuddy。
+    #[test]
+    fn liveagent_migration_from_dev_v26_backfills_workbuddy_column() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_liveagent BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_liveagent BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 26)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            let values: (i64, i64) = conn.query_row(
+                &format!("SELECT enabled_liveagent, enabled_workbuddy FROM {table}"),
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            assert_eq!(values, (1, 0), "{table}");
+        }
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
         Ok(())
     }
 

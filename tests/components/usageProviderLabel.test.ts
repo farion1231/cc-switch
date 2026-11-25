@@ -36,6 +36,7 @@ describe("getUsageProviderLabel", () => {
     );
     expect(names).toContain("Antigravity (Session)");
     expect(names).toContain("DeepSeek Harness (Session)");
+    expect(names).toContain("LiveAgent (Session)");
     for (const name of names) {
       expect(getUsageProviderLabel(name, t).shortLabel).toBe(
         "usage.sessionProvider.short",

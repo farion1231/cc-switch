@@ -196,6 +196,16 @@ fn test_parse_mcp_deeplink_accepts_dsh() {
     }
 }
 
+/// LiveAgent 的 MCP 链接要能通过解析层白名单，走到 parse_mcp_apps 的 liveagent 分支
+#[test]
+fn test_parse_mcp_deeplink_accepts_liveagent() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    let url = format!("ccswitch://v1/import?resource=mcp&apps=claude,liveagent&config={config}");
+    let request = parse_deeplink_url(&url).expect("liveagent is a valid MCP target");
+    let apps = parse_mcp_apps(request.apps.as_deref().unwrap()).unwrap();
+    assert!(apps.claude && apps.liveagent);
+}
+
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_accepts_the_pi_family_apps_with_a_model() {

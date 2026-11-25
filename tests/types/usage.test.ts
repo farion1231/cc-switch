@@ -12,6 +12,11 @@ describe("getCacheWriteAvailability", () => {
     expect(getCacheWriteAvailability([])).toBe("ok");
   });
 
+  it("treats LiveAgent as partial because it mixes protocols under one app type", () => {
+    expect(getCacheWriteAvailability(["liveagent"])).toBe("partial");
+    expect(getCacheWriteAvailability(["claude", "liveagent"])).toBe("partial");
+  });
+
   it("treats a zero cache write as unreported only for Gemini and Grok Build", () => {
     expect(omitsCacheWrites("codex")).toBe(false);
     expect(omitsCacheWrites("claude")).toBe(false);

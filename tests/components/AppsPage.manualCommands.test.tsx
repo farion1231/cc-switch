@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   autoSaveSettings: vi.fn(async () => null),
   dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
   desktopStatus: { supported: true, installed: true, configured: true },
+  liveagentStatus: { installed: true, configured: true, configPath: "" },
 }));
 
 vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
@@ -40,6 +41,9 @@ vi.mock("@/lib/api/providers", () => ({
   providersApi: {
     getClaudeDesktopStatus: async () => mocks.desktopStatus,
   },
+}));
+vi.mock("@/lib/api/liveagent", () => ({
+  liveagentApi: { getStatus: async () => mocks.liveagentStatus },
 }));
 vi.mock("@/hooks/useSettings", () => ({
   useSettings: () => ({

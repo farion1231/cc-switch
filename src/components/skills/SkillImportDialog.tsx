@@ -109,6 +109,7 @@ export function SkillImportDialog({
               workbuddy: chosen.has("workbuddy"),
               agy: chosen.has("agy"),
               copilot: chosen.has("copilot"),
+              liveagent: chosen.has("liveagent"),
             },
           };
         }),

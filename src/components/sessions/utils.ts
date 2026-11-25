@@ -6,7 +6,7 @@ import type { SessionMeta, SessionTextRange } from "@/types";
 
 export const UNKNOWN_PROJECT_DIR_KEY = "__unknown_project_dir__";
 
-/** 会话来源：13 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
+/** 会话来源：15 个应用（Claude Desktop 没有自己的会话记录，用 Claude Code 的）。 */
 export const SESSION_APP_IDS = [
   "claude",
   "codex",
@@ -23,6 +23,7 @@ export const SESSION_APP_IDS = [
   "dsh",
   "agy",
   "copilot",
+  "liveagent",
   "workbuddy",
 ] as const satisfies readonly AppId[];
 
@@ -54,6 +55,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
     "~/.t3/userdata/providers/antigravity/<instance>/antigravity-acp/brain/<conversation>/.system_generated/logs",
   ],
   copilot: ["~/.copilot/session-state"],
+  liveagent: ["~/.liveagent/sessions/[<project>/]<session>/session.jsonl"],
 };
 
 /** 这些应用的会话只能在原软件里删（后端也会拒绝）：只删文件会让它们自己的索引失效。 */
@@ -61,6 +63,7 @@ const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   mcode: "sessionManager.mcodeDeleteHint",
   dsh: "dsh.deleteSessionHint",
   copilot: "sessionManager.copilotDeleteHint",
+  liveagent: "sessionManager.liveagentDeleteHint",
   workbuddy: "workbuddy.deleteSessionHint",
   codebuddy: "sessionManager.codebuddyDeleteHint",
 };

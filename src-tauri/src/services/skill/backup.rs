@@ -157,6 +157,7 @@ impl SkillService {
                     | AppType::Kimi
                     | AppType::Dsh
                     | AppType::Copilot
+                    | AppType::LiveAgent
                     | AppType::WorkBuddy
                     | AppType::Codebuddy
             ) && !skill.apps.is_enabled_for(&app)

@@ -26,6 +26,8 @@ macro_rules! app_flags {
             #[serde(default)]
             pub copilot: bool,
             #[serde(default)]
+            pub liveagent: bool,
+            #[serde(default)]
             pub codebuddy: bool,
             #[serde(default)]
             pub claude: bool,
@@ -47,7 +49,7 @@ macro_rules! app_flags {
 
         impl $name {
             /// [`Self::enabled_apps`] 的顺序：同步、移除都按它走，不要随意调整
-            const ORDER: [AppType; 15] = [
+            const ORDER: [AppType; 16] = [
                 AppType::Claude,
                 AppType::Codex,
                 AppType::Gemini,
@@ -57,6 +59,7 @@ macro_rules! app_flags {
                 AppType::Copilot,
                 AppType::Dsh,
                 AppType::Kimi,
+                AppType::LiveAgent,
                 AppType::WorkBuddy,
                 AppType::Codebuddy,
                 AppType::Mcode,
@@ -81,6 +84,7 @@ macro_rules! app_flags {
                     AppType::Agy => Some(&mut self.agy),
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
+                    AppType::LiveAgent => Some(&mut self.liveagent),
                     AppType::Codebuddy => Some(&mut self.codebuddy),
                     AppType::OpenClaw | AppType::ClaudeDesktop => None,
                 }
@@ -329,6 +333,7 @@ pub enum AppType {
     Agy,
     Omp,
     Copilot,
+    LiveAgent,
     WorkBuddy,
     Codebuddy,
 }
@@ -464,6 +469,13 @@ impl AppType {
                 route_mode: false,
                 stack: false,
             },
+            AppType::LiveAgent => AppSpec {
+                id: "liveagent",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
             AppType::WorkBuddy => AppSpec {
                 id: "workbuddy",
                 additive: true,
@@ -486,7 +498,7 @@ impl AppType {
     }
 
     /// 所有应用，按默认顺序
-    pub const ALL: [AppType; 17] = [
+    pub const ALL: [AppType; 18] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -502,6 +514,7 @@ impl AppType {
         AppType::Agy,
         AppType::Omp,
         AppType::Copilot,
+        AppType::LiveAgent,
         AppType::WorkBuddy,
         AppType::Codebuddy,
     ];
@@ -541,11 +554,12 @@ impl FromStr for AppType {
                 Ok(AppType::Copilot)
             }
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
+            "liveagent" => Ok(AppType::LiveAgent),
             "codebuddy" | "codebuddy-code" | "codebuddy_code" => Ok(AppType::Codebuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, codebuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, codebuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, liveagent, codebuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, liveagent, codebuddy."),
             )),
         }
     }
@@ -903,6 +917,7 @@ impl MultiAppConfig {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
+            | AppType::LiveAgent
             | AppType::WorkBuddy
             | AppType::Codebuddy => return Ok(false),
         };
@@ -955,6 +970,7 @@ impl MultiAppConfig {
                 | AppType::Agy
                 | AppType::Omp
                 | AppType::Copilot
+                | AppType::LiveAgent
                 | AppType::WorkBuddy
                 | AppType::Codebuddy => continue, // Pi didn't exist in v3.6.x, skip
             };

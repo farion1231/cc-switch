@@ -59,6 +59,7 @@ impl SkillService {
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
+                | AppType::LiveAgent
                 | AppType::WorkBuddy
                 | AppType::Codebuddy
         ) {
@@ -215,6 +216,138 @@ impl SkillService {
         crate::settings::get_skill_sync_method()
     }
 
+    /// LiveAgent selects managed Skills by frontmatter name, not directory. Another
+    /// managed directory with the same name would share one selection entry.
+    fn liveagent_name_owner(root: &Path, directory: &str, name: &str) -> Option<String> {
+        let entries = fs::read_dir(root).ok()?;
+        for entry in entries.flatten() {
+            let dir_name = entry.file_name().to_string_lossy().to_string();
+            // K-brain's scanner only reads real directories (it skips symlinks).
+            if dir_name == directory
+                || dir_name.starts_with('.')
+                || !entry.file_type().is_ok_and(|kind| kind.is_dir())
+            {
+                continue;
+            }
+            let skill_md = entry.path().join("SKILL.md");
+            if !skill_md.is_file() {
+                continue;
+            }
+            if Self::read_skill_name_desc(&skill_md, &dir_name).0 == name {
+                return Some(dir_name);
+            }
+        }
+        None
+    }
+
+    fn liveagent_name_conflict(owner: &str, name: &str) -> anyhow::Error {
+        anyhow!(
+            "LiveAgent already has another Skill named \"{name}\" in skills/{owner}; rename one of them first"
+        )
+    }
+
+    /// Update a deployed LiveAgent Skill whose frontmatter name may change, keeping
+    /// the selected names, the copied files and the database commit together.
+    pub(super) fn update_liveagent_skill_name<T>(
+        directory: &str,
+        old_name: &str,
+        new_name: &str,
+        apply: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let root = Self::get_app_skills_dir(&AppType::LiveAgent)?;
+        if let Some(owner) = Self::liveagent_name_owner(&root, directory, new_name) {
+            return Err(Self::liveagent_name_conflict(&owner, new_name));
+        }
+        let mut changes = vec![(new_name, true)];
+        // The old name stays selected while another directory still uses it.
+        if old_name != new_name && Self::liveagent_name_owner(&root, directory, old_name).is_none()
+        {
+            changes.insert(0, (old_name, false));
+        }
+        crate::liveagent_config::update_skill_selections_and_commit(&changes, || {
+            apply().map_err(|e| crate::error::AppError::Message(e.to_string()))
+        })
+        .map_err(|e| anyhow!(e.to_string()))
+    }
+
+    pub(super) fn sync_liveagent_skill<T>(
+        directory: &str,
+        enabled: bool,
+        commit: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let directory = Self::require_valid_directory(directory)?;
+        let ssot = Self::get_ssot_dir()?;
+        let source = ssot.join(&directory);
+        Self::validate_sync_source_dir(&source, &directory)?;
+        let root = Self::get_distinct_app_skills_dir(&ssot, &AppType::LiveAgent)?;
+        let destination = root.join(&directory);
+        Self::inspect_pi_skill_destination(&source, &destination, &directory)?;
+        let (name, _) = Self::read_skill_name_desc(&source.join("SKILL.md"), &directory);
+        let shared_owner = Self::liveagent_name_owner(&root, &directory, &name);
+        if enabled {
+            if let Some(owner) = &shared_owner {
+                return Err(Self::liveagent_name_conflict(owner, &name));
+            }
+        }
+        // Disabling never deselects a name that another directory still uses, and an
+        // invalid name was never selected; both only remove our copy.
+        let selection_changes: Vec<(&str, bool)> = if enabled
+            || (shared_owner.is_none() && crate::liveagent_config::valid_skill_name(&name))
+        {
+            vec![(name.as_str(), enabled)]
+        } else {
+            Vec::new()
+        };
+        fs::create_dir_all(&root)?;
+        let stage = tempfile::Builder::new()
+            .prefix(".cc-switch-skill-")
+            .tempdir_in(&root)?;
+        let replacement = stage.path().join("new");
+        // LiveAgent's native scanner ignores directory symlinks. Always deploy
+        // a real directory, even when other CC Switch apps use symlink mode.
+        if enabled {
+            Self::copy_dir_recursive(&source, &replacement)?;
+        }
+        let old = stage.path().join("old");
+        let mut changed = false;
+        let result =
+            crate::liveagent_config::update_skill_selections_and_commit(&selection_changes, || {
+                let update = (|| -> Result<T> {
+                    // Repeat ownership check after preparing the replacement.
+                    Self::inspect_pi_skill_destination(&source, &destination, &directory)?;
+                    if destination.exists() || Self::is_symlink(&destination) {
+                        fs::rename(&destination, &old)?;
+                    }
+                    changed = true;
+                    if enabled {
+                        fs::rename(&replacement, &destination)?;
+                    }
+                    commit()
+                })();
+                update.map_err(|e| crate::error::AppError::Message(e.to_string()))
+            });
+        if let Err(error) = result {
+            if changed {
+                let rollback = (|| -> Result<()> {
+                    Self::remove_path(&destination)?;
+                    if old.exists() || Self::is_symlink(&old) {
+                        fs::rename(&old, &destination)?;
+                    }
+                    Ok(())
+                })();
+                if let Err(rollback) = rollback {
+                    let saved = stage.keep();
+                    return Err(anyhow!(
+                        "{error}; LiveAgent skill rollback failed: {rollback}; backup: {}",
+                        saved.display()
+                    ));
+                }
+            }
+            return Err(error.into());
+        }
+        result.map_err(Into::into)
+    }
+
     /// 同步 Skill 到应用目录（使用 symlink 或 copy）
     ///
     /// 根据配置和平台选择最佳同步方式：
@@ -222,6 +355,10 @@ impl SkillService {
     /// - Symlink: 仅使用 symlink
     /// - Copy: 仅使用文件复制
     pub fn sync_to_app_dir(directory: &str, app: &AppType) -> Result<()> {
+        if matches!(app, AppType::LiveAgent) {
+            return Self::sync_liveagent_skill(directory, true, || Ok(()));
+        }
+
         if matches!(app, AppType::ClaudeDesktop) {
             return Ok(());
         }
@@ -248,6 +385,7 @@ impl SkillService {
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
+                | AppType::LiveAgent
                 | AppType::WorkBuddy
                 | AppType::Codebuddy
         ) && (dest.exists() || Self::is_symlink(&dest))
@@ -447,6 +585,10 @@ impl SkillService {
             return Ok(());
         }
 
+        if matches!(app, AppType::LiveAgent) {
+            return Self::sync_liveagent_skill(&directory, false, || Ok(()));
+        }
+
         if skill_path.exists() || Self::is_symlink(&skill_path) {
             if matches!(
                 app,
@@ -456,6 +598,7 @@ impl SkillService {
                     | AppType::Kimi
                     | AppType::Dsh
                     | AppType::Omp
+                    | AppType::LiveAgent
                     | AppType::Copilot
                     | AppType::WorkBuddy
                     | AppType::Codebuddy
@@ -541,6 +684,7 @@ impl SkillService {
                     | AppType::Kimi
                     | AppType::Dsh
                     | AppType::Copilot
+                    | AppType::LiveAgent
                     | AppType::WorkBuddy
                     | AppType::Codebuddy
             )

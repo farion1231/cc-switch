@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   adaptSvgToTheme,
   getIcon,
+  hasIcon,
   isDarkInk,
+  isTileIcon,
   needsLightBacking,
 } from "@/icons/extracted";
 
@@ -69,5 +71,12 @@ describe("needsLightBacking", () => {
     ]) {
       expect(needsLightBacking(name)).toBe(true);
     }
+  });
+});
+
+describe("LiveAgent logo", () => {
+  it("is a transparent mark, not a white tile, so it follows the theme", () => {
+    expect(hasIcon("liveagent")).toBe(true);
+    expect(isTileIcon("liveagent")).toBe(false);
   });
 });

@@ -125,6 +125,7 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   agy: "Antigravity",
   omp: "omp",
   copilot: "Copilot",
+  liveagent: "LiveAgent",
   workbuddy: "WorkBuddy",
   codebuddy: "CodeBuddy",
 };

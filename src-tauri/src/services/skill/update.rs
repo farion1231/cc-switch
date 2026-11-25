@@ -471,6 +471,7 @@ impl SkillService {
             AppType::Dsh,
             AppType::Omp,
             AppType::Copilot,
+            AppType::LiveAgent,
             AppType::WorkBuddy,
             AppType::Codebuddy,
         ] {
@@ -490,30 +491,20 @@ impl SkillService {
             log::warn!("更新前备份 Skill {} 失败: {e}", skill.directory);
         }
 
-        if !(skill.apps.mcode
+        let managed_native = skill.apps.mcode
             || skill.apps.agy
             || skill.apps.kimi
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
-            || skill.apps.codebuddy)
-        {
+            || skill.apps.liveagent
+            || skill.apps.codebuddy;
+        if !managed_native {
             Self::replace_dir_staged(&source, &dest)?;
         }
 
         // 计算新哈希 + 解析新元数据
-        let metadata_source = if skill.apps.mcode
-            || skill.apps.agy
-            || skill.apps.kimi
-            || skill.apps.dsh
-            || skill.apps.copilot
-            || skill.apps.workbuddy
-            || skill.apps.codebuddy
-        {
-            &source
-        } else {
-            &dest
-        };
+        let metadata_source = if managed_native { &source } else { &dest };
         let new_hash = Self::compute_dir_hash(metadata_source).ok();
         let skill_md = metadata_source.join("SKILL.md");
         let (new_name, new_description) = Self::read_skill_name_desc(&skill_md, &skill.directory);
@@ -549,39 +540,48 @@ impl SkillService {
             updated_at: chrono::Utc::now().timestamp(),
         };
 
-        let mut updated_skill = if skill.apps.mcode
-            || skill.apps.agy
-            || skill.apps.kimi
-            || skill.apps.dsh
-            || skill.apps.copilot
-            || skill.apps.workbuddy
-            || skill.apps.codebuddy
-        {
-            Self::update_managed_skill_files(
-                &source,
-                &dest,
-                &skill.directory,
-                &deployments,
-                &[
-                    AppType::Mcode,
-                    AppType::Agy,
-                    AppType::Kimi,
-                    AppType::Dsh,
-                    AppType::Copilot,
-                    AppType::WorkBuddy,
-                    AppType::Codebuddy,
-                ]
-                .iter()
-                .filter(|app| skill.apps.is_enabled_for(app))
-                .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
-                .collect::<Result<Vec<_>>>()?,
-                || {
-                    if !db.update_skill_metadata(&updated_metadata)? {
-                        return Err(anyhow!("Skill no longer installed: {}", skill.id));
-                    }
-                    Ok(updated_metadata)
-                },
-            )?
+        let mut updated_skill = if managed_native {
+            let native_targets = [
+                AppType::Mcode,
+                AppType::Agy,
+                AppType::Kimi,
+                AppType::Dsh,
+                AppType::Copilot,
+                AppType::WorkBuddy,
+                AppType::LiveAgent,
+                AppType::Codebuddy,
+            ]
+            .iter()
+            .filter(|app| skill.apps.is_enabled_for(app))
+            .map(|app| Self::get_app_skills_dir(app).map(|dir| dir.join(&skill.directory)))
+            .collect::<Result<Vec<_>>>()?;
+            let apply = || {
+                Self::update_managed_skill_files(
+                    &source,
+                    &dest,
+                    &skill.directory,
+                    &deployments,
+                    &native_targets,
+                    || {
+                        if !db.update_skill_metadata(&updated_metadata)? {
+                            return Err(anyhow!("Skill no longer installed: {}", skill.id));
+                        }
+                        Ok(updated_metadata.clone())
+                    },
+                )
+            };
+            if skill.apps.liveagent {
+                let old_name =
+                    Self::read_skill_name_desc(&dest.join("SKILL.md"), &skill.directory).0;
+                Self::update_liveagent_skill_name(
+                    &skill.directory,
+                    &old_name,
+                    &updated_metadata.name,
+                    apply,
+                )?
+            } else {
+                apply()?
+            }
         } else {
             for (destination, deployment) in deployments {
                 Self::refresh_pi_skill_destination(
@@ -607,6 +607,7 @@ impl SkillService {
                     | AppType::Dsh
                     | AppType::Omp
                     | AppType::Copilot
+                    | AppType::LiveAgent
                     | AppType::WorkBuddy
                     | AppType::Codebuddy
             ) {
@@ -699,9 +700,17 @@ impl SkillService {
                 matches!(deployment, PiSkillDeployment::Symlink { .. }),
             ));
         }
+        // LiveAgent's scanner skips directory symlinks, so its copy is always real.
+        let liveagent_root = Self::get_app_skills_dir(&AppType::LiveAgent).ok();
         for native in native_targets {
             if !native.exists() && !Self::is_symlink(native) {
-                targets.push((native.clone(), Self::get_sync_method() != SyncMethod::Copy));
+                let copy_only = liveagent_root
+                    .as_ref()
+                    .is_some_and(|root| native.starts_with(root));
+                targets.push((
+                    native.clone(),
+                    !copy_only && Self::get_sync_method() != SyncMethod::Copy,
+                ));
             }
         }
 

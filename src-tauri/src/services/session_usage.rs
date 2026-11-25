@@ -199,6 +199,10 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
                 "DeepSeek Harness",
                 crate::services::session_usage_dsh::sync_dsh_usage,
             ),
+            (
+                "LiveAgent",
+                crate::services::session_usage_liveagent::sync_liveagent_usage,
+            ),
         ],
     );
     notify_sync_result(&result);

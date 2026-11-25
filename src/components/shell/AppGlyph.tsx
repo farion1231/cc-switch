@@ -20,6 +20,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   agy: "Antigravity",
   omp: "Oh My Pi",
   copilot: "Copilot CLI",
+  liveagent: "LiveAgent",
   workbuddy: "WorkBuddy",
   codebuddy: "CodeBuddy Code",
 };
@@ -40,6 +41,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   agy: "antigravity",
   omp: "omp",
   copilot: "githubcopilot",
+  liveagent: "liveagent",
   workbuddy: "workbuddy",
   codebuddy: "codebuddy",
 };

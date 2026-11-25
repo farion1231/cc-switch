@@ -1664,6 +1664,226 @@ fn pi_install_conflict_is_rejected_before_persisting() {
         .contains("external"));
 }
 
+/// Export a credential-free fixture for validation by LiveAgent's pinned
+/// K-brain source. Normal test runs keep everything in temporary directories.
+#[test]
+#[serial_test::serial]
+fn liveagent_native_contract_fixture() {
+    let temp = tempdir().unwrap();
+    let _home = TestHomeGuard::set(temp.path());
+    let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+    let root = crate::liveagent_config::test_support::TestRoot::new();
+    let db = Arc::new(Database::memory().unwrap());
+    let state = crate::store::AppState::new(db.clone());
+    let config = serde_json::json!({"api":"openai-responses","baseUrl":"https://example.invalid/v1","apiKey":"fixture-only","models":[{"id":"fixture-model","contextWindow":32000}],"activeModels":["fixture-model"]});
+    crate::services::ProviderService::add(
+        &state,
+        AppType::LiveAgent,
+        crate::provider::Provider::with_id("fixture".into(), "Fixture".into(), config, None),
+        true,
+    )
+    .unwrap();
+    crate::liveagent_config::set_default("fixture", "fixture-model").unwrap();
+    let server = crate::app_config::McpServer {
+        id: "fixture-mcp".into(),
+        name: "Fixture MCP".into(),
+        server: serde_json::json!({"type":"stdio","command":"node","args":["fixture-server.js"],"env":{"FIXTURE":"1"}}),
+        apps: crate::app_config::McpApps {
+            liveagent: true,
+            ..Default::default()
+        },
+        description: None,
+        homepage: None,
+        docs: None,
+        tags: vec![],
+    };
+    crate::services::McpService::upsert_server(&state, server).unwrap();
+    let mut skill = poisoned_skill("local:fixture-skill", "fixture-skill");
+    skill.apps.liveagent = true;
+    write_skill(
+        &SkillService::get_ssot_dir().unwrap().join("fixture-skill"),
+        "fixture-skill",
+    );
+    SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).unwrap();
+    assert!(!SkillService::is_symlink(
+        &root.dir.path().join("skills/fixture-skill")
+    ));
+    let config = crate::liveagent_config::read().unwrap();
+    assert_eq!(config["providers"]["fixture"]["api"], "openai-responses");
+    assert_eq!(
+        config["mcp"]["fixture-mcp"]["command"],
+        serde_json::json!(["node", "fixture-server.js"])
+    );
+    if let Some(destination) = std::env::var_os("CC_SWITCH_LIVEAGENT_FIXTURE") {
+        let destination = PathBuf::from(destination);
+        assert!(
+            !destination.exists(),
+            "fixture export must use a new directory"
+        );
+        SkillService::copy_dir_recursive(root.dir.path(), &destination).unwrap();
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn liveagent_skill_update_rolls_back_files_and_selection_together() {
+    let temp = tempdir().unwrap();
+    let _home = TestHomeGuard::set(temp.path());
+    let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+    let root = crate::liveagent_config::test_support::TestRoot::new();
+    let ssot = SkillService::get_ssot_dir().unwrap().join("test-skill");
+    write_skill(&ssot, "old-name");
+    SkillService::sync_to_app_dir("test-skill", &AppType::LiveAgent).unwrap();
+    let destination = root.dir.path().join("skills/test-skill");
+    let deployment = SkillService::inspect_pi_skill_destination(&ssot, &destination, "test-skill")
+        .unwrap()
+        .unwrap();
+    let fresh = temp.path().join("fresh");
+    write_skill(&fresh, "new-name");
+    let settings = root.dir.path().join("skills-settings.json");
+    let before = fs::read(&settings).unwrap();
+    let changes = [("old-name", false), ("new-name", true)];
+    let deployments = vec![(destination.clone(), deployment)];
+    let result: std::result::Result<(), crate::error::AppError> =
+        crate::liveagent_config::update_skill_selections_and_commit(&changes, || {
+            SkillService::update_managed_skill_files(
+                &fresh,
+                &ssot,
+                "test-skill",
+                &deployments,
+                std::slice::from_ref(&destination),
+                || Err(anyhow!("database unavailable")),
+            )
+            .map_err(|e| crate::error::AppError::Message(e.to_string()))
+        });
+    assert!(result.is_err());
+    assert_eq!(fs::read(&settings).unwrap(), before);
+    assert!(fs::read_to_string(destination.join("SKILL.md"))
+        .unwrap()
+        .contains("old-name"));
+    assert!(fs::read_to_string(ssot.join("SKILL.md"))
+        .unwrap()
+        .contains("old-name"));
+    crate::liveagent_config::update_skill_selections_and_commit(&changes, || {
+        SkillService::update_managed_skill_files(
+            &fresh,
+            &ssot,
+            "test-skill",
+            &deployments,
+            std::slice::from_ref(&destination),
+            || Ok(()),
+        )
+        .map_err(|e| crate::error::AppError::Message(e.to_string()))
+    })
+    .unwrap();
+    assert!(!SkillService::is_symlink(&destination));
+    let settings: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(
+        settings["global"]["selected"],
+        serde_json::json!(["new-name"])
+    );
+    assert!(fs::read_to_string(destination.join("SKILL.md"))
+        .unwrap()
+        .contains("new-name"));
+}
+
+#[test]
+#[serial_test::serial]
+fn liveagent_skill_lifecycle_updates_native_selection_and_preserves_external_files() {
+    let temp = tempdir().unwrap();
+    let _home = TestHomeGuard::set(temp.path());
+    let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+    let root = crate::liveagent_config::test_support::TestRoot::new();
+    let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+    let db = Arc::new(Database::memory().unwrap());
+    let mut skill = poisoned_skill("local:skill", "test-skill");
+    skill.apps.liveagent = true;
+    let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+    write_skill(&source, "managed-name");
+    SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).unwrap();
+    let destination = root.dir.path().join("skills/test-skill");
+    assert!(destination.join("SKILL.md").exists());
+    assert!(
+        !SkillService::is_symlink(&destination),
+        "LiveAgent ignores skill directory symlinks"
+    );
+    let settings = || -> serde_json::Value {
+        serde_json::from_slice(&fs::read(root.dir.path().join("skills-settings.json")).unwrap())
+            .unwrap()
+    };
+    assert_eq!(
+        settings()["global"]["selected"],
+        serde_json::json!(["managed-name"])
+    );
+    SkillService::toggle_app(&db, &skill.id, &AppType::LiveAgent, false).unwrap();
+    assert!(!destination.exists());
+    assert_eq!(settings()["global"]["selected"], serde_json::json!([]));
+    assert!(
+        !db.get_installed_skill(&skill.id)
+            .unwrap()
+            .unwrap()
+            .apps
+            .liveagent
+    );
+    SkillService::toggle_app(&db, &skill.id, &AppType::LiveAgent, true).unwrap();
+    assert!(
+        db.get_installed_skill(&skill.id)
+            .unwrap()
+            .unwrap()
+            .apps
+            .liveagent
+    );
+    SkillService::uninstall(&db, &skill.id).unwrap();
+    assert!(!destination.exists());
+    assert_eq!(settings()["global"]["selected"], serde_json::json!([]));
+    // A same-named native Skill with different content is never overwritten.
+    write_skill(&source, "managed-name");
+    write_skill(&destination, "external-name");
+    assert!(SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).is_err());
+    assert!(fs::read_to_string(destination.join("SKILL.md"))
+        .unwrap()
+        .contains("external-name"));
+}
+
+#[test]
+#[serial_test::serial]
+fn liveagent_skill_names_shared_with_native_skills_are_not_reused() {
+    let temp = tempdir().unwrap();
+    let _home = TestHomeGuard::set(temp.path());
+    let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+    let root = crate::liveagent_config::test_support::TestRoot::new();
+    let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+    let db = Arc::new(Database::memory().unwrap());
+    let settings_path = root.dir.path().join("skills-settings.json");
+    let selected = || -> serde_json::Value {
+        serde_json::from_slice::<serde_json::Value>(&fs::read(&settings_path).unwrap()).unwrap()
+            ["global"]["selected"]
+            .clone()
+    };
+    let mut skill = poisoned_skill("local:skill", "test-skill");
+    skill.apps.liveagent = true;
+    let source = SkillService::get_ssot_dir().unwrap().join(&skill.directory);
+    write_skill(&source, "shared-name");
+    // The user's own LiveAgent Skill already uses this name in another directory.
+    write_skill(&root.dir.path().join("skills/user-skill"), "shared-name");
+    fs::write(
+        &settings_path,
+        r#"{"revision":1,"global":{"enabled":true,"selected":["shared-name"]},"projects":{}}"#,
+    )
+    .unwrap();
+    assert!(SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).is_err());
+    assert!(!root.dir.path().join("skills/test-skill").exists());
+
+    // Deployed before the user added theirs: disabling ours keeps their selection.
+    fs::remove_dir_all(root.dir.path().join("skills/user-skill")).unwrap();
+    SkillService::persist_and_sync_new_skill(&db, &skill, &AppType::LiveAgent).unwrap();
+    write_skill(&root.dir.path().join("skills/user-skill"), "shared-name");
+    SkillService::toggle_app(&db, &skill.id, &AppType::LiveAgent, false).unwrap();
+    assert!(!root.dir.path().join("skills/test-skill").exists());
+    assert_eq!(selected(), serde_json::json!(["shared-name"]));
+}
+
 #[test]
 #[serial_test::serial]
 fn agy_and_kimi_skill_toggle_rolls_back_on_database_failure() {

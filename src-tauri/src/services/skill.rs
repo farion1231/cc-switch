@@ -767,6 +767,9 @@ impl SkillService {
             | AppType::Copilot
             | AppType::WorkBuddy
             | AppType::Codebuddy => {}
+            AppType::LiveAgent => {
+                return Ok(crate::liveagent_config::data_dir()?.join("skills"));
+            }
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
@@ -791,6 +794,7 @@ impl SkillService {
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::Copilot => crate::copilot_config::skills_dir(),
+            AppType::LiveAgent => crate::liveagent_config::data_dir()?.join("skills"),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
             AppType::Codebuddy => crate::codebuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
@@ -1150,6 +1154,15 @@ impl SkillService {
                 Ok(directory) => {
                     let ssot_dir = Self::get_ssot_dir()?;
                     let source = ssot_dir.join(&directory);
+                    let liveagent_destination = if skill.apps.liveagent {
+                        let destination =
+                            Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::LiveAgent)?
+                                .join(&directory);
+                        Self::inspect_pi_skill_destination(&source, &destination, &directory)?;
+                        Some(destination)
+                    } else {
+                        None
+                    };
                     let mut managed_destinations = Vec::new();
                     for app in [
                         AppType::Mcode,
@@ -1221,6 +1234,9 @@ impl SkillService {
                         Self::create_uninstall_backup_excluding(&skill, &preserved_paths)?
                             .map(|path| path.to_string_lossy().to_string());
 
+                    if liveagent_destination.is_some() {
+                        Self::sync_liveagent_skill(&directory, false, || Ok(()))?;
+                    }
                     for destination in managed_destinations {
                         Self::remove_verified_pi_destination(&source, &destination, &directory)
                             .context("Managed Skill could not be removed; uninstall cancelled")?;
@@ -1253,6 +1269,7 @@ impl SkillService {
                                 | AppType::Dsh
                                 | AppType::Omp
                                 | AppType::Copilot
+                                | AppType::LiveAgent
                         ) {
                             continue;
                         }
@@ -1400,6 +1417,16 @@ impl SkillService {
                     }
                 }
             }
+            if skill.apps.liveagent {
+                let destination = Self::get_app_skills_dir(&AppType::LiveAgent)?.join(&directory);
+                if let Some(deployment) =
+                    Self::inspect_pi_skill_destination(&src, &destination, &directory)
+                        .ok()
+                        .flatten()
+                {
+                    mcode_deployments.push((directory.clone(), destination, deployment));
+                }
+            }
             // Omp 没有开关列，是否部署只看原生目录里有没有 CC Switch 的副本。
             let omp_destination = Self::get_app_skills_dir(&AppType::Omp)?.join(&directory);
             if let Some(deployment) =
@@ -1541,6 +1568,15 @@ impl SkillService {
                 return Err(error);
             }
             return Ok(());
+        }
+
+        if matches!(app, AppType::LiveAgent) {
+            skill.apps.liveagent = enabled;
+            return Self::sync_liveagent_skill(&skill.directory, enabled, || {
+                db.update_skill_apps(id, &skill.apps)
+                    .map(|_| ())
+                    .map_err(Into::into)
+            });
         }
 
         // 更新状态
@@ -1760,6 +1796,42 @@ impl SkillService {
                     }
                 }
             }
+            // An explicitly imported LiveAgent link must point at the managed copy
+            // so subsequent toggles and updates can verify its ownership.
+            if apps.liveagent {
+                let projection = (|| -> Result<()> {
+                    let native = Self::get_distinct_app_skills_dir(&ssot_dir, &AppType::LiveAgent)?
+                        .join(&dir_name);
+                    if Self::is_symlink(&native) && !Self::paths_alias(&native, &dest) {
+                        if Self::compute_pi_deployment_hash(&native)?
+                            != Self::compute_pi_deployment_hash(&dest)?
+                        {
+                            return Err(anyhow!(
+                                "LiveAgent Skill 与托管副本内容不同，拒绝替换链接: {dir_name}"
+                            ));
+                        }
+                        if let Some(deployment) =
+                            Self::inspect_pi_skill_destination(&native, &native, &dir_name)?
+                        {
+                            Self::refresh_pi_skill_destination(
+                                &dest,
+                                &native,
+                                &dir_name,
+                                &deployment,
+                            )?;
+                        }
+                    } else {
+                        Self::preflight_install_destination(&dest, &dir_name, &AppType::LiveAgent)?;
+                    }
+                    Self::sync_to_app_dir(&dir_name, &AppType::LiveAgent)?;
+                    Ok(())
+                })();
+                if let Err(error) = projection {
+                    skipped_mcode.push(format!("{dir_name}: {error}"));
+                    continue 'imports;
+                }
+            }
+
             // 勾选的应用里还没有这个 Skill（它是在别处发现的）：导入时就投影过去。
             // 只存标志的话，界面显示已启用、应用却读不到，要等下次切换供应商才补上。
             // 已经在应用目录里的保持原样；投影失败就不记这个应用的启用，
@@ -1775,6 +1847,7 @@ impl SkillService {
                         | AppType::Codebuddy
                         | AppType::Omp
                         | AppType::Copilot
+                        | AppType::LiveAgent
                         | AppType::WorkBuddy
                 ) || !apps.is_enabled_for(&app)
                     || Self::skill_exists_in_app(&dir_name, &app)

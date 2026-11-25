@@ -1694,7 +1694,7 @@ fn migration_v23_to_v24_adds_dsh_flags_without_changing_omp_or_skill_state() {
 }
 
 #[test]
-fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_state() {
+fn migration_from_v24_adds_copilot_workbuddy_and_liveagent_flags_without_changing_dsh_state() {
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
     conn.execute_batch(
@@ -1702,6 +1702,8 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
          ALTER TABLE skills DROP COLUMN enabled_copilot;
          ALTER TABLE mcp_servers DROP COLUMN enabled_workbuddy;
          ALTER TABLE skills DROP COLUMN enabled_workbuddy;
+         ALTER TABLE mcp_servers DROP COLUMN enabled_liveagent;
+         ALTER TABLE skills DROP COLUMN enabled_liveagent;
          ALTER TABLE mcp_servers DROP COLUMN enabled_codebuddy;
          ALTER TABLE skills DROP COLUMN enabled_codebuddy;
          INSERT INTO mcp_servers (id, name, server_config, enabled_dsh)
@@ -1716,16 +1718,16 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
     // v24 → v25（Copilot）→ v26（WorkBuddy）
     assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
     for table in ["mcp_servers", "skills"] {
-        let flags: (bool, bool, bool, bool) = conn
+        let flags: (bool, bool, bool, bool, bool) = conn
             .query_row(
                 &format!(
-                    "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_codebuddy FROM {table}"
+                    "SELECT enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_liveagent, enabled_codebuddy FROM {table}"
                 ),
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
             .expect("read migrated flags");
-        assert_eq!(flags, (true, false, false, false), "{table}");
+        assert_eq!(flags, (true, false, false, false, false), "{table}");
     }
 
     conn.execute("UPDATE skills SET enabled_copilot = 1", [])
@@ -1738,7 +1740,7 @@ fn migration_from_v24_adds_copilot_and_workbuddy_flags_without_changing_dsh_stat
 }
 
 #[test]
-fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
+fn fresh_install_has_dsh_copilot_workbuddy_and_liveagent_flags_at_current_version() {
     // 与 Database::init 的全新安装路径一致：先建表，再从 user_version=0 跑迁移。
     let conn = Connection::open_in_memory().expect("open memory db");
     Database::create_tables_on_conn(&conn).expect("create tables");
@@ -1749,6 +1751,7 @@ fn fresh_install_has_dsh_copilot_and_workbuddy_flags_at_current_version() {
             "enabled_dsh",
             "enabled_copilot",
             "enabled_workbuddy",
+            "enabled_liveagent",
             "enabled_codebuddy",
         ] {
             assert!(
@@ -1891,6 +1894,131 @@ fn migration_from_dev_v27_fills_skill_repo_host_and_keeps_codebuddy_flag() {
             )
             .expect("read codebuddy flag");
         assert!(enabled, "{table}");
+    }
+    let repo_host: Option<String> = conn
+        .query_row("SELECT repo_host FROM skills", [], |row| row.get(0))
+        .expect("skills.repo_host exists");
+    assert_eq!(repo_host, None);
+    let host: String = conn
+        .query_row("SELECT host FROM skill_repos", [], |row| row.get(0))
+        .expect("skill_repos.host exists");
+    assert_eq!(host, "github.com");
+}
+
+/// 上游 v27/v28 与 LiveAgent 早期开发版 v28（记了 enabled_liveagent、却没有上游 v27→v28 的
+/// enabled_codebuddy）都要能升到当前版本：缺的开关补成 0，已有开关原样保留。
+#[test]
+fn migration_to_v29_adds_liveagent_and_codebuddy_flags_keeping_existing_state() {
+    struct Case {
+        name: &'static str,
+        version: i32,
+        dropped: &'static [&'static str],
+        seeded: &'static str,
+        expected: (bool, bool, bool),
+    }
+    let cases = [
+        Case {
+            name: "upstream v27",
+            version: 27,
+            dropped: &["enabled_codebuddy", "enabled_liveagent"],
+            seeded: "enabled_workbuddy",
+            expected: (true, false, false),
+        },
+        Case {
+            name: "upstream v28",
+            version: 28,
+            dropped: &["enabled_liveagent"],
+            seeded: "enabled_codebuddy",
+            expected: (false, true, false),
+        },
+        Case {
+            name: "branch dev v28 without enabled_codebuddy",
+            version: 28,
+            dropped: &["enabled_codebuddy"],
+            seeded: "enabled_liveagent",
+            expected: (false, false, true),
+        },
+    ];
+
+    for case in cases {
+        let conn = Connection::open_in_memory().expect("open memory db");
+        Database::create_tables_on_conn(&conn).expect("create tables");
+        for table in ["mcp_servers", "skills"] {
+            for column in case.dropped {
+                conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN {column};"))
+                    .expect("drop column");
+            }
+        }
+        conn.execute(
+            &format!(
+                "INSERT INTO mcp_servers (id, name, server_config, {}) VALUES ('m', 'M', '{{}}', 1)",
+                case.seeded
+            ),
+            [],
+        )
+        .expect("seed mcp");
+        conn.execute(
+            &format!(
+                "INSERT INTO skills (id, name, directory, {}) VALUES ('s', 'S', 's', 1)",
+                case.seeded
+            ),
+            [],
+        )
+        .expect("seed skill");
+        Database::set_user_version(&conn, case.version).expect("set user_version");
+
+        Database::apply_schema_migrations_on_conn(&conn).expect("upgrade database");
+        assert_eq!(
+            Database::get_user_version(&conn).unwrap(),
+            SCHEMA_VERSION,
+            "{}",
+            case.name
+        );
+        for table in ["mcp_servers", "skills"] {
+            let flags: (bool, bool, bool) = conn
+                .query_row(
+                    &format!(
+                        "SELECT enabled_workbuddy, enabled_codebuddy, enabled_liveagent FROM {table}"
+                    ),
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                )
+                .expect("read migrated flags");
+            assert_eq!(flags, case.expected, "{}: {table}", case.name);
+        }
+    }
+}
+
+/// 早期开发版把 enabled_liveagent 记作 v27，库里没有上游 v26→v27 的 GitLab 列；
+/// 升到当前版本要把它们和 enabled_codebuddy 补上，并保留已有的 liveagent 开关。
+#[test]
+fn migration_from_dev_v27_fills_skill_repo_host_and_keeps_liveagent_flag() {
+    let conn = Connection::open_in_memory().expect("open memory db");
+    conn.execute_batch(
+        r#"
+        CREATE TABLE mcp_servers (id TEXT PRIMARY KEY, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0, enabled_liveagent BOOLEAN NOT NULL DEFAULT 0);
+        CREATE TABLE skills (id TEXT PRIMARY KEY, enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0, enabled_liveagent BOOLEAN NOT NULL DEFAULT 0);
+        CREATE TABLE skill_repos (owner TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (owner, name));
+        INSERT INTO mcp_servers (id, enabled_liveagent) VALUES ('m', 1);
+        INSERT INTO skills (id, enabled_liveagent) VALUES ('s', 1);
+        INSERT INTO skill_repos (owner, name) VALUES ('o', 'r');
+        "#,
+    )
+    .expect("seed dev v27 database");
+    Database::set_user_version(&conn, 27).expect("set user_version=27");
+
+    Database::apply_schema_migrations_on_conn(&conn).expect("upgrade dev v27 database");
+    assert_eq!(Database::get_user_version(&conn).unwrap(), SCHEMA_VERSION);
+
+    for table in ["mcp_servers", "skills"] {
+        let flags: (bool, bool) = conn
+            .query_row(
+                &format!("SELECT enabled_liveagent, enabled_codebuddy FROM {table}"),
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("read liveagent/codebuddy flags");
+        assert_eq!(flags, (true, false), "{table}");
     }
     let repo_host: Option<String> = conn
         .query_row("SELECT repo_host FROM skills", [], |row| row.get(0))
