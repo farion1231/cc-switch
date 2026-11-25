@@ -95,7 +95,13 @@ fn revision(
 ) -> rusqlite::Result<StoredFingerprint> {
     // Tables are fixed identifiers, never input from a source path or session ID.
     let tables: &[&str] = match provider {
-        "opencode" => &["message", "part", "session_message", "session_v2"],
+        "opencode" => &[
+            "message",
+            "part",
+            "session_message",
+            "session_part",
+            "session_v2",
+        ],
         "hermes" => &["messages"],
         "mcode" => &[
             "local_runtime_message_row_migrations",
@@ -183,6 +189,7 @@ mod tests {
             ("hermes", "messages"),
             ("opencode", "part"),
             ("opencode", "session_message"),
+            ("opencode", "session_part"),
             ("mcode", "local_runtime_messages"),
             ("mcode", "local_runtime_message_rows"),
             ("mcode", "local_runtime_message_row_migrations"),

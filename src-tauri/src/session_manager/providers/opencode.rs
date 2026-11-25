@@ -608,6 +608,7 @@ fn load_messages_sqlite_v2(
         })
         .map_err(|e| format!("Failed to query V2 messages: {e}"))?;
 
+    let mut split_parts = load_session_parts(conn, session_id);
     let mut messages = Vec::new();
     for (row_id, msg_type, ts, data) in rows.flatten() {
         let Ok(msg_value) = serde_json::from_str::<Value>(&data) else {
@@ -628,7 +629,7 @@ fn load_messages_sqlite_v2(
                 serde_json::json!({ "type": "text", "text": text }),
             )
         };
-        let parts: Vec<(PartLocator, Value)> = match (
+        let mut parts: Vec<(PartLocator, Value)> = match (
             msg_type.as_str(),
             msg_value.get("text").and_then(Value::as_str),
             msg_value.get("content"),
@@ -652,6 +653,16 @@ fn load_messages_sqlite_v2(
             (_, Some(text), _) => vec![text_part(text)],
             _ => Vec::new(),
         };
+        // 2.4+ 的 assistant 行只剩空 `content: []`，parts 在 `session_part`；与 OpenCode
+        // 读取时一致：先放拆出的 parts，再接旧版本写回的内联 content
+        if msg_type == "assistant" {
+            if let Some(mut split) = split_parts.remove(&row_id) {
+                if matches!(msg_value.get("content"), Some(Value::Array(_))) {
+                    split.append(&mut parts);
+                }
+                parts = split;
+            }
+        }
 
         let message = message_from_parts(
             &msg_type,
@@ -667,6 +678,50 @@ fn load_messages_sqlite_v2(
 
     assign_turn_ids(&mut messages);
     Ok(messages)
+}
+
+/// OpenCode 2.4+（迁移 `20261029002625_session_part`）把 assistant 的每个 part 拆成
+/// `session_part` 一行，主键 `(message_id, ordinal)`。旧库没有这张表时返回空表。
+/// 读取失败时同样退回空表：仍能显示内联 content，不让整段会话加载失败。
+fn load_session_parts(
+    conn: &Connection,
+    session_id: &str,
+) -> HashMap<String, Vec<(PartLocator, Value)>> {
+    let mut map: HashMap<String, Vec<(PartLocator, Value)>> = HashMap::new();
+    if !sqlite_table_exists(conn, "session_part") {
+        return map;
+    }
+    let Ok(mut stmt) = conn.prepare(
+        "SELECT message_id, ordinal, type, data FROM session_part \
+         WHERE session_id = ?1 ORDER BY message_id ASC, ordinal ASC",
+    ) else {
+        return map;
+    };
+    let Ok(rows) = stmt.query_map([session_id], |row| {
+        let message_id: String = row.get(0)?;
+        let ordinal: i64 = row.get(1)?;
+        let part_type: String = row.get(2)?;
+        let data: String = row.get(3)?;
+        Ok((message_id, ordinal, part_type, data))
+    }) else {
+        return map;
+    };
+    for (message_id, ordinal, part_type, data) in rows.flatten() {
+        let Ok(mut part) = serde_json::from_str::<Value>(&data) else {
+            continue;
+        };
+        // OpenCode 解码时以 `type` 列为准
+        if let Value::Object(obj) = &mut part {
+            obj.insert("type".to_string(), Value::String(part_type));
+        }
+        let locator = PartLocator::Sqlite {
+            table: "session_part",
+            id: format!("{message_id}:{ordinal}"),
+            base: String::new(),
+        };
+        map.entry(message_id).or_default().push((locator, part));
+    }
+    map
 }
 
 pub fn delete_session(storage: &Path, path: &Path, session_id: &str) -> Result<bool, String> {
@@ -773,6 +828,7 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
 
             // Best-effort cleanup of auxiliary V2 tables whose schema may evolve
             for child in [
+                "session_part",
                 "session_pending",
                 "session_inbox",
                 "instruction_entry",
@@ -1038,6 +1094,7 @@ fn remove_dir_all_if_exists(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session_manager::model::SessionBlock;
     use rusqlite::Connection;
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
@@ -1564,6 +1621,7 @@ mod tests {
         let db_path = base_dir.join("opencode.db");
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema_v2(&conn);
+        create_sqlite_schema_session_part(&conn);
 
         conn.execute(
             "INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -1575,6 +1633,11 @@ mod tests {
             ("msg_1", "ses_v2_1", "user", 1_i64, r#"{"text":"Hello"}"#, 1000_i64, 1000_i64),
         )
         .expect("insert message");
+        conn.execute(
+            "INSERT INTO session_part (message_id, session_id, ordinal, type, call_id, time_created, time_updated, data) VALUES ('msg_1', 'ses_v2_1', 0, 'text', NULL, 1, 1, '{}')",
+            [],
+        )
+        .expect("insert part");
         drop(conn);
 
         let source = format!("sqlite:{}:ses_v2_1", db_path.display());
@@ -1596,15 +1659,117 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("count v2 messages");
+        let remaining_parts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_part WHERE session_id = 'ses_v2_1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count v2 parts");
 
         assert_eq!(remaining_sessions, 0);
         assert_eq!(remaining_messages, 0);
+        assert_eq!(remaining_parts, 0);
 
         if let Some(value) = original_xdg {
             std::env::set_var("XDG_DATA_HOME", value);
         } else {
             std::env::remove_var("XDG_DATA_HOME");
         }
+    }
+
+    /// OpenCode 2.4+ 的 `session_part` 表（迁移 20261029002625_session_part）
+    fn create_sqlite_schema_session_part(conn: &Connection) {
+        conn.execute_batch(
+            "
+            CREATE TABLE session_part (
+                message_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                ordinal INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                call_id TEXT,
+                time_created INTEGER NOT NULL,
+                time_updated INTEGER NOT NULL,
+                data TEXT NOT NULL,
+                CONSTRAINT session_part_pk PRIMARY KEY(message_id, ordinal),
+                FOREIGN KEY(message_id) REFERENCES session_message(id) ON DELETE CASCADE,
+                FOREIGN KEY(session_id) REFERENCES session_v2(id) ON DELETE CASCADE
+            );
+            ",
+        )
+        .expect("create session_part table");
+    }
+
+    #[test]
+    fn load_messages_sqlite_v2_reads_assistant_parts_from_session_part() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let temp = tempdir().expect("tempdir");
+        let db_path = temp.path().join("opencode.db");
+        let conn = Connection::open(&db_path).expect("open sqlite db");
+        create_sqlite_schema_v2(&conn);
+        create_sqlite_schema_session_part(&conn);
+
+        conn.execute(
+            "INSERT INTO session_v2 (id, title, directory, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ("ses_p", "Split parts", "/tmp/project-p", 1000_i64, 5000_i64),
+        )
+        .expect("insert session_v2");
+        let insert_message = |id: &str, msg_type: &str, seq: i64, data: &str| {
+            conn.execute(
+                "INSERT INTO session_message (id, session_id, type, seq, data, time_created, time_updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+                (id, "ses_p", msg_type, seq, data, 1000 + seq),
+            )
+            .expect("insert session_message");
+        };
+        let insert_part = |message_id: &str, ordinal: i64, part_type: &str, data: &str| {
+            conn.execute(
+                "INSERT INTO session_part (message_id, session_id, ordinal, type, call_id, time_created, time_updated, data) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?5, ?6)",
+                (message_id, "ses_p", ordinal, part_type, 2000 + ordinal, data),
+            )
+            .expect("insert session_part");
+        };
+        insert_message("msg_1", "user", 1, r#"{"text":"Hello parts"}"#);
+        // 2.4 写法：assistant 行只剩空 content，parts 在 session_part，插入顺序故意打乱
+        insert_message("msg_2", "assistant", 2, r#"{"content":[]}"#);
+        insert_part(
+            "msg_2",
+            1,
+            "text",
+            r#"{"type":"text","text":"Answer from parts"}"#,
+        );
+        insert_part("msg_2", 0, "reasoning", r#"{"text":"thinking first"}"#);
+        // 拆分后旧版本又写回了内联 content：parts 在前，内联在后
+        insert_message(
+            "msg_3",
+            "assistant",
+            3,
+            r#"{"content":[{"type":"text","text":"inline tail"}]}"#,
+        );
+        insert_part("msg_3", 0, "text", r#"{"type":"text","text":"split head"}"#);
+        // 没有拆分的旧行照旧读内联 content
+        insert_message(
+            "msg_4",
+            "assistant",
+            4,
+            r#"{"content":[{"type":"text","text":"legacy inline"}]}"#,
+        );
+        drop(conn);
+
+        let source = format!("sqlite:{}:ses_p", db_path.display());
+        let messages = load_messages_sqlite(&source).expect("load split-part messages");
+
+        assert_eq!(messages.len(), 4);
+        assert_eq!(messages[0].content, "Hello parts");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].content, "Answer from parts");
+        assert!(matches!(
+            messages[1].blocks.first(),
+            Some(SessionBlock::Thinking { .. })
+        ));
+        assert_eq!(messages[2].content, "split head\n\ninline tail");
+        assert_eq!(messages[3].content, "legacy inline");
     }
 
     #[test]
