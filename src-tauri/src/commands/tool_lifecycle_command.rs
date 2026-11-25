@@ -1153,8 +1153,10 @@ fn package_manager_anchored_command_from_paths(
             ));
         }
         "pnpm" => {
-            let pnpm = sibling_bin(bin_path, "pnpm")?;
             let bin_dir = parent_dir(bin_path);
+            if bin_dir.is_empty() {
+                return None;
+            }
             // pnpm 11+ puts global binaries in PNPM_HOME/bin; older versions
             // put them directly in PNPM_HOME. GUI apps may not inherit it.
             let pnpm_home = if Path::new(&bin_dir)
@@ -1166,10 +1168,9 @@ fn package_manager_anchored_command_from_paths(
                 bin_dir.clone()
             };
             return Some(format!(
-                "PNPM_HOME={} PATH={}:\"$PATH\" {} add -g {pkg}@latest",
+                "PNPM_HOME={} PATH={}:\"$PATH\" pnpm add -g {pkg}@latest",
                 shell_single_quote(&pnpm_home),
                 shell_single_quote(&bin_dir),
-                shell_single_quote(&pnpm),
             ));
         }
         // 自带同级 npm 的 node 管理器：落到下面锚定到那处的 npm。
@@ -1651,6 +1652,12 @@ mod tests {
             )
             .unwrap();
             std::fs::set_permissions(&pnpm, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let fallback_dir = temp.path().join("node-bin");
+            std::fs::create_dir_all(&fallback_dir).unwrap();
+            let fallback_pnpm = fallback_dir.join("pnpm");
+            std::fs::write(&fallback_pnpm, "#!/bin/sh\nexit 93\n").unwrap();
+            std::fs::set_permissions(&fallback_pnpm, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
             let codex = bin_dir.join("codex");
             let install = |path: &Path, source: &str, is_path_default| ToolInstallation {
                 path: path.to_string_lossy().into_owned(),
@@ -1675,9 +1682,10 @@ mod tests {
                 panic!("pnpm-managed Codex must use an anchored update");
             };
             let trace = temp.path().join("trace");
-            let status = Command::new("bash")
+            let status = Command::new("/bin/bash")
                 .args(["-c", &command])
                 .env("TRACE_FILE", &trace)
+                .env("PATH", &fallback_dir)
                 .env_remove("PNPM_HOME")
                 .status()
                 .unwrap();
@@ -1693,6 +1701,51 @@ mod tests {
                 ]
             );
         }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn pnpm_codex_update_uses_login_path_when_no_sibling_pnpm_exists() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+
+        let temp = tempfile::Builder::new()
+            .prefix("cc switch '")
+            .tempdir()
+            .unwrap();
+        let pnpm_home = temp.path().join("pnpm");
+        let node_bin = temp.path().join("node-bin");
+        std::fs::create_dir_all(&pnpm_home).unwrap();
+        std::fs::create_dir_all(&node_bin).unwrap();
+        let pnpm = node_bin.join("pnpm");
+        std::fs::write(
+            &pnpm,
+            "#!/bin/sh\nprintf '%s\\n' \"$PNPM_HOME\" \"$@\" > \"$TRACE_FILE\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&pnpm, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let codex = pnpm_home.join("codex");
+        let codex = codex.to_str().unwrap();
+        let command = anchored_command_from_paths("codex", codex, codex).unwrap();
+        let trace = temp.path().join("trace");
+        let status = Command::new("/bin/bash")
+            .args(["-c", &command])
+            .env("TRACE_FILE", &trace)
+            .env("PATH", &node_bin)
+            .env_remove("PNPM_HOME")
+            .status()
+            .unwrap();
+        assert!(status.success(), "{command}");
+        let output = std::fs::read_to_string(trace).unwrap();
+        assert_eq!(
+            output.lines().collect::<Vec<_>>(),
+            [
+                pnpm_home.to_str().unwrap(),
+                "add",
+                "-g",
+                "@openai/codex@latest"
+            ]
+        );
     }
 
     #[test]
