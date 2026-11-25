@@ -2719,7 +2719,15 @@
       "showMore": "Mehr anzeigen",
       "showLess": "Weniger anzeigen",
       "less": "Weniger",
-      "more": "Mehr"
+      "more": "Mehr",
+      "rangeSelect": "Bereichsauswahl",
+      "pickRangeEnd": "Weiteren Tag klicken, um den Bereich abzuschließen",
+      "dayCount": "{{count}} Tage",
+      "applyRange": "Auf Filter anwenden",
+      "closeDetail": "Details schließen",
+      "archivedTitle": "Nur Tageszusammenfassung",
+      "archivedBody": "Rohdaten, die älter als {{days}} Tage sind, werden zu Tageswerten verdichtet, sodass kein Stundenverlauf verfügbar ist. Aktivieren Sie die Bereichsauswahl für mehrtägige Verläufe.",
+      "cellAriaSingle": "{{date}}: {{tokens}} Token, {{requests}} Anfragen, {{cost}}"
     },
     "trend": {
       "title": "Nutzungstrend · {{range}}",

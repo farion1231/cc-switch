@@ -2719,7 +2719,15 @@
       "showMore": "显示更多",
       "showLess": "收起",
       "less": "少",
-      "more": "多"
+      "more": "多",
+      "rangeSelect": "连续多选",
+      "pickRangeEnd": "再点一天完成区间",
+      "dayCount": "{{count}} 天",
+      "applyRange": "应用到主筛选",
+      "closeDetail": "收起详情",
+      "archivedTitle": "仅保留每日汇总",
+      "archivedBody": "超过 {{days}} 天的原始请求已归档为按天汇总，暂不支持按小时曲线；开启「连续多选」可查看多日趋势。",
+      "cellAriaSingle": "{{date}}：{{tokens}} Token，{{requests}} 次请求，{{cost}}"
     },
     "trend": {
       "title": "使用趋势 · {{range}}",

@@ -2648,7 +2648,15 @@
       "showMore": "Daha fazlasını göster",
       "showLess": "Daha az göster",
       "less": "Daha az",
-      "more": "Diğer"
+      "more": "Diğer",
+      "rangeSelect": "Aralık seçimi",
+      "pickRangeEnd": "Aralığı tamamlamak için başka bir güne tıklayın",
+      "dayCount": "{{count}} gün",
+      "applyRange": "Filtreye uygula",
+      "closeDetail": "Ayrıntıları kapat",
+      "archivedTitle": "Yalnızca günlük özet",
+      "archivedBody": "{{days}} günden eski ham istekler günlük özetlere sıkıştırıldığı için saatlik dağılım kullanılamaz. Çok günlük eğilimleri görmek için Aralık seçimi özelliğini açın.",
+      "cellAriaSingle": "{{date}}: {{tokens}} token, {{requests}} istek, {{cost}}"
     },
     "trend": {
       "title": "Kullanım eğilimi · {{range}}",

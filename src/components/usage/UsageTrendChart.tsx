@@ -34,6 +34,8 @@ interface UsageTrendChartProps {
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
+  /** 嵌在热力图折叠抽屉里时收紧外边距，避免与外层卡片留白叠加 */
+  embedded?: boolean;
 }
 
 export interface UsageTrendStatLike {
@@ -286,6 +288,7 @@ export function UsageTrendChart({
   providerName,
   model,
   refreshIntervalMs,
+  embedded = false,
 }: UsageTrendChartProps) {
   const { t, i18n } = useTranslation();
   const { money, moneyTick, rate } = useMoneyFormat();
@@ -380,10 +383,15 @@ export function UsageTrendChart({
     );
   };
 
+  const titleId = embedded ? "usage-heatmap-trend-title" : "usage-trend-title";
+
   return (
-    <section aria-labelledby="usage-trend-title" className="px-4 pb-2.5 pt-5">
+    <section
+      aria-labelledby={titleId}
+      className={embedded ? "pt-2" : "px-4 pb-2.5 pt-5"}
+    >
       <h2
-        id="usage-trend-title"
+        id={titleId}
         className="m-0 min-h-7 whitespace-nowrap text-caption font-semibold leading-7 text-fg-2"
       >
         {t("usage.trend.titleMetric", {

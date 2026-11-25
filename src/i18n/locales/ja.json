@@ -2719,7 +2719,15 @@
       "showMore": "もっと見る",
       "showLess": "折りたたむ",
       "less": "少",
-      "more": "多"
+      "more": "多",
+      "rangeSelect": "連続選択",
+      "pickRangeEnd": "別の日にちをクリックして範囲を確定",
+      "dayCount": "{{count}} 日間",
+      "applyRange": "フィルターに適用",
+      "closeDetail": "詳細を閉じる",
+      "archivedTitle": "日別集計のみ保持",
+      "archivedBody": "{{days}} 日より前の生ログは日別集計にアーカイブされるため、時間別の推移は表示できません。「連続選択」をオンにすると複数日の日別推移を確認できます。",
+      "cellAriaSingle": "{{date}}: {{tokens}} トークン、{{requests}} リクエスト、{{cost}}"
     },
     "trend": {
       "title": "使用状況の推移 · {{range}}",
