@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API-Schlüssel eingeben",
     "show": "API-Schlüssel anzeigen",
-    "hide": "API-Schlüssel ausblenden"
+    "hide": "API-Schlüssel ausblenden",
+    "copied": "API-Schlüssel kopiert",
+    "copyFailed": "API-Schlüssel konnte nicht kopiert werden"
   },
   "jsonEditor": {
     "mustBeObject": "Die Konfiguration muss ein JSON-Objekt sein, kein Array oder anderer Typ",
@@ -202,6 +204,8 @@
       "extraArgsPlaceholder": "z. B. --debug --append-system-prompt \"Be brief\"",
       "extraArgsHint": "Wird nur für dieses Terminal hinter den Startbefehl gesetzt. Mit Leerzeichen trennen; Werte mit Leerzeichen in Anführungszeichen setzen.",
       "agySwitchTitle": "Dadurch wird die Anmeldung von agy gewechselt",
+      "agyBindingMissing": "Das mit dieser Karte verknüpfte Antigravity-Konto fehlt auf diesem Computer. Füge es unter „Konten“ hinzu oder verwende für diesen Start die aktuelle agy-Anmeldung.",
+      "agyUseCurrentLogin": "Aktuelle agy-Anmeldung für diesen Start verwenden",
       "agySwitchBody": "Vor dem Öffnen wechselt die Anmeldung von agy zu {{account}}; danach gestartete agy-Sitzungen verwenden dieses Konto.",
       "agySwitchRunning": "agy läuft: Geöffnete agy-Sitzungen behalten das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie sie nach Möglichkeit zuerst.",
       "isolationBodyCopilot": "copilot startet in diesem Terminal mit --model auf das erste Modell von „{{name}}“, nur für diese Sitzung. Endpunkt und Schlüssel stammen aus der providers.json von Copilot, daher können andere Terminals es ebenfalls mit /model auswählen."
@@ -231,7 +235,7 @@
         "account": "Konto",
         "accountFollow": "Aktueller Anmeldung von agy folgen",
         "accountMissing": "Ein Konto, das nicht auf diesem Computer vorhanden ist",
-        "accountHelp": "Bei ausgewähltem Konto wechselt „Terminal öffnen“ zuerst die Anmeldung von agy zu diesem Konto (das gilt global: danach gestartete agy-Sitzungen verwenden es). Konten fügen Sie in der Kontoverwaltung hinzu."
+        "accountHelp": "Wenn Sie eine neue Kontoverknüpfung speichern, verwenden neue agy-Sitzungen dieses Konto. Auch beim Öffnen eines Terminals über diese Karte wechselt agy zum verknüpften Konto. Konten können Sie in der Kontoverwaltung hinzufügen."
       },
       "gemini": {
         "model": "Modell",
@@ -239,17 +243,19 @@
         "oauthHint": "Google Official verwendet die persönliche OAuth-Authentifizierung; ein API-Schlüssel ist nicht nötig. Beim ersten Gebrauch öffnet sich automatisch der Browser zur Anmeldung.",
         "apiKeyPlaceholder": "Gemini-API-Schlüssel eingeben"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "Anmeldemethode",
+        "missing": "Konto nicht auf diesem Computer vorhanden",
+        "reauthBadge": "Erneute Anmeldung erforderlich"
+      },
+      "claudeAccount": {
         "default": "Claude-Code-Anmeldung folgen",
         "defaultDescription": "Das Konto ändert sich mit der aktuellen Claude-Code-Anmeldung",
-        "missing": "Konto nicht auf diesem Computer vorhanden",
         "manage": "Claude-Konten hinzufügen oder verwalten",
         "helpTerminal": "Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Wechsel zu dieser Karte die Anmeldung von Claude Code nicht. Verwenden Sie „Terminal öffnen“ auf der Karte, um das ausgewählte Konto zu nutzen.",
         "helpWsl": "Der Claude-Konfigurationsordner liegt in WSL, wo Claude-Konten noch nicht unterstützt werden. Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code nicht.",
         "help": "Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code sofort auf das ausgewählte Konto, auch für bereits laufende Sitzungen. Um mehrere Konten gleichzeitig zu nutzen, verwenden Sie „Terminal öffnen“ auf der Karte.",
         "claudeAccount": "Claude-Konto",
-        "reauthBadge": "Erneute Anmeldung erforderlich",
         "terminalHint": "Über „Terminal öffnen“ nutzen",
         "wslHint": "In WSL nicht unterstützt",
         "plan": {
@@ -261,6 +267,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok-CLI-Anmeldung folgen",
+        "defaultDescription": "Verwendet das Konto, mit dem Grok CLI angemeldet ist",
+        "manage": "xAI-Konten hinzufügen oder verwalten",
+        "help": "Wenn Sie zu dieser Karte wechseln, wird die Anmeldung von Grok CLI (~/.grok/auth.json) auf das ausgewählte Konto umgestellt. Das zuvor angemeldete Konto wird zuerst in der Kontoverwaltung gespeichert und kehrt zurück, wenn Sie zur Karte „Grok-CLI-Anmeldung folgen“ wechseln.",
+        "xaiAccount": "xAI-Konto"
       }
     },
     "duplicateLiveIdsLoadFailed": "Anbieterkennungen konnten nicht aus der Konfiguration gelesen werden. Bitte beheben Sie die Konfiguration und versuchen Sie es erneut",
@@ -318,7 +331,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "Modellliste",
     "directModelListCollapsedHint": "Anbieter nativer Claude-Modelle benötigen dies in der Regel nicht. Claude Desktop ruft /v1/models automatisch ab.",
-    "directModelListHint": "Konfigurieren Sie die Modelle Sonnet, Opus und Haiku, die Claude Desktop zur Verfügung stehen. Leer lassen, damit Claude Desktop /v1/models automatisch abruft. Mit dem Häkchen bei 1M wird Unterstützung für 1M Kontext angegeben.",
+    "directModelListHint": "Konfigurieren Sie die Modelle Sonnet, Opus und Haiku, die Claude Desktop zur Verfügung stehen. Im Direktmodus leer lassen, damit Claude Desktop /v1/models automatisch abruft; im Routing-Modus bietet eine leere Liste nur die Standard-Modellnamen von Claude an – tragen Sie die Modelle hier ein, um die des Anbieters zu nutzen. Mit dem Häkchen bei 1M wird Unterstützung für 1M Kontext angegeben.",
     "directModelInvalid": "Direkte Modelle müssen von Claude Desktop erkannte Modell-IDs für Sonnet / Opus / Haiku verwenden",
     "addModel": "Modell hinzufügen",
     "addRoute": "Modell hinzufügen",
@@ -378,6 +391,7 @@
     "openclawModelNotFound": "Das ausgewählte Modell existiert nicht mehr. Aktualisieren Sie die Ansicht und versuchen Sie es erneut.",
     "backfillWarning": "Wechsel erfolgreich, aber die Änderungen konnten nicht im vorherigen Anbieter gespeichert werden",
     "codexAuthCleanupFailed": "Wechsel erfolgreich, aber auth.json konnte nicht entfernt werden – die Zugangsdaten der offiziellen Anmeldung liegen weiterhin auf der Festplatte; löschen Sie auth.json im Codex-Konfigurationsordner, um sie zu entfernen",
+    "omoVariantCleanupFailed": "Erfolgreich gewechselt, aber die Konfigurationsdatei der anderen OMO-Variante (OMO / OMO Slim) konnte nicht entfernt werden, daher lädt OpenCode möglicherweise beide; lösche sie im OpenCode-Konfigurationsverzeichnis",
     "windowControlFailed": "Fenstersteuerung fehlgeschlagen: {{error}}",
     "officialBlockedByProxy": "Bei aktivem lokalem Routing ist kein Wechsel zu einem offiziellen Anbieter möglich. Die Nutzung von Routing mit offiziellen APIs kann zur Sperrung des Kontos führen.",
     "proxyOfficialWarning": "Der aktuelle Anbieter {{name}} ist offiziell. Erwägen Sie den Wechsel zu einem Drittanbieter, bevor Sie das lokale Routing verwenden.",
@@ -463,8 +477,7 @@
     "tabProxy": "Routing",
     "authCenter": {
       "description": "Nutzen Sie GitHub-Copilot-, ChatGPT- und xAI-Abonnements als Anbieter. Der Routing-Dienst fügt deren Zugangsdaten ein, daher laufen diese Anbieter im Routing-Modus (außer bei der Bindung an die offizielle Codex-Anmeldung). Antigravity-Konten wechseln die offizielle Anmeldung von agy.",
-      "beta": "Beta",
-      "xaiOauthDescription": "xAI-/Grok-Konten verwalten"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -595,6 +608,9 @@
       "safetyBackupId": "ID der Sicherheitskopie",
       "intervalLabel": "Intervall für automatische Sicherung",
       "retainLabel": "Aufbewahrung von Sicherungen",
+      "maxTotalLabel": "Größenlimit für Sicherungen",
+      "maxTotalUnlimited": "Kein Limit",
+      "maxTotalHint": "Standardmäßig deaktiviert. Wenn ein Limit gesetzt ist, werden die ältesten Sicherungen gelöscht, sobald der Sicherungsordner diese Größe überschreitet. Die neueste Sicherung und jede Sicherung, die eine Wiederherstellung verwendet, bleiben immer erhalten. Daher kann der Ordner über dem Limit bleiben, wenn eine einzelne Sicherung größer ist. Gilt ab der nächsten Sicherung oder der täglichen Wartung.",
       "intervalDisabled": "Deaktiviert",
       "intervalHours": "{{hours}} Stunden",
       "intervalDays": "{{days}} Tage",
@@ -1084,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "Es lässt sich nicht bestimmen, welche Installation Ihre Kommandozeile verwendet; der Standard-Upgrade-Befehl wird ausgeführt (installiert möglicherweise in das erste npm im PATH).",
     "toolUpgradeUnmanagedTitle": "Upgrade dieser Tools übersprungen",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) wurde weder per npm noch mit einem bekannten Installer installiert, daher kann CC Switch nicht erkennen, wie es zu aktualisieren ist. Aktualisieren Sie es auf dem Weg, auf dem Sie es installiert haben (z. B. winget, Scoop oder erneutes Ausführen des offiziellen Installationsskripts).",
+    "toolUpgradeDesktopManagedDetail": "Diese OpenCode-CLI ist in OpenCode Desktop enthalten und wird zusammen mit der Desktop-App aktualisiert.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1121,7 +1138,6 @@
       "pricingModelSourceLabel": "Quelle des Preismodells",
       "pricingModelSourceRequest": "Anfragemodell",
       "pricingModelSourceResponse": "Antwortmodell",
-      "pricingSave": "Preis-Standardwerte speichern",
       "pricingSaved": "Preis-Standardwerte gespeichert",
       "pricingSaveFailed": "Preis-Standardwerte konnten nicht gespeichert werden: {{error}}",
       "pricingLoadFailed": "Preis-Standardwerte konnten nicht geladen werden: {{error}}"
@@ -1260,6 +1276,8 @@
       "credits": "Credits",
       "leftOf": "{{remaining}} / {{total}} übrig",
       "usedOf": "{{used}} / {{total}} verbraucht",
+      "unlimited": "Unbegrenzt",
+      "unlimitedUsed": "Unbegrenzt, {{used}} verbraucht",
       "usedUp": "Aufgebraucht (von {{total}})",
       "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
       "staleNotRunning": "WorkBuddy läuft nicht; letztes Ergebnis wird angezeigt",
@@ -1443,7 +1461,7 @@
     "keyFieldsHint": "Das Standardmodell (models.default) und die Modelltabelle, auf die es verweist, folgen dem Anbieter; alles andere sind globale Grok-Build-Einstellungen und gilt nach dem Speichern für jeden Anbieter.",
     "inactiveFieldsHint": "Von einer älteren Version in diesem Anbieter gespeichert; beim Wechsel werden sie nicht mehr angewendet. Klicken Sie auf einen Eintrag, um sein TOML zu kopieren und oben einzufügen, falls Sie es benötigen.",
     "inactiveFieldCopied": "Kopiert",
-    "routeOnlySettingsHint": "Die beiden folgenden Einstellungen gelten nur im Routing-Modus."
+    "routeOnlySettingsHint": "Die folgenden Einstellungen gelten nur im Routing-Modus."
   },
   "sessionManager": {
     "searchPlaceholder": "Titel, Ordner, erste/letzte Nachrichten oder Sitzungs-IDs suchen",
@@ -1452,6 +1470,7 @@
     "contentSearchToggle": "Nachrichtentext durchsuchen",
     "contentSearchToggleFailed": "Die Einstellung für die Nachrichtentextsuche konnte nicht geändert werden: {{error}}",
     "contentIndexing": "Nachrichtentext wird indiziert ({{processed}}/{{total}}). Texttreffer sind möglicherweise unvollständig",
+    "contentSearchFailed": "Textsuche fehlgeschlagen; derzeit kann nur in Titeln, Ordnern und der ersten/letzten Nachricht gesucht werden",
     "contentHitPrefix": "Text: ",
     "contentHitMore": " ({{count}} Nachrichten passen)",
     "moreContentHits": "Weitere Texttreffer",
@@ -1521,6 +1540,7 @@
     "selectSessionLabel": "{{title}} auswählen",
     "agyDeleteHint": "Löschen Sie diese Sitzung in Antigravity, um auch ihren Laufzeitstatus zu entfernen",
     "mcodeDeleteHint": "In MiniMax Code löschen",
+    "codebuddyDeleteHint": "Verwalten Sie diese Sitzung in CodeBuddy Code: Hintergrundaufgaben, Teammitglieder und der Dateiverlauf verweisen auf ihr Transkript",
     "groupMeta": "{{count}} Sitzungen · {{time}}",
     "bucketToday": "Heute",
     "bucketYesterday": "Gestern",
@@ -1658,7 +1678,17 @@
         "prLink": "PR #{{number}} verknüpft",
         "prLinkPlain": "Einen PR verknüpft",
         "slashCommand": "{{command}} ausgeführt",
-        "subAgent": "Subagent {{name}}"
+        "subAgent": "Subagent {{name}}",
+        "goal": "Ziel · {{status}}",
+        "goalPlain": "Ziel",
+        "goalStatus": {
+          "active": "Aktiv",
+          "paused": "Pausiert",
+          "blocked": "Blockiert",
+          "usageLimited": "Nutzungslimit erreicht",
+          "budgetLimited": "Budget erreicht",
+          "complete": "Abgeschlossen"
+        }
       },
       "injectedToggle": "Eingefügten Kontext anzeigen",
       "injectedRow": "Kontext · {{label}} · {{chars}} Zeichen",
@@ -1725,6 +1755,7 @@
       "outlineFailed": "Enthält fehlgeschlagene Schritte",
       "outlineAborted": "Unterbrochen",
       "outlineNoReply": "Keine Antwort",
+      "chapter": "Kapitel",
       "viewOptions": "Anzeigeoptionen",
       "noChanges": "Keine Dateiänderungen in dieser Sitzung",
       "rawMatch": "Treffer in der Quelle",
@@ -1740,6 +1771,9 @@
     "openReleaseNotesFailed": "Versionshinweise konnten nicht geöffnet werden:"
   },
   "providerForm": {
+    "billingMultiplier": "Kostenfaktor des Anbieters",
+    "billingMultiplierHelp": "Der Referenzpreis jedes Modells dieses Anbieters wird mit diesem Wert multipliziert, um die Kosten von Anfragen über das lokale Routing zu schätzen. 0,5 bedeutet halber Preis; leer lassen für 1×. Gilt nur für künftige Anfragen; im Direktmodus (Routing aus) wird aus Sitzungsprotokollen importierte Nutzung weiter mit 1× gezählt.",
+    "billingMultiplierInvalid": "Gib eine Zahl von 0 bis 1000 ein oder lass das Feld für 1× leer.",
     "nativeConfig": {
       "title": "Konfigurationsdatei {{path}} (nur dieser Anbieter)",
       "hint": "Zeigt den Teil der Datei, der zu diesem Anbieter gehört, im eigenen Format der App und schreibt ihn beim Speichern dorthin. Globale Einstellungen wie das Standardmodell sind hier nicht enthalten. Hier eingegebene Kommentare werden nicht gespeichert.",
@@ -1800,6 +1834,7 @@
       "subrouter": "SubRouter ist ein KI-Relay-Aggregator, der mit einem Schlüssel Zugriff auf mehrere Modelle und Anbieter ermöglicht.",
       "qiniu": "Qiniu Cloud ist ein Multiprotokoll-KI-Relay: ein Schlüssel für native Claude-, GPT- und Gemini-Modelle, mit Unterstützung der Anthropic-, OpenAI- und Gemini-APIs.",
       "haoai": "hao.ai ist ein schnelles, stabiles, einheitliches LLM-API-Gateway für Entwickler und Teams: Mit einem Schlüssel erreichen Sie GPT, Claude, Grok und weitere führende Modelle über OpenAI- und Anthropic-kompatible APIs, mit Modell-Routing, Failover und vollständigen Anfrageprotokollen, zu Preisen ab 15 % der offiziellen Referenzpreise. CC-Switch-Nutzer, die sich über diesen Link registrieren, erhalten 5 % Bonusguthaben auf ihre erste Bestellung!",
+      "stringai": "StringAI ist eine preiswerte, schnelle und stabile Modell-API-Plattform mit Zugang zu KI-Coding, Bildgenerierung, Sprachsynthese und Videogenerierung aus einer Hand. Exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über diesen Link und erhalten Sie bei Ihrer ersten Aufladung von 3,74 $ zusätzlich 3,74 $ Bonusguthaben!",
       "fenno": "Fenno.ai ist ein stabiler, effizienter API-Relay mit Zugang zu zahlreichen gängigen Modellen. Exklusives Angebot für CC-Switch-Nutzer: Abonnieren Sie über diesen Link den Testtarif für 1,99 $ mit 50 $ Guthaben, gültig für 7 Tage!",
       "teamorouter": "TeamoRouter bietet Claude Code einen Schlüssel für Opus 5.5, Sonnet 5.5 und Fable 5.1, mit Opus 5.5 für etwa 28 % des offiziellen Preises, nutzungsbasiert abgerechnet, über das native Anthropic-Protokoll. CC-Switch-Nutzer, die sich über diesen Link registrieren, erhalten 10 % zusätzliches Guthaben auf eine erste Aufladung von 10 $, 20 $ oder 50 $!",
       "ppio": "PPIO ist ein führender unabhängiger Agentic-Cloud-Anbieter in China und stellt alle führenden Open-Source-Modelle über einen einzigen API-Schlüssel bereit. Registrieren Sie sich über diesen Link und schließen Sie die Identitätsprüfung ab, um einen Gutschein über ¥10 zu erhalten.",
@@ -2091,6 +2126,7 @@
     "selectAccount": "Konto auswählen",
     "selectAccountPlaceholder": "xAI-Konto auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
+    "account": "xAI-Konto",
     "accounts": "xAI-Konten",
     "defaultAccount": "Standard",
     "expired": "Anmeldedaten abgelaufen",
@@ -2235,7 +2271,7 @@
     "inactiveFieldCopied": "Kopiert",
     "upstreamFormatCopilotRouteHint": "Jeder Modus erfordert Routing, das die Zugangsdaten des Copilot-Kontos einfügt. Ein ausdrücklich gewähltes Protokoll schlägt bei Modellen fehl, die es nicht unterstützen.",
     "maxOutputTokensWarning": "Überschreiten Sie nicht das tatsächliche Ausgabelimit des Modells oder Gateways, sonst geben Anfragen 400 zurück.",
-    "routeOnlySettingsHint": "Die beiden Einstellungen unten gelten nur im Routing- und im Aggregationsmodus."
+    "routeOnlySettingsHint": "Die Einstellungen unten gelten nur im Routing- und im Aggregationsmodus."
   },
   "geminiConfig": {
     "envFile": "Umgebungsvariablen (.env)",
@@ -2341,6 +2377,7 @@
     "loginWith": {
       "deepseek": "Mit einem DeepSeek-Konto anmelden",
       "workbuddy": "Mit einem WorkBuddy-Konto anmelden",
+      "codebuddy": "Mit einem CodeBuddy-Konto anmelden",
       "kimi": "Mit einem Kimi-Konto anmelden",
       "claude": "Mit einem Claude-Konto anmelden",
       "chatgpt": "Mit einem ChatGPT-Konto anmelden",
@@ -2520,8 +2557,8 @@
     "input": "Eingabe",
     "output": "Ausgabe",
     "cacheWrite": "Erstellung",
-    "cacheWriteNotReported": "Das OpenAI-Protokoll unterscheidet die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
-    "cacheWritePartial": "Einige Protokolle (z. B. OpenAI) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
+    "cacheWriteNotReported": "Gemini und Grok Build melden die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
+    "cacheWritePartial": "Einige Protokolle (z. B. Gemini) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
     "cacheRead": "Treffer",
     "baseCost": "Basis",
     "costMultiplier": "Kostenmultiplikator",
@@ -2662,7 +2699,7 @@
       "label": "Kennzahlen",
       "more": "Weitere Kennzahlen",
       "realTotalHelpTitle": "Wie die Token-Gesamtzahl berechnet wird",
-      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa OpenAI) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
+      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa Gemini) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
       "hitRateHelpTitle": "Wie die Cache-Trefferquote berechnet wird",
       "hitRateHelp": "Cache-Treffer ÷ (neue Eingabe + Cache-Schreibvorgänge + Cache-Treffer)."
     },
@@ -2737,7 +2774,9 @@
       "speedEstimateTooFew": "Unter 200 Ausgabe-Token, daher keine Schätzung",
       "noTimingSession": "Sitzungsprotokolle enthalten keine Zeitdaten",
       "noFirstToken": "Keine Zeit bis zum ersten Token, daher keine Geschwindigkeit",
-      "providerId": "Anbieter-ID"
+      "providerId": "Anbieter-ID",
+      "copyRequestId": "Anfrage-ID kopieren",
+      "requestIdCopied": "Anfrage-ID kopiert"
     },
     "sources": {
       "scanTitle": "Sitzungsprotokolle automatisch scannen",
@@ -2921,7 +2960,6 @@
     "geminiTitle": "Gemini MCP-Verwaltung",
     "unifiedPanel": {
       "title": "MCP-Server-Verwaltung",
-      "deleteServer": "Server löschen",
       "deleteConfirm": "Möchten Sie den Server „{{id}}“ wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.",
       "enabledApps": "Aktivierte Apps",
       "importSuccess": "{{count}} MCP-Server erfolgreich importiert",
@@ -2968,28 +3006,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "Startseite",
       "docs": "Doku",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "Vollständige TOML-Konfiguration",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "Nach {{target}} spiegeln"
+      "tomlConfig": "Vollständige TOML-Konfiguration"
     },
     "wizard": {
       "title": "MCP-Konfigurationsassistent",
       "hint": "MCP-Server schnell konfigurieren und die JSON-Konfiguration automatisch erzeugen",
       "type": "Typ",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "Befehl",
       "commandPlaceholder": "npx oder uvx",
       "args": "Argumente",
-      "argsPlaceholder": "arg1\narg2",
       "env": "Umgebungsvariablen",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "Bitte URL eingeben",
       "headers": "Header (optional)",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "Konfigurationsvorschau",
       "apply": "Konfiguration anwenden"
     },
@@ -3504,21 +3534,28 @@
       "skillNotFound": "Skill nicht gefunden: {{directory}}",
       "missingRepoInfo": "Repository-Angaben fehlen (Eigentümer oder Name)",
       "downloadTimeout": "Zeitüberschreitung beim Herunterladen des Repositorys {{owner}}/{{name}} ({{timeout}} s)",
+      "downloadStalled": "Download des Repositorys {{owner}}/{{name}} abgebrochen: {{timeout}} s lang keine Daten empfangen",
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
+      "archiveInvalid": "Der Download ist kein ZIP-Archiv: Diese Seite ist möglicherweise kein GitHub-/GitLab-/Gitea-Repository und wird noch nicht unterstützt",
       "invalidRepoRef": "Ungültiger Repository-Verweis: {{owner}}/{{name}}",
       "archiveTooLarge": "Das Archiv überschreitet das Entpacklimit von {{limit_mb}} MB; abgebrochen",
       "archiveDownloadTooLarge": "Der Download des Repository-Archivs überschreitet das Limit von {{limit_mb}} MB; abgebrochen",
       "archiveTooManyEntries": "Das Archiv hat zu viele Einträge ({{count}}); das Limit beträgt {{limit}}",
       "downloadFailed": "Download fehlgeschlagen: HTTP {{status}}",
-      "httpError": "HTTP-Fehler {{status}}",
       "http403": "GitHub-Zugriff eingeschränkt, möglicherweise durch Ratenbegrenzung",
-      "http404": "Repository oder Branch nicht gefunden, bitte URL prüfen",
+      "http404": "Repository oder Branch nicht gefunden, bitte URL prüfen. Private Repositories benötigen zuerst ein Zugriffstoken unter „Skill-Repositories verwalten“",
       "http429": "Zu viele Anfragen, bitte warten und erneut versuchen",
+      "http401Token": "Das Zugriffstoken ist ungültig oder abgelaufen. Legen Sie es unter „Skill-Repositories verwalten“ neu fest",
+      "http403Token": "Das Zugriffstoken darf dieses Repository nicht lesen, oder es gab zu viele Anfragen",
+      "http404Token": "Repository oder Branch nicht gefunden, oder das Zugriffstoken darf dieses Repository nicht lesen",
+      "httpAuthRequired": "Diese Seite erfordert eine Anmeldung. Legen Sie unter „Skill-Repositories verwalten“ ein Zugriffstoken dafür fest",
+      "invalidTokenHost": "Ungültige Seite: {{host}}. Geben Sie nur den Hostnamen ein, z. B. gitlab.example.com",
+      "invalidRepoToken": "Ungültiges Token: nur Buchstaben, Ziffern und - _ . ~ + / =, höchstens {{limit}} Zeichen",
+      "repoTokenStorageFailed": "Das Zugriffstoken für {{host}} konnte nicht gelesen oder geschrieben werden. Prüfen Sie, ob der Anmeldedatenspeicher des Systems verfügbar ist",
       "getHomeDirFailed": "Benutzerverzeichnis konnte nicht ermittelt werden",
       "noSkillsInZip": "Keine Skills in der ZIP-Datei gefunden (erfordert eine SKILL.md-Datei)",
-      "networkError": "Netzwerkfehler",
       "unknownError": "Unbekannter Fehler",
       "suggestion": {
         "checkNetwork": "Bitte Netzwerkverbindung prüfen",
@@ -3543,6 +3580,19 @@
       "empty": "Keine Repositories",
       "invalidUrl": "Ungültiges Format der Repository-URL",
       "httpsOnly": "GitLab- und Gitea-Repositories müssen eine https-Adresse verwenden",
+      "token": {
+        "title": "Zugriffstokens",
+        "description": "Werden zum Lesen privater Repositories verwendet. Tokens werden pro Seite im Anmeldedatenspeicher des Systems gespeichert (macOS-Schlüsselbund, Windows-Anmeldeinformationsverwaltung) und nie synchronisiert. Lesezugriff genügt.",
+        "descriptionFile": "Werden zum Lesen privater Repositories verwendet. Tokens werden pro Seite in einer Datei auf diesem Computer gespeichert, die nur Sie lesen können, und nie synchronisiert. Lesezugriff genügt.",
+        "host": "Seite",
+        "hostPlaceholder": "github.com oder gitlab.example.com",
+        "value": "Token",
+        "valuePlaceholder": "Zugriffstoken einfügen",
+        "save": "Token speichern",
+        "empty": "Noch keine Zugriffstokens",
+        "removeAria": "Zugriffstoken für {{host}} entfernen",
+        "missingFields": "Bitte Seite und Token angeben"
+      },
       "addSuccess": "Repository {{owner}}/{{name}} hinzugefügt, {{count}} Skills erkannt",
       "addFailed": "Hinzufügen fehlgeschlagen",
       "removeSuccess": "Repository {{owner}}/{{name}} entfernt",
@@ -3717,7 +3767,10 @@
       "command": "Befehl",
       "args": "Argumente",
       "env": "Umgebung",
-      "url": "URL"
+      "url": "URL",
+      "type": "Typ",
+      "cwd": "Arbeitsverzeichnis",
+      "headers": "Header"
     },
     "prompt": {
       "title": "System-Prompt importieren",
@@ -3733,7 +3786,6 @@
       "repo": "GitHub-Repository",
       "directory": "Zielverzeichnis",
       "branch": "Branch",
-      "skillsPath": "Skills-Pfad",
       "hint": "Dadurch wird das Skill-Repository zur Liste hinzugefügt.",
       "hintDetail": "Nach dem Hinzufügen können Sie bestimmte Skills auf der Skills-Verwaltungsseite installieren."
     },
@@ -3752,7 +3804,8 @@
     "risk": {
       "envHijack": "Diese Konfiguration setzt Umgebungsvariablen, die verändern, wie Prozesse Code laden (z. B. Bibliotheken einschleusen oder CA-Zertifikate ersetzen). Importieren Sie nur aus einer Quelle, der Sie vertrauen.",
       "privateEndpoint": "Diese Adresse zeigt auf localhost oder ein privates Netzwerk. Nur importieren, wenn es Ihr eigener lokaler Dienst ist.",
-      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile."
+      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile.",
+      "mcpDangerousField": "Diese MCP-Konfiguration enthält risikoreiche Felder, die Host-Umgebungsvariablen auslesen (z. B. bearer_token_env_var, env_http_headers, env_vars), Hilfsbefehle ausführen (http_headers_helper) oder das Arbeitsverzeichnis ändern (cwd) können. Nur aus vollständig vertrauenswürdigen Quellen importieren."
     }
   },
   "iconPicker": {
@@ -3830,7 +3883,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "Aktueller Anbieter:",
       "openSettings": "Routing-Dienst konfigurieren",
       "stats": {
         "activeConnections": "Aktive Verbindungen",
@@ -3891,10 +3943,6 @@
           "label": "Nicht-Streaming-Timeout (Sek.)",
           "description": "Gesamt-Timeout für Nicht-Streaming-Anfragen"
         }
-      },
-      "validation": {
-        "retryMin": "Die Anzahl der Wiederholungen darf nicht negativ sein",
-        "retryMax": "Die Anzahl der Wiederholungen darf 10 nicht überschreiten"
       },
       "actions": {
         "save": "Konfiguration speichern"
@@ -4305,6 +4353,7 @@
     "refresh": "Aktualisieren"
   },
   "nav": {
+    "skills": "Skills",
     "mainLabel": "Hauptnavigation",
     "skipToContent": "Zum Hauptinhalt springen",
     "expandSidebar": "Seitenleiste ausklappen",
@@ -4328,7 +4377,8 @@
       "stack": "Aggregation"
     },
     "needsAttention": "Erfordert Aufmerksamkeit",
-    "back": "Zurück"
+    "back": "Zurück",
+    "plugins": "Plugins"
   },
   "appsPage": {
     "showInSidebar": "{{name}} in der Seitenleiste anzeigen",
@@ -4748,7 +4798,8 @@
       "failedTitle": "Einige Apps konnten nicht gelesen werden",
       "filesTitle": "Welche Dateien gelesen wurden",
       "claudeNote": " (mcpServers auf oberster Ebene)",
-      "dshNote": " (in jedes initialisierte Profil geschrieben: web, desktop, headless, acp)",
+      "codebuddyNote": " (die erste vorhandene von .mcp.json, mcp.json, ~/.codebuddy.json)",
+      "dshNote": " (in jedes initialisierte Profil geschrieben: web, desktop, headless, acp. Die Datei auf Home-Ebene ~/.dsh/cordis.patch.yml wird weder gelesen noch geschrieben; MCP-Server darin bitte dort verwalten)",
       "ok": "Verstanden"
     },
     "templateLabels": {
@@ -5022,6 +5073,91 @@
     "updateAllCount": "Alle aktualisieren ({{count}})",
     "updatingProgress": "Aktualisierung {{done}}/{{total}} …"
   },
+  "pluginsPage": {
+    "title": "Plugins",
+    "helpTitle": "Plugins",
+    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity CLI installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
+    "appAria": "App",
+    "viewAria": "Plugin-Ansichten",
+    "viewInstalled": "Installiert",
+    "viewInstalledCount": "Installiert · {{count}}",
+    "viewDiscover": "Entdecken",
+    "viewDiscoverCount": "Entdecken · {{count}}",
+    "viewMarketplaces": "Marketplaces",
+    "searchPlaceholder": "Plugins durchsuchen",
+    "searchAria": "Plugins durchsuchen",
+    "count": "{{count}} Plugins",
+    "countFiltered": "{{shown}} von {{count}}",
+    "noMatches": "Keine Plugins passen zu „{{query}}“",
+    "loading": "Plugins von {{app}} werden gelesen …",
+    "loadFailed": "Plugins von {{app}} konnten nicht gelesen werden",
+    "catalogLoadFailed": "Der Marketplace-Katalog konnte nicht gelesen werden",
+    "loadingCatalog": "Marketplace-Katalog von {{app}} wird gelesen …",
+    "refreshing": "Wird aktualisiert …",
+    "marketsLoadFailed": "Marketplaces konnten nicht gelesen werden",
+    "cliMissingTitle": "{{app}} ist nicht installiert",
+    "cliMissingBody": "Plugins werden über die CLI von {{app}} verwaltet. Installieren Sie sie auf der Apps-Seite und kehren Sie dann hierher zurück.",
+    "emptyInstalledTitle": "Keine Plugins installiert",
+    "emptyInstalledBody": "Durchsuchen Sie die Marketplaces, um {{app}} Skills, Befehle, Agents und MCP-Server hinzuzufügen.",
+    "browse": "Plugins durchsuchen",
+    "emptyDiscoverTitle": "Nichts Neues zu installieren",
+    "emptyDiscoverBody": "Alle Plugins aus Ihren Marketplaces sind installiert. Fügen Sie einen Marketplace hinzu, um mehr zu sehen.",
+    "emptyCatalogBody": "Alle Plugins im Katalog sind installiert.",
+    "emptyMarketsTitle": "Keine Marketplaces hinzugefügt",
+    "emptyMarketsBody": "{{app}} zeigt weiterhin den integrierten Katalog. Fügen Sie ein GitHub-Repository oder eine Git-URL hinzu, um weitere Plugins aufzulisten.",
+    "builtIn": "Integriert",
+    "builtInPlugin": "Wird mit der App ausgeliefert. Sie können es ein- oder ausschalten, aber nicht deinstallieren.",
+    "scope": "Bereich {{scope}}",
+    "scopeReadOnly": "Im Bereich {{scope}} installiert. Verwalten Sie es mit der CLI aus diesem Projekt heraus.",
+    "enableAria": "{{name}} aktivieren",
+    "moreActions": "Weitere Aktionen für {{name}}",
+    "working": "Wird ausgeführt …",
+    "install": "Installieren",
+    "installing": "Wird installiert …",
+    "notInstallable": "Nicht verfügbar",
+    "update": "Aktualisieren",
+    "uninstall": "Deinstallieren",
+    "restartNote": "Änderungen gelten für neue {{app}}-Sitzungen.",
+    "restartNoteGateway": "Änderungen gelten nach einem Neustart des {{app}}-Gateways.",
+    "refreshMarketplaces": "Marketplaces aktualisieren",
+    "refreshCatalog": "Katalog aktualisieren",
+    "addMarketplace": "Marketplace hinzufügen",
+    "addMarketplaceTitle": "Marketplace für {{app}} hinzufügen",
+    "addMarketplaceBody": "Ein GitHub-owner/repo, eine Git-URL oder ein lokaler Ordner (Schrägstriche verwenden, keine Leerzeichen).",
+    "addMarketplaceWaiting": "Das Marketplace-Repository wird heruntergeladen. Große Repositorys können einige Minuten dauern (höchstens 5). Sie können dieses Fenster schließen; Sie werden benachrichtigt, sobald es fertig ist.",
+    "sourceLabel": "Quelle",
+    "removeMarketplace": "Entfernen",
+    "confirmUninstallTitle": "{{name}} deinstallieren?",
+    "confirmUninstallBody": "Entfernt das Plugin und seine zwischengespeicherten Dateien aus {{app}}. Sie können es unter „Entdecken“ erneut installieren.",
+    "confirmUninstallClaudeBody": "Deinstalliert das Plugin aus {{app}} und behält sein Datenverzeichnis. Ist dies die letzte Installation, werden gespeicherte Optionen und Anmeldedaten gelöscht und bei einer Neuinstallation nicht wiederhergestellt.",
+    "confirmInstallTitle": "{{name}} installieren?",
+    "confirmInstallBody": "Plugins laufen mit Ihren Berechtigungen: {{app}} lädt ihre Skills, Hooks und MCP-Server und gewährt die deklarierten Fähigkeiten. Installieren Sie nur Plugins aus vertrauenswürdigen Quellen.",
+    "confirmRemoveMarketTitle": "Marketplace {{name}} entfernen?",
+    "confirmRemoveMarketBody": "{{app}} listet keine Plugins aus diesem Marketplace mehr auf und deinstalliert möglicherweise die daraus installierten Plugins. Sie können ihn später erneut hinzufügen.",
+    "toast": {
+      "installed": "{{name}} installiert",
+      "installedNeedsConfig": "Deaktiviert installiert. Führen Sie in {{app}} /plugin aus, um die MCP-Server zu konfigurieren und es zu aktivieren.",
+      "installFailed": "{{name}} konnte nicht installiert werden",
+      "installNeedsTerminal": "Dieses Plugin führt bei der Installation einen vom Marketplace deklarierten Befehl auf Ihrem Rechner aus, und CC Switch bestätigt das nicht für Sie. Führen Sie {{command}} in einem Terminal aus, bestätigen Sie dort und aktualisieren Sie dann hier.",
+      "authRequired": "{{app}} erfordert zuerst eine Anmeldung. Führen Sie {{command}} in einem Terminal aus und versuchen Sie es dann erneut.",
+      "pluginInUse": "Dieses Plugin wird derzeit von einem anderen {{app}}- / {{cli}}-Prozess verwendet (z. B. einer laufenden Sitzung, dem Hub oder einem Hintergrunddienst). Schließen Sie ihn und versuchen Sie es erneut.",
+      "uninstalled": "{{name}} deinstalliert",
+      "uninstallFailed": "{{name}} konnte nicht deinstalliert werden",
+      "enabled": "{{name}} aktiviert",
+      "disabled": "{{name}} deaktiviert",
+      "toggleFailed": "{{name}} konnte nicht geändert werden",
+      "updated": "{{name}} aktualisiert",
+      "upToDate": "{{name}} ist bereits auf dem neuesten Stand",
+      "updateFailed": "{{name}} konnte nicht aktualisiert werden",
+      "updateNeedsReinstall": "Dieses Plugin liegt in einem Ordner älterer Antigravity-Versionen, daher kann CC Switch es nicht aktualisieren. Deinstallieren Sie es und installieren Sie es unter „Entdecken“ erneut, um die neueste Version zu erhalten.",
+      "refreshed": "Marketplaces aktualisiert",
+      "refreshFailed": "Marketplaces konnten nicht aktualisiert werden",
+      "marketAdded": "Marketplace {{source}} hinzugefügt",
+      "marketAddFailed": "Der Marketplace konnte nicht hinzugefügt werden",
+      "marketRemoved": "Marketplace {{name}} entfernt",
+      "marketRemoveFailed": "{{name}} konnte nicht entfernt werden"
+    }
+  },
   "newLayoutNotice": {
     "title": "CC Switch hat ein neues Aussehen",
     "body": "Diese Version gestaltet die Oberfläche neu, daher hat sich einiges verschoben:\n• Die Modi stehen jetzt oben auf jeder App-Seite\n• Nutzung und Konten befinden sich in der Seitenleiste\nAlle Änderungen finden Sie in den Versionshinweisen.",
@@ -5050,6 +5186,7 @@
       "chatgptHelp": "Wird von ChatGPT-Vorlagen in Claude Code und Claude Desktop sowie von der Bindung an die offizielle Codex-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "xaiHelp": "Wird von xAI-Vorlagen in Claude Code, Claude Desktop und Codex verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "agyHelp": "Die offizielle Anmeldung der Antigravity CLI (agy). agy kann nur mit einem Konto gleichzeitig angemeldet sein; „Wechseln“ ersetzt die Anmeldung von agy durch das ausgewählte Konto, und danach gestartete agy-Sitzungen verwenden es. Das Konto, mit dem agy bereits angemeldet war, wird hier automatisch hinzugefügt, sodass es beim Wechseln nie verloren geht.",
+      "codebuddyHelp": "Die offizielle Anmeldung für CodeBuddy Code (China- und internationale Website). Um das Konto zu wechseln, legen Sie in der Anbieterliste eine Karte „CodeBuddy-Offizielle-Anmeldung“ für das Konto an und klicken Sie auf „Hinzufügen“. „Konto hinzufügen“ öffnet ein Terminal mit codebuddy und fügt das Konto hier hinzu, sobald Sie fertig sind; ist CodeBuddy bereits angemeldet, wird es vorübergehend abgemeldet und kann wiederhergestellt werden, falls Sie abbrechen. CodeBuddy erneuert seine Tokens selbst.",
       "workbuddyHelp": "Die offizielle Anmeldung der WorkBuddy-Desktop-App. CC Switch kann sich nicht für Sie bei WorkBuddy anmelden; es kann nur das Konto speichern, mit dem WorkBuddy angemeldet ist (ein Snapshot seiner Anmeldedateien). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „WorkBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „WorkBuddy Official Sign-in“ hinzu (es wird jeweils nur eine offizielle Karte hinzugefügt). Snapshots funktionieren nur auf diesem Computer und werden nicht synchronisiert.",
       "claudeHelpTerminal": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Kartenwechsel die Anmeldung von Claude Code nicht. Wählen Sie ein Konto auf einer offiziellen Karte und verwenden Sie „Terminal öffnen“ auf der Karte.",
       "claudeHelpWsl": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Wird noch nicht unterstützt, solange der Claude-Konfigurationsordner in WSL liegt.",
@@ -5110,6 +5247,32 @@
       "removeNote": "agy bleibt angemeldet: Wenn agy dieses Konto verwendet, funktioniert es nach dem Entfernen weiter.",
       "switched": "Gewechselt. Neue agy-Sitzungen verwenden dieses Konto.",
       "switchedWhileRunning": "Gewechselt. agy läuft: Geöffnete agy-Sitzungen verwenden weiter das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie agy und öffnen Sie es erneut."
+    },
+    "codebuddy": {
+      "mainland": "China",
+      "global": "International",
+      "expiredNote": "Anmeldung abgelaufen, bitte erneut anmelden",
+      "addedOn": "Hinzugefügt am {{date}}",
+      "imported": "{{login}} hinzugefügt.",
+      "uncollected": "CodeBuddy ist als {{login}} angemeldet; dieses Konto steht noch nicht in dieser Liste.",
+      "importCurrent": "Aktuelles Konto hinzufügen",
+      "unrecognized": "Die Anmeldedatei von CodeBuddy hat ein unbekanntes Format",
+      "unrecognizedNote": "Sie ist möglicherweise von WorkBuddy verschlüsselt. CC Switch lässt sie unverändert und kann keine Konten wechseln.",
+      "statusLoadFailed": "CodeBuddy-Konten konnten nicht gelesen werden. Versuchen Sie es erneut.",
+      "empty": "Noch keine CodeBuddy-Konten. Klicken Sie auf „Konto hinzufügen“, um sich anzumelden, oder fügen Sie das Konto hinzu, mit dem CodeBuddy angemeldet ist.",
+      "login": "Mit neuem Konto anmelden",
+      "current": "Von CodeBuddy verwendet",
+      "pendingNote": "codebuddy wurde in einem Terminal geöffnet. Folgen Sie den Anweisungen zur Anmeldung (geben Sie /login ein, falls kein Anmeldebildschirm erscheint); das Konto wird hier hinzugefügt, sobald Sie fertig sind.",
+      "reopenTerminal": "Terminal erneut öffnen",
+      "removeNote": "Entfernt nur die Kopie in CC Switch. CodeBuddy bleibt angemeldet.",
+      "quota": {
+        "credits": "Credits",
+        "enterprise": "Enterprise",
+        "unlimited": "Unbegrenzt",
+        "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
+        "usedDetail": "{{used}} Credits in diesem Zeitraum verbraucht",
+        "refreshPending": "Das Token wartet auf die Erneuerung durch CodeBuddy. Wechseln Sie zu diesem Konto, verwenden Sie es einmal und prüfen Sie dann erneut."
+      }
     },
     "workbuddy": {
       "addedOn": "Hinzugefügt am {{date}}",
@@ -5259,6 +5422,47 @@
       "legacyModelsJson": "Oh My Pi hat noch eine alte models.json, die omp beim nächsten Start nach models.yml migriert. Führen Sie omp einmal aus und fügen Sie den Anbieter dann erneut hinzu."
     }
   },
+  "codebuddy": {
+    "empty": {
+      "title": "Noch keine benutzerdefinierten Modelle",
+      "description": "Die offiziellen Modelle von CodeBuddy verwaltet CodeBuddy Code selbst. Um offizielle Konten zu wechseln, legen Sie eine Karte „CodeBuddy-Offizielle-Anmeldung“ für das Konto an und klicken Sie hier auf „Hinzufügen“. Benutzerdefinierte Modelle, die bereits in ~/.codebuddy/models.json stehen, erscheinen hier automatisch. Mit der Schaltfläche + oben rechts fügen Sie eine Vorlage oder ein benutzerdefiniertes Modell hinzu."
+    },
+    "modelsHint": "Die Modell-ID ist die id, die in models.json geschrieben wird, und der Name, den Sie in /model auswählen – meist der Modellname des Endpunkts. Sie lässt sich nach dem Hinzufügen nicht mehr ändern. Der Anzeigename entspricht dem Namen oben.",
+    "modelIdDuplicate": "Diese Modell-ID wird bereits verwendet",
+    "modelIdInvalid": "Die Modell-ID darf nicht mit einem Leerzeichen beginnen oder enden.",
+    "vendor": "Anbieterbezeichnung",
+    "urlHint": "Verwenden Sie den vollständigen Pfad, meist mit /chat/completions am Ende. Umgebungsverweise wie ${VAR} funktionieren.",
+    "urlInvalid": "Geben Sie eine gültige http(s)-URL ein.",
+    "apiKeyPlaceholder": "API-Schlüssel eingeben oder eine Umgebungsvariable als ${MY_API_KEY} referenzieren",
+    "maxInputTokens": "Max. Eingabe-Tokens",
+    "maxOutputTokens": "Max. Ausgabe-Tokens",
+    "jsonHint": "Ein Modelleintrag in models.json (seine id stammt aus der Modell-ID oben). CodeBuddy Code lädt die Datei nach dem Speichern selbst neu.",
+    "official": {
+      "presetName": "CodeBuddy-Offizielle-Anmeldung",
+      "account": "Konto",
+      "accountHint": "Wählen Sie das CodeBuddy-Konto, das diese Karte verwendet. CodeBuddy kann nur mit einem Konto gleichzeitig angemeldet sein: Klicken Sie in der Anbieterliste bei dieser Karte auf „Hinzufügen“, um CodeBuddy damit anzumelden; ein laufendes CodeBuddy übernimmt es automatisch.",
+      "accountDeleted": "Konto entfernt. Wählen Sie ein anderes aus.",
+      "accountDeletedChip": "Konto entfernt",
+      "unbound": "Noch kein Konto ausgewählt. Bearbeiten Sie die Karte, um eines auszuwählen.",
+      "statusLoading": "Konten werden geladen …",
+      "expired": "Die Anmeldung dieses Kontos ist abgelaufen. Melden Sie sich in der Kontoverwaltung erneut an, bevor Sie es hinzufügen.",
+      "importCurrent": "Aktuelle Anmeldung hinzufügen ({{login}})",
+      "adding": "Wird hinzugefügt …",
+      "added": "{{name}} hinzugefügt. CodeBuddy ist jetzt mit diesem Konto angemeldet; ein laufendes CodeBuddy wechselt automatisch, und neue Sitzungen verwenden es ebenfalls.",
+      "addFailed": "Hinzufügen fehlgeschlagen: {{error}}",
+      "removeHint": "CodeBuddy kann nur mit einem Konto gleichzeitig angemeldet sein. Fügen Sie eine andere offizielle Karte hinzu, um zu wechseln."
+    },
+    "login": {
+      "confirmTitle": "Mit einem anderen CodeBuddy-Konto anmelden",
+      "confirmMessage": "CodeBuddy ist als {{login}} angemeldet und kann nur ein Konto gleichzeitig verwenden. Wenn Sie fortfahren, wird dieses Konto zuerst zur Kontoverwaltung hinzugefügt, CodeBuddy dann vorübergehend abgemeldet (die Anmeldung bleibt erhalten, kein Server wird kontaktiert) und ein Terminal zur Anmeldung mit dem neuen Konto geöffnet.\n\nDanach erscheinen laufende CodeBuddy-Sitzungen als abgemeldet, bis Sie die Anmeldung abgeschlossen haben. Brechen Sie ab, können Sie die ursprüngliche Anmeldung mit einem Klick wiederherstellen.",
+      "confirm": "Fortfahren",
+      "signedInHint": "Solange CodeBuddy angemeldet ist, wird es bei der Anmeldung mit einem neuen Konto zuerst vom aktuellen abgemeldet: Laufende CodeBuddy-Sitzungen erscheinen als abgemeldet, bis Sie die Anmeldung abgeschlossen haben.",
+      "pendingReplacing": "CodeBuddy wurde vorübergehend vom aktuellen Konto abgemeldet und codebuddy in einem Terminal geöffnet. Folgen Sie den Anweisungen, um sich mit dem neuen Konto anzumelden; es wird hier hinzugefügt, sobald Sie fertig sind.",
+      "restore": "Ursprüngliche Anmeldung wiederherstellen",
+      "restored": "Die ursprüngliche CodeBuddy-Anmeldung wurde wiederhergestellt.",
+      "restoreFailed": "Die ursprüngliche Anmeldung konnte nicht wiederhergestellt werden (CodeBuddy schreibt möglicherweise gerade seine Anmeldedatei). Melden Sie sich in der Kontoverwaltung oder in einem Terminal erneut an."
+    }
+  },
   "dsh": {
     "empty": {
       "title": "DeepSeek-Harness-Anbieter hinzufügen",
@@ -5303,5 +5507,11 @@
     "installFailed": "Update-Installation fehlgeschlagen",
     "downloadingInline": "Neue Version wird im Hintergrund heruntergeladen…",
     "downloadedInline": "Heruntergeladen"
+  },
+  "unreadableEntry": {
+    "title": "„{{name}}“ kann nicht gelesen werden",
+    "hint": "Möglicherweise von einer neueren CC-Switch-Version gespeichert. Die Daten bleiben unverändert erhalten und können nicht bearbeitet oder aktiviert werden; ein Update stellt sie wieder her, oder du löschst den Eintrag.",
+    "confirmTitle": "Unlesbaren Eintrag löschen",
+    "confirmMessage": "„{{name}}“ löschen? Nur dieser CC-Switch-Eintrag wird entfernt; die Konfigurationsdateien der Apps bleiben unverändert."
   }
 }

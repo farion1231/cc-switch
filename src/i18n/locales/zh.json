@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "请输入API Key",
     "show": "显示API Key",
-    "hide": "隐藏API Key"
+    "hide": "隐藏API Key",
+    "copied": "API Key 已复制",
+    "copyFailed": "API Key 复制失败"
   },
   "jsonEditor": {
     "mustBeObject": "配置必须是JSON对象，不能是数组或其他类型",
@@ -202,6 +204,8 @@
       "extraArgsPlaceholder": "例如 --debug --append-system-prompt \"简洁回答\"",
       "extraArgsHint": "接在启动命令后面，只用于这次打开的终端。用空格分隔，含空格的值用引号括起来。",
       "agySwitchTitle": "会切换 agy 的登录",
+      "agyBindingMissing": "这张卡绑定的 Antigravity 账号不在本机。你可以在授权中心添加它，或本次使用 agy 当前登录。",
+      "agyUseCurrentLogin": "本次使用 agy 当前登录",
       "agySwitchBody": "打开前把 agy 的登录切换到 {{account}}，之后新开的 agy 都用这个号。",
       "agySwitchRunning": "检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，最好先退出它们。",
       "isolationBodyCopilot": "这个终端里的 copilot 以 --model 选中「{{name}}」的第一个模型，只对这次会话生效；地址和 Key 读自 Copilot 的 providers.json，在别的终端里也能用 /model 选到它。"
@@ -231,7 +235,7 @@
         "account": "账号",
         "accountFollow": "跟随 agy 当前登录",
         "accountMissing": "不在这台电脑上的账号",
-        "accountHelp": "选了账号的话，「打开终端」前会先把 agy 的登录切到它（全局生效，之后新开的 agy 都用它）。账号在授权中心添加。"
+        "accountHelp": "保存新的绑定账号后，新开的 agy 会使用它。用这张卡打开终端时也会切回绑定账号。账号在授权中心添加。"
       },
       "gemini": {
         "model": "模型",
@@ -239,17 +243,19 @@
         "oauthHint": "Google 官方使用 OAuth 个人认证，无需填写 API Key。首次使用时会自动打开浏览器进行登录。",
         "apiKeyPlaceholder": "请输入 Gemini API Key"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "登录方式",
+        "missing": "不在这台电脑上的账号",
+        "reauthBadge": "需要重新登录"
+      },
+      "claudeAccount": {
         "default": "跟随 Claude Code 登录",
         "defaultDescription": "账号会随 Claude Code 当前登录变化",
-        "missing": "不在这台电脑上的账号",
         "manage": "添加或管理 Claude 账号",
         "helpTerminal": "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
         "helpWsl": "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
         "help": "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
         "claudeAccount": "Claude 账号",
-        "reauthBadge": "需要重新登录",
         "terminalHint": "从卡片打开终端使用",
         "wslHint": "WSL 暂不支持",
         "plan": {
@@ -261,6 +267,13 @@
           "teamPremium": "Team 高级席位",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "跟随 Grok CLI 登录",
+        "defaultDescription": "账号会随 Grok CLI 当前登录变化",
+        "manage": "添加或管理 xAI 账号",
+        "help": "切到这张卡后，Grok CLI 的登录（~/.grok/auth.json）会换成选中的账号；原来登录的号会先收进授权中心，切回「跟随 Grok CLI 登录」的卡时还原。",
+        "xaiAccount": "xAI 账号"
       }
     },
     "duplicateLiveIdsLoadFailed": "读取配置中的供应商标识失败，请先修复配置后再试",
@@ -318,7 +331,7 @@
     "supports1mShort": "1M",
     "directModelListTitle": "模型列表",
     "directModelListCollapsedHint": "原生 Claude 模型供应商通常不用填写，Claude Desktop 会自动读取 /v1/models。",
-    "directModelListHint": "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。留空时 Claude Desktop 会自动读取 /v1/models；勾选 1M 会声明支持 1M 上下文。",
+    "directModelListHint": "配置 Claude Desktop 可用的 Sonnet、Opus、Haiku 模型。直连时留空，Claude Desktop 会自动读取 /v1/models；路由模式下留空只提供默认的 Claude 模型名，要用供应商的模型请在这里填写。勾选 1M 会声明支持 1M 上下文。",
     "directModelInvalid": "直连模型必须使用 Claude Desktop 可识别的 Sonnet / Opus / Haiku 模型名",
     "addModel": "添加模型",
     "addRoute": "添加模型",
@@ -378,6 +391,7 @@
     "openclawModelNotFound": "所选模型已不存在，请刷新后重试",
     "backfillWarning": "切换成功，但旧供应商配置回填失败，您手动修改的配置可能未保存",
     "codexAuthCleanupFailed": "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
+    "omoVariantCleanupFailed": "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
     "windowControlFailed": "窗口控制失败：{{error}}",
     "officialBlockedByProxy": "本地路由模式下不能切换到官方供应商，使用路由访问官方 API 可能导致账号被封禁",
     "proxyOfficialWarning": "当前供应商 {{name}} 是官方供应商，建议切换到第三方供应商后再使用本地路由",
@@ -463,8 +477,7 @@
     "tabProxy": "路由",
     "authCenter": {
       "description": "把 GitHub Copilot、ChatGPT、xAI 订阅当作供应商用。凭据由路由服务注入，相关供应商要在路由模式下使用（Codex 官方登录绑定除外）。Antigravity 账号用来切换 agy 的官方登录。",
-      "beta": "Beta",
-      "xaiOauthDescription": "管理 xAI / Grok 账号"
+      "beta": "Beta"
     },
     "advanced": {
       "configDir": {
@@ -595,6 +608,9 @@
       "safetyBackupId": "安全备份ID",
       "intervalLabel": "自动备份间隔",
       "retainLabel": "备份保留数量",
+      "maxTotalLabel": "备份总大小上限",
+      "maxTotalUnlimited": "不限制",
+      "maxTotalHint": "默认不限制。设置后，备份文件夹超过此大小时，会从最旧的备份开始删除。最新的一份备份和恢复正在使用的备份始终保留，所以单份备份比上限还大时，文件夹仍可能超过上限。在下次备份或每日维护时生效。",
       "intervalDisabled": "禁用",
       "intervalHours": "{{hours}} 小时",
       "intervalDays": "{{days}} 天",
@@ -1084,6 +1100,7 @@
     "toolUpgradeUnanchoredHint": "无法确定命令行实际使用哪处，将执行默认升级命令（可能装到 PATH 上第一个 npm）。",
     "toolUpgradeUnmanagedTitle": "以下工具已跳过升级",
     "toolUpgradeUnmanagedDetail": "{{tool}}（{{path}}）不是通过 npm 或可识别的安装器安装的，CC Switch 无法判断如何升级它。请用你原来的安装方式升级（例如 winget、Scoop 或重新运行官方安装脚本）。",
+    "toolUpgradeDesktopManagedDetail": "这个 OpenCode CLI 由 OpenCode Desktop 捆绑提供，并随 Desktop 应用更新。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1121,7 +1138,6 @@
       "pricingModelSourceLabel": "计费模式",
       "pricingModelSourceRequest": "请求模型",
       "pricingModelSourceResponse": "返回模型",
-      "pricingSave": "保存计费配置",
       "pricingSaved": "计费配置已保存",
       "pricingSaveFailed": "保存计费配置失败：{{error}}",
       "pricingLoadFailed": "加载计费配置失败：{{error}}"
@@ -1260,6 +1276,8 @@
       "credits": "积分",
       "leftOf": "剩余 {{remaining}} / {{total}}",
       "usedOf": "已用 {{used}} / {{total}}",
+      "unlimited": "不限量",
+      "unlimitedUsed": "不限量，已用 {{used}}",
       "usedUp": "已用完（共 {{total}}）",
       "detail": "积分剩余 {{remaining}} / 共 {{total}}，已用 {{used}}",
       "staleNotRunning": "WorkBuddy 没在运行，显示的是上次查到的结果",
@@ -1443,7 +1461,7 @@
     "keyFieldsHint": "默认模型（models.default）和它指向的模型表随供应商切换；其余是 Grok Build 全局设置，保存后对所有供应商生效。",
     "inactiveFieldsHint": "这些是旧版存进卡里的设置，现在切换不会写出去。点一下复制 TOML，需要时粘贴到上方。",
     "inactiveFieldCopied": "已复制",
-    "routeOnlySettingsHint": "以下两项只在路由模式下生效。"
+    "routeOnlySettingsHint": "以下设置只在路由模式下生效。"
   },
   "sessionManager": {
     "searchPlaceholder": "搜索标题、目录、首末消息或会话 ID",
@@ -1452,6 +1470,7 @@
     "contentSearchToggle": "搜索消息正文",
     "contentSearchToggleFailed": "无法更改正文搜索设置：{{error}}",
     "contentIndexing": "正在建立正文索引（{{processed}}/{{total}}），正文结果可能还不全",
+    "contentSearchFailed": "正文搜索失败，暂时只能按标题、目录和首末消息查找",
     "contentHitPrefix": "正文：",
     "contentHitMore": "（{{count}} 条消息命中）",
     "moreContentHits": "更多正文命中",
@@ -1521,6 +1540,7 @@
     "selectSessionLabel": "选择 {{title}}",
     "agyDeleteHint": "请在 Antigravity 中删除会话，以同步清理运行状态",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
+    "codebuddyDeleteHint": "请在 CodeBuddy Code 中管理此会话：后台任务、团队成员和文件历史都引用它的记录",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
     "bucketYesterday": "昨天",
@@ -1658,7 +1678,17 @@
         "prLink": "已关联 PR #{{number}}",
         "prLinkPlain": "已关联 PR",
         "slashCommand": "运行了 {{command}}",
-        "subAgent": "子代理 {{name}}"
+        "subAgent": "子代理 {{name}}",
+        "goal": "目标 · {{status}}",
+        "goalPlain": "目标",
+        "goalStatus": {
+          "active": "进行中",
+          "paused": "已暂停",
+          "blocked": "受阻",
+          "usageLimited": "额度已用尽",
+          "budgetLimited": "已达预算",
+          "complete": "已完成"
+        }
       },
       "injectedToggle": "显示注入的上下文",
       "injectedRow": "上下文 · {{label}} · {{chars}} 字",
@@ -1725,6 +1755,7 @@
       "outlineFailed": "有失败步骤",
       "outlineAborted": "已中断",
       "outlineNoReply": "没有回复",
+      "chapter": "章节",
       "viewOptions": "显示选项",
       "noChanges": "这个会话没有文件改动",
       "rawMatch": "原文中的匹配",
@@ -1740,6 +1771,9 @@
     "openReleaseNotesFailed": "打开更新日志失败:"
   },
   "providerForm": {
+    "billingMultiplier": "供应商费用倍率",
+    "billingMultiplierHelp": "该供应商所有模型的参考价都乘以这个值，用来估算经本地路由的请求花了多少钱。0.5 即半价，留空为 1 倍。只影响之后的请求；不开路由（直连）时从会话记录导入的用量仍按 1 倍统计。",
+    "billingMultiplierInvalid": "请输入 0 到 1000 的数字，或留空使用 1 倍。",
     "nativeConfig": {
       "title": "配置文件 {{path}}（只显示这一家）",
       "hint": "按应用自己的格式显示这一家在文件里的部分，保存后写进这个文件；默认模型等全局设置不在这里。在这里写的注释不会保存。",
@@ -1800,6 +1834,7 @@
       "subrouter": "SubRouter 是中转站聚合平台，一个 Key 可接入多个模型与供应商。",
       "qiniu": "七牛云是多协议 AI 中转平台，一个 Key 即可调用原生 Claude、GPT、Gemini 模型，兼容 Anthropic、OpenAI、Gemini 多种接口。",
       "haoai": "hao.ai 是面向开发者与团队的高速、稳定大模型统一 API 网关：一个 Key 即可接入 GPT、Claude、Grok 等主流模型，兼容 OpenAI、Anthropic 协议，提供模型路由、故障回退与完整调用日志，价格低至官方参考价的 1.5 折。CC Switch 用户通过此链接注册，首单可享 5% 赠送额度！",
+      "stringai": "弦界 StringAI 是高性价比、高效稳定的模型 API 平台，一站式接入 AI 编程、图像生成、语音合成和视频生成四大能力。CC Switch 用户专属福利：通过此链接注册，首充 25 元送 25 元额外奖励额度！",
       "fenno": "Fenno.ai 是稳定高效的 API 中转服务商，可接入多种主流模型。CC Switch 用户专属福利：通过此链接订阅 1.99 刀 /50 刀额度的 Trial 计划，有效期 7 天！",
       "teamorouter": "TeamoRouter 让 Claude Code 一个 Key 直接用 Opus 5.5、Sonnet 5.5、Fable 5.1，Opus 5.5 约为官方价 2.8 折，按量计费，原生 Anthropic 协议。CC Switch 用户通过此链接注册，首充 $10 / $20 / $50 额外多送 10% 额度！",
       "ppio": "PPIO 是国内领先的独立 Agentic Cloud 服务商，一个 API Key 调用全部旗舰开源模型。通过此链接注册并完成实名认证，即可获得 ¥10 代金券。",
@@ -2091,6 +2126,7 @@
     "selectAccount": "选择账号",
     "selectAccountPlaceholder": "选择 xAI 账号",
     "useDefaultAccount": "使用默认账号",
+    "account": "xAI 账号",
     "accounts": "xAI 账号",
     "defaultAccount": "默认",
     "expired": "凭据已失效",
@@ -2235,7 +2271,7 @@
     "inactiveFieldCopied": "已复制",
     "upstreamFormatCopilotRouteHint": "所有模式都需要开启路由，由路由注入 Copilot 账号凭据；手动指定的协议模型不支持时会报错。",
     "maxOutputTokensWarning": "不要超过模型或网关的真实输出上限，否则会返回 400。",
-    "routeOnlySettingsHint": "以下两项只在路由、聚合模式下生效。"
+    "routeOnlySettingsHint": "以下设置只在路由、聚合模式下生效。"
   },
   "geminiConfig": {
     "envFile": "环境变量 (.env)",
@@ -2341,6 +2377,7 @@
     "loginWith": {
       "deepseek": "用 DeepSeek 账号登录",
       "workbuddy": "用 WorkBuddy 账号登录",
+      "codebuddy": "用 CodeBuddy 账号登录",
       "kimi": "使用 Kimi 账号登录",
       "claude": "用 Claude 账号登录",
       "chatgpt": "用 ChatGPT 账号登录",
@@ -2520,8 +2557,8 @@
     "input": "Input",
     "output": "Output",
     "cacheWrite": "创建",
-    "cacheWriteNotReported": "OpenAI 协议不区分缓存写入，仅上报缓存命中",
-    "cacheWritePartial": "部分协议（如 OpenAI）不上报缓存写入，数值可能偏低",
+    "cacheWriteNotReported": "Gemini 和 Grok Build 不上报缓存写入，仅上报缓存命中",
+    "cacheWritePartial": "部分协议（如 Gemini）不上报缓存写入，数值可能偏低",
     "cacheRead": "命中",
     "baseCost": "基础",
     "costMultiplier": "成本倍率",
@@ -2662,7 +2699,7 @@
       "label": "指标",
       "more": "更多指标",
       "realTotalHelpTitle": "真实消耗 Tokens 怎么算",
-      "realTotalHelp": "新增输入 + 输出 + 缓存写入 + 缓存命中。新增输入不含缓存；部分协议（如 OpenAI）不上报缓存写入，这一项可能偏低。",
+      "realTotalHelp": "新增输入 + 输出 + 缓存写入 + 缓存命中。新增输入不含缓存；部分协议（如 Gemini）不上报缓存写入，这一项可能偏低。",
       "hitRateHelpTitle": "缓存命中率怎么算",
       "hitRateHelp": "缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中）。"
     },
@@ -2737,7 +2774,9 @@
       "speedEstimateTooFew": "输出不到 200 token，不估速度",
       "noTimingSession": "会话日志没有计时数据",
       "noFirstToken": "没有首字计时，不算速度",
-      "providerId": "供应商 ID"
+      "providerId": "供应商 ID",
+      "copyRequestId": "复制请求 ID",
+      "requestIdCopied": "已复制请求 ID"
     },
     "sources": {
       "scanTitle": "自动扫描会话日志",
@@ -2921,7 +2960,6 @@
     "geminiTitle": "Gemini MCP 管理",
     "unifiedPanel": {
       "title": "MCP 服务器管理",
-      "deleteServer": "删除服务器",
       "deleteConfirm": "确定要删除服务器 \"{{id}}\" 吗？此操作无法撤销。",
       "enabledApps": "启用的应用",
       "importSuccess": "成功导入 {{count}} 个 MCP 服务器",
@@ -2968,28 +3006,20 @@
       "tagsPlaceholder": "stdio, time, utility",
       "homepage": "主页链接",
       "docs": "文档链接",
-      "jsonPlaceholder": "{\n  \"type\": \"stdio\",\n  \"command\": \"uvx\",\n  \"args\": [\"mcp-server-fetch\"]\n}",
-      "tomlConfig": "完整的 TOML 配置",
-      "tomlPlaceholder": "type = \"stdio\"\ncommand = \"uvx\"\nargs = [\"mcp-server-fetch\"]",
-      "syncOtherSide": "同步到 {{target}}"
+      "tomlConfig": "完整的 TOML 配置"
     },
     "wizard": {
       "title": "MCP 配置向导",
       "hint": "快速配置 MCP 服务器，自动生成 JSON 配置",
       "type": "类型",
-      "typeStdio": "stdio",
-      "typeSse": "sse",
       "command": "命令",
       "commandPlaceholder": "npx 或 uvx",
       "args": "参数",
-      "argsPlaceholder": "arg1\narg2",
       "env": "环境变量",
-      "envPlaceholder": "KEY1=value1\nKEY2=value2",
       "url": "URL",
       "urlPlaceholder": "https://api.example.com/mcp",
       "urlRequired": "请输入 URL",
       "headers": "请求头（可选）",
-      "headersPlaceholder": "Authorization: Bearer your_token_here\nContent-Type: application/json",
       "preview": "配置预览",
       "apply": "应用配置"
     },
@@ -3504,21 +3534,28 @@
       "skillNotFound": "技能不存在：{{directory}}",
       "missingRepoInfo": "缺少仓库信息（owner 或 name）",
       "downloadTimeout": "下载仓库 {{owner}}/{{name}} 超时（{{timeout}}秒）",
+      "downloadStalled": "下载仓库 {{owner}}/{{name}} 时连续 {{timeout}} 秒没有收到数据，已中止",
       "skillDirNotFound": "技能目录不存在：{{path}}",
       "directoryConflict": "技能目录 '{{directory}}' 已被 {{existing_repo}} 占用，无法从 {{new_repo}} 安装",
       "emptyArchive": "下载的压缩包为空",
+      "archiveInvalid": "下载到的不是压缩包：这个站点可能不是 GitHub / GitLab / Gitea 仓库，暂不支持",
       "invalidRepoRef": "仓库地址不合法：{{owner}}/{{name}}",
       "archiveTooLarge": "压缩包解压后超过 {{limit_mb}} MB 上限，已中止",
       "archiveDownloadTooLarge": "仓库压缩包下载超过 {{limit_mb}} MB 上限，已中止",
       "archiveTooManyEntries": "压缩包条目过多（{{count}}），上限 {{limit}}",
       "downloadFailed": "下载失败：HTTP {{status}}",
-      "httpError": "HTTP 错误 {{status}}",
       "http403": "GitHub 访问受限，可能是请求频率过高",
-      "http404": "仓库或分支不存在，请检查地址",
+      "http404": "仓库或分支不存在，请检查地址；私有仓库需要先在「管理技能仓库」里设置访问令牌",
       "http429": "请求过于频繁，请等待后重试",
+      "http401Token": "访问令牌无效或已过期，请在「管理技能仓库」里重新设置",
+      "http403Token": "访问令牌没有读取这个仓库的权限，或请求过于频繁",
+      "http404Token": "仓库或分支不存在，或访问令牌无权读取这个仓库",
+      "httpAuthRequired": "这个站点需要登录才能读取，请在「管理技能仓库」里为它设置访问令牌",
+      "invalidTokenHost": "站点无效：{{host}}。只填主机名，例如 gitlab.example.com",
+      "invalidRepoToken": "令牌格式不对：只能包含字母、数字和 - _ . ~ + / =，最长 {{limit}} 个字符",
+      "repoTokenStorageFailed": "无法读写 {{host}} 的访问令牌，请检查系统的凭据存储是否可用",
       "getHomeDirFailed": "无法获取用户主目录",
       "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
-      "networkError": "网络错误",
       "unknownError": "未知错误",
       "suggestion": {
         "checkNetwork": "请检查网络连接",
@@ -3543,6 +3580,19 @@
       "empty": "暂无仓库",
       "invalidUrl": "无效的仓库 URL 格式",
       "httpsOnly": "GitLab / Gitea 仓库只支持 https 地址",
+      "token": {
+        "title": "访问令牌",
+        "description": "读取私有仓库时使用。令牌按站点保存在系统的凭据存储里（macOS 钥匙串、Windows 凭据管理器），不随云同步，只需要只读权限。",
+        "descriptionFile": "读取私有仓库时使用。令牌按站点保存在本机仅自己可读的文件里，不随云同步，只需要只读权限。",
+        "host": "站点",
+        "hostPlaceholder": "github.com 或 gitlab.example.com",
+        "value": "令牌",
+        "valuePlaceholder": "粘贴访问令牌",
+        "save": "保存令牌",
+        "empty": "还没有设置访问令牌",
+        "removeAria": "删除 {{host}} 的访问令牌",
+        "missingFields": "请填写站点和令牌"
+      },
       "addSuccess": "仓库 {{owner}}/{{name}} 已添加，识别到 {{count}} 个技能",
       "addFailed": "添加失败",
       "removeSuccess": "仓库 {{owner}}/{{name}} 已删除",
@@ -3717,7 +3767,10 @@
       "command": "命令",
       "args": "参数",
       "env": "环境",
-      "url": "地址"
+      "url": "地址",
+      "type": "类型",
+      "cwd": "工作目录",
+      "headers": "请求头"
     },
     "prompt": {
       "title": "导入系统提示词",
@@ -3733,7 +3786,6 @@
       "repo": "GitHub 仓库",
       "directory": "目标目录",
       "branch": "分支",
-      "skillsPath": "Skills 路径",
       "hint": "此操作将添加 Skill 仓库到列表。",
       "hintDetail": "添加后，您可以在 Skills 管理界面中选择安装具体的 Skill。"
     },
@@ -3752,7 +3804,8 @@
     "risk": {
       "envHijack": "该配置包含可改变进程加载行为的环境变量（如注入动态库、替换 CA 证书），请确认来源可信。",
       "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
-      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。"
+      "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。",
+      "mcpDangerousField": "该 MCP 配置包含高危扩展字段，可能会读取宿主机环境变量并外发（如 bearer_token_env_var、env_http_headers、env_vars）、执行辅助命令（http_headers_helper）或劫持工作目录（cwd）。请务必确认来源完全可信。"
     }
   },
   "iconPicker": {
@@ -3830,7 +3883,6 @@
   },
   "proxy": {
     "panel": {
-      "currentProvider": "当前 Provider：",
       "openSettings": "配置路由服务",
       "stats": {
         "activeConnections": "活跃连接",
@@ -3891,10 +3943,6 @@
           "label": "非流式超时（秒）",
           "description": "非流式请求的总超时时间"
         }
-      },
-      "validation": {
-        "retryMin": "重试次数不能为负",
-        "retryMax": "重试次数不能超过10"
       },
       "actions": {
         "save": "保存配置"
@@ -4316,6 +4364,7 @@
     "usage": "用量统计",
     "auth": "授权中心",
     "authNeedsReauth": "有账号需要重新登录",
+    "skills": "Skills",
     "prompts": "提示词",
     "sessions": "会话",
     "apps": "应用",
@@ -4328,7 +4377,8 @@
       "stack": "聚合"
     },
     "needsAttention": "需要处理",
-    "back": "返回"
+    "back": "返回",
+    "plugins": "插件"
   },
   "appsPage": {
     "showInSidebar": "在侧栏显示 {{name}}",
@@ -4748,7 +4798,8 @@
       "failedTitle": "有应用没有读到",
       "filesTitle": "读取了哪些文件",
       "claudeNote": "（顶层 mcpServers）",
-      "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp）",
+      "codebuddyNote": "（按 .mcp.json → mcp.json → ~/.codebuddy.json 读取最先存在的一个）",
+      "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp。home 级的 ~/.dsh/cordis.patch.yml 不读取也不改写，其中的 MCP 请在该文件里管理）",
       "ok": "知道了"
     },
     "templateLabels": {
@@ -5022,6 +5073,91 @@
     "updateAllCount": "全部更新（{{count}} 个）",
     "updatingProgress": "正在更新 {{done}}/{{total}}…"
   },
+  "pluginsPage": {
+    "title": "插件",
+    "helpTitle": "插件",
+    "help": "安装、启用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity CLI 的插件。CC Switch 调用各应用自带的命令行，效果和在终端里执行它的插件命令一样。Pi 的插件就是 Pi 包，目录取自 npm。",
+    "appAria": "应用",
+    "viewAria": "插件视图",
+    "viewInstalled": "已安装",
+    "viewInstalledCount": "已安装 · {{count}}",
+    "viewDiscover": "发现",
+    "viewDiscoverCount": "发现 · {{count}}",
+    "viewMarketplaces": "市场",
+    "searchPlaceholder": "搜索插件",
+    "searchAria": "搜索插件",
+    "count": "{{count}} 个插件",
+    "countFiltered": "{{shown}} / {{count}}",
+    "noMatches": "没有匹配「{{query}}」的插件",
+    "loading": "正在读取 {{app}} 的插件…",
+    "loadFailed": "读取 {{app}} 的插件失败",
+    "catalogLoadFailed": "读取市场目录失败",
+    "loadingCatalog": "正在读取 {{app}} 的市场目录…",
+    "refreshing": "正在刷新…",
+    "marketsLoadFailed": "读取插件市场失败",
+    "cliMissingTitle": "未安装 {{app}}",
+    "cliMissingBody": "插件通过 {{app}} 命令行管理。请先在「应用」页安装，再回到这里。",
+    "emptyInstalledTitle": "还没有安装插件",
+    "emptyInstalledBody": "去插件市场看看，为 {{app}} 添加技能、命令、子代理和 MCP 服务器。",
+    "browse": "浏览插件",
+    "emptyDiscoverTitle": "没有可新装的插件",
+    "emptyDiscoverBody": "已添加市场里的插件都装好了。添加更多市场可以看到更多插件。",
+    "emptyCatalogBody": "目录里的插件都装好了。",
+    "emptyMarketsTitle": "还没有添加市场",
+    "emptyMarketsBody": "{{app}} 仍会显示内置目录。添加 GitHub 仓库或 Git 地址可以列出更多插件。",
+    "builtIn": "内置",
+    "builtInPlugin": "随应用自带，可以开关，不能卸载。",
+    "scope": "{{scope}} 范围",
+    "scopeReadOnly": "安装在 {{scope}} 范围，请在对应项目里用命令行管理。",
+    "enableAria": "启用 {{name}}",
+    "moreActions": "{{name}} 的更多操作",
+    "working": "处理中…",
+    "install": "安装",
+    "installing": "安装中…",
+    "notInstallable": "不可安装",
+    "update": "更新",
+    "uninstall": "卸载",
+    "restartNote": "改动在新的 {{app}} 会话中生效。",
+    "restartNoteGateway": "改动在 {{app}} Gateway 重启后生效。",
+    "refreshMarketplaces": "刷新市场",
+    "refreshCatalog": "刷新目录",
+    "addMarketplace": "添加市场",
+    "addMarketplaceTitle": "添加 {{app}} 插件市场",
+    "addMarketplaceBody": "GitHub 的 owner/repo、Git 地址，或本地文件夹（用正斜杠，不含空格）。",
+    "addMarketplaceWaiting": "正在下载市场仓库，仓库大时可能要几分钟（最长 5 分钟）。可以先关掉这个窗口，完成后会提示。",
+    "sourceLabel": "来源",
+    "removeMarketplace": "移除",
+    "confirmUninstallTitle": "卸载 {{name}}？",
+    "confirmUninstallBody": "从 {{app}} 移除这个插件和它的缓存文件。之后可以在「发现」里重新安装。",
+    "confirmUninstallClaudeBody": "从 {{app}} 卸载插件并保留其数据目录。若这是最后一份安装，保存的选项和凭据会被删除，重新安装无法恢复。",
+    "confirmInstallTitle": "安装 {{name}}？",
+    "confirmInstallBody": "插件以你的权限运行：{{app}} 会加载它的技能、钩子和 MCP 服务器，并授予它声明的能力。只安装来源可信的插件。",
+    "confirmRemoveMarketTitle": "移除市场 {{name}}？",
+    "confirmRemoveMarketBody": "{{app}} 将不再列出这个市场里的插件，从这个市场装的插件也可能被一并卸载。之后可以重新添加。",
+    "toast": {
+      "installed": "已安装 {{name}}",
+      "installedNeedsConfig": "已安装但默认停用。请在 {{app}} 中运行 /plugin 配置其 MCP 服务器后再启用。",
+      "installFailed": "安装 {{name}} 失败",
+      "installNeedsTerminal": "这个插件安装时要在本机运行市场声明的命令，CC Switch 不会替你同意。请在终端里运行 {{command}}，确认后再回来刷新。",
+      "authRequired": "{{app}} 需要先登录账号。请在终端里运行 {{command}} 登录，再回来重试。",
+      "pluginInUse": "该插件正被其他 {{app}} / {{cli}} 进程占用（如运行中的会话、Hub 或后台服务）。请关闭正在运行的会话或相关进程后重试。",
+      "uninstalled": "已卸载 {{name}}",
+      "uninstallFailed": "卸载 {{name}} 失败",
+      "enabled": "已启用 {{name}}",
+      "disabled": "已停用 {{name}}",
+      "toggleFailed": "切换 {{name}} 失败",
+      "updated": "已更新 {{name}}",
+      "upToDate": "{{name}} 已是最新版本",
+      "updateFailed": "更新 {{name}} 失败",
+      "updateNeedsReinstall": "这个插件装在旧版 Antigravity 用的目录里，CC Switch 无法替它更新。卸载后在「发现」里重新安装，就能装上最新版本。",
+      "refreshed": "插件市场已刷新",
+      "refreshFailed": "刷新插件市场失败",
+      "marketAdded": "已添加市场 {{source}}",
+      "marketAddFailed": "添加市场失败",
+      "marketRemoved": "已移除市场 {{name}}",
+      "marketRemoveFailed": "移除 {{name}} 失败"
+    }
+  },
   "newLayoutNotice": {
     "title": "界面改版了",
     "body": "CC Switch 这一版重新设计了界面，常用功能的位置有变化：\n• 模式移到了每个应用页的顶部\n• 用量统计和授权中心移到了左侧边栏\n想了解全部变化，可以看看这一版的更新说明。",
@@ -5050,6 +5186,7 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
+      "codebuddyHelp": "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里给账号建一张「CodeBuddy 官方登录」卡并点「添加」。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
       "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
@@ -5110,6 +5247,32 @@
       "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
       "switched": "已切换，新开的 agy 会使用这个账号。",
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
+    },
+    "codebuddy": {
+      "mainland": "国内版",
+      "global": "国际版",
+      "expiredNote": "登录已过期，需要重新登录",
+      "addedOn": "{{date}}收录",
+      "imported": "已收录 {{login}}。",
+      "uncollected": "CodeBuddy 现在登着 {{login}}，还没收录到这里。",
+      "importCurrent": "收录当前账号",
+      "unrecognized": "CodeBuddy 的登录文件格式认不出",
+      "unrecognizedNote": "可能由 WorkBuddy 加密托管。CC Switch 不会改动它，也不能切换账号。",
+      "statusLoadFailed": "无法读取 CodeBuddy 账号，请重试。",
+      "empty": "还没有 CodeBuddy 账号。点「添加账号」登录，或收录 CodeBuddy 当前登录的号。",
+      "login": "登录新账号",
+      "current": "CodeBuddy 在用",
+      "pendingNote": "已在终端打开 codebuddy，按提示登录（没有出现登录界面就输入 /login），完成后这里会自动收录。",
+      "reopenTerminal": "重新打开终端",
+      "removeNote": "只删除 CC Switch 里的副本，不会让 CodeBuddy 退出登录。",
+      "quota": {
+        "credits": "积分",
+        "enterprise": "企业版",
+        "unlimited": "不限量",
+        "detail": "积分剩余 {{remaining}} / 共 {{total}}，已用 {{used}}",
+        "usedDetail": "本周期已用 {{used}} 积分",
+        "refreshPending": "令牌待 CodeBuddy 续期，切到这个号用一次后再查"
+      }
     },
     "workbuddy": {
       "addedOn": "{{date}}收录",
@@ -5259,6 +5422,47 @@
       "legacyModelsJson": "Oh My Pi 目录里还是旧的 models.json，omp 会在下次启动时把它迁移成 models.yml。请先运行一次 omp，再回来添加供应商。"
     }
   },
+  "codebuddy": {
+    "empty": {
+      "title": "还没有添加自定义模型",
+      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理；要切换官方账号，给账号建一张「CodeBuddy 官方登录」卡，在这里点「添加」。~/.codebuddy/models.json 里已有的自定义模型会自动显示在这里。点击右上角 +，从预设或自定义配置添加模型。"
+    },
+    "modelsHint": "模型 ID 写入 models.json 的 id，也是 /model 里选择的名称，通常就是接口的模型名，添加后不可修改。显示名称与上方的「名称」是同一个值。",
+    "modelIdDuplicate": "此模型 ID 已被使用，请更换",
+    "modelIdInvalid": "模型 ID 不能以空格开头或结尾。",
+    "vendor": "厂商标签",
+    "urlHint": "填写完整路径，通常以 /chat/completions 结尾；支持 ${VAR} 环境变量引用。",
+    "urlInvalid": "请输入有效的 http(s) 地址。",
+    "apiKeyPlaceholder": "输入 API Key，或写成 ${MY_API_KEY} 引用环境变量",
+    "maxInputTokens": "最大输入 Token",
+    "maxOutputTokens": "最大输出 Token",
+    "jsonHint": "对应 models.json 中的一条模型配置（id 由上方模型 ID 决定）。保存后 CodeBuddy Code 会自动重新加载。",
+    "official": {
+      "presetName": "CodeBuddy 官方登录",
+      "account": "登录账号",
+      "accountHint": "选择这张卡要用的 CodeBuddy 账号。CodeBuddy 同时只能登录一个账号：在供应商列表里点这张卡的「添加」，CodeBuddy 的登录就会换成它，正在运行的 CodeBuddy 也会自动换过去。",
+      "accountDeleted": "账号已删除，请重新选择",
+      "accountDeletedChip": "账号已删除",
+      "unbound": "还没有选择账号，请编辑卡片选择一个",
+      "statusLoading": "正在读取账号…",
+      "expired": "这个账号的登录已过期，请在授权中心重新登录后再添加",
+      "importCurrent": "收录当前登录（{{login}}）",
+      "adding": "正在添加…",
+      "added": "已添加 {{name}}，CodeBuddy 已登录这个账号。正在运行的 CodeBuddy 会自动换过去，新开的也会用它。",
+      "addFailed": "添加失败：{{error}}",
+      "removeHint": "CodeBuddy 同时只能登录一个账号，添加另一张官方卡即可切换"
+    },
+    "login": {
+      "confirmTitle": "登录新的 CodeBuddy 账号",
+      "confirmMessage": "CodeBuddy 现在登着 {{login}}，同一时间只能登录一个账号。继续后会先把它收录到授权中心，再让 CodeBuddy 暂时退出登录（不删除登录信息、不通知服务器），然后打开终端登录新账号。\n\n写入后，正在运行的 CodeBuddy 会话会暂时变为未登录，直到你登录完成。中途放弃可以一键恢复原来的登录。",
+      "confirm": "继续登录",
+      "signedInHint": "CodeBuddy 已登录时，登录新账号会先让它暂时退出原来的登录：写入后，正在运行的 CodeBuddy 会话会暂时变为未登录，直到你登录完成。",
+      "pendingReplacing": "已让 CodeBuddy 暂时退出原来的登录，并在终端打开了 codebuddy。按提示登录新账号，完成后这里会自动收录。",
+      "restore": "恢复原来的登录",
+      "restored": "已恢复原来的 CodeBuddy 登录。",
+      "restoreFailed": "没能恢复原来的登录（CodeBuddy 可能正在写登录文件）。可以在授权中心重新登录，或在终端里登录。"
+    }
+  },
   "dsh": {
     "empty": {
       "title": "添加 DeepSeek Harness 供应商",
@@ -5303,5 +5507,11 @@
     "installFailed": "安装更新失败",
     "downloadingInline": "正在后台下载新版本…",
     "downloadedInline": "已下载完毕"
+  },
+  "unreadableEntry": {
+    "title": "「{{name}}」的数据无法读取",
+    "hint": "可能由更新版本的 CC Switch 写入。数据已原样保留，不能编辑或启用；升级后即可恢复，也可以删除。",
+    "confirmTitle": "删除无法读取的条目",
+    "confirmMessage": "删除「{{name}}」？只删除 CC Switch 里的这条记录，不改动各应用自己的配置文件。"
   }
 }

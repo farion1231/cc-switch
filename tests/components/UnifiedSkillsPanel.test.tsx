@@ -12,6 +12,7 @@ import type {
   SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const m = vi.hoisted(() => ({
   scanUnmanaged: vi.fn(),
@@ -119,6 +120,11 @@ vi.mock("@/hooks/useSkills", () => ({
   useRefreshDiscoverableSkills: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepoTokens: () => ({ data: { hosts: [], secureStorage: true } }),
+  useSkillRepoTokenActions: () => ({
+    setToken: vi.fn(),
+    deleteToken: vi.fn(),
+  }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
@@ -164,6 +170,7 @@ const columns = () =>
   screen.getAllByRole("button", { name: /appMatrix.columnAria/ });
 
 async function openMenu(trigger: string, item: string) {
+  await waitForOverlayTransition();
   await userEvent.click(screen.getByRole("button", { name: trigger }));
   await userEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
@@ -974,6 +981,7 @@ describe("UnifiedSkillsPanel", () => {
           pi: false,
           mcode: false,
           kimi: false,
+          codebuddy: false,
           dsh: false,
           workbuddy: false,
           agy: false,

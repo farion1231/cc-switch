@@ -166,6 +166,18 @@ describe("OpenCode preset reasoning flags", () => {
       }
     }
   });
+
+  it("offers only OpenCode Go DeepSeek V4.1 Flash's low / high / max efforts", () => {
+    const goFlash = opencodeProviderPresets.find(
+      (p) => p.name === "OpenCode Go",
+    )?.settingsConfig.models?.["deepseek-v4.1-flash"];
+    expect(goFlash?.variants).toEqual({
+      low: { reasoningEffort: "low" },
+      medium: { disabled: true },
+      high: { reasoningEffort: "high" },
+      max: { reasoningEffort: "max" },
+    });
+  });
 });
 
 describe("OpenCode preset model limits", () => {

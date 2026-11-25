@@ -742,8 +742,16 @@ fn get_providers_from(
                     }
                 }
                 model["limit"] = Value::Object(limits);
-                if let Some(efforts) = model.get("reasoningEfforts") {
-                    model["reasoning"] = json!(efforts.is_object());
+                if let Some(efforts) = model.get("reasoningEfforts").cloned() {
+                    match normalize_reasoning_efforts(&efforts) {
+                        Some(normalized) => {
+                            model["reasoning"] = json!(normalized.is_object());
+                            model["reasoningEfforts"] = normalized;
+                        }
+                        None => {
+                            model.as_object_mut().unwrap().remove("reasoningEfforts");
+                        }
+                    }
                 }
                 if let Some(input) = model.get("input").cloned() {
                     model["modalities"] = json!({"input":input,"output":["text"]});
@@ -976,6 +984,28 @@ pub(crate) fn initialize_profiles(
     initialize_profiles_and_commit(providers, servers, || Ok(()))
 }
 
+/// Whether some target profile has not been seeded yet. Lets a caller that can't build the full
+/// seed (an unreadable managed row) defer only when there is a profile it would actually miss.
+pub(crate) fn has_uninitialized_profiles() -> Result<bool, AppError> {
+    let initialized = parse_profile_receipt(&read_text(&profile_receipt_path())?)?;
+    Ok(target_paths()
+        .iter()
+        .any(|path| !initialized.contains(&profile_name(path))))
+}
+
+fn profile_receipt_path() -> PathBuf {
+    data_dir().join(".cc-switch-profile-sync.json")
+}
+
+fn parse_profile_receipt(text: &str) -> Result<Vec<String>, AppError> {
+    if text.trim().is_empty() {
+        Ok(vec![])
+    } else {
+        serde_json::from_str(text)
+            .map_err(|_| AppError::Config("Invalid DeepSeek Harness profile sync receipt".into()))
+    }
+}
+
 fn initialize_profiles_and_commit<T>(
     providers: &IndexMap<String, Value>,
     servers: &IndexMap<String, Value>,
@@ -985,16 +1015,8 @@ fn initialize_profiles_and_commit<T>(
         return commit();
     }
     let profiles = target_paths();
-    let receipt = data_dir().join(".cc-switch-profile-sync.json");
-    let parse_receipt = |text: &str| -> Result<Vec<String>, AppError> {
-        if text.trim().is_empty() {
-            Ok(vec![])
-        } else {
-            serde_json::from_str(text).map_err(|_| {
-                AppError::Config("Invalid DeepSeek Harness profile sync receipt".into())
-            })
-        }
-    };
+    let receipt = profile_receipt_path();
+    let parse_receipt = parse_profile_receipt;
     let initialized = parse_receipt(&read_text(&receipt)?)?;
     if profiles
         .iter()
@@ -1240,6 +1262,40 @@ fn diverged_mcp_error(id: &str, other: Option<&PathBuf>, source: Option<&PathBuf
     )
 }
 
+/// Keys accepted by DSH's `llm-pi-ai` schema for a model's `reasoningEfforts` map.
+const DSH_REASONING_EFFORT_LEVELS: [&str; 7] =
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// Normalize `reasoningEfforts` to what `llm-pi-ai` accepts (`false` or a non-empty map keyed by
+/// [`DSH_REASONING_EFFORT_LEVELS`] with `string | null` values).
+///
+/// YAML 1.1 parsers turn unquoted `off: null` into boolean `false: null`, which `serde_json::to_value`
+/// then surfaces as the `"false"` key; map `"false"` back to `"off"` when `"off"` is absent, and
+/// drop unknown keys or invalid value types so one bad entry cannot fail the whole `llm-pi-ai` block
+/// (#9785).
+fn normalize_reasoning_efforts(value: &Value) -> Option<Value> {
+    match value {
+        Value::Bool(false) => Some(Value::Bool(false)),
+        Value::Object(map) => {
+            let mut normalized = serde_json::Map::new();
+            for (key, entry) in map {
+                if !(entry.is_string() || entry.is_null()) {
+                    continue;
+                }
+                if DSH_REASONING_EFFORT_LEVELS.contains(&key.as_str()) {
+                    normalized.insert(key.clone(), entry.clone());
+                } else if key == "false" {
+                    normalized
+                        .entry("off".to_string())
+                        .or_insert_with(|| entry.clone());
+                }
+            }
+            (!normalized.is_empty()).then_some(Value::Object(normalized))
+        }
+        _ => None,
+    }
+}
+
 /// The native `llm-pi-ai` provider node for an editor config, and the credentials text with a new
 /// key stored under CC Switch's reference (unchanged when the key is unchanged).
 fn native_provider(
@@ -1298,13 +1354,25 @@ fn native_provider(
             object.remove("modalities");
             if object.get("reasoning") == Some(&Value::Bool(false)) {
                 object.insert("reasoningEfforts".into(), Value::Bool(false));
-            } else if object.get("reasoning") == Some(&Value::Bool(true))
-                && !object.contains_key("reasoningEfforts")
-            {
-                object.insert(
-                    "reasoningEfforts".into(),
-                    json!({"off":null,"low":"low","medium":"medium","high":"high"}),
-                );
+            } else {
+                if let Some(efforts) = object.get("reasoningEfforts").cloned() {
+                    match normalize_reasoning_efforts(&efforts) {
+                        Some(normalized) => {
+                            object.insert("reasoningEfforts".into(), normalized);
+                        }
+                        None => {
+                            object.remove("reasoningEfforts");
+                        }
+                    }
+                }
+                if object.get("reasoning") == Some(&Value::Bool(true))
+                    && !object.contains_key("reasoningEfforts")
+                {
+                    object.insert(
+                        "reasoningEfforts".into(),
+                        json!({"off":null,"low":"low","medium":"medium","high":"high"}),
+                    );
+                }
             }
             object.remove("reasoning");
             models.push(model);
@@ -1345,9 +1413,6 @@ fn native_provider(
 
 pub(crate) fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
     save_and_commit(id, Some(config), false, || Ok(()))
-}
-pub(crate) fn remove_provider(id: &str) -> Result<(), AppError> {
-    save_and_commit(id, None, false, || Ok(()))
 }
 /// A key is taken when any target profile already has it (CC Switch never overwrites a node).
 pub(crate) fn provider_key_exists(id: &str) -> Result<bool, AppError> {
@@ -1720,6 +1785,89 @@ mod tests {
         assert_eq!(model("test-model")["input"], json!(["text", "image"]));
         assert!(model("pdf-only").get("input").is_none());
         assert!(model("pdf-only").get("modalities").is_none());
+    }
+
+    #[test]
+    fn provider_reasoning_efforts_normalizes_false_key_and_filters_unknown_entries() {
+        let mut config = editor_config();
+        config["models"]["false-alias"] = json!({
+            "name": "False Alias",
+            "reasoning": true,
+            "reasoningEfforts": {
+                "false": null,
+                "low": "low",
+                "medium": "medium",
+                "max": "max",
+                "turbo": "turbo",
+                "high": 123
+            }
+        });
+        config["models"]["explicit-off-wins"] = json!({
+            "name": "Explicit Off",
+            "reasoning": true,
+            "reasoningEfforts": {
+                "false": null,
+                "off": "none",
+                "low": "low"
+            }
+        });
+        config["models"]["only-invalid-reasoning-on"] = json!({
+            "name": "Only Invalid On",
+            "reasoning": true,
+            "reasoningEfforts": { "bogus": "x" }
+        });
+        config["models"]["only-invalid-no-flag"] = json!({
+            "name": "Only Invalid",
+            "reasoningEfforts": { "bogus": "x" }
+        });
+        config["models"]["disabled-efforts"] = json!({
+            "name": "Disabled",
+            "reasoningEfforts": false
+        });
+
+        let (_, native) = native_provider("gateway", &config, "").unwrap();
+        let models = native["models"].as_array().unwrap();
+        let model = |id: &str| models.iter().find(|model| model["id"] == id).unwrap();
+
+        assert_eq!(
+            model("false-alias")["reasoningEfforts"],
+            json!({"off": null, "low": "low", "medium": "medium", "max": "max"})
+        );
+        assert_eq!(
+            model("explicit-off-wins")["reasoningEfforts"],
+            json!({"off": "none", "low": "low"})
+        );
+        assert_eq!(
+            model("only-invalid-reasoning-on")["reasoningEfforts"],
+            json!({"off": null, "low": "low", "medium": "medium", "high": "high"})
+        );
+        assert!(model("only-invalid-no-flag")
+            .get("reasoningEfforts")
+            .is_none());
+        assert_eq!(model("disabled-efforts")["reasoningEfforts"], json!(false));
+    }
+
+    #[test]
+    fn get_providers_normalizes_yaml_boolean_false_reasoning_effort_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("cordis.patch.yml");
+        let credentials = temp.path().join(".credentials.yaml");
+        fs::write(
+            &path,
+            "- id: llm-pi-ai\n  config:\n    providers:\n      volcengine:\n        api: openai-completions\n        baseURL: https://ark.example/v1\n        models:\n          - id: m1\n            name: Model 1\n            reasoningEfforts:\n              false: null\n              low: low\n              max: max\n              bogus: nope\n          - id: m2\n            name: Model 2\n            reasoningEfforts: false\n",
+        )
+        .unwrap();
+
+        let providers = get_providers_from(&path, &credentials).unwrap();
+        let m1 = &providers["volcengine"]["models"]["m1"];
+        assert_eq!(m1["reasoning"], json!(true));
+        assert_eq!(
+            m1["reasoningEfforts"],
+            json!({"off": null, "low": "low", "max": "max"})
+        );
+        let m2 = &providers["volcengine"]["models"]["m2"];
+        assert_eq!(m2["reasoning"], json!(false));
+        assert_eq!(m2["reasoningEfforts"], json!(false));
     }
 
     #[test]
@@ -2204,7 +2352,7 @@ mod tests {
             "test-value"
         );
 
-        remove_provider("gateway").unwrap();
+        save_and_commit("gateway", None, false, || Ok(())).unwrap();
         for name in ["web", "desktop", "headless"] {
             assert!(!profile_text(root, name).unwrap().contains("gateway"));
         }
@@ -2256,7 +2404,7 @@ mod tests {
         assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
 
         // Removal goes through the same path list.
-        remove_provider("gateway").unwrap();
+        save_and_commit("gateway", None, false, || Ok(())).unwrap();
         assert!(!get_providers().unwrap().contains_key("gateway"));
     }
 
@@ -2394,6 +2542,111 @@ mod tests {
         assert!(!profile_path("acp").exists());
     }
 
+    fn seed_rows_with_one_unreadable_mcp(dsh_enabled: bool) -> crate::store::AppState {
+        use crate::app_config::{AppType, McpApps, McpServer};
+        use crate::provider::{Provider, ProviderMeta};
+
+        let state = crate::store::AppState::new(std::sync::Arc::new(
+            crate::database::Database::memory().unwrap(),
+        ));
+        let mut provider =
+            Provider::with_id("gateway".into(), "gateway".into(), editor_config(), None);
+        provider.meta = Some(ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+        state.db.save_provider(&AppType::Dsh, &provider).unwrap();
+        for (id, dsh) in [("fetch", true), ("broken", dsh_enabled)] {
+            state
+                .db
+                .save_mcp_server(&McpServer {
+                    id: id.into(),
+                    name: id.into(),
+                    server: json!({"command":"node","args":["fetch.js"]}),
+                    apps: McpApps {
+                        dsh,
+                        claude: true,
+                        ..Default::default()
+                    },
+                    description: None,
+                    homepage: None,
+                    docs: None,
+                    tags: vec![],
+                })
+                .unwrap();
+        }
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'broken'",
+                [],
+            )
+            .unwrap();
+        state
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn profile_initialization_ignores_an_unreadable_mcp_row_of_another_app() {
+        use crate::services::provider::initialize_dsh_profiles;
+
+        let home = DshHome::new();
+        init_profiles(home.dir.path(), &["web"]);
+        let state = seed_rows_with_one_unreadable_mcp(false);
+
+        initialize_dsh_profiles(&state).expect("another app's bad row must not block DSH");
+
+        let web = profile_path("web");
+        assert!(get_providers_from(&web, &credentials_path())
+            .unwrap()
+            .contains_key("gateway"));
+        let text = read_text(&web).unwrap();
+        assert!(existing_mcp_entry(&text, "fetch").unwrap().is_some());
+        assert!(existing_mcp_entry(&text, "broken").unwrap().is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn profile_initialization_defers_while_a_dsh_row_is_unreadable() {
+        use crate::app_config::AppType;
+        use crate::services::provider::initialize_dsh_profiles;
+
+        let home = DshHome::new();
+        init_profiles(home.dir.path(), &["web"]);
+        let web = profile_path("web");
+        let before = read_text(&web).unwrap();
+        let state = seed_rows_with_one_unreadable_mcp(true);
+
+        // Seeding is one-time: going ahead without the row would leave it out for good.
+        assert!(initialize_dsh_profiles(&state).is_err());
+        assert_eq!(read_text(&web).unwrap(), before);
+        assert!(has_uninitialized_profiles().unwrap());
+
+        // Once the bad row is gone, the deferred profile is seeded on the next attempt.
+        state.db.delete_mcp_server("broken").unwrap();
+        initialize_dsh_profiles(&state).unwrap();
+        assert!(existing_mcp_entry(&read_text(&web).unwrap(), "fetch")
+            .unwrap()
+            .is_some());
+        assert!(!has_uninitialized_profiles().unwrap());
+
+        // With nothing waiting, a bad DSH row no longer fails later syncs.
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET settings_config = '{\"providers\":' WHERE app_type = ?1 AND id = 'gateway'",
+                [AppType::Dsh.as_str()],
+            )
+            .unwrap();
+        initialize_dsh_profiles(&state).expect("no profile is waiting");
+    }
+
     #[test]
     #[serial_test::serial]
     fn profile_initialization_rolls_back_its_receipt_and_can_retry() {
@@ -2506,7 +2759,7 @@ mod tests {
         let error = set_provider("gateway", editor_config()).unwrap_err();
         assert!(error.to_string().contains("cordis.patch.yml"), "{error}");
         assert_eq!(profile_text(root, "web").unwrap(), written);
-        remove_provider("gateway").unwrap();
+        save_and_commit("gateway", None, false, || Ok(())).unwrap();
         assert!(get_providers().unwrap().is_empty());
     }
 
@@ -2614,7 +2867,7 @@ mod tests {
         assert!(!root.join("profiles/web/cordis.patch.yml.lock").exists());
 
         // 删除同理：不能把 diverged 的那份一起删掉
-        let error = remove_provider("gateway").unwrap_err();
+        let error = save_and_commit("gateway", None, false, || Ok(())).unwrap_err();
         assert!(error.to_string().contains("desktop"));
         assert_eq!(profile_text(root, "desktop").unwrap(), edited);
 

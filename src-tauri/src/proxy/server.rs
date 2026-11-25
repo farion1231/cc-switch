@@ -26,7 +26,7 @@ use axum::{
     Router,
 };
 use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
@@ -107,10 +107,7 @@ impl ProxyServer {
             return Err(ProxyError::AlreadyRunning);
         }
 
-        let addr: SocketAddr =
-            format!("{}:{}", self.config.listen_address, self.config.listen_port)
-                .parse()
-                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+        let addr = listen_socket_addr(&self.config.listen_address, self.config.listen_port)?;
 
         // 创建关闭通道
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -129,8 +126,12 @@ impl ProxyServer {
 
         log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
 
-        // 更新全局代理端口，用于系统代理检测
+        // 更新全局代理端口，用于系统代理检测；并登记活跃监听器以阻止内部请求回打自身代理
         crate::proxy::http_client::set_proxy_port(actual_port);
+        let active_listener_guard = crate::proxy::http_client::register_active_proxy_listener(
+            self.config.listen_address.clone(),
+            actual_port,
+        );
 
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -149,11 +150,12 @@ impl ProxyServer {
         // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
+            let _active_listener_guard = active_listener_guard;
             let mut shutdown_rx = shutdown_rx;
             loop {
                 tokio::select! {
                     result = listener.accept() => {
-                        let (stream, _remote_addr) = match result {
+                        let (stream, remote_addr) = match result {
                             Ok(v) => v,
                             Err(e) => {
                                 log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
@@ -164,6 +166,11 @@ impl ProxyServer {
 
                         let app = app.clone();
                         tokio::spawn(async move {
+                            let conn_addrs = browser_guard::ConnectionAddrs {
+                                remote: remote_addr,
+                                local: stream.local_addr().ok(),
+                            };
+
                             // Peek raw TCP bytes to capture original header casing
                             // before hyper parses (and lowercases) the header names.
                             let original_cases = {
@@ -194,6 +201,7 @@ impl ProxyServer {
 
                                     // Insert our own header case map alongside hyper's internal one
                                     parts.extensions.insert(cases);
+                                    parts.extensions.insert(conn_addrs);
 
                                     let body = axum::body::Body::new(body);
                                     let axum_req = http::Request::from_parts(parts, body);
@@ -422,7 +430,7 @@ impl ProxyServer {
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
-            .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            .layer(DefaultBodyLimit::max(handlers::MAX_REQUEST_BODY_BYTES))
             // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard
             .layer(middleware::from_fn_with_state(
                 self.state.clone(),
@@ -446,6 +454,40 @@ impl ProxyServer {
             .update_app_configs(app_type, config)
             .await;
     }
+
+    pub async fn forget_circuit_breakers(
+        &self,
+        app_type: &crate::app_config::AppType,
+        provider_id: Option<&str>,
+    ) {
+        self.state
+            .provider_router
+            .forget(app_type, provider_id)
+            .await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn provider_router(&self) -> Arc<ProviderRouter> {
+        self.state.provider_router.clone()
+    }
+}
+
+/// 监听地址 + 端口拼成 SocketAddr。不能拼字符串再 parse：裸 IPv6（`::1`）拼出来是
+/// `::1:15721`，`SocketAddr` 只认 `[::1]:15721`（#9743）。方括号写法也收；`localhost`
+/// 是旧库可能留下的值，按 IPv4 回环处理（设置页保存时也是这么改写的）。
+fn listen_socket_addr(listen_address: &str, port: u16) -> Result<SocketAddr, ProxyError> {
+    let host = listen_address.trim();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    let ip = if host.eq_ignore_ascii_case("localhost") {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    } else {
+        host.parse::<IpAddr>()
+            .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?
+    };
+    Ok(SocketAddr::new(ip, port))
 }
 
 #[cfg(test)]
@@ -485,6 +527,47 @@ mod tests {
             0,
             "listener socket is inheritable"
         );
+    }
+
+    #[test]
+    fn listen_address_accepts_bare_and_bracketed_ipv6() {
+        for (input, expected) in [
+            ("127.0.0.1", "127.0.0.1:15721"),
+            ("0.0.0.0", "0.0.0.0:15721"),
+            ("::1", "[::1]:15721"),
+            ("[::1]", "[::1]:15721"),
+            ("::", "[::]:15721"),
+            (" ::1 ", "[::1]:15721"),
+            ("localhost", "127.0.0.1:15721"),
+        ] {
+            let addr = listen_socket_addr(input, 15721).expect(input);
+            assert_eq!(addr.to_string(), expected, "{input}");
+        }
+        for input in ["", "not-an-ip", "[::1", "::1:15721", "999.0.0.1"] {
+            assert!(listen_socket_addr(input, 15721).is_err(), "{input}");
+        }
+    }
+
+    /// IPv6 回环上能起服务；本机没有 IPv6 时跳过。
+    #[tokio::test]
+    async fn proxy_starts_on_ipv6_loopback() {
+        if std::net::TcpListener::bind("[::1]:0").is_err() {
+            return;
+        }
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_address: "::1".to_string(),
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start proxy on ::1");
+        assert_ne!(info.port, 0);
+        std::net::TcpStream::connect(("::1", info.port)).expect("connect to [::1]");
+        proxy.stop().await.expect("stop test proxy");
     }
 
     /// Codex 内置的 openai 先用 WebSocket 连 Responses：握手回 426 它才立刻改走 HTTP。
@@ -580,6 +663,58 @@ mod tests {
         assert_eq!(desktop.status(), StatusCode::UNAUTHORIZED);
 
         proxy.stop().await.expect("stop test proxy");
+    }
+
+    /// 即使代理监听在 0.0.0.0，来自本机回环的 DNS 重绑定请求仍必须被 Host 规则拦截。
+    #[tokio::test]
+    async fn wildcard_listener_still_rejects_loopback_dns_rebinding() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_address: "0.0.0.0".to_string(),
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start wildcard proxy");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let rebinding = client
+            .get(format!("http://127.0.0.1:{}/status", info.port))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "0.0.0.0 listener must still reject DNS rebinding Host headers from loopback peers"
+        );
+
+        let local_cli = client
+            .get(format!("http://127.0.0.1:{}/health", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(local_cli.status(), StatusCode::OK);
+
+        // Reuse the pooled keep-alive connection from the same reqwest::Client to verify
+        // ConnectionAddrs remains attached across subsequent requests on the same TCP stream.
+        let keep_alive_rebinding = client
+            .get(format!("http://127.0.0.1:{}/status", info.port))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            keep_alive_rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "keep-alive connection reuse on 0.0.0.0 listener must still reject DNS rebinding Host headers"
+        );
+
+        proxy.stop().await.expect("stop wildcard proxy");
     }
 
     /// Regression for #3787: a provider accidentally pointing at the proxy must

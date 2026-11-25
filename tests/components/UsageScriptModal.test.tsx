@@ -193,6 +193,101 @@ describe("UsageScriptModal Claude official card bound to an account", () => {
   });
 });
 
+describe("UsageScriptModal Grok official card bound to an xAI account", () => {
+  const grokProvider: Provider = {
+    id: "grok-bound",
+    name: "Grok Official",
+    category: "official",
+    settingsConfig: {},
+    meta: {
+      authBinding: {
+        source: "managed_account",
+        authProvider: "xai_oauth",
+        accountId: "xai-acct-1",
+      },
+    },
+  };
+
+  // 卡片和托盘在没保存开关时默认查这个号的额度，配置页也要显示为已开
+  it("shows usage enabled by default when nothing was saved", async () => {
+    const onSave = vi.fn();
+    const client = createTestQueryClient();
+    render(
+      <QueryClientProvider client={client}>
+        <UsageScriptModal
+          provider={grokProvider}
+          appId="grokbuild"
+          isOpen
+          onClose={() => {}}
+          onSave={onSave}
+        />
+      </QueryClientProvider>,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "usageScript.saveConfig" }),
+    );
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: true,
+        templateType: "official_subscription",
+      }),
+    );
+  });
+
+  // 测试要查绑定的 xAI 账号，不能去读 ~/.grok/auth.json 当前登录的号
+  it("tests the bound xAI account's quota and caches it under that account", async () => {
+    const { subscriptionApi } = await import("@/lib/api/subscription");
+    const quota = {
+      tool: "grokbuild",
+      credentialStatus: "valid",
+      credentialMessage: null,
+      success: true,
+      tiers: [{ name: "weekly", utilization: 42, resetsAt: null }],
+      extraUsage: null,
+      error: null,
+      queriedAt: 1,
+    } as unknown as Awaited<ReturnType<typeof subscriptionApi.getQuota>>;
+    const getXaiOauthQuota = vi
+      .spyOn(subscriptionApi, "getXaiOauthQuota")
+      .mockResolvedValue(quota);
+    const getQuota = vi
+      .spyOn(subscriptionApi, "getQuota")
+      .mockResolvedValue(quota);
+
+    try {
+      const client = createTestQueryClient();
+      render(
+        <QueryClientProvider client={client}>
+          <UsageScriptModal
+            provider={grokProvider}
+            appId="grokbuild"
+            isOpen
+            onClose={() => {}}
+            onSave={() => {}}
+          />
+        </QueryClientProvider>,
+      );
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.testScript" }),
+      );
+
+      expect(getXaiOauthQuota).toHaveBeenCalledWith("xai-acct-1");
+      expect(getQuota).not.toHaveBeenCalled();
+      expect(client.getQueryData(["xai_oauth", "quota", "xai-acct-1"])).toBe(
+        quota,
+      );
+      expect(
+        client.getQueryData(["subscription", "quota", "grokbuild"]),
+      ).toBeUndefined();
+    } finally {
+      getXaiOauthQuota.mockRestore();
+      getQuota.mockRestore();
+    }
+  });
+});
+
 /**
  * Oh My Pi has its own `AppId` ("omp"), so it never matched the `pi` branch
  * and both built-in tests reported "API key is empty" on an omp card. The
@@ -383,6 +478,66 @@ describe("UsageScriptModal WorkBuddy credentials", () => {
       expect(getBalance).toHaveBeenCalledWith(
         "https://api.deepseek.com/v1",
         "sk-test-workbuddy",
+      );
+    } finally {
+      getBalance.mockRestore();
+    }
+  });
+});
+
+describe("UsageScriptModal CodeBuddy credentials", () => {
+  const codebuddyProvider: Provider = {
+    id: "codebuddy-deepseek",
+    name: "DeepSeek",
+    settingsConfig: {
+      id: "deepseek-chat",
+      name: "DeepSeek",
+      vendor: "DeepSeek",
+      url: "https://api.deepseek.com/v1/chat/completions",
+      apiKey: "sk-test-codebuddy",
+    },
+    meta: {
+      usage_script: {
+        enabled: true,
+        language: "javascript",
+        code: "",
+      },
+    },
+  };
+
+  it("passes the entry's key and endpoint without /chat/completions to the balance test", async () => {
+    const { subscriptionApi } = await import("@/lib/api/subscription");
+    const getBalance = vi
+      .spyOn(subscriptionApi, "getBalance")
+      .mockResolvedValue({
+        success: true,
+        data: [{ isValid: true, remaining: 1, unit: "CNY" }],
+      });
+
+    try {
+      const client = createTestQueryClient();
+      render(
+        <QueryClientProvider client={client}>
+          <UsageScriptModal
+            provider={codebuddyProvider}
+            appId="codebuddy"
+            isOpen
+            onClose={() => {}}
+            onSave={() => {}}
+          />
+        </QueryClientProvider>,
+      );
+      expect(screen.getByText("usageScript.balanceHint")).toBeInTheDocument();
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.templateBalance" }),
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "usageScript.testScript" }),
+      );
+
+      expect(getBalance).toHaveBeenCalledWith(
+        "https://api.deepseek.com/v1",
+        "sk-test-codebuddy",
       );
     } finally {
       getBalance.mockRestore();

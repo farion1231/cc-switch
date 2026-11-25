@@ -14,8 +14,7 @@ use crate::error::AppError;
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        cost_columns, load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn,
-        SessionSyncResult,
+        cost_columns, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -29,17 +28,29 @@ use std::{
     path::Path,
 };
 
-pub fn sync_copilot_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_sessions(db, &crate::copilot_config::session_state_dir())
+pub(crate) fn sync_copilot_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_sessions_with_cursors(db, &crate::copilot_config::session_state_dir(), cursors)
 }
 
+#[cfg(test)]
 fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
+    sync_sessions_with_cursors(
+        db,
+        root,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_sessions_with_cursors(
+    db: &Database,
+    root: &Path,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
-    let provider_ids: HashSet<String> = db
-        .get_all_providers(&AppType::Copilot)?
-        .into_keys()
-        .collect();
+    let provider_ids: HashSet<String> = db.get_provider_ids(&AppType::Copilot)?;
     let Ok(sessions) = fs::read_dir(root) else {
         return Ok(result);
     };

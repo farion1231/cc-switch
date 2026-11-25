@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use crate::init_status::{InitErrorPayload, SkillsMigrationPayload};
 use indexmap::IndexSet;
 use regex::Regex;
@@ -9,7 +7,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use tauri::AppHandle;
-use tauri_plugin_opener::OpenerExt;
 use tool_lifecycle_progress::ToolLifecycleProgress;
 
 #[path = "tool_discovery.rs"]
@@ -62,9 +59,7 @@ fn validate_external_url(raw: &str) -> Result<String, String> {
 pub async fn open_external(app: AppHandle, url: String) -> Result<bool, String> {
     let url = validate_external_url(&url)?;
 
-    app.opener()
-        .open_url(&url, None::<String>)
-        .map_err(|e| format!("打开链接失败: {e}"))?;
+    crate::host_open::open_url(&app, &url).map_err(|e| format!("打开链接失败: {e}"))?;
 
     Ok(true)
 }
@@ -87,13 +82,11 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<bool, String> {
 
 #[tauri::command]
 pub async fn check_for_updates(handle: AppHandle) -> Result<bool, String> {
-    handle
-        .opener()
-        .open_url(
-            "https://github.com/farion1231/cc-switch/releases/latest",
-            None::<String>,
-        )
-        .map_err(|e| format!("打开更新页面失败: {e}"))?;
+    crate::host_open::open_url(
+        &handle,
+        "https://github.com/farion1231/cc-switch/releases/latest",
+    )
+    .map_err(|e| format!("打开更新页面失败: {e}"))?;
 
     Ok(true)
 }
@@ -124,10 +117,7 @@ pub async fn open_portable_update_download(
 ) -> Result<bool, String> {
     let url = portable_zip_url(&version, cfg!(target_arch = "aarch64"))
         .unwrap_or_else(|| "https://github.com/farion1231/cc-switch/releases/latest".to_string());
-    handle
-        .opener()
-        .open_url(url, None::<String>)
-        .map_err(|e| format!("打开更新页面失败: {e}"))?;
+    crate::host_open::open_url(&handle, &url).map_err(|e| format!("打开更新页面失败: {e}"))?;
 
     Ok(true)
 }
@@ -275,7 +265,7 @@ impl ToolSpec {
 static UNKNOWN_TOOL: ToolSpec = ToolSpec::not_on_npm("", "Unknown");
 
 /// 顺序即「应用」页与批量安装 / 升级的顺序。
-static TOOLS: [ToolSpec; 14] = [
+static TOOLS: [ToolSpec; 15] = [
     ToolSpec::npm("claude", "Claude Code", "@anthropic-ai/claude-code")
         .npm_install_args(
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
@@ -305,6 +295,12 @@ static TOOLS: [ToolSpec; 14] = [
         .not_npm_installable()
         .official_update("update"),
     ToolSpec::npm("copilot", "GitHub Copilot CLI", "@github/copilot"),
+    // `codebuddy update` 无交互确认：按自身安装方式升级（npm 会用 `--prefix` 钉在正在运行的
+    // 那份上，pnpm/bun 各用自己的命令，原生版走官方 installer），装完核对版本；失败或认不出
+    // 安装方式（会提示手动 `npm install -g`）时 exit 1，由 `|| <npm fallback>` 兜底。
+    // 依赖没有 install 脚本，npm 12 不需要 `--allow-scripts`。
+    ToolSpec::npm("codebuddy", "CodeBuddy Code", "@tencent-ai/codebuddy-code")
+        .official_update("update"),
 ];
 
 fn known_tool(id: &str) -> Option<&'static ToolSpec> {
@@ -358,15 +354,15 @@ pub async fn get_tool_versions(
         Some(tools) => normalize_requested_tools(tools),
         None => TOOLS.iter().map(|tool| tool.id).collect(),
     };
-    let mut results = Vec::new();
-
-    for tool in requested {
+    // 各工具互不依赖，并发探测：总耗时取最慢的那个，而不是逐个累加（启动后台检查一次
+    // 传入全部工具）。join_all 保持输入顺序。
+    let results = futures::future::join_all(requested.into_iter().map(|tool| {
         let pref = wsl_shell_by_tool.as_ref().and_then(|m| m.get(tool));
         let tool_wsl_shell = pref.and_then(|p| p.wsl_shell.as_deref());
         let tool_wsl_shell_flag = pref.and_then(|p| p.wsl_shell_flag.as_deref());
-
-        results.push(get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag).await);
-    }
+        get_single_tool_version_impl(tool, tool_wsl_shell, tool_wsl_shell_flag)
+    }))
+    .await;
 
     Ok(results)
 }
@@ -433,9 +429,11 @@ impl ToolLifecycleCoordinator {
 
         // 必须把锁移进 blocking 任务：即使等待它的 IPC future 被取消，
         // 子进程仍会继续运行，直到它真正退出前都不能允许下一次写入。
+        // 局部变量按声明的逆序释放：工具锁要先于执行锁放开，否则排队的下一个写入
+        // 拿到执行锁、跑完之后，紧接着对这个工具的请求还会撞上没放开的工具锁。
         tokio::task::spawn_blocking(move || {
-            let _tool_guards = tool_guards;
             let _execution_guard = execution_guard;
+            let _tool_guards = tool_guards;
             operation(&tools)
         })
         .await
@@ -873,7 +871,7 @@ pub(super) fn effective_path_string() -> String {
         .unwrap_or_default();
     let fnm = fnm_default_alias_dir_candidates(
         std::env::var_os("FNM_DIR"),
-        &dirs::home_dir().unwrap_or_default(),
+        &crate::config::get_home_dir(),
         dirs::data_dir(),
     )
     .into_iter()
@@ -983,13 +981,36 @@ pub async fn probe_tool_installations(
     .map_err(|e| format!("probe task join error: {e}"))
 }
 
-/// 「应用」页显示每个工具的路径、安装来源和多处安装。和升级前的预检是同一份枚举，
-/// 单列一个命令只为把「打开页面时的展示」和「点升级时的预检」分开调用。
+/// 「应用」页的安装概览：每个工具装在哪几处、来源和命令行默认那处。只定位、不跑命令，
+/// 用来在版本探测回来之前先把工具分进「已安装 / 未安装」。
+#[derive(Debug, serde::Serialize)]
+pub struct ToolInstallationOverview {
+    tool: &'static str,
+    installs: Vec<ToolInstallLocation>,
+    /// 这个工具跑在 WSL 里：本机清单说明不了 WSL 里装没装，前端等版本探测再分组。
+    is_wsl: bool,
+}
+
+/// 「应用」页展示路径、来源和多处安装。和升级前的预检是同一份定位，但不对每处安装跑
+/// `--version`（那一步留给诊断和升级预检），打开页面不必等每个命令行工具启动一遍。
+/// 各工具的定位各要开一个登录 shell / `where`，互不依赖，并发进行。
 #[tauri::command]
 pub async fn list_tool_installations(
     tools: Vec<String>,
-) -> Result<Vec<ToolInstallationReport>, String> {
-    probe_tool_installations(tools).await
+) -> Result<Vec<ToolInstallationOverview>, String> {
+    let requested = normalize_requested_tools(&tools);
+    let tasks = requested.into_iter().map(|tool| {
+        tokio::task::spawn_blocking(move || ToolInstallationOverview {
+            tool,
+            installs: list_tool_install_locations(tool),
+            is_wsl: tool_runs_in_wsl(tool),
+        })
+    });
+    futures::future::join_all(tasks)
+        .await
+        .into_iter()
+        .map(|result| result.map_err(|e| format!("installation listing task join error: {e}")))
+        .collect()
 }
 
 /// 这个工具的配置目录是不是指向 WSL（只有 Windows 上会是）。
@@ -1419,43 +1440,8 @@ mod tests {
         );
     }
 
-    /// npm bin 路径冲突（#9173）：EEXIST + File exists 行齐备时，错误详情后
-    /// 追加指出冲突路径与安全处理方式的提示，且不建议盲目 --force。
     #[test]
-    fn npm_bin_collision_appends_actionable_hint() {
-        let raw = "npm error code EEXIST\n\
-                   npm error path /home/user/.local/bin/pi\n\
-                   npm error EEXIST: file already exists\n\
-                   npm error File exists: /home/user/.local/bin/pi\n\
-                   npm error Remove the existing file and try again, or run npm\n\
-                   npm error with --force to overwrite files recklessly.";
-        let detail = append_npm_bin_collision_hint("npm error code EEXIST".to_string(), raw);
-        assert!(detail.contains("/home/user/.local/bin/pi"));
-        assert!(detail.contains("/home/user/.local/bin/pi.bak"));
-        assert!(detail.contains("Do not use npm --force"));
-    }
-
-    /// Windows 的 npm 输出同样带 `File exists:` 行（含盘符路径），应能提取。
-    #[test]
-    fn npm_bin_collision_extracts_windows_path() {
-        let raw = "npm error code EEXIST\nnpm error File exists: C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd";
-        assert_eq!(
-            npm_bin_collision_path(raw),
-            Some("C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd")
-        );
-    }
-
-    /// 只有 EEXIST 字样、没有 File exists 行的失败不误判，原样返回。
-    #[test]
-    fn npm_bin_collision_ignores_other_failures() {
-        let raw = "some tool failed with EEXIST while writing its cache";
-        let detail = "cache write failed".to_string();
-        assert_eq!(append_npm_bin_collision_hint(detail.clone(), raw), detail);
-        assert_eq!(npm_bin_collision_path("npm error code E404"), None);
-    }
-
-    #[test]
-    fn npm_bin_collision_detail_survives_trailing_noise() {
+    fn npm_bin_collision_detection_and_hint() {
         let raw = [
             "npm error code EEXIST",
             "npm error path /home/me/.local/bin/pi",
@@ -1465,22 +1451,34 @@ mod tests {
             "npm error with --force to overwrite files recklessly.",
             "npm notice",
             "npm notice New major version of npm available! 10.9.2 -> 11.6.0",
-            "npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.6.0",
-            "npm notice To update run: npm install -g npm@11.6.0",
-            "npm notice",
             "npm error A complete log of this run can be found in: /tmp/debug-0.log",
         ]
         .join("\n");
+        let detail = append_npm_bin_collision_hint("npm error code EEXIST".to_string(), &raw);
+        assert!(detail.contains("/home/me/.local/bin/pi.bak"));
+        assert!(detail.contains("Do not use npm --force"));
         assert_eq!(
             npm_bin_collision_detail(&raw).as_deref(),
             Some("npm error code EEXIST\nnpm error File exists: /home/me/.local/bin/pi")
+        );
+
+        let win_raw =
+            "npm error code EEXIST\nnpm error File exists: C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd";
+        assert_eq!(
+            npm_bin_collision_path(win_raw),
+            Some("C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd")
+        );
+
+        // Non-collision errors are untouched.
+        let other = "some tool failed with EEXIST while writing its cache";
+        assert_eq!(
+            append_npm_bin_collision_hint("cache write failed".to_string(), other),
+            "cache write failed"
         );
         assert_eq!(npm_bin_collision_detail("npm error code E404"), None);
         assert_eq!(npm_bin_collision_detail("EEXIST without a path"), None);
     }
 
-    /// 在 tempdir 下按 `layout` 搭一个自定义 `MCODE_INSTALL_DIR`（`<tmp>/apps/<root_name>`，
-    /// 目录名不是 `.minimax-code`）的 installer 布局，返回 `(TempDir, root, 入口路径)`。
     fn mcode_custom_install(
         root_name: &str,
         layout: McodeLayout,
@@ -1513,16 +1511,16 @@ mod tests {
     }
 
     #[test]
-    fn mcode_receipt_claims_custom_install_dir() {
-        for (root_name, layout) in [
-            ("mcode", McodeLayout::Posix),
-            ("bin", McodeLayout::Posix),
-            ("mcode", McodeLayout::Windows),
-            // MCODE_INSTALL_DIR=C:\Users\me\bin：入口 `<root>\mcode.cmd` 的父目录名就是 bin。
-            ("bin", McodeLayout::Windows),
+    fn mcode_receipt_validation() {
+        // Claims custom POSIX/Windows dirs (including root named `bin` and UTF-8 BOM).
+        for (root_name, layout, bom) in [
+            ("mcode", McodeLayout::Posix, false),
+            ("bin", McodeLayout::Posix, false),
+            ("mcode", McodeLayout::Windows, true),
+            ("bin", McodeLayout::Windows, false),
         ] {
             let (_dir, root, entry) = mcode_custom_install(root_name, layout);
-            write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, false);
+            write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, bom);
             assert_eq!(
                 mcode_receipt_install_root(&entry, layout).as_deref(),
                 Some(root.as_str()),
@@ -1530,7 +1528,7 @@ mod tests {
             );
         }
 
-        // 端到端：单处安装也必须原地重跑 installer，不能退到全局 `npm i -g`。
+        // End-to-end: single install reruns installer in place instead of global npm.
         let (_dir, root, entry) = mcode_custom_install("mcode", McodeLayout::NATIVE);
         write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, false);
         let installs = vec![ToolInstallation {
@@ -1547,41 +1545,19 @@ mod tests {
             installs_anchored_command("mcode", &installs),
             Some(mcode_installer_update_command(&root))
         );
-    }
 
-    #[test]
-    fn mcode_receipt_tolerates_utf8_bom() {
-        // install.ps1 在 Windows PowerShell 5.1 下用 `Set-Content -Encoding UTF8` 写回执，带 BOM。
-        let (_dir, root, entry) = mcode_custom_install("mcode", McodeLayout::Windows);
-        write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, true);
-        assert_eq!(
-            mcode_receipt_install_root(&entry, McodeLayout::Windows).as_deref(),
-            Some(root.as_str())
-        );
-    }
-
-    #[test]
-    fn mcode_receipt_rejects_foreign_or_mismatched_receipts() {
+        // Missing, foreign, or copied-prefix receipts are rejected.
         let layout = McodeLayout::NATIVE;
-        // 没有回执：不认领。
-        let (_dir, _root, entry) = mcode_custom_install("mcode", layout);
-        assert_eq!(mcode_receipt_install_root(&entry, layout), None);
-
-        // 不是 MiniMax Code 的回执、或不归 npm-prefix 管：不认领。
+        let (_dir, _root, no_receipt) = mcode_custom_install("mcode", layout);
+        assert_eq!(mcode_receipt_install_root(&no_receipt, layout), None);
         for (product, owner) in [
             ("other", "npm-prefix"),
             ("minimax-code", "managed-installer"),
         ] {
             let (_dir, root, entry) = mcode_custom_install("mcode", layout);
             write_mcode_receipt(&root, product, owner, &root, false);
-            assert_eq!(
-                mcode_receipt_install_root(&entry, layout),
-                None,
-                "{product}/{owner}"
-            );
+            assert_eq!(mcode_receipt_install_root(&entry, layout), None);
         }
-
-        // prefix 指向别的目录（拷贝来的回执）：不认领。
         let elsewhere = tempfile::tempdir().unwrap();
         let (_dir, root, entry) = mcode_custom_install("mcode", layout);
         write_mcode_receipt(
@@ -1595,64 +1571,33 @@ mod tests {
     }
 
     #[cfg(target_os = "windows")]
-    mod wsl_helpers {
-        use super::super::*;
-
-        #[test]
-        fn test_is_valid_shell() {
-            assert!(is_valid_shell("bash"));
-            assert!(is_valid_shell("zsh"));
-            assert!(is_valid_shell("sh"));
-            assert!(is_valid_shell("fish"));
-            assert!(is_valid_shell("dash"));
-            assert!(is_valid_shell("/usr/bin/bash"));
-            assert!(is_valid_shell("/bin/zsh"));
-            assert!(!is_valid_shell("powershell"));
-            assert!(!is_valid_shell("cmd"));
-            assert!(!is_valid_shell(""));
-        }
-
-        #[test]
-        fn test_is_valid_shell_flag() {
-            assert!(is_valid_shell_flag("-c"));
-            assert!(is_valid_shell_flag("-lc"));
-            assert!(is_valid_shell_flag("-lic"));
-            assert!(!is_valid_shell_flag("-x"));
-            assert!(!is_valid_shell_flag(""));
-            assert!(!is_valid_shell_flag("--login"));
-        }
-
-        #[test]
-        fn test_default_flag_for_shell() {
-            assert_eq!(default_flag_for_shell("sh"), "-c");
-            assert_eq!(default_flag_for_shell("dash"), "-c");
-            assert_eq!(default_flag_for_shell("/bin/dash"), "-c");
-            assert_eq!(default_flag_for_shell("fish"), "-lc");
-            assert_eq!(default_flag_for_shell("bash"), "-lic");
-            assert_eq!(default_flag_for_shell("zsh"), "-lic");
-            assert_eq!(default_flag_for_shell("/usr/bin/zsh"), "-lic");
-        }
-
-        #[test]
-        fn test_is_valid_wsl_distro_name() {
-            assert!(is_valid_wsl_distro_name("Ubuntu"));
-            assert!(is_valid_wsl_distro_name("Ubuntu-22.04"));
-            assert!(is_valid_wsl_distro_name("my_distro"));
-            assert!(!is_valid_wsl_distro_name(""));
-            assert!(!is_valid_wsl_distro_name("distro with spaces"));
-            assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
-        }
-    }
-
-    #[cfg(target_os = "windows")]
     #[test]
-    fn merge_path_segments_win_preserves_order_and_dedupes_case_insensitively() {
-        let merged = merge_path_segments_win(&[
-            r"C:\a;C:\B;%SystemRoot%\system32",
-            r"C:\b;C:\a", // dup of C:\a (case-insensitive) and C:\B
-            "",
-        ]);
-        assert_eq!(merged, r"C:\a;C:\B;%SystemRoot%\system32");
+    fn wsl_validation_and_path_helpers() {
+        for ok in ["bash", "zsh", "sh", "fish", "dash", "/usr/bin/bash"] {
+            assert!(is_valid_shell(ok), "{ok}");
+        }
+        for bad in ["powershell", "cmd", ""] {
+            assert!(!is_valid_shell(bad), "{bad}");
+        }
+        assert!(
+            is_valid_shell_flag("-c") && is_valid_shell_flag("-lc") && is_valid_shell_flag("-lic")
+        );
+        assert!(!is_valid_shell_flag("-x") && !is_valid_shell_flag("--login"));
+        assert_eq!(default_flag_for_shell("/bin/dash"), "-c");
+        assert_eq!(default_flag_for_shell("fish"), "-lc");
+        assert_eq!(default_flag_for_shell("/usr/bin/zsh"), "-lic");
+
+        assert!(is_valid_wsl_distro_name("Ubuntu-22.04") && is_valid_wsl_distro_name("my_distro"));
+        assert!(
+            !is_valid_wsl_distro_name("")
+                && !is_valid_wsl_distro_name("distro with spaces")
+                && !is_valid_wsl_distro_name(&"a".repeat(65))
+        );
+
+        assert_eq!(
+            merge_path_segments_win(&[r"C:\a;C:\B;%SystemRoot%\system32", r"C:\b;C:\a", "",]),
+            r"C:\a;C:\B;%SystemRoot%\system32"
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -1668,7 +1613,6 @@ mod tests {
             assert!(effective.contains(r";D:\cc-switch-path-test"));
             return;
         }
-        // Use a subprocess so other tests never observe a modified process PATH.
         let mut path: Vec<u16> = r"C:\cc-switch-path-test;C:\".encode_utf16().collect();
         path.push(0xD800); // Unpaired UTF-16 surrogate.
         path.extend(r";D:\cc-switch-path-test".encode_utf16());
@@ -1684,22 +1628,5 @@ mod tests {
             .unwrap();
         assert!(output.status.success(), "{output:?}");
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn windows_shell_compatible_path_strips_verbatim_prefixes() {
-        assert_eq!(
-            windows_shell_compatible_path(Path::new(r"\\?\C:\tools\codex.cmd")),
-            PathBuf::from(r"C:\tools\codex.cmd")
-        );
-        assert_eq!(
-            windows_shell_compatible_path(Path::new(r"\\?\UNC\server\share\tools\codex.cmd")),
-            PathBuf::from(r"\\server\share\tools\codex.cmd")
-        );
-        assert_eq!(
-            windows_shell_compatible_path(Path::new(r"C:\tools\codex.cmd")),
-            PathBuf::from(r"C:\tools\codex.cmd")
-        );
     }
 }

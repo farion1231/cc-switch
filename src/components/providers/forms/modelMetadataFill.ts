@@ -8,6 +8,7 @@ import {
   workbuddyThinkingFields,
   type WorkBuddyModel,
 } from "@/config/workbuddyProviderPresets";
+import type { CodebuddyModelConfig } from "@/config/codebuddyProviderPresets";
 import type { KimiProviderConfig } from "@/config/kimiProviderPresets";
 import {
   PI_THINKING_LEVELS,
@@ -195,6 +196,26 @@ export function fillKimiModel(
   return next;
 }
 
+/**
+ * CodeBuddy models.json 的一条模型：上下文窗口当作最大输入，空着的 token 上限才补；
+ * 图片输入和推理只往「支持」方向补。
+ */
+export function fillCodebuddyModel(
+  model: CodebuddyModelConfig,
+  metadata: KnownModelMetadata,
+): CodebuddyModelConfig {
+  const next = { ...model };
+  if (isBlank(model.maxInputTokens) && metadata.contextWindow) {
+    next.maxInputTokens = metadata.contextWindow;
+  }
+  if (isBlank(model.maxOutputTokens) && metadata.maxOutputTokens) {
+    next.maxOutputTokens = metadata.maxOutputTokens;
+  }
+  if (metadata.inputModalities?.includes("image")) next.supportsImages = true;
+  if (metadata.reasoning === true) next.supportsReasoning = true;
+  return next;
+}
+
 const PI_EFFORT_LEVELS = PI_THINKING_LEVELS.filter((level) => level !== "off");
 
 /**
@@ -279,12 +300,14 @@ function piCompletionsThinking({
 
 /**
  * Pi 会不会把档位原样作为 `reasoning_effort` 发给上游。Pi 官方只在这种协议下用
- * effort 档位生成映射（`supportsDirectReasoningEffort`）：Responses 总是；Chat
- * Completions 看 `piCompletionsThinking`。Anthropic 等协议还需要额外的 compat，
+ * effort 档位生成映射（`supportsDirectReasoningEffort`）：Responses 和 Mistral
+ * 总是；Chat Completions 看 `piCompletionsThinking`。Anthropic 等协议还需要额外的 compat，
  * 不生成。
  */
 export function piSendsReasoningEffort(protocol: PiProviderProtocol): boolean {
   if (protocol.api === "openai-responses") return true;
+  // Pi 的 Mistral 协议把映射值原样作为 reasoning_effort 发出
+  if (protocol.api === "mistral-conversations") return true;
   if (protocol.api !== "openai-completions") return false;
   const { format, effort } = piCompletionsThinking(protocol);
   return format === "openai" && effort;

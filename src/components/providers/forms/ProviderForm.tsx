@@ -78,12 +78,16 @@ import {
 } from "@/utils/providerConfigUtils";
 import { mergeProviderMeta } from "@/utils/providerMetaUtils";
 import {
+  BillingMultiplierField,
+  isValidBillingMultiplier,
+} from "./BillingMultiplierField";
+import {
   codexApiFormatFromWireApi,
   extractCodexWireApi,
   setCodexWireApi,
   extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -116,6 +120,7 @@ import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
+import { CodebuddyProviderForm } from "./CodebuddyProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
@@ -367,6 +372,7 @@ export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "mcode" || props.appId === "dsh")
     return <McodeProviderForm {...props} />;
   if (props.appId === "workbuddy") return <WorkBuddyProviderForm {...props} />;
+  if (props.appId === "codebuddy") return <CodebuddyProviderForm {...props} />;
   if (appHas(props.appId, "piFamily")) {
     return <PiProviderForm {...props} />;
   }
@@ -497,6 +503,7 @@ function ProviderFormFull({
     );
     setPromptCacheRouting(initialData?.meta?.promptCacheRouting ?? "auto");
     setCustomUserAgent(initialData?.meta?.customUserAgent ?? "");
+    setBillingMultiplier(initialData?.meta?.billingMultiplier ?? "");
     setLocalProxyHeadersOverride(
       formatRequestOverrideObject(
         initialData?.meta?.localProxyRequestOverrides?.headers,
@@ -754,6 +761,12 @@ function ProviderFormFull({
   const [customUserAgent, setCustomUserAgent] = useState<string>(
     () => initialData?.meta?.customUserAgent ?? "",
   );
+  const [billingMultiplier, setBillingMultiplier] = useState(
+    initialData?.meta?.billingMultiplier ?? "",
+  );
+  // 只有走本地路由的应用记得到按供应商的花费；官方卡的花费跟单价无关，不显示。
+  const supportsBillingMultiplier =
+    appHas(appId, "localProxy") && category !== "official";
   const [localProxyHeadersOverride, setLocalProxyHeadersOverride] =
     useState<string>(() =>
       formatRequestOverrideObject(
@@ -1377,6 +1390,18 @@ function ProviderFormFull({
     (appId === "claude" || appId === "codex") && category !== "official";
 
   const handleSubmit = async (values: ProviderFormData) => {
+    if (
+      supportsBillingMultiplier &&
+      !isValidBillingMultiplier(billingMultiplier)
+    ) {
+      toast.error(
+        t("providerForm.billingMultiplierInvalid", {
+          defaultValue:
+            "Enter a decimal from 0 to 1000, or leave blank for 1×.",
+        }),
+      );
+      return;
+    }
     const overridesResult = shouldApplyLocalProxyRequestOverrides
       ? buildLocalProxyRequestOverrides(
           localProxyHeadersOverride,
@@ -2196,6 +2221,11 @@ function ProviderFormFull({
       delete nextMeta.githubAccountId;
     }
 
+    if (supportsBillingMultiplier) {
+      if (billingMultiplier.trim())
+        nextMeta.billingMultiplier = billingMultiplier.trim();
+      else delete nextMeta.billingMultiplier;
+    }
     payload.meta = nextMeta;
 
     await onSubmit(payload);
@@ -2824,6 +2854,10 @@ function ProviderFormFull({
               onFullUrlChange={setLocalIsFullUrl}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              billingMultiplier={billingMultiplier}
+              onBillingMultiplierChange={
+                supportsBillingMultiplier ? setBillingMultiplier : undefined
+              }
               localProxyHeadersOverride={localProxyHeadersOverride}
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
@@ -2934,6 +2968,10 @@ function ProviderFormFull({
               speedTestEndpoints={speedTestEndpoints}
               customUserAgent={customUserAgent}
               onCustomUserAgentChange={setCustomUserAgent}
+              billingMultiplier={billingMultiplier}
+              onBillingMultiplierChange={
+                supportsBillingMultiplier ? setBillingMultiplier : undefined
+              }
               localProxyHeadersOverride={localProxyHeadersOverride}
               onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
               localProxyBodyOverride={localProxyBodyOverride}
@@ -2970,6 +3008,15 @@ function ProviderFormFull({
               model={geminiModel}
               onModelChange={handleGeminiModelChange}
               speedTestEndpoints={speedTestEndpoints}
+            />
+          )}
+
+          {/* Gemini 表单没有高级区，倍率单独放在模型下面 */}
+          {appId === "gemini" && supportsBillingMultiplier && (
+            <BillingMultiplierField
+              id="gemini-billing-multiplier"
+              value={billingMultiplier}
+              onChange={setBillingMultiplier}
             />
           )}
 

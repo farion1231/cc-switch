@@ -18,7 +18,8 @@ afterEach(async () => {
 describe("Turkish language detection", () => {
   it.each(["tr", "tr-TR"])("detects %s on first launch", async (language) => {
     vi.stubGlobal("navigator", { language });
-    const { default: i18n } = await import("@/i18n");
+    const { default: i18n, i18nReady } = await import("@/i18n");
+    await i18nReady;
     loadedI18n = i18n;
     expect(i18n.language).toBe("tr");
     expect(i18n.t("common.save")).toBe("Kaydet");
@@ -27,7 +28,8 @@ describe("Turkish language detection", () => {
     "uses English for unsupported system language %s",
     async (language) => {
       vi.stubGlobal("navigator", { language });
-      const { default: i18n } = await import("@/i18n");
+      const { default: i18n, i18nReady } = await import("@/i18n");
+      await i18nReady;
       loadedI18n = i18n;
       expect(i18n.language).toBe("en");
     },
@@ -35,7 +37,8 @@ describe("Turkish language detection", () => {
   it("keeps a saved language instead of overriding it with the system language", async () => {
     localStorage.setItem("language", "en");
     vi.stubGlobal("navigator", { language: "tr-TR" });
-    const { default: i18n } = await import("@/i18n");
+    const { default: i18n, i18nReady } = await import("@/i18n");
+    await i18nReady;
     loadedI18n = i18n;
     expect(i18n.language).toBe("en");
   });

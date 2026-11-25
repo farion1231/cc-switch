@@ -1,7 +1,7 @@
 //! Exact counters exported by agy; absent models remain unknown (never use today's provider).
 //! Amounts are the matching Gemini API prices, like every other session-log import.
 use super::{
-    session_usage::{cost_columns, load_sync_cursors, metadata_modified_nanos, SessionSyncResult},
+    session_usage::{cost_columns, metadata_modified_nanos, SessionSyncResult},
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
 };
 use crate::proxy::usage::calculator::ModelPricing;
@@ -9,7 +9,7 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::{
     database::{lock_conn, Database},
     error::AppError,
-    session_manager::providers::agy,
+    session_manager::providers::agy::{self, model_from_settings_change},
 };
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -28,19 +28,39 @@ struct AgySyncCursorUpdate<'a> {
     native_state: &'a str,
 }
 
-pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_agy_usage_from_files(db, agy::transcript_files())
+#[cfg(test)]
+pub(crate) fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_with_cursors(db, &crate::services::session_usage::load_sync_cursors(db)?)
 }
 
+pub(crate) fn sync_agy_usage_with_cursors(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files_with_cursors(db, agy::transcript_files(), cursors)
+}
+
+#[cfg(test)]
 fn sync_agy_usage_from_files(
     db: &Database,
     files: Vec<(String, PathBuf)>,
+) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files_with_cursors(
+        db,
+        files,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_agy_usage_from_files_with_cursors(
+    db: &Database,
+    files: Vec<(String, PathBuf)>,
+    cursors: &crate::services::session_usage::SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     if files.is_empty() {
         return Ok(result);
     }
-    let cursors = load_sync_cursors(db)?;
     for (session_id, path) in files {
         result.files_scanned += 1;
         let cursor_key = format!("agy:{}", path.to_string_lossy());
@@ -56,8 +76,9 @@ fn sync_agy_usage_from_files(
         };
         let modified = metadata_modified_nanos(&metadata);
         let size = metadata.len() as i64;
-        // Invalidate pre-Orchestrator cursors once, including unchanged, already timed history.
-        let native_state = format!("v2:{}", native_models::native_state_fingerprint(&path));
+        // Invalidate pre-Orchestrator / pre-worker-alias / pre-Neon-Orchestrator cursors once,
+        // including unchanged, already timed history.
+        let native_state = format!("v4:{}", native_models::native_state_fingerprint(&path));
         if cursor.is_some_and(|c| {
             c.last_modified == modified
                 && c.last_byte_offset == Some(size)
@@ -93,27 +114,6 @@ fn sync_agy_usage_from_files(
     Ok(result)
 }
 
-/// agy 把模型切换写进会话正文：`changed setting \`Model Selection\` from X to Y`。
-/// 逐条响应本身没有模型字段，按 step 顺序继承最近一次切换即可还原当时的模型。
-fn model_from_settings_change(content: &str) -> Option<String> {
-    let start = content.find("Model Selection")?;
-    let rest = &content[start..];
-    let to = rest.find(" to ")? + 4;
-    let tail = &rest[to..];
-    // 模型名里本身有点（Gemini 3.8），只把「句号 + 空格」当成句子结束。
-    let end = tail
-        .find(". ")
-        .or_else(|| tail.find('\n'))
-        .or_else(|| tail.find('`'))
-        .unwrap_or(tail.len());
-    let model = tail[..end].trim().trim_matches('.').trim();
-    if model.is_empty() || model.eq_ignore_ascii_case("none") {
-        None
-    } else {
-        Some(model.to_string())
-    }
-}
-
 /// agy 记下的是显示名（`Gemini 3.8 Flash (High)`）；换成 `agy models` 第一列那样的 ID
 /// （`gemini-3.8-flash-high`）才能对上定价表，查价时档位后缀会被剥掉。已经是 ID 的原样返回。
 fn model_id_of(display: &str) -> String {
@@ -132,15 +132,36 @@ fn model_id_of(display: &str) -> String {
 /// Multi-model modes, not evidence of the model used for an individual response.
 /// Display name and native alias of the same mode map to the same planner.
 fn orchestrator_mode(model: &str) -> Option<&'static str> {
-    match model_id_of(model).as_str() {
+    match model_id_of(model.trim()).to_ascii_lowercase().as_str() {
         "orchestrator-carbon" | "gemini-pro-orchestrator" => Some("carbon"),
-        "orchestrator-argon" | "gemini-pro-orchestrator-argon" => Some("argon"),
+        "orchestrator-argon"
+        | "gemini-pro-orchestrator-argon"
+        | "gemini-pro-orchestrator-g1-pro" => Some("argon"),
+        "orchestrator-neon" | "gemini-pro-orchestrator-neon" => Some("neon"),
         _ => None,
     }
 }
 
 fn is_orchestrator(model: &str) -> bool {
     orchestrator_mode(model).is_some()
+}
+
+/// Per-step alias exported by Antigravity (`agy` CLI and Desktop 2.33+) on Orchestrator worker
+/// generations (`MODEL_PLACEHOLDER_M669`). Unlike `orchestrator_mode`, this already identifies the
+/// Hydrogen worker role even without `conversations/<id>.db`, while still preferring native
+/// field-21 display/tier metadata when present.
+fn is_orchestrator_worker(model: &str) -> bool {
+    model_id_of(model.trim()).eq_ignore_ascii_case("gemini-flash-worker-agy")
+}
+
+/// Mode names, role aliases, and generic labels that do not name a concrete worker model/tier.
+fn is_unresolved_worker_target(model: &str) -> bool {
+    let id = model_id_of(model.trim());
+    id.is_empty()
+        || id.eq_ignore_ascii_case("unknown")
+        || is_orchestrator(&id)
+        || is_orchestrator_worker(&id)
+        || id == "gemini-flash"
 }
 
 /// 五个金额（输入、输出、缓存读、缓存写、合计）；查不到价格的记 0。
@@ -219,7 +240,9 @@ fn import_records_with_cursor(
                 let selected =
                     known_model(row).or_else(|| model_by_step.get(&step).map(String::as_str));
                 // Pruned steps can never be updated again, so their model is moot.
-                let needs_model = selected.is_none_or(is_orchestrator) && !pruned.contains(&step);
+                let needs_model = selected
+                    .is_none_or(|m| is_orchestrator(m) || is_orchestrator_worker(m))
+                    && !pruned.contains(&step);
                 (needs_model || !settled.contains(&step)).then_some(step)
             })
             .collect();
@@ -278,14 +301,29 @@ fn import_records_with_cursor(
             .or_else(|| model_by_step.get(&step).cloned())
             .or_else(|| native_model_by_step.get(&step).cloned())
             .unwrap_or_else(|| "unknown".to_string());
+        let native_worker_model = native_model_by_step
+            .get(&step)
+            .map(String::as_str)
+            .filter(|model| !is_unresolved_worker_target(model));
+        let worker_without_native =
+            is_orchestrator_worker(&display) && native_worker_model.is_none();
         let actual = if is_orchestrator(&display) {
-            native_model_by_step.get(&step).unwrap_or(&display)
+            native_model_by_step
+                .get(&step)
+                .map(String::as_str)
+                .unwrap_or(&display)
+        } else if is_orchestrator_worker(&display) {
+            native_worker_model.unwrap_or("gemini-4-hydrogen")
         } else {
             &display
         };
         let model = model_id_of(actual);
         // 原生库暂时不可读时，保留已恢复的模型；Token 仍按最新日志更新。
-        let (model, display) = if (model == "unknown" || is_orchestrator(&model)) && fresh == 0 {
+        let (model, display) = if (model == "unknown"
+            || is_orchestrator(&model)
+            || worker_without_native)
+            && fresh == 0
+        {
             let previous = tx
                 .prepare_cached(
                     "SELECT model, COALESCE(request_model, model) FROM proxy_request_logs
@@ -295,13 +333,27 @@ fn import_records_with_cursor(
                     Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
                 })
                 .optional()?;
-            previous
-                .filter(|(old_model, old_display)| {
-                    model == "unknown"
-                        || (!is_orchestrator(old_model)
-                            && orchestrator_mode(old_display) == orchestrator_mode(&display))
-                })
-                .unwrap_or((model, display))
+            match previous {
+                Some((old_model, old_display)) if model == "unknown" => (old_model, old_display),
+                Some((old_model, old_display))
+                    if worker_without_native
+                        && ((is_orchestrator_worker(&old_display)
+                            && !is_unresolved_worker_target(&old_model))
+                            || (is_orchestrator(&old_display)
+                                && old_model.starts_with("gemini-4-hydrogen"))) =>
+                {
+                    (old_model, display)
+                }
+                Some((old_model, old_display))
+                    if !worker_without_native
+                        && !is_orchestrator(&old_model)
+                        && !is_orchestrator_worker(&old_model)
+                        && orchestrator_mode(&old_display) == orchestrator_mode(&display) =>
+                {
+                    (old_model, old_display)
+                }
+                _ => (model, display),
+            }
         } else {
             (model, display)
         };
@@ -467,7 +519,10 @@ mod tests {
                 "SELECT model,total_cost_usd FROM proxy_request_logs WHERE request_id='agy:subagent:3'", [],
                 |r| Ok((r.get(0)?,r.get(1)?)),
             ).unwrap();
-            assert_eq!(flash, ("gemini-3.8-flash-tiered".into(), "0".into()));
+            assert_eq!(
+                flash,
+                ("gemini-3.8-flash-tiered".into(), "0.00009375".into())
+            );
         }
         // A missing native table must not erase recovered names or block newer counters.
         native.execute_batch("DROP TABLE gen_metadata").unwrap();
@@ -593,6 +648,122 @@ mod tests {
                 .unwrap();
             assert_eq!((&*got.0, &*got.1), ("gemini-4-argon-medium", request_model));
             assert!(got.2.parse::<f64>().unwrap() > 0.0);
+        }
+    }
+
+    #[test]
+    fn native_flash_tiered_subagent_generations_are_priced_without_losing_provenance() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/browser-subagent/.system_generated/logs/transcript_full.jsonl");
+        let _native = native_models::write_test_database(
+            &dir.path().join("conversations/browser-subagent.db"),
+            &[
+                (1, 0, "gemini-3.8-flash-tiered"),
+                (3, 1, "gemini-3.7-flash-tiered"),
+                (5, 2, "gemini-3.1-flash-tiered"),
+            ],
+        );
+        let db = Database::memory().unwrap();
+        let rows = vec![
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+            json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+            json!({"step_index":5,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+        ];
+        assert_eq!(
+            import_records(&db, "browser-subagent", &rows, Some(&source)).unwrap(),
+            (3, 0)
+        );
+        assert_eq!(
+            import_records(&db, "browser-subagent", &rows, Some(&source)).unwrap(),
+            (0, 3)
+        );
+        let conn = db.conn.lock().unwrap();
+        for (id, expected_model, expected_cost) in [
+            ("agy:browser-subagent:1", "gemini-3.8-flash-tiered", "1.2"),
+            ("agy:browser-subagent:3", "gemini-3.7-flash-tiered", "1.2"),
+            ("agy:browser-subagent:5", "gemini-3.1-flash-tiered", "0"),
+        ] {
+            let (model, request_model, cost): (String, String, String) = conn
+                .query_row(
+                    "SELECT model,request_model,total_cost_usd FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            assert_eq!(model, expected_model);
+            assert_eq!(request_model, expected_model);
+            assert_eq!(
+                cost.parse::<rust_decimal::Decimal>().unwrap(),
+                expected_cost.parse::<rust_decimal::Decimal>().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn hydrogen_tiered_native_and_explicit_models_are_priced() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/tiered/.system_generated/logs/transcript_full.jsonl");
+        let native = native_models::write_test_database(
+            &dir.path().join("conversations/tiered.db"),
+            &[(1, 0, "gemini-4-hydrogen")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-4-hydrogen",
+            &native_models::test_model_id("gemini-4-hydrogen-tiered-high"),
+        );
+        let db = Database::memory().unwrap();
+        let rows = vec![
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+            json!({"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","model":"gemini-4-hydrogen-tiered-high","input_tokens":1_000_000,"output_tokens":100_000,"cache_read_tokens":1_000_000}),
+        ];
+        assert_eq!(
+            import_records(&db, "tiered", &rows, Some(&source)).unwrap(),
+            (2, 0)
+        );
+        assert_eq!(
+            import_records(&db, "tiered", &rows, Some(&source)).unwrap(),
+            (0, 2)
+        );
+        let conn = db.conn.lock().unwrap();
+        for id in ["agy:tiered:1", "agy:tiered:2"] {
+            let row: (String, String, String, i64, i64, i64) = conn
+                .query_row(
+                    "SELECT model, request_model, total_cost_usd, input_tokens, output_tokens,
+                        cache_read_tokens FROM proxy_request_logs WHERE request_id=?1",
+                    [id],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                        ))
+                    },
+                )
+                .unwrap();
+            assert_eq!(row.0, "gemini-4-hydrogen-tiered-high");
+            assert_eq!(row.1, "gemini-4-hydrogen-tiered-high");
+            assert_eq!(
+                row.2.parse::<rust_decimal::Decimal>().unwrap(),
+                "2.325".parse::<rust_decimal::Decimal>().unwrap()
+            );
+            assert_eq!((row.3, row.4, row.5), (1_000_000, 100_000, 1_000_000));
         }
     }
 
@@ -752,6 +923,10 @@ mod tests {
             "gemini-3.8-flash-high"
         );
         assert_eq!(model_id_of("Gemini 4 Argon (Low)"), "gemini-4-argon-low");
+        assert_eq!(
+            model_id_of("Claude Opus 4.6 (Thinking)"),
+            "claude-opus-4.6-thinking"
+        );
         assert_eq!(model_id_of("gemini-3.8-flash"), "gemini-3.8-flash");
         assert_eq!(model_id_of("unknown"), "unknown");
 
@@ -761,8 +936,9 @@ mod tests {
             json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":1_000_000,"output_tokens":0}),
             json!({"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","model":"Gemini 3.1 Pro (High)","input_tokens":1_000_000}),
             json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE","model":"Mystery Model","input_tokens":5}),
+            json!({"step_index":4,"type":"PLANNER_RESPONSE","status":"DONE","model":"Claude Opus 4.6 (Thinking)","input_tokens":1_000_000}),
         ];
-        assert_eq!(import_records(&db, "priced", &rows, None).unwrap(), (3, 0));
+        assert_eq!(import_records(&db, "priced", &rows, None).unwrap(), (4, 0));
         let conn = db.conn.lock().unwrap();
         let price = |model: &str| -> (String, String) {
             conn.query_row(
@@ -777,6 +953,10 @@ mod tests {
         assert!(flash.parse::<f64>().unwrap() > 0.0, "{flash}");
         let (_, pro) = price("gemini-3.1-pro-high");
         assert!(pro.parse::<f64>().unwrap() > 0.0, "{pro}");
+        // Claude Opus 4.6 input is $5 / 1M, the same as the base Opus 4.6 row.
+        let (display, opus) = price("claude-opus-4.6-thinking");
+        assert_eq!(display, "Claude Opus 4.6 (Thinking)");
+        assert_eq!(opus.parse::<f64>().unwrap(), 5.0, "{opus}");
         assert_eq!(price("mystery-model").1, "0");
     }
 
@@ -812,7 +992,7 @@ mod tests {
         .unwrap();
 
         let db = Database::memory().unwrap();
-        let roots = [(brain.clone(), None)];
+        let roots = [brain.clone()];
 
         // 1. Initial sync imports step 1 and records a cursor in session_log_sync.
         let r1 = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
@@ -862,5 +1042,143 @@ mod tests {
         .unwrap();
         let r5 = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
         assert_eq!((r5.files_scanned, r5.imported, r5.skipped), (1, 1, 1));
+    }
+
+    #[test]
+    fn sync_agy_usage_imports_subagent_transcripts_excluded_from_session_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("brain");
+        for (id, lines) in [
+            (
+                "main-1",
+                concat!(
+                    "{\"step_index\":0,\"type\":\"USER_INPUT\",\"content\":\"<USER_REQUEST>\\nhello\\n</USER_REQUEST>\"}\n",
+                    "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":40,\"output_tokens\":10}\n",
+                ),
+            ),
+            (
+                "subagent-1",
+                concat!(
+                    "{\"step_index\":0,\"type\":\"SYSTEM_MESSAGE\",\"content\":\"subagent task\"}\n",
+                    "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":120,\"output_tokens\":30}\n",
+                ),
+            ),
+        ] {
+            let logs = root.join(id).join(".system_generated/logs");
+            std::fs::create_dir_all(&logs).unwrap();
+            std::fs::write(logs.join("transcript_full.jsonl"), lines).unwrap();
+        }
+        let db = Database::memory().unwrap();
+        let files = agy::transcript_files_in_roots(&[root]);
+        let res = sync_agy_usage_from_files(&db, files).unwrap();
+        assert_eq!(res.files_scanned, 2);
+        assert_eq!(res.imported, 2);
+        assert!(res.errors.is_empty());
+        let conn = db.conn.lock().unwrap();
+        let total_input: i64 = conn
+            .query_row(
+                "SELECT SUM(input_tokens) FROM proxy_request_logs WHERE app_type='agy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total_input, 160);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn sync_agy_usage_imports_t3_code_acp_sessions_with_native_timing_and_dedup() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = crate::test_support::TestHome::new();
+        let acp_root = home
+            .path()
+            .join(".t3/userdata/providers/antigravity/inst-hash-1/antigravity-acp");
+        let logs = acp_root.join("brain/acp-sess-1/.system_generated/logs");
+        let convs = acp_root.join("conversations");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::create_dir_all(&convs).unwrap();
+
+        let transcript = logs.join("transcript_full.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                "{\"step_index\":0,\"type\":\"USER_INPUT\",\"created_at\":\"2026-11-21T10:00:00Z\",\"content\":\"<USER_REQUEST>\\n<t3_code_instructions>\\nrules\\n</t3_code_instructions>\\n\\n<user_request>\\ncheck usage\\n</user_request>\\n</USER_REQUEST>\"}\n",
+                "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"created_at\":\"2026-11-21T10:00:05Z\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":500,\"output_tokens\":80,\"cache_read_tokens\":100}\n",
+            ),
+        )
+        .unwrap();
+        let native = native_models::write_test_database(
+            &convs.join("acp-sess-1.db"),
+            &[(1, 0, "gemini-4-neon")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-4-neon",
+            &native_models::test_timing(900, 1500),
+        );
+        drop(native);
+
+        let db = Database::memory().unwrap();
+        let first = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (first.files_scanned, first.imported, first.skipped),
+            (1, 1, 0)
+        );
+        assert!(first.errors.is_empty());
+
+        // Second sync skips unchanged transcript + native DB via cursor.
+        let second = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (second.files_scanned, second.imported, second.skipped),
+            (1, 0, 0)
+        );
+
+        // Even if sync cursors are cleared, session_usage_dedup prevents duplicate billing.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM session_log_sync", [])
+            .unwrap();
+        let third = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (third.files_scanned, third.imported, third.skipped),
+            (1, 0, 1)
+        );
+
+        let conn = db.conn.lock().unwrap();
+        let row: (String, i64, i64, i64, i64, Option<i64>, i64) = conn
+            .query_row(
+                "SELECT model, input_tokens, output_tokens, cache_read_tokens, latency_ms, first_token_ms,
+                    (SELECT COUNT(*) FROM proxy_request_logs WHERE app_type='agy')
+                 FROM proxy_request_logs WHERE request_id='agy:acp-sess-1:1'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "gemini-4-neon-xhigh".into(),
+                500,
+                80,
+                100,
+                2400,
+                Some(900),
+                1
+            )
+        );
     }
 }

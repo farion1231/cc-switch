@@ -42,6 +42,7 @@ pub mod transform_codex_chat;
 pub mod transform_codex_chat_moonshot_schema;
 pub mod transform_codex_responses_kimi_history;
 pub mod transform_codex_responses_namespace;
+pub mod transform_codex_responses_reorder;
 pub mod transform_codex_responses_xai_sanitize;
 pub mod transform_gemini;
 pub mod transform_responses;
@@ -135,7 +136,8 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => return None,
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => return None,
     })
 }
 

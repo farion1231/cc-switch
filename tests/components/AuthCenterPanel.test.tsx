@@ -1,6 +1,20 @@
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import type { Settings } from "@/types";
+import { APP_IDS } from "@/config/appSpecs";
+
+const mocks = vi.hoisted(() => ({
+  settings: undefined as Partial<Settings> | undefined,
+  canSwitchAgy: true,
+}));
+
+vi.mock("@/lib/query", () => ({
+  useSettingsQuery: () => ({ data: mocks.settings }),
+}));
+vi.mock("@/lib/authBinding", () => ({
+  canSwitchAgyAccount: () => mocks.canSwitchAgy,
+}));
 
 vi.mock("@/components/providers/forms/ClaudeOfficialSection", () => ({
   ClaudeOfficialSection: () => <div data-testid="claude" />,
@@ -22,6 +36,9 @@ vi.mock("@/components/providers/KimiAccountLogin", () => ({
 }));
 vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
   WorkBuddyAccountSection: () => <div data-testid="workbuddy" />,
+}));
+vi.mock("@/components/providers/forms/CodebuddyAccountSection", () => ({
+  CodebuddyAccountSection: () => <div data-testid="codebuddy" />,
 }));
 vi.mock("@/components/providers/DshAccount", () => ({
   DshAccountLogin: () => <div data-testid="dsh" />,
@@ -136,5 +153,85 @@ describe("AuthCenterPanel scroll target", () => {
     expect(container.style.overflowAnchor).toBe("none");
     unmount();
     expect(container.style.overflowAnchor).toBe("");
+  });
+});
+
+const cardOrder = () =>
+  screen
+    .getAllByTestId(/^(claude|copilot|codex|xai|kimi|dsh|agy|workbuddy)$/)
+    .map((card) => card.dataset.testid);
+
+describe("AuthCenterPanel card order and visibility", () => {
+  afterEach(() => {
+    mocks.settings = undefined;
+    mocks.canSwitchAgy = true;
+  });
+
+  it("keeps the default order before the sidebar is customized", () => {
+    render(<AuthCenterPanel />);
+    expect(cardOrder()).toEqual([
+      "claude",
+      "copilot",
+      "codex",
+      "xai",
+      "kimi",
+      "dsh",
+      "agy",
+      "workbuddy",
+    ]);
+  });
+
+  it("follows the order dragged in the Apps page", () => {
+    // 侧栏里 Antigravity、WorkBuddy 拖到最前，Claude Code 拖到最后
+    const moved = new Set(["agy", "workbuddy", "claude"]);
+    mocks.settings = {
+      appOrder: [
+        "agy",
+        "workbuddy",
+        ...APP_IDS.filter((app) => !moved.has(app)),
+        "claude",
+      ],
+    };
+    render(<AuthCenterPanel />);
+    // Copilot、ChatGPT、xAI 跟着 Claude Desktop 走；Claude 官方只看 Claude Code
+    expect(cardOrder()).toEqual([
+      "agy",
+      "workbuddy",
+      "copilot",
+      "codex",
+      "xai",
+      "kimi",
+      "dsh",
+      "claude",
+    ]);
+  });
+
+  it("hides a card only when every app using that account is hidden", () => {
+    mocks.settings = {
+      visibleApps: {
+        claude: false,
+        "claude-desktop": false,
+        codex: false,
+        kimi: false,
+      } as Settings["visibleApps"],
+    };
+    render(<AuthCenterPanel />);
+    // Copilot CLI 还显示着：Copilot 卡留下，排到 Copilot CLI 的位置；
+    // ChatGPT、xAI、Claude 官方、Kimi 的应用全藏了
+    expect(cardOrder()).toEqual(["dsh", "agy", "copilot", "workbuddy"]);
+  });
+
+  it("always shows the card a provider form jumps to", () => {
+    mocks.settings = {
+      visibleApps: { kimi: false } as Settings["visibleApps"],
+    };
+    render(<AuthCenterPanel authScrollTarget="kimi_oauth" />);
+    expect(cardOrder()).toContain("kimi");
+  });
+
+  it("omits Antigravity where account switching is unsupported", () => {
+    mocks.canSwitchAgy = false;
+    render(<AuthCenterPanel />);
+    expect(cardOrder()).not.toContain("agy");
   });
 });

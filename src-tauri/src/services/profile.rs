@@ -206,7 +206,10 @@ impl ProfileService {
         scope: ProfileScope,
     ) -> Result<ProfilePayload, AppError> {
         let mut payload = ProfilePayload::default();
-        let mcp_servers = state.db.get_all_mcp_servers()?;
+        let mcp_servers = state
+            .db
+            .get_mcp_server_rows()?
+            .into_readable("抓取配置快照");
         let skills = state.db.get_all_installed_skills()?;
 
         for app in scope.apps().iter() {
@@ -377,8 +380,7 @@ impl ProfileService {
 
             // 1. 供应商
             if let Some(Some(target_pid)) = payload.providers.get(app) {
-                let providers = state.db.get_all_providers(app)?;
-                if !providers.contains_key(target_pid) {
+                if !state.db.provider_exists(target_pid, app)? {
                     warnings.push(format!(
                         "[{app_str}] provider '{target_pid}' no longer exists, skipped"
                     ));
@@ -401,7 +403,7 @@ impl ProfileService {
 
             // 2. MCP diff（最小 toggle：仅动目标态≠当前态的条目；None = 该侧未拍过，不动）
             if let Some(Some(target_ids)) = payload.mcp.get(app) {
-                let servers = state.db.get_all_mcp_servers()?;
+                let servers = state.db.get_mcp_server_rows()?.into_readable("切换配置");
                 let current: Vec<(String, bool)> = servers
                     .values()
                     .map(|s| (s.id.clone(), s.apps.is_enabled_for(app)))

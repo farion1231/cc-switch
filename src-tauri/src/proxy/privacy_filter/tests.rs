@@ -25,9 +25,70 @@ fn assert_no_hit(text: &str, label: &str) {
     );
 }
 
-// --- 结构化 PII ---
+// --- 分组测试入口（共享 global() 的只读用例）---
+// cargo nextest 按 #[test] 分进程运行，每个进程首次访问 global() 都会重新解析 gitleaks.toml
+// 并编译 222 条正则与 Aho-Corasick 自动机。将只读的 global() 用例按主题合并为 4 组，
+// 保持每个子用例独立函数名与 100% 断言不变，仅消除 ~40 次重复冷初始化。
 
 #[test]
+fn pii_and_secrets_detection_rules() {
+    pii_basic();
+    ssh_targets_are_not_emails();
+    local_addresses_are_not_ips();
+    bank_card_needs_bin_or_context();
+    timestamps_are_not_bank_cards();
+    gitleaks_rules_loaded();
+    secrets_basic();
+    entropy_fallback_preserves_assignment_names();
+    entropy_fallback_false_positives();
+    post_validators();
+    keyword_crossing_candidate_start_does_not_panic();
+    short_context_secrets_are_redacted();
+    context_placeholders_are_kept();
+}
+
+#[test]
+fn filter_end_to_end_and_placeholder_idempotency() {
+    clean_text_untouched();
+    multiple_entities();
+    placeholders_follow_language();
+    multibyte_lookback_does_not_panic();
+    upstream_regression_cases();
+    second_pass_over_placeholders_is_a_noop();
+    literal_placeholders_in_source_text_are_not_exempt();
+    second_pass_may_relabel_across_kinds_once();
+}
+
+#[test]
+fn request_body_redaction_across_protocols() {
+    anthropic_body_defaults_to_user_text_and_system();
+    anthropic_body_with_tool_results();
+    openai_chat_body_defaults_to_user_text_and_system();
+    openai_chat_body_with_tool_results();
+    responses_body_defaults_to_user_text_and_system();
+    responses_body_with_tool_results();
+    gemini_body_defaults_to_user_text_and_system();
+    gemini_body_with_tool_results();
+    non_object_body_is_noop();
+    tool_definitions_are_left_untouched();
+    alpha_search_queries_are_redacted();
+    own_compaction_summaries_are_redacted_and_rewrapped();
+    client_pass_runs_before_copilot_merge();
+    deterministic_request_id_does_not_fingerprint_redacted_secrets();
+    gemini_count_tokens_wrapper_is_redacted();
+    input_declared_tools_are_left_untouched();
+}
+
+#[test]
+fn keyword_gate_and_naive_parity() {
+    keyword_gate_matches_naive_lowercase_contains();
+    kelvin_sign_activates_keyword_rules();
+    detection_and_output_match_the_naive_gate();
+    keyword_gate_edge_cases_match_naive();
+}
+
+// --- 结构化 PII ---
+
 fn pii_basic() {
     assert_hit("有事联系 test.user@example.com 谢谢", "[邮箱]");
     assert_hit("我的手机是 13812345678 随时打", "[电话]");
@@ -36,7 +97,6 @@ fn pii_basic() {
     assert_no_hit("订单编号 1234567890123456", "[银行卡]");
 }
 
-#[test]
 fn ssh_targets_are_not_emails() {
     for input in [
         "ssh user@host.example.com",
@@ -50,7 +110,6 @@ fn ssh_targets_are_not_emails() {
     assert_hit("我的邮箱是 alice@example.com 请保密", "[邮箱]");
 }
 
-#[test]
 fn local_addresses_are_not_ips() {
     for input in [
         "http://127.0.0.1:3000",
@@ -67,7 +126,6 @@ fn local_addresses_are_not_ips() {
     assert_hit("http://10.0.0.5:3000", "[IP]");
 }
 
-#[test]
 fn bank_card_needs_bin_or_context() {
     // 卡组织测试卡号，无上下文也要命中
     for card in [
@@ -96,7 +154,6 @@ fn bank_card_needs_bin_or_context() {
     }
 }
 
-#[test]
 fn timestamps_are_not_bank_cards() {
     // 毫秒 / 微秒 / 纳秒时间戳，步长取质数以覆盖各种校验位
     for i in 0..1000u64 {
@@ -109,7 +166,6 @@ fn timestamps_are_not_bank_cards() {
 
 // --- 密钥层 ---
 
-#[test]
 fn gitleaks_rules_loaded() {
     let (rules, _) = global().secrets.stats();
     assert!(rules > 100, "only {rules} gitleaks rules loaded");
@@ -125,7 +181,6 @@ fn builtin_fallback_when_rules_missing() {
         .contains("[密钥]"));
 }
 
-#[test]
 fn secrets_basic() {
     assert_hit("我的密码是 Hunter2xyz", "[密钥]");
     assert_hit("配置里 api_key = aB3xK9pLmN2qR7sT", "[密钥]");
@@ -137,7 +192,6 @@ fn secrets_basic() {
     );
 }
 
-#[test]
 fn entropy_fallback_preserves_assignment_names() {
     let value = "V6nQ2rZa8kTm3wBx9cLp5dFj7sHy4uGe";
     for prefix in ["SESSION_COOKIE=", "GITHUB_PAT=", "x=", "MY_VAR: "] {
@@ -148,7 +202,6 @@ fn entropy_fallback_preserves_assignment_names() {
     }
 }
 
-#[test]
 fn entropy_fallback_false_positives() {
     for input in [
         "ls /home/user/AbCdEfGh1234567890XyZ",
@@ -165,7 +218,6 @@ fn entropy_fallback_false_positives() {
     }
 }
 
-#[test]
 fn post_validators() {
     for input in [
         "secret={{ API_KEY }} 或 token=${TOKEN}",
@@ -183,7 +235,6 @@ fn post_validators() {
     }
 }
 
-#[test]
 fn keyword_crossing_candidate_start_does_not_panic() {
     // 关键词 `api key` 跨过了候选串 `key=...` 的起点
     assert_eq!(redact("api key=AbCdEfGh1234567890XyZ"), "api key=[密钥]");
@@ -198,7 +249,6 @@ fn keyword_crossing_candidate_start_does_not_panic() {
     assert_hit("x token=AbCdEfGh1234567890XyZ", "[密钥]");
 }
 
-#[test]
 fn short_context_secrets_are_redacted() {
     for (input, expected) in [
         ("我的密码是 hunter2", "我的密码是 [密钥]"),
@@ -211,7 +261,6 @@ fn short_context_secrets_are_redacted() {
     }
 }
 
-#[test]
 fn context_placeholders_are_kept() {
     for input in [
         // 占位值
@@ -243,7 +292,6 @@ fn context_placeholders_are_kept() {
 
 // --- 整体行为 ---
 
-#[test]
 fn clean_text_untouched() {
     let text = "今天天气不错，我们一起去公园散步吧。";
     let res = global().redact(text, ZH);
@@ -251,7 +299,6 @@ fn clean_text_untouched() {
     assert_eq!(res.count, 0);
 }
 
-#[test]
 fn multiple_entities() {
     let res = global().redact("邮箱 a@b.com 手机 13900001111 密码是 Qwer1234", ZH);
     for label in ["[邮箱]", "[电话]", "[密钥]"] {
@@ -260,7 +307,6 @@ fn multiple_entities() {
     assert!(res.count >= 3);
 }
 
-#[test]
 fn placeholders_follow_language() {
     let text = "mail a@b.com phone 13900001111 password: Qwer1234";
     let cases = [
@@ -286,7 +332,6 @@ fn placeholders_follow_language() {
     }
 }
 
-#[test]
 fn multibyte_lookback_does_not_panic() {
     // 回溯窗口落在多字节字符中间时不能 panic
     let text = "中文中文中文中文中文中文 aB3xK9pLmN2qR7sT5vW1zYQwErTyUiOp 密钥令牌凭证鉴权";
@@ -294,7 +339,6 @@ fn multibyte_lookback_does_not_panic() {
 }
 
 /// 上游 testdata/cases.json 回归样本
-#[test]
 fn upstream_regression_cases() {
     #[derive(serde::Deserialize)]
     struct Case {
@@ -344,7 +388,6 @@ fn anthropic_body() -> Value {
     })
 }
 
-#[test]
 fn anthropic_body_defaults_to_user_text_and_system() {
     let mut body = anthropic_body();
     assert_eq!(redact_request_body(&mut body, ZH, false), 3);
@@ -362,7 +405,6 @@ fn anthropic_body_defaults_to_user_text_and_system() {
     );
 }
 
-#[test]
 fn anthropic_body_with_tool_results() {
     let mut body = anthropic_body();
     assert_eq!(redact_request_body(&mut body, ZH, true), 5);
@@ -390,7 +432,6 @@ fn openai_chat_body() -> Value {
     })
 }
 
-#[test]
 fn openai_chat_body_defaults_to_user_text_and_system() {
     let mut body = openai_chat_body();
     assert_eq!(redact_request_body(&mut body, ZH, false), 3);
@@ -406,7 +447,6 @@ fn openai_chat_body_defaults_to_user_text_and_system() {
     assert_eq!(body["messages"][5]["content"], SECRET);
 }
 
-#[test]
 fn openai_chat_body_with_tool_results() {
     let mut body = openai_chat_body();
     assert_eq!(redact_request_body(&mut body, ZH, true), 5);
@@ -431,7 +471,6 @@ fn responses_body() -> Value {
     })
 }
 
-#[test]
 fn responses_body_defaults_to_user_text_and_system() {
     let mut body = responses_body();
     assert_eq!(redact_request_body(&mut body, ZH, false), 3);
@@ -450,7 +489,6 @@ fn responses_body_defaults_to_user_text_and_system() {
     assert_eq!(body["input"], REDACTED);
 }
 
-#[test]
 fn responses_body_with_tool_results() {
     let mut body = responses_body();
     assert_eq!(redact_request_body(&mut body, ZH, true), 5);
@@ -487,7 +525,6 @@ fn gemini_body() -> Value {
     })
 }
 
-#[test]
 fn gemini_body_defaults_to_user_text_and_system() {
     let mut body = gemini_body();
     assert_eq!(redact_request_body(&mut body, ZH, false), 2);
@@ -498,7 +535,6 @@ fn gemini_body_defaults_to_user_text_and_system() {
     assert_eq!(body["contents"][3], gemini_body()["contents"][3]);
 }
 
-#[test]
 fn gemini_body_with_tool_results() {
     let mut body = gemini_body();
     assert_eq!(redact_request_body(&mut body, ZH, true), 5);
@@ -518,7 +554,6 @@ fn gemini_body_with_tool_results() {
     );
 }
 
-#[test]
 fn non_object_body_is_noop() {
     let mut body = Value::Null;
     assert_eq!(redact_request_body(&mut body, ZH, true), 0);
@@ -575,7 +610,6 @@ fn gate_corpus() -> Vec<String> {
     corpus
 }
 
-#[test]
 fn keyword_gate_matches_naive_lowercase_contains() {
     for filter in [global(), &Filter::from_gitleaks_toml("")] {
         for text in gate_corpus() {
@@ -588,7 +622,6 @@ fn keyword_gate_matches_naive_lowercase_contains() {
     }
 }
 
-#[test]
 fn kelvin_sign_activates_keyword_rules() {
     // 旧实现先 to_lowercase，开尔文符号 `K`（U+212A）会变成 k，带含 k 关键词的规则
     // （如 snyk-api-token 的 snyk）随之参与匹配；只按 ASCII 忽略大小写的预筛会把它们漏掉
@@ -609,7 +642,6 @@ fn kelvin_sign_activates_keyword_rules() {
 /// 工具定义整体不碰：说明文字是客户端自带的固定文字，示例地址会被模型照抄
 /// （Claude Code 的 Bash 工具说明要求提交信息带 `Co-Authored-By: Claude <noreply@anthropic.com>`），
 /// 句点前的 `?token=abc.` 也不能被吞掉。
-#[test]
 fn tool_definitions_are_left_untouched() {
     let coauthor = "Co-Authored-By: Claude <noreply@anthropic.com>";
     let url = "Fetch https://example.com/api?token=abc. Then continue.";
@@ -629,7 +661,6 @@ fn tool_definitions_are_left_untouched() {
     assert_eq!(body, original);
 }
 
-#[test]
 fn alpha_search_queries_are_redacted() {
     let mut body = json!({
         "id": "search-1",
@@ -640,7 +671,6 @@ fn alpha_search_queries_are_redacted() {
     assert_eq!(body["commands"]["search_query"][1]["q"], "rust regex");
 }
 
-#[test]
 fn own_compaction_summaries_are_redacted_and_rewrapped() {
     use crate::proxy::providers::codex_compaction::{
         decode_compaction_summary, encode_compaction_summary,
@@ -665,7 +695,6 @@ fn own_compaction_summaries_are_redacted_and_rewrapped() {
 // --- Codex 审核（P1/P2）后的回归用例 ---
 
 /// 同类占位符的第二遍过滤不改写、不计数（跨类型的情况见 `second_pass_may_relabel_across_kinds_once`）
-#[test]
 fn second_pass_over_placeholders_is_a_noop() {
     for language in ["zh", "zh-TW", "en", "ja", "tr"] {
         let placeholders = Placeholders::for_language(language);
@@ -680,7 +709,6 @@ fn second_pass_over_placeholders_is_a_noop() {
 
 /// Copilot 优化会把 user 消息里的文本并进 tool_result。转发器先在客户端请求体上过滤
 /// （子开关关闭时也处理用户文本），再合并，用户文本里的密钥不会躲进工具结果。
-#[test]
 fn client_pass_runs_before_copilot_merge() {
     use crate::proxy::copilot_optimizer::{merge_tool_results, sanitize_orphan_tool_results};
     let mut body = json!({
@@ -703,7 +731,6 @@ fn client_pass_runs_before_copilot_merge() {
 
 /// Copilot 确定性请求 ID 是 SHA-256(session ‖ 最后一条用户文本)。在过滤后的请求体上计算，
 /// 只差在被遮盖口令上的两个请求得到同一个 ID，上游没法用它枚举口令。
-#[test]
 fn deterministic_request_id_does_not_fingerprint_redacted_secrets() {
     use crate::proxy::copilot_optimizer::deterministic_request_id;
     let id = |password: &str| {
@@ -716,7 +743,6 @@ fn deterministic_request_id_does_not_fingerprint_redacted_secrets() {
     assert_eq!(id("4937"), id("4938"));
 }
 
-#[test]
 fn gemini_count_tokens_wrapper_is_redacted() {
     for key in ["generateContentRequest", "generate_content_request"] {
         let mut body = json!({
@@ -741,7 +767,6 @@ fn gemini_count_tokens_wrapper_is_redacted() {
 
 /// 写在 input 里的工具定义（additional_tools、工具搜索带出来的定义）同样不碰；
 /// 工具搜索的结果文本跟随子开关
-#[test]
 fn input_declared_tools_are_left_untouched() {
     let tools = json!([{ "type": "function", "name": "lookup", "description": SECRET,
         "parameters": { "type": "object", "properties": {} } }]);
@@ -768,7 +793,6 @@ fn input_declared_tools_are_left_untouched() {
 const LANGUAGES: [&str; 5] = ["zh", "zh-TW", "en", "ja", "tr"];
 
 /// 原文里写着的占位符字样不豁免：`password = [EMAIL]` 仍按密钥替换
-#[test]
 fn literal_placeholders_in_source_text_are_not_exempt() {
     for language in LANGUAGES {
         let ph = Placeholders::for_language(language);
@@ -790,7 +814,6 @@ fn literal_placeholders_in_source_text_are_not_exempt() {
 
 /// P1 验收：与旧预筛三层对拍。① Route 1–3 原始命中 ② 合并区间
 /// ③ 各语言最终字节（与 v1 的重建算法比：每个合并区间都换成占位符）
-#[test]
 fn detection_and_output_match_the_naive_gate() {
     let filter = global();
     let filler = " 普通的对话内容 plain text".repeat(12);
@@ -849,7 +872,6 @@ fn detection_and_output_match_the_naive_gate() {
 
 /// 预筛的边界：重复关键词、互相包含的关键词、空关键词、无关键词、大写关键词，
 /// 以及自动机不可用时的回退路径
-#[test]
 fn keyword_gate_edge_cases_match_naive() {
     use super::secrets::SecretDetector;
     const EDGE_TOML: &str = r#"
@@ -916,7 +938,6 @@ keywords = ["KEY", "snyk"]
 
 /// 第二遍只省掉「同类占位符」的无效重写：第一遍按邮箱替换的值，第二遍被上下文规则按密钥
 /// 命中，会改成密钥占位符并计数；再来一遍就不变了。原值不会因此重新出现。
-#[test]
 fn second_pass_may_relabel_across_kinds_once() {
     let en = Placeholders::for_language("en");
     let first = global().redact("password = alice@example.com", en);
@@ -927,4 +948,54 @@ fn second_pass_may_relabel_across_kinds_once() {
     let third = global().redact(&second.redacted, en);
     assert_eq!(third.redacted, second.redacted);
     assert_eq!(third.count, 0);
+}
+
+#[test]
+fn keyword_gate_preserves_unicode_lowercase_and_custom_keywords() {
+    use super::secrets::SecretDetector;
+    for keywords in [r#"["key", "i", "s"]"#, r#"["éclair", "ος", "密钥"]"#] {
+        let config = format!(
+            r#"[[rules]]
+id = "unicode"
+regex = 'abc[0-9]+'
+keywords = {keywords}
+"#
+        );
+        let detector = SecretDetector::from_gitleaks_toml(&config);
+        for text in [
+            "中文，KEY。",
+            "KEY",
+            "İ",
+            "ſ",
+            "ÉCLAIR",
+            "ΟΣ",
+            "这里是密钥",
+            "🦀",
+        ] {
+            assert_eq!(
+                detector.active_rules(text),
+                detector.active_rules_naive(text),
+                "{text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn pii_prechecks_preserve_digit_free_email_and_numeric_entities() {
+    for (text, kind) in [
+        ("联系 alice@example.com，谢谢", Kind::Email),
+        ("电话 13800138000", Kind::Phone),
+        ("地址 192.168.1.2", Kind::Ip),
+        ("卡号 4111111111111111", Kind::BankCard),
+        ("身份证 11010519491231002X", Kind::IdCard),
+    ] {
+        assert!(
+            super::pii::detect(text)
+                .iter()
+                .any(|span| span.kind == kind),
+            "{text}"
+        );
+    }
+    assert!(super::pii::detect("纯中文和普通标点。没有个人资料").is_empty());
 }

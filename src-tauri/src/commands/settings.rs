@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use crate::error::AppError;
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
@@ -93,6 +91,7 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let auto_update_disabled = existing.auto_update_enabled && !merged.auto_update_enabled;
     let without_login_changed =
         merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
     let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
@@ -102,6 +101,11 @@ pub async fn save_settings(
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
+    }
+
+    // 关闭自动更新时立即释放内存里已下载的安装包字节，避免几十 MB 常驻进程。
+    if auto_update_disabled {
+        crate::app_update::discard_pending(&app);
     }
 
     // 立即重写，失败时回滚设置，免得界面显示已改好、客户端还是旧的。
@@ -514,63 +518,41 @@ mod tests {
     };
 
     #[test]
-    fn save_settings_should_keep_the_existing_lightweight_mode() {
+    fn save_settings_preserves_backend_owned_fields_and_omitted_sync_configs() {
         let existing = AppSettings {
             lightweight_mode: true,
-            ..AppSettings::default()
-        };
-
-        let merged = merge_settings_for_save(AppSettings::default(), &existing);
-
-        assert!(merged.lightweight_mode);
-    }
-
-    #[test]
-    fn save_settings_should_keep_the_existing_proxy_client_host() {
-        let existing = AppSettings {
             proxy_client_host: Some("172.25.144.1".to_string()),
-            ..AppSettings::default()
-        };
-
-        let merged = merge_settings_for_save(AppSettings::default(), &existing);
-
-        assert_eq!(merged.proxy_client_host.as_deref(), Some("172.25.144.1"));
-    }
-
-    #[test]
-    fn save_settings_should_preserve_existing_webdav_when_payload_omits_it() {
-        let existing = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.example.com".to_string(),
                 username: "alice".to_string(),
                 password: "secret".to_string(),
                 ..WebDavSyncSettings::default()
             }),
-            ..AppSettings::default()
-        };
-
-        let incoming = AppSettings::default();
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert!(merged.webdav_sync.is_some());
-        assert_eq!(
-            merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
-            Some("https://dav.example.com")
-        );
-    }
-
-    #[test]
-    fn save_settings_should_keep_incoming_webdav_when_present() {
-        let existing = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.old.example.com".to_string(),
-                username: "old".to_string(),
-                password: "old-pass".to_string(),
-                ..WebDavSyncSettings::default()
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "s3-secret".to_string(),
+                ..S3SyncSettings::default()
             }),
             ..AppSettings::default()
         };
 
+        let merged = merge_settings_for_save(AppSettings::default(), &existing);
+        assert!(merged.lightweight_mode);
+        assert_eq!(merged.proxy_client_host.as_deref(), Some("172.25.144.1"));
+        assert_eq!(
+            merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
+            Some("https://dav.example.com")
+        );
+        assert_eq!(
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
+            Some("s3-secret")
+        );
+
+        // Explicit incoming sync settings replace the previous values.
         let incoming = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.new.example.com".to_string(),
@@ -580,21 +562,21 @@ mod tests {
             }),
             ..AppSettings::default()
         };
-
-        let merged = merge_settings_for_save(incoming, &existing);
-
+        let replaced = merge_settings_for_save(incoming, &existing);
         assert_eq!(
-            merged.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
+            replaced.webdav_sync.as_ref().map(|v| v.base_url.as_str()),
             Some("https://dav.new.example.com")
+        );
+        assert_eq!(
+            replaced.webdav_sync.as_ref().map(|v| v.password.as_str()),
+            Some("new-pass")
         );
     }
 
-    /// Regression test: frontend always receives empty password from
-    /// get_settings_for_frontend(). If a component accidentally spreads
-    /// the full settings object into save_settings, the empty password
-    /// must NOT overwrite the existing one.
+    /// Frontend receives redacted empty secrets from `get_settings_for_frontend()`;
+    /// saving a spread settings object must never wipe stored credentials.
     #[test]
-    fn save_settings_should_preserve_password_when_incoming_has_empty_password() {
+    fn save_settings_preserves_existing_secrets_when_incoming_is_empty() {
         let existing = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.example.com".to_string(),
@@ -602,239 +584,104 @@ mod tests {
                 password: "secret".to_string(),
                 ..WebDavSyncSettings::default()
             }),
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: "s3-secret".to_string(),
+                ..S3SyncSettings::default()
+            }),
             ..AppSettings::default()
         };
-
-        // Simulate frontend sending settings with cleared password
         let incoming = AppSettings {
             webdav_sync: Some(WebDavSyncSettings {
                 base_url: "https://dav.example.com".to_string(),
                 username: "alice".to_string(),
-                password: "".to_string(),
+                password: String::new(),
                 ..WebDavSyncSettings::default()
+            }),
+            s3_sync: Some(S3SyncSettings {
+                bucket: "bucket".to_string(),
+                access_key_id: "ak".to_string(),
+                secret_access_key: String::new(),
+                ..S3SyncSettings::default()
             }),
             ..AppSettings::default()
         };
-
-        let merged = merge_settings_for_save(incoming, &existing);
-
+        let merged = merge_settings_for_save(incoming.clone(), &existing);
         assert_eq!(
             merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
-            Some("secret"),
-            "empty password from frontend must not overwrite existing password"
+            Some("secret")
         );
-    }
-
-    /// When both incoming and existing have no password, merge should
-    /// work without panicking and keep the empty state.
-    #[test]
-    fn save_settings_should_handle_both_empty_passwords() {
-        let existing = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let incoming = AppSettings {
-            webdav_sync: Some(WebDavSyncSettings {
-                base_url: "https://dav.example.com".to_string(),
-                username: "alice".to_string(),
-                password: "".to_string(),
-                ..WebDavSyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let merged = merge_settings_for_save(incoming, &existing);
-
         assert_eq!(
-            merged.webdav_sync.as_ref().map(|v| v.password.as_str()),
+            merged
+                .s3_sync
+                .as_ref()
+                .map(|v| v.secret_access_key.as_str()),
+            Some("s3-secret")
+        );
+
+        // Both empty stays empty without panicking.
+        let both_empty = merge_settings_for_save(incoming.clone(), &incoming);
+        assert_eq!(
+            both_empty.webdav_sync.as_ref().map(|v| v.password.as_str()),
             Some("")
         );
     }
 
     #[test]
-    fn save_settings_should_preserve_existing_s3_when_payload_omits_it() {
-        let existing = AppSettings {
-            s3_sync: Some(S3SyncSettings {
-                bucket: "bucket".to_string(),
-                access_key_id: "ak".to_string(),
-                secret_access_key: "secret".to_string(),
-                ..S3SyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let incoming = AppSettings::default();
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert!(merged.s3_sync.is_some());
-        assert_eq!(
-            merged
-                .s3_sync
-                .as_ref()
-                .map(|v| v.secret_access_key.as_str()),
-            Some("secret")
-        );
-    }
-
-    #[test]
-    fn save_settings_should_preserve_s3_secret_when_incoming_has_empty_secret() {
-        let existing = AppSettings {
-            s3_sync: Some(S3SyncSettings {
-                bucket: "bucket".to_string(),
-                access_key_id: "ak".to_string(),
-                secret_access_key: "secret".to_string(),
-                ..S3SyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let incoming = AppSettings {
-            s3_sync: Some(S3SyncSettings {
-                bucket: "bucket".to_string(),
-                access_key_id: "ak".to_string(),
-                secret_access_key: "".to_string(),
-                ..S3SyncSettings::default()
-            }),
-            ..AppSettings::default()
-        };
-
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert_eq!(
-            merged
-                .s3_sync
-                .as_ref()
-                .map(|v| v.secret_access_key.as_str()),
-            Some("secret")
-        );
-    }
-
-    #[test]
-    fn save_settings_should_preserve_local_migrations_when_payload_omits_it() {
-        let existing = AppSettings {
-            local_migrations: Some(LocalMigrations {
-                codex_third_party_history_provider_bucket_v1: Some(
-                    CodexThirdPartyHistoryProviderBucketMigration {
-                        completed_at: "2026-05-20T00:00:00Z".to_string(),
-                        target_provider_id: "custom".to_string(),
-                        source_provider_ids: vec!["rightcode".to_string()],
-                        migrated_jsonl_files: 2,
-                        migrated_state_rows: 3,
-                        scanned_history_files: true,
-                    },
-                ),
-                codex_provider_template_v1: Some(CodexProviderTemplateMigration {
-                    completed_at: "2026-05-20T00:01:00Z".to_string(),
-                    migrated_provider_ids: vec!["legacy".to_string()],
-                }),
-                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
-                    completed_at: "2026-06-12T00:00:00Z".to_string(),
+    fn save_settings_always_keeps_backend_local_migrations_authoritative() {
+        let sample_migrations = LocalMigrations {
+            codex_third_party_history_provider_bucket_v1: Some(
+                CodexThirdPartyHistoryProviderBucketMigration {
+                    completed_at: "2026-05-20T00:00:00Z".to_string(),
                     target_provider_id: "custom".to_string(),
-                    migrated_jsonl_files: 5,
-                    migrated_state_rows: 7,
-                    codex_config_dir: None,
-                }),
-                ..LocalMigrations::default()
+                    source_provider_ids: vec!["rightcode".to_string()],
+                    migrated_jsonl_files: 2,
+                    migrated_state_rows: 3,
+                    scanned_history_files: true,
+                },
+            ),
+            codex_provider_template_v1: Some(CodexProviderTemplateMigration {
+                completed_at: "2026-05-20T00:01:00Z".to_string(),
+                migrated_provider_ids: vec!["legacy".to_string()],
             }),
-            ..AppSettings::default()
+            codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
+                completed_at: "2026-06-12T00:00:00Z".to_string(),
+                target_provider_id: "custom".to_string(),
+                migrated_jsonl_files: 5,
+                migrated_state_rows: 7,
+                codex_config_dir: None,
+            }),
+            ..LocalMigrations::default()
         };
 
-        let incoming = AppSettings::default();
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        let migration = merged
-            .local_migrations
-            .as_ref()
-            .and_then(|migrations| {
-                migrations
-                    .codex_third_party_history_provider_bucket_v1
-                    .as_ref()
-            })
-            .expect("local migration marker should be preserved");
-        assert_eq!(migration.target_provider_id, "custom");
-        assert_eq!(migration.migrated_jsonl_files, 2);
-        assert_eq!(migration.migrated_state_rows, 3);
-
-        let template_migration = merged
-            .local_migrations
-            .as_ref()
-            .and_then(|migrations| migrations.codex_provider_template_v1.as_ref())
-            .expect("template migration marker should be preserved");
-        assert_eq!(
-            template_migration.migrated_provider_ids,
-            vec!["legacy".to_string()]
-        );
-
-        let unify_migration = merged
-            .local_migrations
-            .as_ref()
-            .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-            .expect("official unify migration marker should be preserved");
-        assert_eq!(unify_migration.migrated_jsonl_files, 5);
-        assert_eq!(unify_migration.migrated_state_rows, 7);
-    }
-
-    /// incoming 带有 local_migrations（哪怕是空的）也不能覆盖后端维护的标记。
-    #[test]
-    fn save_settings_should_keep_backend_migration_markers_over_incoming() {
         let existing = AppSettings {
-            local_migrations: Some(LocalMigrations {
-                codex_third_party_history_provider_bucket_v1: None,
-                codex_provider_template_v1: None,
-                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
-                    completed_at: "2026-06-12T00:00:00Z".to_string(),
-                    target_provider_id: "custom".to_string(),
-                    migrated_jsonl_files: 1,
-                    migrated_state_rows: 2,
-                    codex_config_dir: None,
-                }),
-                ..LocalMigrations::default()
-            }),
+            local_migrations: Some(sample_migrations.clone()),
             ..AppSettings::default()
         };
+        // Both omitted and empty incoming `local_migrations` preserve backend markers.
+        for incoming_migrations in [None, Some(LocalMigrations::default())] {
+            let incoming = AppSettings {
+                local_migrations: incoming_migrations,
+                ..AppSettings::default()
+            };
+            let merged = merge_settings_for_save(incoming, &existing);
+            let m = merged.local_migrations.as_ref().unwrap();
+            assert!(m.codex_third_party_history_provider_bucket_v1.is_some());
+            assert!(m.codex_provider_template_v1.is_some());
+            assert!(m.codex_official_history_unify_v1.is_some());
+        }
 
-        let incoming = AppSettings {
-            local_migrations: Some(LocalMigrations::default()),
+        // Stale incoming markers cannot resurrect cleared backend markers.
+        let stale_incoming = AppSettings {
+            local_migrations: Some(sample_migrations),
             ..AppSettings::default()
         };
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert!(merged
-            .local_migrations
-            .as_ref()
-            .and_then(|migrations| migrations.codex_official_history_unify_v1.as_ref())
-            .is_some());
-    }
-
-    /// 后端清掉 marker 后（如关闭统一会话开关）、前端缓存刷新前的全量保存
-    /// 会携带旧 marker；merge 必须忽略它，否则被"复活"的标记会让重新开启
-    /// 时误判已迁移而漏迁。
-    #[test]
-    fn save_settings_should_ignore_stale_incoming_migration_markers() {
-        let existing = AppSettings::default();
-
-        let incoming = AppSettings {
-            local_migrations: Some(LocalMigrations {
-                codex_official_history_unify_v1: Some(CodexOfficialHistoryUnifyMigration {
-                    completed_at: "2026-06-12T00:00:00Z".to_string(),
-                    target_provider_id: "custom".to_string(),
-                    migrated_jsonl_files: 1,
-                    migrated_state_rows: 2,
-                    codex_config_dir: None,
-                }),
-                ..LocalMigrations::default()
-            }),
-            ..AppSettings::default()
-        };
-        let merged = merge_settings_for_save(incoming, &existing);
-
-        assert!(merged.local_migrations.is_none());
+        assert!(
+            merge_settings_for_save(stale_incoming, &AppSettings::default())
+                .local_migrations
+                .is_none()
+        );
     }
 }
 

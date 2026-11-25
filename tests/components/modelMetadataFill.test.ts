@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  fillCodebuddyModel,
   fillCodexCatalogModel,
   fillHermesModel,
   fillKimiModel,
@@ -237,6 +238,16 @@ describe("piSendsReasoningEffort", () => {
     expect(piSendsReasoningEffort(base)).toBe(true);
   });
 
+  it("accepts Pi's native Mistral protocol", () => {
+    expect(
+      piSendsReasoningEffort({
+        ...base,
+        api: "mistral-conversations",
+        baseUrl: "https://api.mistral.ai",
+      }),
+    ).toBe(true);
+  });
+
   it("rejects protocols and endpoints with their own thinking format", () => {
     expect(piSendsReasoningEffort({ ...base, api: "anthropic-messages" })).toBe(
       false,
@@ -332,6 +343,27 @@ describe("piPresetThinkingFor", () => {
         compat: { supportsReasoningEffort: false },
       }),
     ).toBeNull();
+  });
+
+  it("fills blank CodeBuddy token limits and only turns capabilities on", () => {
+    expect(
+      fillCodebuddyModel(
+        { url: "https://e.example", maxOutputTokens: 4096 },
+        metadata,
+      ),
+    ).toEqual({
+      url: "https://e.example",
+      maxInputTokens: 262144,
+      maxOutputTokens: 4096,
+      supportsImages: true,
+      supportsReasoning: true,
+    });
+    expect(
+      fillCodebuddyModel(
+        { supportsImages: true, supportsReasoning: true },
+        { reasoning: false, inputModalities: ["text"] },
+      ),
+    ).toEqual({ supportsImages: true, supportsReasoning: true });
   });
 });
 

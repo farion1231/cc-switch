@@ -39,10 +39,49 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
+        AppType::Codebuddy => crate::codebuddy_config::provider_key_exists(provider_id),
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
-        _ => Ok(false),
+        // 切换式应用的 live 只有当前那一家，没有按标识存的条目。
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::Agy => Ok(false),
+    }
+}
+
+/// 只从累加式应用的 live 配置里删掉这家供应商的条目，不动 DB。
+///
+/// Pi、Omp、Kimi、DSH、Copilot 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
+/// 这里之前就分流了；切换式应用没有按标识存的条目。这些应用都报错，不静默跳过。
+pub(crate) fn remove_provider_from_live(
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<(), AppError> {
+    match app_type {
+        AppType::OpenCode => remove_opencode_provider_from_live(provider_id),
+        AppType::OpenClaw => remove_openclaw_provider_from_live(provider_id),
+        AppType::Hermes => remove_hermes_provider_from_live(provider_id),
+        AppType::Mcode => crate::mcode_config::remove_provider(provider_id),
+        AppType::Codebuddy => crate::codebuddy_config::remove_provider(provider_id),
+        AppType::WorkBuddy => crate::workbuddy_config::remove_provider(provider_id),
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::Pi
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Agy
+        | AppType::Omp
+        | AppType::Copilot => Err(AppError::Message(format!(
+            "App {} does not support remove from live config",
+            app_type.as_str()
+        ))),
     }
 }
 
@@ -317,6 +356,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -399,7 +439,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => Ok(settings.clone()),
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => Ok(settings.clone()),
     }
 }
 
@@ -435,13 +476,21 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
     if matches!(app_type, AppType::GrokBuild) {
-        super::grok_direct::reapply(db, Some(provider), provider)?;
+        super::grok_direct::reapply(state, Some(provider), provider)?;
         return Ok(());
     }
     if matches!(app_type, AppType::Agy | AppType::Copilot) {
         // Antigravity 的卡只作用于它打开的终端，全量同步不写真实 settings.json。Copilot 自带
         // 模型卡只经「添加 / 编辑」写进 providers.json（文件里的条目归 Copilot，列表从文件读回），
         // 全量同步不重写它；官方卡从不写文件。
+        return Ok(());
+    }
+
+    if matches!(app_type, AppType::OpenCode)
+        && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
+    {
+        // OMO / OMO Slim 预设不是 opencode.json 里的供应商：OmoService 把正在用的那份写进
+        // 它自己的文件（切换、编辑各自处理），全量同步这里没有要写的。
         return Ok(());
     }
 
@@ -732,6 +781,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             }
             crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
         }
+        AppType::Codebuddy => {
+            // 官方登录卡只绑定账号，不是 models.json 里的模型
+            if crate::codebuddy_config::is_official_provider(provider) {
+                return Err(AppError::InvalidInput(
+                    "CodeBuddy official sign-in cards are not written to models.json".into(),
+                ));
+            }
+            crate::codebuddy_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -764,6 +822,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
     let providers = state.db.get_all_providers(app_type)?;
     let mut synced_count = 0usize;
+    // 一家写失败不拦其余各家（逐家写入是幂等的），但失败要报给调用方，不能当成功。
+    let mut failures = Vec::new();
 
     for provider in providers.values() {
         if provider
@@ -781,13 +841,18 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
                 app_type,
                 provider.id
             );
+            failures.push(format!("{}: {e}", provider.id));
             continue;
         }
         synced_count += 1;
     }
 
     log::info!("Synced {synced_count} {app_type:?} providers to live config");
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(failures.join("; ")))
+    }
 }
 
 /// 把累加式应用的全部供应商同步到 live，再重投影它的 MCP。
@@ -795,14 +860,19 @@ pub(crate) fn sync_additive_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    sync_all_providers_to_live(state, app_type)?;
+    let providers = sync_all_providers_to_live(state, app_type);
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
     // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
     // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
-    McpService::sync_enabled_for_app(state, app_type)?;
+    // 某家供应商写失败也照常重投影 MCP，两边的失败一起上抛。
+    let mcp = McpService::sync_enabled_for_app(state, app_type);
 
-    Ok(())
+    match (providers, mcp) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(providers), Err(mcp)) => Err(AppError::Message(format!("{providers}; mcp: {mcp}"))),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -840,7 +910,7 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
         super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
     } else if matches!(app_type, AppType::GrokBuild) {
         // 编辑前的行用来推断旧版写的表（还没有写入记录时），改了表名也能删掉旧表。
-        super::grok_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
+        super::grok_direct::reapply(state, prev.or(Some(provider)), provider)?;
     } else {
         write_live_for_state(state, app_type, provider)?;
     }
@@ -863,8 +933,8 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
         None => return Ok(None),
     };
 
-    let providers = state.db.get_all_providers(app_type)?;
-    let Some(provider) = providers.get(&current_id) else {
+    let providers = state.db.get_provider_rows(app_type)?;
+    let Some(provider) = providers.get(&current_id)? else {
         return Ok(None);
     };
 
@@ -873,10 +943,31 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 
 /// Populate newly encountered DSH profiles with managed providers and enabled MCP servers.
 /// The native writer records completion locally so later native deletions remain intentional.
+///
+/// An unreadable MCP row of another application is ignored. An unreadable DSH provider, or an
+/// unreadable MCP row enabled for DSH, defers seeding without writing the receipt: seeding is
+/// one-time, so skipping the row would leave it out of the new profile for good, and dropping its
+/// id would hide a managed node the profile may already carry. It only fails while some profile
+/// is actually waiting, so it can't break every later sync.
 pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
-    let providers = state
-        .db
-        .get_all_providers(&AppType::Dsh)?
+    let provider_rows = state.db.get_provider_rows(&AppType::Dsh)?;
+    let server_rows = state.db.get_mcp_server_rows()?;
+    let dsh_server_ids = state.db.mcp_server_ids_enabled_for(&AppType::Dsh)?;
+    let blocking = provider_rows.unreadable.iter().chain(
+        server_rows
+            .unreadable
+            .iter()
+            .filter(|entry| dsh_server_ids.contains(&entry.id)),
+    );
+    if let Some(entry) = blocking.into_iter().next() {
+        if crate::dsh_config::has_uninitialized_profiles()? {
+            return Err(AppError::Database(entry.error.clone()));
+        }
+        return Ok(());
+    }
+
+    let providers = provider_rows
+        .readable
         .into_iter()
         .filter(|(_, provider)| {
             provider
@@ -887,9 +978,8 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
         })
         .map(|(id, provider)| (id, provider.settings_config))
         .collect();
-    let servers = state
-        .db
-        .get_all_mcp_servers()?
+    let servers = server_rows
+        .readable
         .into_iter()
         .filter(|(_, server)| server.apps.dsh)
         .map(|(id, server)| (id, server.server))
@@ -919,6 +1009,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Codebuddy
                 | AppType::Copilot
         ) {
             continue;
@@ -1079,6 +1170,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
+        AppType::Codebuddy => Ok(json!(crate::codebuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1223,7 +1315,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
-        | AppType::WorkBuddy => {
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1321,7 +1414,7 @@ pub fn should_import_default_config_on_startup(
 ///
 /// This is specific to OpenCode's additive mode - removing a provider
 /// from the opencode.json file.
-pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::opencode_config;
 
     // Check if OpenCode config directory exists
@@ -1592,7 +1685,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
 ///
 /// This removes a specific provider from ~/.hermes/config.yaml
 /// without affecting other providers in the file.
-pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::hermes_config;
 
     // Check if Hermes config directory exists
@@ -1611,7 +1704,7 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
 ///
 /// This removes a specific provider from ~/.openclaw/openclaw.json
 /// without affecting other providers in the file.
-pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::openclaw_config;
 
     // Check if OpenClaw config directory exists
