@@ -566,12 +566,16 @@ fn run_tool_lifecycle_silently(
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(command_line);
-    // GUI App 继承的是 launchd 的窄 PATH，而锚定探测用的是登录 shell —— 见
-    // `login_shell_path` doc。命令自身用绝对路径不受影响，但工具**内部** spawn 的
-    // npm/node 等子进程、以及 install 链里裸的 npm fallback 都需要真实 PATH。
-    if let Some(login_path) = login_shell_path(None) {
-        let inherited = std::env::var("PATH").unwrap_or_default();
-        cmd.env("PATH", merge_path_segments(&login_path, &inherited));
+    // GUI App 继承的是 launchd 的极简环境，而锚定探测用的是登录 shell —— 见
+    // `login_shell_env` doc。命令自身用绝对路径不受影响，但工具**内部** spawn 的
+    // npm/node 等子进程、install 链里裸的 npm fallback、以及 Vite+ 等 multicall shim
+    // 都需要真实 PATH 与工具链环境变量。
+    if let Some(login_env) = login_shell_env(None) {
+        if let Some(login_path) = login_env.path.as_deref() {
+            let inherited = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", merge_path_segments(login_path, &inherited));
+        }
+        apply_login_shell_vars(&mut cmd, &login_env.vars);
     }
     let output = tool_lifecycle_progress::run_with_progress(cmd, progress)
         .map_err(|e| format!("启动安装进程失败: {e}"))?;

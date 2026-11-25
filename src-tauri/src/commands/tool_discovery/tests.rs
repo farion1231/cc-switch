@@ -772,6 +772,72 @@ mod anchored_upgrade {
         assert_eq!(resolved, launcher);
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn parse_login_shell_env_extracts_toolchain_vars_after_marker() {
+        let raw = format!(
+            "Using Node.js v26.13.1 (resolved from default)\n\
+             VP_HOME=/stale/before/marker\n\
+             PATH=/stale/bin\n\
+             {LOGIN_ENV_MARKER}\n\
+             PATH=/Users/me/.vite-plus/bin:/opt/homebrew/bin:/usr/bin\n\
+             VP_HOME=/Users/me/.vite-plus\n\
+             VP_NODE_VERSION=26.13.1\n\
+             VP_SHIM_TOOL=should-never-forward\n\
+             XDG_DATA_HOME=/Users/me/.local/share\n\
+             XDG_CONFIG_HOME=relative/ignored\n\
+             PNPM_HOME=/Users/me/Library/pnpm\n\
+             MISE_DATA_DIR=\n\
+             PI_CODING_AGENT_DIR=/Users/me/.pi/custom\n\
+             SECRET_TOKEN=super-secret\n"
+        );
+        let parsed = parse_login_shell_env_output(&raw);
+        assert_eq!(
+            parsed.path.as_deref(),
+            Some("/Users/me/.vite-plus/bin:/opt/homebrew/bin:/usr/bin")
+        );
+        assert_eq!(
+            parsed.vars,
+            vec![
+                ("VP_HOME".to_string(), "/Users/me/.vite-plus".to_string()),
+                ("VP_NODE_VERSION".to_string(), "26.13.1".to_string()),
+                (
+                    "XDG_DATA_HOME".to_string(),
+                    "/Users/me/.local/share".to_string()
+                ),
+                (
+                    "PNPM_HOME".to_string(),
+                    "/Users/me/Library/pnpm".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn apply_login_shell_vars_fills_missing_without_clobbering_process_env() {
+        let existing_home = std::env::var("HOME").expect("HOME should be set on Unix");
+        let vars = vec![
+            (
+                "CC_SWITCH_TEST_LOGIN_ONLY_VAR".to_string(),
+                "/Users/me/.vite-plus".to_string(),
+            ),
+            ("HOME".to_string(), "/should/not/override".to_string()),
+        ];
+        let mut cmd = std::process::Command::new("/bin/sh");
+        cmd.args([
+            "-c",
+            "printf '%s|%s' \"$CC_SWITCH_TEST_LOGIN_ONLY_VAR\" \"$HOME\"",
+        ]);
+        apply_login_shell_vars(&mut cmd, &vars);
+        let out = cmd.output().expect("sh should run");
+        assert!(out.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            format!("/Users/me/.vite-plus|{existing_home}")
+        );
+    }
+
     #[test]
     fn is_conflicting_thresholds() {
         let make = |version: Option<&str>, runnable: bool| ToolInstallation {

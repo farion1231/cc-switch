@@ -1115,14 +1115,144 @@ fn first_abs_path_line(raw: &str) -> Option<&str> {
     raw.lines().map(str::trim).find(|l| l.starts_with('/'))
 }
 
+#[cfg(not(target_os = "windows"))]
+const LOGIN_ENV_MARKER: &str = "__CC_SWITCH_ENV__";
+
+/// 登录 shell 透传给 GUI 子进程的工具链 / shim / XDG 环境变量白名单。
+///
+/// macOS/Linux 桌面应用继承的是 launchd / systemd 的极简环境，缺 `.zshrc`/`.profile`
+/// 导出的工具管理器目录变量。仅靠 `PATH` 仍会让某些 multicall shim 在非默认布局下退回
+/// 默认目录而拒绝转发——例如 Homebrew 装的 Vite+ (`vp`) 在缺少 `VP_HOME` 时查
+/// `~/.local/share/vite-plus/bin/<tool>` 而不是 `~/.vite-plus/bin/<tool>`，导致
+/// `~/.vite-plus/bin/pi list` 被当成 `vp list`（`pnpm list`）执行（#9960）。
+///
+/// 只透传工具链 / XDG 目录与运行时配置，不透传任意用户会话变量，也不覆盖
+/// CC Switch 显式传入的 `extra_env`（如 `PI_CODING_AGENT_DIR`、`CODEX_HOME`、
+/// `RUST_BACKTRACE=0`）。
+#[cfg(not(target_os = "windows"))]
+const LOGIN_SHELL_PASSTHROUGH_VARS: &[&str] = &[
+    // Vite+ (vp) directory layout & runtime selection
+    "VP_HOME",
+    "VP_BIN_DIR",
+    "VP_DATA_DIR",
+    "VP_CACHE_DIR",
+    "VP_NODE_VERSION",
+    "VP_ENV_FORBIDDEN",
+    "VP_BYPASS",
+    // XDG base directories (used by Vite+, mise, pnpm, etc.)
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+    "XDG_BIN_HOME",
+    // Other Node / package / version managers
+    "PNPM_HOME",
+    "VOLTA_HOME",
+    "MISE_DATA_DIR",
+    "MISE_CONFIG_DIR",
+    "MISE_CACHE_DIR",
+    "MISE_STATE_DIR",
+    "ASDF_DATA_DIR",
+    "ASDF_DIR",
+    "NVM_DIR",
+    "FNM_DIR",
+    "FNM_MULTISHELL_PATH",
+    "BUN_INSTALL",
+    "NPM_CONFIG_PREFIX",
+    "NPM_CONFIG_USERCONFIG",
+    "NPM_CONFIG_REGISTRY",
+    "npm_config_registry",
+    // Custom TLS certs for Node / CLI network calls
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+];
+
+#[cfg(not(target_os = "windows"))]
+fn requires_abs_path_value(key: &str) -> bool {
+    matches!(
+        key,
+        "VP_HOME"
+            | "VP_BIN_DIR"
+            | "VP_DATA_DIR"
+            | "VP_CACHE_DIR"
+            | "XDG_DATA_HOME"
+            | "XDG_CONFIG_HOME"
+            | "XDG_CACHE_HOME"
+            | "XDG_STATE_HOME"
+            | "XDG_BIN_HOME"
+    )
+}
+
+/// 登录 shell 解析出的 PATH 与需要透传给子进程的工具链环境变量。
+#[cfg(not(target_os = "windows"))]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct LoginShellEnv {
+    pub(super) path: Option<String>,
+    pub(super) vars: Vec<(String, String)>,
+}
+
+/// 从 `echo __CC_SWITCH_ENV__; /usr/bin/env`（或裸 `/usr/bin/env`）输出里提取 `PATH` 与
+/// 白名单里的工具链环境变量。标记行用于隔离交互式 shell 启动时 `.zshrc` 打印的噪音；
+/// 路径类变量额外要求以 `/` 开头，避免被多行环境变量的文本行误伤。
+#[cfg(not(target_os = "windows"))]
+fn parse_login_shell_env_output(raw: &str) -> LoginShellEnv {
+    let lines: Vec<&str> = raw.lines().collect();
+    let tail = match lines
+        .iter()
+        .rposition(|line| line.trim() == LOGIN_ENV_MARKER)
+    {
+        Some(index) => &lines[index + 1..],
+        None => &lines[..],
+    };
+
+    let mut path = None;
+    let mut vars: Vec<(String, String)> = Vec::new();
+    for line in tail {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key == "PATH" {
+            if path.is_none() && value.starts_with('/') {
+                path = Some(value.to_string());
+            }
+            continue;
+        }
+        if !LOGIN_SHELL_PASSTHROUGH_VARS.contains(&key) || value.is_empty() {
+            continue;
+        }
+        if requires_abs_path_value(key) && !value.starts_with('/') {
+            continue;
+        }
+        if let Some(existing) = vars.iter_mut().find(|(k, _)| k == key) {
+            existing.1 = value.to_string();
+        } else {
+            vars.push((key.to_string(), value.to_string()));
+        }
+    }
+
+    LoginShellEnv { path, vars }
+}
+
 /// 从 `env` 输出里取 `PATH=` 那行的值。要求值以 `/` 开头——PATH 首段必是绝对路径，
 /// 这条约束顺带跳过"某个多行值的环境变量恰好有一行以 `PATH=` 开头"的污染，
 /// 与 `first_abs_path_line` 对交互式 shell 噪音的容错同理。
-#[cfg(not(target_os = "windows"))]
+#[cfg(all(not(target_os = "windows"), test))]
 fn path_line_from_env_output(raw: &str) -> Option<&str> {
     raw.lines()
         .filter_map(|line| line.strip_prefix("PATH="))
         .find(|value| value.starts_with('/'))
+}
+
+/// 只补齐当前进程环境里缺失的登录 shell 变量，避免覆盖终端启动（如 `pnpm dev`）或测试里
+/// 显式设置的会话覆盖；调用方再通过 `apply_extra_env` 覆盖应用配置目录等强约束变量。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn apply_login_shell_vars(cmd: &mut std::process::Command, vars: &[(String, String)]) {
+    for (key, value) in vars {
+        if std::env::var_os(key).is_none() {
+            cmd.env(key, value);
+        }
+    }
 }
 
 /// 合并两段 PATH：`primary` 全部保留在前，`extra` 中未出现过的段按序追加。
@@ -1140,22 +1270,21 @@ pub(crate) fn merge_path_segments(primary: &str, extra: &str) -> String {
     merged.join(":")
 }
 
-/// 用与 `resolve_path_default` 相同的登录 shell 解析用户的真实 PATH，
-/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本，也供
-/// `run_detected_tool_command_with_timeout` 注入给运行时调用的 CLI。
+/// 用与 `resolve_path_default` 相同的登录 shell 解析用户的真实 `PATH` 与工具链环境变量，
+/// 供 `run_tool_lifecycle_silently`、`run_detected_tool_command_with_timeout`、
+/// `detected_tool_command` 等注入给子进程。
 ///
 /// **要解决的不对称**：探测阶段（`try_get_version` / `resolve_path_default`）跑的是
-/// `$SHELL -lic`，会读 `.zshrc`/`.zprofile`，看得到 nvm / homebrew / volta；而执行阶段
-/// 是非登录 `bash -c`，继承的是 launchd 给 GUI App 的 PATH，通常只有
-/// `/usr/bin:/bin:/usr/sbin:/sbin`。锚定命令自己用绝对路径调用执行体，本不受这条影响
-/// ——但有两类漏网：
-/// 1. **执行体在内部再 spawn 第三方 CLI**：`grok update` 靠 `npm view` 查最新版本
-///    （见 `grok_native_update_command`），npm 又是 `#!/usr/bin/env node` 脚本；
-///    未来任何 self-update 内部调 node/git/python 同理。
+/// `$SHELL -lic`，会读 `.zshrc`/`.zprofile`，看得到 nvm / homebrew / volta / vite-plus；
+/// 而执行阶段继承的是 launchd 给 GUI App 的极简环境（PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，
+/// 且缺失 `VP_HOME` / `XDG_*` / `PNPM_HOME` 等变量）。
+/// 1. **执行体在内部再 spawn 第三方 CLI**：`grok update` 靠 `npm view` 查最新版本，
+///    npm 又是 `#!/usr/bin/env node` 脚本；任何 self-update 内部调 node/git/python 同理。
 /// 2. **install 分支的 `<官方 installer> || npm i -g <pkg>@latest`**：`||` 右侧是裸命令，
 ///    窄 PATH 下必然 exit 127，等于没有兜底。
-///
-/// 把执行阶段的 PATH 拉平到探测阶段的水平，一次消除这两类。
+/// 3. **依赖环境变量定位根目录的 multicall shim**：Homebrew 装的 Vite+ (`vp`) 需要
+///    `VP_HOME` / `VP_*_DIR` / `XDG_DATA_HOME` 才知道 `~/.vite-plus/bin/<tool>` 是它托管的
+///    包二进制，否则会退回 `vp` 主命令（#9960）。
 ///
 /// **用 `/usr/bin/env` 而不是 `echo $PATH`**：`$PATH` 在 fish 里是 list 类型，
 /// `"$PATH"` 展开成空格分隔而非冒号分隔；`env` 打印的则是子进程的真实环境，
@@ -1165,7 +1294,7 @@ pub(crate) fn merge_path_segments(primary: &str, extra: &str) -> String {
 /// 解析不到（含超过 `deadline`）时返回 `None`，调用方保持原有行为（不注入），
 /// 不引入新的失败模式。
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
+pub(super) fn login_shell_env(deadline: Option<CommandDeadline>) -> Option<LoginShellEnv> {
     use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
@@ -1174,7 +1303,7 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg("/usr/bin/env")
+        .arg(format!("echo {LOGIN_ENV_MARKER}; /usr/bin/env"))
         // 与 `resolve_path_default` 相同：交互式 rc 不能读到继承来的 stdin，
         // 也不能因持有控制终端被作业控制停住。
         .stdin(Stdio::null())
@@ -1187,20 +1316,31 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
         return None;
     }
     let raw = decode_command_output(&out.stdout);
-    Some(path_line_from_env_output(&raw)?.to_string())
+    let env = parse_login_shell_env_output(&raw);
+    if env.path.is_none() && env.vars.is_empty() {
+        None
+    } else {
+        Some(env)
+    }
 }
 
-/// [`login_shell_path`] 的进程级缓存：GUI 启动后 PATH 不会再变，解析一次、全进程共用
-/// （MCP 连通性检测、Codex 模型目录探测）。限时 10 秒，免得卡住的 shell 配置让每次调用都等；
-/// 第一次调用会阻塞，异步代码里放进 `spawn_blocking`。
+/// [`login_shell_env`] 的进程级缓存：GUI 启动后登录 shell 环境不会再变，解析一次、全进程共用。
+/// 限时 10 秒，免得卡住的 shell 配置让每次调用都等；第一次调用会阻塞，异步代码里放进 `spawn_blocking`。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn cached_login_shell_env() -> Option<LoginShellEnv> {
+    static LOGIN_SHELL_ENV: std::sync::LazyLock<Option<LoginShellEnv>> =
+        std::sync::LazyLock::new(|| {
+            login_shell_env(CommandDeadline::from_timeout(Some(
+                std::time::Duration::from_secs(10),
+            )))
+        });
+    LOGIN_SHELL_ENV.clone()
+}
+
+/// [`login_shell_env`] 的 PATH 视图（MCP 连通性检测、Codex 模型目录探测复用）。
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn cached_login_shell_path() -> Option<String> {
-    static LOGIN_SHELL_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
-        login_shell_path(CommandDeadline::from_timeout(Some(
-            std::time::Duration::from_secs(10),
-        )))
-    });
-    LOGIN_SHELL_PATH.clone()
+    cached_login_shell_env().and_then(|env| env.path)
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1385,6 +1525,15 @@ pub(super) fn run_probe_version_command(
     tool_path: &Path,
     new_path: &std::ffi::OsStr,
 ) -> Result<std::process::Output, String> {
+    run_probe_version_command_with_env(tool_path, new_path, &[])
+}
+
+#[cfg(not(target_os = "windows"))]
+fn run_probe_version_command_with_env(
+    tool_path: &Path,
+    new_path: &std::ffi::OsStr,
+    login_vars: &[(String, String)],
+) -> Result<std::process::Output, String> {
     use std::process::{Command, Stdio};
 
     let mut cmd = Command::new(tool_path);
@@ -1393,6 +1542,7 @@ pub(super) fn run_probe_version_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    apply_login_shell_vars(&mut cmd, login_vars);
     isolate_child_process_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| e.to_string())?;
     wait_child_output(
@@ -1515,10 +1665,17 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
+    let login_env = cached_login_shell_env();
+    #[cfg(not(target_os = "windows"))]
     let current_path = install_probe_base_path(
-        cached_login_shell_path().as_deref(),
+        login_env.as_ref().and_then(|env| env.path.as_deref()),
         &effective_path_os().unwrap_or_default(),
     );
+    #[cfg(not(target_os = "windows"))]
+    let login_vars: &[(String, String)] = login_env
+        .as_ref()
+        .map(|env| env.vars.as_slice())
+        .unwrap_or(&[]);
 
     located
         .into_iter()
@@ -1532,7 +1689,10 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
             #[cfg(not(target_os = "windows"))]
             let new_path = prepend_search_dir_to_path(dir, &current_path);
 
+            #[cfg(target_os = "windows")]
             let output = run_probe_version_command(&install.path, &new_path);
+            #[cfg(not(target_os = "windows"))]
+            let output = run_probe_version_command_with_env(&install.path, &new_path, login_vars);
 
             let (version, runnable, error, exited_with_error) = match output {
                 Ok(out) if out.status.success() => {

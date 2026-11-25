@@ -213,18 +213,25 @@ pub(crate) fn run_detected_tool_command_with_timeout(
         .ok_or_else(|| format!("Invalid {tool} executable path"))?;
     #[cfg(target_os = "windows")]
     let current_path = effective_path_string();
-    // GUI 启动时继承的是 launchd 的窄 PATH（/usr/bin:/bin:/usr/sbin:/sbin）。npm 装的 CLI
-    // 是 `#!/usr/bin/env node` 脚本，node 常不在工具自己的目录里（如 codex 在
-    // /opt/homebrew/bin、node 在 /usr/local/bin），只补工具目录会 exit 127（#8653）。
-    // 与安装/升级同样补上登录 shell 的 PATH。
+    // GUI 启动时继承的是 launchd 的极简环境（PATH 只有 /usr/bin:/bin:/usr/sbin:/sbin，
+    // 也缺 VP_HOME / XDG_* / PNPM_HOME 等工具链目录变量）。npm 装的 CLI 是
+    // `#!/usr/bin/env node` 脚本，只补工具目录会 exit 127（#8653）；Vite+ (`vp`) 等
+    // multicall shim 缺 `VP_HOME` 还会拒绝转发而跑成宿主命令本身（#9960）。
+    // 与安装/升级同样补齐登录 shell 的 PATH 和工具链环境变量。
     #[cfg(not(target_os = "windows"))]
-    let current_path = {
+    let (current_path, login_vars) = {
         let inherited = std::env::var_os("PATH")
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_default();
-        match login_shell_path(deadline) {
-            Some(login_path) => merge_path_segments(&login_path, &inherited),
-            None => inherited,
+        match login_shell_env(deadline) {
+            Some(login_env) => {
+                let merged = match login_env.path.as_deref() {
+                    Some(login_path) => merge_path_segments(login_path, &inherited),
+                    None => inherited,
+                };
+                (merged, login_env.vars)
+            }
+            None => (inherited, Vec::new()),
         }
     };
 
@@ -252,6 +259,7 @@ pub(crate) fn run_detected_tool_command_with_timeout(
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        apply_login_shell_vars(&mut cmd, &login_vars);
         apply_extra_env(&mut cmd, extra_env);
         isolate_child_process_group(&mut cmd);
         let child = cmd
@@ -310,13 +318,17 @@ pub(crate) fn detected_tool_command(
         let inherited = std::env::var_os("PATH")
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let current_path = match login_shell_path(deadline) {
-            Some(login_path) => merge_path_segments(&login_path, &inherited),
+        let login_env = login_shell_env(deadline);
+        let current_path = match login_env.as_ref().and_then(|env| env.path.as_deref()) {
+            Some(login_path) => merge_path_segments(login_path, &inherited),
             None => inherited,
         };
         let mut cmd = std::process::Command::new(&tool_path);
         cmd.args(args)
             .env("PATH", format!("{}:{current_path}", dir.display()));
+        if let Some(login_env) = login_env.as_ref() {
+            apply_login_shell_vars(&mut cmd, &login_env.vars);
+        }
         isolate_child_process_group(&mut cmd);
         Ok(cmd)
     }
