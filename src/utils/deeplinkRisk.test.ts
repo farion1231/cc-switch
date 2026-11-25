@@ -114,6 +114,17 @@ describe("classifyEnvKey", () => {
       "PATH",
       "HTTPS_PROXY",
       "https_proxy", // 大小写不敏感
+      "ALL_PROXY",
+      "SSL_CERT_FILE",
+      "SSL_CERT_DIR",
+      "REQUESTS_CA_BUNDLE",
+      "CURL_CA_BUNDLE",
+      "GIT_SSH_COMMAND",
+      "GIT_EXEC_PATH",
+      "ZDOTDIR",
+      "PROMPT_COMMAND",
+      "COMSPEC",
+      "PATHEXT",
     ]) {
       expect(classifyEnvKey(key), key).toBe("envHijack");
     }
@@ -187,6 +198,109 @@ describe("classifyCommand", () => {
     );
     // 不含 c 的短开关串不算
     expect(classifyCommand("bash", ["-l", "script.sh"])).toBeNull();
+  });
+
+  it("flags scripting interpreters invoked with inline code execution flags", () => {
+    expect(classifyCommand("node", ["-e", "require('child_process')"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("/usr/bin/node", ["--eval=process.exit()"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("node.exe", ["-p", "1+1"])).toBe("shellCommand");
+    expect(classifyCommand("bun", ["-e", "console.log(1)"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("deno", ["eval", "console.log(1)"])).toBe(
+      "shellCommand",
+    );
+    expect(
+      classifyCommand("python3", ["-c", "import os; os.system('id')"]),
+    ).toBe("shellCommand");
+    expect(classifyCommand("python3.12", ["-uc", "print(1)"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("py.exe", ["-c", "print(1)"])).toBe("shellCommand");
+    expect(classifyCommand("perl", ["-e", "system('id')"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("ruby", ["-e", "system('id')"])).toBe(
+      "shellCommand",
+    );
+    expect(classifyCommand("php", ["-r", "system('id');"])).toBe(
+      "shellCommand",
+    );
+
+    // Interpreter flags before inline execution still trigger.
+    expect(
+      classifyCommand("python3", ["-W", "ignore", "-c", "import os"]),
+    ).toBe("shellCommand");
+    expect(
+      classifyCommand("node", ["-r", "./preload.js", "-e", "process.exit()"]),
+    ).toBe("shellCommand");
+    expect(
+      classifyCommand("deno", ["--allow-net", "eval", "console.log(1)"]),
+    ).toBe("shellCommand");
+
+    // Normal script file launches and script-owned flags after script name / `--` / `-m` remain clean.
+    expect(classifyCommand("python3", ["server.py"])).toBeNull();
+    expect(
+      classifyCommand("python3", ["server.py", "-c", "config.toml"]),
+    ).toBeNull();
+    expect(
+      classifyCommand("python3", ["-u", "server.py", "-c", "config.toml"]),
+    ).toBeNull();
+    expect(
+      classifyCommand("python3", ["-W", "ignore", "server.py", "-c", "cfg"]),
+    ).toBeNull();
+    expect(
+      classifyCommand("python3", ["-m", "mcp_server", "-c", "config.toml"]),
+    ).toBeNull();
+    expect(
+      classifyCommand("python3", ["-Wonce", "-mhttp.server", "-c", "cfg"]),
+    ).toBeNull();
+    expect(classifyCommand("python3", ["--", "-c", "config.toml"])).toBeNull();
+    expect(classifyCommand("node", ["dist/index.js"])).toBeNull();
+    expect(
+      classifyCommand("node", [
+        "dist/index.js",
+        "-e",
+        "production",
+        "--eval=false",
+        "-p",
+        "3000",
+      ]),
+    ).toBeNull();
+    expect(
+      classifyCommand("node", [
+        "-r",
+        "dotenv/config",
+        "server.js",
+        "-e",
+        "dev",
+      ]),
+    ).toBeNull();
+    expect(classifyCommand("node", ["--", "-e", "not-eval"])).toBeNull();
+    expect(
+      classifyCommand("bun", ["run", "server.ts", "-e", "prod"]),
+    ).toBeNull();
+    expect(
+      classifyCommand("perl", ["-Mfeature", "script.pl", "-e", "arg"]),
+    ).toBeNull();
+    expect(
+      classifyCommand("ruby", ["-rset", "server.rb", "-e", "prod"]),
+    ).toBeNull();
+    expect(
+      classifyCommand("php", [
+        "-dmemory_limit=256M",
+        "server.php",
+        "-r",
+        "arg",
+      ]),
+    ).toBeNull();
+    expect(classifyCommand("deno", ["run", "server.ts"])).toBeNull();
+    expect(classifyCommand("deno", ["run", "server.ts", "eval"])).toBeNull();
+    expect(classifyCommand("deno", ["--", "eval", "x"])).toBeNull();
   });
 });
 
