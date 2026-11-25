@@ -11,12 +11,11 @@ use http_body_util::BodyExt;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use std::sync::OnceLock;
-use std::{future::Future, pin::Pin};
 
 /// An async action to run immediately before a protocol converter emits a
 /// successful terminal event. Errors, truncation, and client cancellation do
 /// not run this hook.
-pub type SuccessTerminalHook = Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send>;
+pub type SuccessTerminalHook = Box<dyn FnOnce() -> futures::future::BoxFuture<'static, ()> + Send>;
 
 /// Our own header case map: maps lowercase header name → original wire-casing bytes.
 ///
