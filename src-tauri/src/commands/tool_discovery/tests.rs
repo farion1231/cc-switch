@@ -707,14 +707,6 @@ mod anchored_upgrade {
             Some("/Users/me/.local/bin/pi")
         );
 
-        let raw =
-            "🚀 Welcome!\nSOME_SCRIPT=line1\nPATH=not-a-path\nPATH=/opt/homebrew/bin:/usr/bin\n";
-        assert_eq!(
-            path_line_from_env_output(raw),
-            Some("/opt/homebrew/bin:/usr/bin")
-        );
-        assert_eq!(path_line_from_env_output("HOME=/Users/me\n"), None);
-
         assert_eq!(
             merge_path_segments(
                 "/Users/me/.nvm/versions/node/v22/bin:/usr/bin:/bin",
@@ -776,41 +768,17 @@ mod anchored_upgrade {
     #[test]
     fn parse_login_shell_env_extracts_toolchain_vars_after_marker() {
         let raw = format!(
-            "Using Node.js v26.13.1 (resolved from default)\n\
-             VP_HOME=/stale/before/marker\n\
-             PATH=/stale/bin\n\
-             {LOGIN_ENV_MARKER}\n\
-             PATH=/Users/me/.vite-plus/bin:/opt/homebrew/bin:/usr/bin\n\
-             VP_HOME=/Users/me/.vite-plus\n\
-             VP_NODE_VERSION=26.13.1\n\
-             VP_SHIM_TOOL=should-never-forward\n\
-             XDG_DATA_HOME=/Users/me/.local/share\n\
-             XDG_CONFIG_HOME=relative/ignored\n\
-             PNPM_HOME=/Users/me/Library/pnpm\n\
-             MISE_DATA_DIR=\n\
-             PI_CODING_AGENT_DIR=/Users/me/.pi/custom\n\
-             SECRET_TOKEN=super-secret\n"
+            "PATH=/stale/bin\nVP_HOME=/stale\n{LOGIN_ENV_MARKER}\
+             PATH=/usr/bin\0VP_HOME=/Users/me/.vite-plus\0XDG_DATA_HOME=relative\0\
+             OTHER=value\nVP_HOME=/wrong/home\0NPM_CONFIG_REGISTRY=https://example.org\0"
         );
-        let parsed = parse_login_shell_env_output(&raw);
-        assert_eq!(
-            parsed.path.as_deref(),
-            Some("/Users/me/.vite-plus/bin:/opt/homebrew/bin:/usr/bin")
-        );
+        let parsed = parse_login_shell_env_output(&raw).unwrap();
+        assert_eq!(parsed.path.as_deref(), Some("/usr/bin"));
         assert_eq!(
             parsed.vars,
-            vec![
-                ("VP_HOME".to_string(), "/Users/me/.vite-plus".to_string()),
-                ("VP_NODE_VERSION".to_string(), "26.13.1".to_string()),
-                (
-                    "XDG_DATA_HOME".to_string(),
-                    "/Users/me/.local/share".to_string()
-                ),
-                (
-                    "PNPM_HOME".to_string(),
-                    "/Users/me/Library/pnpm".to_string()
-                ),
-            ]
+            [("VP_HOME".to_owned(), "/Users/me/.vite-plus".to_owned())]
         );
+        assert!(parse_login_shell_env_output("PATH=/stale/bin").is_none());
     }
 
     #[cfg(not(target_os = "windows"))]

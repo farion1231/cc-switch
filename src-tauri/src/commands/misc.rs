@@ -566,10 +566,7 @@ fn run_tool_lifecycle_silently(
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(command_line);
-    // GUI App 继承的是 launchd 的极简环境，而锚定探测用的是登录 shell —— 见
-    // `login_shell_env` doc。命令自身用绝对路径不受影响，但工具**内部** spawn 的
-    // npm/node 等子进程、install 链里裸的 npm fallback、以及 Vite+ 等 multicall shim
-    // 都需要真实 PATH 与工具链环境变量。
+    // GUI 启动时，安装脚本的 node/npm 子进程也需要登录 shell 的 PATH 和 Vite+ 目录。
     if let Some(login_env) = login_shell_env(None) {
         if let Some(login_path) = login_env.path.as_deref() {
             let inherited = std::env::var("PATH").unwrap_or_default();
