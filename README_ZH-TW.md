@@ -68,8 +68,20 @@ Claude Code / Codex / Gemini 官方通道分別低至原價的 38% / 2% / 9%，�
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>感謝 Modelflare 贊助本專案！Modelflare：滿血穩定不摻水，以低成本享受全球 SOTA 模型。網站由美國 LLC 主體 Havenbyte LLC 營運，支援 GPT、Claude、Gemini、Grok 等主流模型與常用相容協定，另支援 40 多種圖片與影片模型，並支援中國大陸正規商務合作。
+<b>快取補償是一大亮點：</b>部分 OpenAI 價格優先、穩定與高級分組提供每日 65%、75%、85% 的快取命中率保障，符合條件的請求未達目標時，平台補償差額，結算後可在用量看板查看。
+<b>特惠活動：</b>單筆儲值 US$20 即可解鎖 0.015 倍價格倍率的 GPT 特惠分組，單筆儲值 US$50 即可解鎖 0.03 倍價格倍率的 Claude 特惠分組。透過<a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">專屬連結註冊</a>即可參加。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>感謝 hao.ai 贊助本專案！hao.ai 是為開發者與團隊打造的快速、穩定的統一 LLM API 閘道。只需一組 API Key 與統一介面，即可存取 GPT、Claude、xAI Grok 等頂尖模型，並相容 OpenAI、Anthropic 等常見協定與 SDK。平台提供模型路由、故障轉移、團隊管理與完整的請求日誌，模型價格最低可至官方參考價的 15%，讓建構 AI 應用更簡單、更穩定、更省錢。hao.ai 為 CC Switch 用戶提供專屬福利：透過<a href="https://hao.ai/invite/DTBZS3OR">此連結</a>註冊，首單即可額外獲得 5% 贈送額度！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>感謝弦界 StringAI 贊助本專案！弦界 StringAI 是一個高性價比、高效穩定的模型 API 平台，一站式接入 AI 程式設計（Coding）、圖像生成（Image）、語音合成（TTS）和影片生成（Video）四大能力。匯聚全球多款知名模型，提供自部署、雲端服務商及官方 API 等多種資源選擇，滿足高校、企業、個人開發者和創業團隊的接入需求，並由專業團隊提供接入指導與技術支援。弦界為 CC Switch 使用者提供了專屬福利，透過<a href="https://www.string.ink/register?ref=661AE533A60AF110">此連結</a>註冊，首儲 3.74 美元送 3.74 美元，獲贈 3.74 美元額外獎勵額度！</td>
 </tr>
 
 <tr>
@@ -355,6 +367,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy Code | 共存 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **切換**：同一時間只有一個供應商生效；**共存**：多個供應商會同時寫入該工具自己的設定，由你在工具內挑選其中一個。
 - **本地路由**：CC Switch 在你的電腦上轉發請求並轉換 API 格式；詳見下方的[本地路由與故障轉移](#本地路由與故障轉移)。Claude Desktop 的供應商可使用「直連」或「模型映射」；使用「模型映射」時，請求會經過本地路由。
@@ -393,7 +406,7 @@ paru -S cc-switch-bin
 
 ### MCP、提示詞與 Skills
 
-- **統一的 MCP 面板** — 在同一處管理所有 MCP 伺服器，選擇每個伺服器要同步到哪些工具（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi），從各工具匯入現有設定，並可透過 Deep Link 匯入
+- **統一的 MCP 面板** — 在同一處管理所有 MCP 伺服器，選擇每個伺服器要同步到哪些工具（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi、CodeBuddy Code），從各工具匯入現有設定，並可透過 Deep Link 匯入
 - **提示詞** — 依工具分別建立的提示詞庫，附 Markdown 編輯器；啟用提示詞時會將其寫入該工具的提示詞檔案（CLAUDE.md / AGENTS.md / GEMINI.md），並先把檔案現有的內容存回提示詞庫，確保不會遺失任何內容。Pi 還可編輯 SYSTEM.md、APPEND_SYSTEM.md 與提示詞範本
 - **Skills** — 搜尋 skills.sh，或從 GitHub 儲存庫或 ZIP 檔案一鍵安裝；可檢查更新並一鍵全部更新；可自動同步到各工具、僅用符號連結，或僅用複本；也可選擇存放在 `~/.agents/skills`
 - 三個面板都支援搜尋，MCP 與 Skills 還可依工具一次全部啟用或停用；供應商、MCP 伺服器與提示詞都在內容區以整頁方式編輯，離開時若有未儲存的變更會先提醒你

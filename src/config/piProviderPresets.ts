@@ -17,7 +17,8 @@ export type PiApiFormat =
   | "openai-responses"
   | "anthropic-messages"
   | "google-generative-ai"
-  | "bedrock-converse-stream";
+  | "bedrock-converse-stream"
+  | "mistral-conversations";
 
 export type PiPresetModel = PiCatalogModel & {
   thinkingLevelMap?: PiThinkingLevelMap;
@@ -161,6 +162,15 @@ const aiCodeMirrorModels = (): PiPresetModel[] => [
   }),
   piModel("anthropic/claude-sonnet-5.5", {
     id: "claude-sonnet-5-5",
+  }),
+];
+
+const stringAiModels = (): PiPresetModel[] => [
+  piModel("openai/gpt-6-astra", {
+    id: "gpt-6-astra",
+  }),
+  piModel("openai/gpt-6.1-sol", {
+    id: "gpt-6.1-sol",
   }),
 ];
 
@@ -495,6 +505,23 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    providerKey: "cc-switch-string-ai",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      name: "StringAI",
+      baseUrl: "https://www.string.ink/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: stringAiModels(),
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
   },
   {
     name: "FennoAI",
@@ -2410,6 +2437,40 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     },
     category: "third_party",
     icon: "cline",
+  },
+  {
+    name: "Mistral AI",
+    // Pi 内置的 mistral provider 用同名 ID，加前缀避免遮蔽内置定义
+    providerKey: "cc-switch-mistral",
+    websiteUrl: "https://mistral.ai",
+    // Vibe（原 Le Chat）订阅额度与 API 共用，Key 在 Code > Vibe CLI 页创建，
+    // 免费 / 订阅 / 按量付费通用（同其他应用的 Mistral 预设）
+    apiKeyUrl: "https://chat.mistral.ai/code/extensions",
+    settingsConfig: {
+      name: "Mistral AI",
+      // 走 Pi 原生的 mistral-conversations 协议（Pi 1.5.0 内置 mistral provider
+      // 同此写法，base 不带 /v1，由 Pi 自拼 /v1/chat/completions）。Pi 的
+      // openai-completions 通道没有 Mistral 专用处理，推理时流式 content 是
+      // thinking/text 分块数组，走那条路会丢正文，故不用。档位映射照 Pi 内置
+      // 目录：Large 4 只收 low / medium / high，Small 4 只收 none / high。
+      // 2026-11-08 用真 Key 经 Pi 1.5.0 冒烟：两模型对话、各思考档位（越界档位
+      // 由 Pi 收拢到可用档）、流式 thinking、并行工具调用与多轮回传均正常
+      baseUrl: "https://api.mistral.ai",
+      api: "mistral-conversations",
+      apiKey: "",
+      models: [
+        piModel("mistral/mistral-large-4", {
+          id: "mistral-large-4",
+          thinkingProfile: "lowMediumHighOnly",
+        }),
+        piModel("mistral/mistral-small-2603", {
+          id: "mistral-small-2603",
+          thinkingProfile: "noneOrHigh",
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "mistral",
   },
   {
     name: "Groq",

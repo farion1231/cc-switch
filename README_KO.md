@@ -68,8 +68,20 @@ Claude Code / Codex / Gemini 공식 채널을 정가의 38% / 2% / 9%에 제공�
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>이 프로젝트를 후원해 주신 Modelflare에 감사드립니다! Modelflare는 성능을 깎지 않은 안정적인 서비스로, 전 세계 SOTA 모델을 저렴하게 이용할 수 있습니다. 미국 LLC인 Havenbyte LLC가 운영하며, GPT, Claude, Gemini, Grok 등 주요 모델과 일반적인 호환 프로토콜을 지원하고, 40여 종의 이미지·동영상 모델도 지원합니다. 중국 본토의 정식 비즈니스 협력도 지원합니다.
+<b>캐시 보상이 큰 장점입니다:</b> 일부 OpenAI 가격 우선·안정·프리미엄 그룹은 일일 캐시 적중률을 각각 65%, 75%, 85%로 보장합니다. 조건을 충족하는 요청이 목표에 미치지 못하면 플랫폼이 차액을 보상하며, 정산 후 사용량 대시보드에서 확인할 수 있습니다.
+<b>특별 혜택:</b> 한 번에 US$20를 충전하면 가격 배율 0.015배의 GPT 특가 그룹이, 한 번에 US$50를 충전하면 가격 배율 0.03배의 Claude 특가 그룹이 열립니다. <a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">전용 링크로 가입</a>하면 참여할 수 있습니다.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>이 프로젝트를 후원해 주신 hao.ai에 감사드립니다! hao.ai는 개발자와 팀을 위한 빠르고 안정적인 통합 LLM API 게이트웨이입니다. 하나의 API 키와 통합 인터페이스로 GPT, Claude, xAI Grok 등 주요 모델에 접근할 수 있으며, OpenAI, Anthropic 등 일반적인 프로토콜과 SDK와 호환됩니다. 모델 라우팅, 장애 조치, 팀 관리, 전체 요청 로그를 제공하고, 모델 가격은 공식 참고 가격의 15%까지 낮아져 AI 애플리케이션을 더 간단하고 안정적이며 저렴하게 만들 수 있습니다. hao.ai는 CC Switch 사용자에게 특별 혜택을 제공합니다. <a href="https://hao.ai/invite/DTBZS3OR">이 링크</a>로 가입하면 첫 주문 시 5% 보너스 크레딧을 받을 수 있습니다!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>이 프로젝트를 후원해 주신 StringAI에 감사드립니다! StringAI는 가성비 좋고 빠르며 안정적인 모델 API 플랫폼으로, AI 코딩, 이미지 생성, 음성 합성(TTS), 동영상 생성의 네 가지 기능을 한곳에서 이용할 수 있습니다. 전 세계의 다양한 유명 모델을 모아 셀프 호스팅, 클라우드 서비스 제공업체, 공식 API 등 여러 리소스를 선택할 수 있어 대학, 기업, 개인 개발자, 스타트업 팀의 요구를 충족하며, 전문 팀이 도입 안내와 기술 지원을 제공합니다. StringAI는 CC Switch 사용자를 위한 특별 혜택을 제공합니다: <a href="https://www.string.ink/register?ref=661AE533A60AF110">이 링크</a>로 가입하면 첫 충전 $3.74에 보너스 크레딧 $3.74를 추가로 드립니다!</td>
 </tr>
 
 <tr>
@@ -355,6 +367,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy Code | 공존 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **전환**: 한 번에 하나의 공급자만 활성화됩니다. **공존**: 여러 공급자가 동시에 도구 자체의 설정에 기록되며, 도구 안에서 하나를 선택합니다.
 - **로컬 라우팅**: CC Switch가 내 컴퓨터에서 요청을 전달하고 API 형식을 변환합니다. 아래 [로컬 라우팅 및 장애 조치](#로컬-라우팅-및-장애-조치)를 참고하세요. Claude Desktop 공급자는 "직접 연결" 또는 "모델 매핑"을 사용할 수 있으며, "모델 매핑"에서는 요청이 로컬 라우팅을 거칩니다.
@@ -393,7 +406,7 @@ paru -S cc-switch-bin
 
 ### MCP, 프롬프트, Skills
 
-- **통합 MCP 패널** — 모든 MCP 서버를 한곳에서 관리하고, 각각을 어떤 도구에 동기화할지 선택하며(Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), 각 도구의 기존 설정을 가져오고, Deep Link로 가져올 수 있습니다
+- **통합 MCP 패널** — 모든 MCP 서버를 한곳에서 관리하고, 각각을 어떤 도구에 동기화할지 선택하며(Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy Code), 각 도구의 기존 설정을 가져오고, Deep Link로 가져올 수 있습니다
 - **프롬프트** — Markdown 편집기를 갖춘 도구별 프롬프트 라이브러리입니다. 프롬프트를 활성화하면 해당 도구의 프롬프트 파일(CLAUDE.md / AGENTS.md / GEMINI.md)에 기록되며, 파일의 기존 내용은 먼저 라이브러리에 저장되므로 아무것도 사라지지 않습니다. Pi는 SYSTEM.md, APPEND_SYSTEM.md, 프롬프트 템플릿도 편집할 수 있습니다
 - **Skills** — skills.sh를 검색하거나 GitHub 저장소 또는 ZIP 파일에서 원클릭으로 설치하고, 업데이트를 확인해 한 번에 모두 업데이트하세요. 각 도구에 자동으로, 심볼릭 링크로만, 또는 복사로만 동기화할 수 있으며, 원하면 `~/.agents/skills`에 저장할 수도 있습니다
 - 세 패널 모두 검색을 지원하고, MCP와 Skills는 도구별로 한 번에 모두 켜거나 끌 수도 있습니다. 공급자, MCP 서버, 프롬프트는 콘텐츠 영역에서 전체 페이지로 편집하며, 저장하지 않은 변경 사항이 있으면 나가기 전에 경고합니다

@@ -68,8 +68,20 @@ The platform also supports enterprise-grade concurrency, a dedicated admin conso
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>Thanks to Modelflare for sponsoring this project! Modelflare: full-strength, stable, never watered down, with the world's SOTA models at low cost. The site is operated by Havenbyte LLC, a US limited liability company, and supports GPT, Claude, Gemini, Grok, and other leading models over common compatible protocols, plus 40+ image and video models. Formal business partnerships in mainland China are supported.
+<b>Cache compensation is a highlight:</b> some of the OpenAI price-first, stable, and premium groups guarantee a daily cache hit rate of 65%, 75%, and 85% respectively. When eligible requests fall short of the target, the platform compensates the difference, which you can see on the usage dashboard after settlement.
+<b>Special offer:</b> a single top-up of US$20 unlocks the GPT discount group at a 0.015× price multiplier, and a single top-up of US$50 unlocks the Claude discount group at a 0.03× price multiplier. <a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">Sign up via the exclusive link</a> to take part.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>Thanks to hao.ai for sponsoring this project! hao.ai is a fast, stable unified LLM API gateway for developers and teams. With one API key and a unified interface, you can access GPT, Claude, xAI Grok, and other leading models, compatible with common protocols and SDKs such as OpenAI and Anthropic. The platform offers model routing, failover, team management, and complete request logs, with model prices as low as 15% of official reference prices, making it simpler, more stable, and cheaper to build AI applications. hao.ai offers CC Switch users a special perk: register via <a href="https://hao.ai/invite/DTBZS3OR">this link</a> to get 5% bonus credit on your first order!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>Thanks to StringAI for sponsoring this project! StringAI is a cost-effective, fast, and stable model API platform that offers one-stop access to four capabilities: AI coding, image generation, text-to-speech (TTS), and video generation. It brings together many well-known models from around the world, with a choice of self-hosted, cloud-provider, and official API resources to fit universities, enterprises, individual developers, and startup teams, and a professional team provides onboarding guidance and technical support. StringAI offers CC Switch users a special perk: register via <a href="https://www.string.ink/register?ref=661AE533A60AF110">this link</a> and your first top-up of $3.74 earns an extra $3.74 in bonus credit!</td>
 </tr>
 
 <tr>
@@ -355,6 +367,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 | MiniMax Code | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy Code | Coexist | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **Switch**: only one provider is active at a time; **Coexist**: multiple providers are written into the tool's own config at the same time, and you pick one inside the tool.
 - **Local Routing**: CC Switch forwards requests on your machine and converts API formats; see [Local Routing & Failover](#local-routing--failover) below. Claude Desktop providers can use "Direct" or "Model Mapping"; with "Model Mapping", requests go through local routing.
@@ -393,7 +406,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 ### MCP, Prompts & Skills
 
-- **Unified MCP panel** — Manage all MCP servers in one place, choose which tools to sync each one to (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), import existing configs from each tool, and import via Deep Link
+- **Unified MCP panel** — Manage all MCP servers in one place, choose which tools to sync each one to (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy Code), import existing configs from each tool, and import via Deep Link
 - **Prompts** — A per-tool prompt library with a Markdown editor; enabling a prompt writes it to that tool's prompt file (CLAUDE.md / AGENTS.md / GEMINI.md), and the file's existing content is saved back to the library first, so nothing is lost. Pi can also edit SYSTEM.md, APPEND_SYSTEM.md, and prompt templates
 - **Skills** — Search skills.sh, or install in one click from GitHub repos or ZIP files; check for updates and update all in one click; sync to each tool automatically, via symlinks only, or via copies only; you can optionally store them in `~/.agents/skills`
 - All three panels support search, and MCP and Skills can also be enabled or disabled all at once per tool; providers, MCP servers, and prompts are edited full-page in the content area, and you're warned before leaving with unsaved changes

@@ -10,11 +10,10 @@ import {
   hasExplicitNonOpenAiCodexModelProvider,
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
-export const KIMI_OFFICIAL_PROVIDER_ID = "managed:kimi-code";
 
 export type CodexOfficialIdentity =
   | "native_login"
@@ -136,7 +135,8 @@ export function supportsConnectivityCheck(
     appId === "mcode" ||
     appId === "dsh" ||
     appId === "kimi" ||
-    appId === "workbuddy"
+    appId === "workbuddy" ||
+    appId === "codebuddy"
   )
     return false;
   return (

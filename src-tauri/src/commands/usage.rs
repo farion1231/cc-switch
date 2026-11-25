@@ -312,18 +312,6 @@ pub async fn fetch_models_dev() -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn check_provider_limits(
-    state: State<'_, AppState>,
-    provider_id: String,
-    app_type: String,
-) -> Result<crate::services::usage_stats::ProviderLimitStatus, AppError> {
-    run_db_query(&state, move |db| {
-        db.check_provider_limits(&provider_id, &app_type)
-    })
-    .await
-}
-
-#[tauri::command]
 pub async fn delete_model_pricing(
     state: State<'_, AppState>,
     model_id: String,
@@ -388,17 +376,6 @@ pub async fn rebuild_codex_usage(
     .map_err(|error| AppError::Message(format!("Codex 用量重建任务失败: {error}")))?
 }
 
-#[tauri::command]
-pub async fn get_usage_data_sources(
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::services::session_usage::DataSourceSummary>, AppError> {
-    run_db_query(
-        &state,
-        crate::services::session_usage::get_data_source_breakdown,
-    )
-    .await
-}
-
 /// 取 USD 对各显示币种的汇率：主源 open.er-api.com，失败退 floatrates.com。
 /// 只用于金额换算显示；失败时前端保留上次缓存或手填的汇率。
 #[tauri::command]
@@ -412,27 +389,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_rebuild_notifies_when_reimport_is_empty() {
+    fn codex_rebuild_notifies_on_empty_or_failed_reimport() {
         crate::usage_events::take_test_notify_count();
-
         let result = finish_codex_rebuild(Ok(
             crate::services::session_usage::SessionSyncResult::default(),
         ))
         .expect("空重导应成功");
-
         assert_eq!(result.imported, 0);
         assert_eq!(crate::usage_events::take_test_notify_count(), 1);
-    }
 
-    #[test]
-    fn codex_rebuild_notifies_when_reimport_fails_after_reset() {
-        crate::usage_events::take_test_notify_count();
-
-        let result = finish_codex_rebuild(Err(AppError::Message(
+        let err = finish_codex_rebuild(Err(AppError::Message(
             "synthetic reimport failure".to_string(),
         )));
-
-        assert!(result.is_err());
+        assert!(err.is_err());
         assert_eq!(crate::usage_events::take_test_notify_count(), 1);
     }
 }

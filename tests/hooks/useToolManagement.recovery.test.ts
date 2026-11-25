@@ -159,13 +159,14 @@ describe("tool detection recovery", () => {
       "@/components/apps/useToolManagement"
     );
     await checkToolUpdatesInBackground();
-    expect(api.getToolVersions).toHaveBeenCalledTimes(1);
+    // 后台检查与页面加载一致，按工具并发探测，单个远端源超时不拖住其余工具。
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount);
     api.getToolVersions.mockImplementation(async (names: string[]) =>
       names.map((name) => version(name)),
     );
     const view = await mountTools();
     await advance(2000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(2);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
     expect(api.getToolVersions).toHaveBeenLastCalledWith(["grok"], {});
     expect(view.result.current.toolVersionByName.get("grok")?.version).toBe(
       "1.0.0",
@@ -525,7 +526,7 @@ describe("tool detection recovery", () => {
     expect(api.listToolInstallations).toHaveBeenCalledTimes(2);
     expect(api.listToolInstallations).toHaveBeenLastCalledWith(["grok"]);
     await advance(3000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(2 * toolCount + 1);
   });
 
   it("does not resurrect an uninstalled path from an earlier scan", async () => {
@@ -588,13 +589,13 @@ describe("tool detection recovery", () => {
       view.result.current.toolVersionByName.get("grok")?.version,
     ).toBeNull();
     await advance(3000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(2 * toolCount);
     await act(async () => {
       finishScan([installationReport()]);
       await background;
     });
     await advance(3000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(2 * toolCount + 1);
   });
   it("schedules short retry when mounting between background failure and scan completion", async () => {
     api.getToolVersions.mockImplementation(async (names: string[]) =>
@@ -625,13 +626,13 @@ describe("tool detection recovery", () => {
     expect(
       second.result.current.toolVersionByName.get("grok")?.version,
     ).toBeNull();
-    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 1);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(2 * toolCount);
     await act(async () => {
       finishScan([installationReport()]);
       await background;
     });
     await advance(3000);
-    expect(api.getToolVersions).toHaveBeenCalledTimes(toolCount + 2);
+    expect(api.getToolVersions).toHaveBeenCalledTimes(2 * toolCount + 1);
   });
   it("does not suppress reinstall with an initial scan older than the latest failed retry", async () => {
     let finishInitial!: (reports: ToolInstallationReport[]) => void;

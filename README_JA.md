@@ -68,8 +68,20 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>本プロジェクトのスポンサーである Modelflare に感謝いたします！Modelflare は、性能をフルに発揮し、安定していて水増しなし。世界の SOTA モデルを低コストで利用できます。米国の LLC である Havenbyte LLC が運営し、GPT、Claude、Gemini、Grok などの主要モデルと一般的な互換プロトコルに対応するほか、40 種類以上の画像・動画モデルにも対応しています。中国本土での正式なビジネス提携にも対応しています。
+<b>キャッシュ補償が大きな特長です：</b>OpenAI の一部の価格優先・安定・プレミアムグループでは、1 日あたりのキャッシュヒット率をそれぞれ 65%、75%、85% で保証しています。条件を満たすリクエストが目標に届かなかった場合は差額が補償され、精算後に使用量ダッシュボードで確認できます。
+<b>特別キャンペーン：</b>1 回で US$20 をチャージすると価格倍率 0.015 倍の GPT 特価グループが、1 回で US$50 をチャージすると価格倍率 0.03 倍の Claude 特価グループが利用可能になります。<a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">専用リンクから登録</a>すると参加できます。</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>本プロジェクトのスポンサーである hao.ai に感謝いたします！hao.ai は、開発者とチーム向けの高速で安定した LLM 統合 API ゲートウェイです。1 つの API キーと統一インターフェースで GPT、Claude、xAI Grok などの主要モデルにアクセスでき、OpenAI や Anthropic などの一般的なプロトコルと SDK に対応しています。モデルルーティング、フェイルオーバー、チーム管理、完全な呼び出しログを備え、モデル価格は公式参考価格の最大 85% オフ。AI アプリケーションをよりシンプルに、より安定して、より低コストで構築できます。hao.ai は CC Switch ユーザー向けに特別特典を用意しています：<a href="https://hao.ai/invite/DTBZS3OR">このリンク</a>から登録すると、初回注文で 5% のボーナスクレジットを受け取れます！</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>StringAI（弦界）のご支援に感謝します！StringAI はコストパフォーマンスに優れ、高速で安定したモデル API プラットフォームで、AI コーディング、画像生成、音声合成（TTS）、動画生成の 4 つの機能にワンストップでアクセスできます。世界の主要なモデルを幅広く集約し、セルフホスト、クラウドプロバイダー、公式 API など複数のリソースから選べるため、大学、企業、個人開発者、スタートアップのニーズに応えます。専門チームが導入支援と技術サポートを提供します。StringAI は CC Switch ユーザー向けに特別特典を用意しています：<a href="https://www.string.ink/register?ref=661AE533A60AF110">このリンク</a>から登録すると、初回チャージ $3.74 で $3.74 のボーナス額度がもらえます！</td>
 </tr>
 
 <tr>
@@ -355,6 +367,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy Code | 共存 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **切り替え**：同時に有効にできるプロバイダは 1 つだけです。**共存**：複数のプロバイダを同時にツール自身の設定に書き込み、ツール内で選んで使用します。
 - **ローカルルーティング**：CC Switch がローカルでリクエストを転送し、API 形式を変換します。詳しくは下記の[ローカルルーティング & フェイルオーバー](#ローカルルーティング--フェイルオーバー)をご覧ください。Claude Desktop のプロバイダでは「直接接続」か「モデルマッピング」を選択でき、「モデルマッピング」を選ぶとローカルルーティング経由で転送されます。
@@ -393,7 +406,7 @@ paru -S cc-switch-bin
 
 ### MCP、プロンプト & Skills
 
-- **統一 MCP パネル** — すべての MCP サーバーを 1 か所で管理し、ツールごとにチェックを入れて同期（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi）。各ツールの既存設定からのインポート、Deep Link インポートに対応
+- **統一 MCP パネル** — すべての MCP サーバーを 1 か所で管理し、ツールごとにチェックを入れて同期（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi、CodeBuddy Code）。各ツールの既存設定からのインポート、Deep Link インポートに対応
 - **プロンプト** — ツールごとに管理するプロンプトライブラリ（Markdown エディタ付き）。有効化すると、そのツールのプロンプトファイル（CLAUDE.md / AGENTS.md / GEMINI.md）に書き込み。有効化の前にファイル内の既存の内容をプロンプトライブラリへ保存するため、内容が失われることはありません。Pi では SYSTEM.md、APPEND_SYSTEM.md、プロンプトテンプレートも編集可能
 - **Skills** — skills.sh を検索、または GitHub リポジトリや ZIP ファイルからワンクリックでインストール。更新の確認とワンクリックでの一括更新に対応。各ツールへの同期方式は「自動」「シンボリックリンクのみ」「コピーのみ」から選べ、保存場所として `~/.agents/skills` も選択可能
 - 3 つのパネルはいずれも検索に対応。MCP と Skills はツールごとにワンクリックで一括有効化・一括無効化も可能。プロバイダ、MCP、プロンプトはコンテンツ領域の全画面で編集し、未保存の変更があるままページを離れようとすると確認が表示されます

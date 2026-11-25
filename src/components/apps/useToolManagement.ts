@@ -13,6 +13,7 @@ import { settingsApi } from "@/lib/api";
 import type {
   NodeRequirementGap,
   ToolInstallation,
+  ToolInstallationOverview,
   ToolInstallationReport,
   ToolUninstallPlan,
 } from "@/lib/api/settings";
@@ -55,6 +56,7 @@ export const TOOL_NAMES = [
   "agy",
   "omp",
   "copilot",
+  "codebuddy",
 ] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -194,7 +196,9 @@ ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 # Oh My Pi
 bun install -g @oh-my-pi/pi-coding-agent@latest
 # GitHub Copilot CLI
-npm i -g @github/copilot@latest`;
+npm i -g @github/copilot@latest
+# CodeBuddy Code
+npm i -g @tencent-ai/codebuddy-code@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
 ${CLAUDE_NPM_INSTALL_COMMAND}
@@ -223,7 +227,9 @@ ${AGY_WINDOWS_INSTALL_COMMAND}
 # Oh My Pi
 bun install -g @oh-my-pi/pi-coding-agent@latest
 # GitHub Copilot CLI
-npm i -g @github/copilot@latest`;
+npm i -g @github/copilot@latest
+# CodeBuddy Code
+npm i -g @tencent-ai/codebuddy-code@latest`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
   ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
@@ -244,6 +250,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
   copilot: "GitHub Copilot CLI",
+  codebuddy: "CodeBuddy Code",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认
@@ -267,6 +274,7 @@ export const TOOL_APP_IDS: Record<ToolName, AppId> = {
   agy: "agy",
   omp: "omp",
   copilot: "copilot",
+  codebuddy: "codebuddy",
 };
 
 // 工具版本探测代价高：每个工具一次 `--version` 子进程 + 一次 npm/github/pypi 网络请求。
@@ -278,6 +286,11 @@ const FAILED_TOOL_PROBE_TTL_MS = 30_000;
 const TOOL_PROBE_RETRY_DELAY_MS = 2_000;
 const EMPTY_TOOL_VERSIONS: ToolVersion[] = [];
 let toolVersionRequestSequence = 0;
+// 全量安装清单扫描的在途请求：快速重挂与启动后台检查共用一次，强制重查另起一次。
+// 单工具重扫由 appliedToolInstallationRequests 按工具排序，迟到的旧报告不能覆盖新报告。
+let inflightInstallations: Promise<void> | null = null;
+// 是否已写入过一次覆盖全部工具的全量清单：单工具重扫只补一条，不能当成「已加载」。
+let installReportsComplete = false;
 const latestToolVersionRequests = new Map<string, number>();
 let toolInstallationRequestSequence = 0;
 const appliedToolInstallationRequests = new Map<string, number>();
@@ -296,6 +309,13 @@ interface ToolLifecycleProgressEvent {
   line?: string;
 }
 
+/**
+ * 行上展示的安装信息：清单扫描（list_tool_installations）写概览，诊断探针
+ * （probe_tool_installations）在同一份记录上补冲突判定，两处展示读同一份报告。
+ */
+type ToolInstallSnapshot = ToolInstallationOverview &
+  Partial<Omit<ToolInstallationReport, "tool" | "installs">>;
+
 interface ToolManagementState {
   toolVersionsCache: { data: ToolVersion[]; at: number } | null;
   failedToolProbes: ReadonlyMap<string, { at: number; retried: boolean }>;
@@ -305,7 +325,7 @@ interface ToolManagementState {
   pendingUpgrades: readonly PendingUpgrade[];
   batchAction: ToolLifecycleAction | null;
   /** 每个工具的安装分布（路径、来源、多处安装），页面打开时探测一次 */
-  installReports: Partial<Record<ToolName, ToolInstallationReport>> | null;
+  installReports: Partial<Record<ToolName, ToolInstallSnapshot>> | null;
 }
 
 // 安装/升级不会随设置页卸载而结束。将任务、确认队列与版本结果一起保留在会话中，
@@ -431,45 +451,11 @@ function staleToolNames(force = false): ToolName[] {
   });
 }
 
-function cacheToolVersions(current: ToolVersion[], complete = false): string[] {
-  const {
-    toolVersionsCache: cache,
-    failedToolProbes,
-    installReports,
-  } = toolManagementState;
-  const failures = new Map(failedToolProbes);
-  const installationsToRefresh: string[] = [];
-  for (const tool of current) {
-    const previous = failures.get(tool.name);
-    if (tool.version) {
-      if (previous) installationsToRefresh.push(tool.name);
-      failures.delete(tool.name);
-    } else {
-      // 版本消失时重验缓存路径，外部卸载后不能一直用旧路径挡住安装入口。
-      if (installReports?.[tool.name as ToolName]?.installs.length) {
-        installationsToRefresh.push(tool.name);
-      }
-      failures.set(tool.name, {
-        at: Date.now(),
-        retried: previous?.retried ?? false,
-      });
-    }
-  }
-  updateToolManagementState({
-    toolVersionsCache: {
-      data: mergeToolVersions(cache?.data ?? [], current),
-      at: complete ? Date.now() : (cache?.at ?? 0),
-    },
-    failedToolProbes: failures,
-  });
-  return installationsToRefresh;
-}
-
 async function loadToolInstallationReports(names: string[], diagnose = false) {
   const requestId = ++toolInstallationRequestSequence;
-  const reports = await (diagnose
-    ? settingsApi.probeToolInstallations(names)
-    : settingsApi.listToolInstallations(names));
+  const reports = diagnose
+    ? await settingsApi.probeToolInstallations(names)
+    : await settingsApi.listToolInstallations(names);
   const next = { ...toolManagementState.installReports };
   for (const report of reports) {
     // 安装报告独立排序：版本重试不会使有效路径失效；迟到的旧扫描不能覆盖新报告。
@@ -486,47 +472,151 @@ async function loadToolInstallationReports(names: string[], diagnose = false) {
 async function refreshToolInstallations(names: string[]) {
   if (names.length === 0) return;
   try {
-    await loadToolInstallationReports(names);
+    await loadToolInstallationReports([...new Set(names)]);
   } catch (error) {
     console.error("[useToolManagement] Installation check failed", error);
   }
 }
 
+function commitToolVersionResults(
+  results: ToolVersion[],
+  requestId: number,
+): { committed: ToolVersion[]; installationsToRefresh: string[] } {
+  const current = results.filter(
+    (tool) => latestToolVersionRequests.get(tool.name) === requestId,
+  );
+  if (current.length === 0)
+    return { committed: [], installationsToRefresh: [] };
+  const {
+    toolVersionsCache: cache,
+    failedToolProbes,
+    installReports,
+  } = toolManagementState;
+  const failures = new Map(failedToolProbes);
+  const installationsToRefresh: string[] = [];
+  for (const tool of current) {
+    const previous = failures.get(tool.name);
+    if (tool.version) {
+      // 上一轮失败过、这次恢复了：安装信息可能也变了，顺手重扫。
+      if (previous) installationsToRefresh.push(tool.name);
+      failures.delete(tool.name);
+    } else {
+      // 版本消失时重验缓存路径，外部卸载后不能一直用旧路径挡住安装入口。
+      if (installReports?.[tool.name as ToolName]?.installs.length) {
+        installationsToRefresh.push(tool.name);
+      }
+      failures.set(tool.name, {
+        at: Date.now(),
+        retried: previous?.retried ?? false,
+      });
+    }
+  }
+  // 同步进模块缓存，供切 Tab 重挂时复用。时间戳沿用上次「全量加载」的（单工具
+  // 刷新与进行中的并发探测不算全量完成、不重置 TTL）；缓存为空时以 at=0 起步——
+  // 0 是「尚未完成全量加载」的过期哨兵，确保探测中途切走/切回时，残缺缓存被判
+  // 过期而触发重查，而非把半套数据当成完整结果复用。真实时间戳只由全量结束时盖上。
+  updateToolManagementState({
+    toolVersionsCache: {
+      data: mergeToolVersions(cache?.data ?? [], current),
+      at: cache?.at ?? 0,
+    },
+    failedToolProbes: failures,
+  });
+  return { committed: current, installationsToRefresh };
+}
+
+/**
+ * OpenCode 命令行实际用的那处是 OpenCode Desktop 自带的：它随 Desktop 应用更新，
+ * CC Switch 不给它升级（npm 升级只会另装一份），也不算进「全部更新」和侧栏圆点。
+ */
+export function isDesktopManagedTool(
+  toolName: string,
+  reports: Partial<Record<ToolName, ToolInstallationOverview>> | null,
+): boolean {
+  if (toolName !== "opencode") return false;
+  const installs = reports?.opencode?.installs ?? [];
+  const defaultInstall =
+    installs.find((install) => install.is_path_default) ?? installs[0];
+  return defaultInstall?.source === "desktop";
+}
+
+// 进行中的后台检查：此时打开「应用」页直接等它，不再重复起一轮全量探测。
+let backgroundToolCheck: Promise<void> | null = null;
 /**
  * 设置里打开了「启动时检查应用更新」时，启动后在后台查一次（结果进同一个模块缓存）。
  * 不弹任何提示，只让侧栏「应用」上出现圆点。
  */
-export async function checkToolUpdatesInBackground(): Promise<void> {
+export function checkToolUpdatesInBackground(): Promise<void> {
+  backgroundToolCheck ??= runBackgroundToolCheck().finally(() => {
+    backgroundToolCheck = null;
+  });
+  return backgroundToolCheck;
+}
+
+async function runBackgroundToolCheck(): Promise<void> {
   const cache = toolManagementState.toolVersionsCache;
   const refreshCacheTime =
     !cache || Date.now() - cache.at >= TOOL_VERSIONS_CACHE_TTL_MS;
   const names = staleToolNames();
   if (names.length === 0) return;
   const requestId = beginToolVersionRequests(names);
+  let anyCommitted = false;
   try {
-    const results = await settingsApi.getToolVersions(names);
-    const current = results.filter(
-      (tool) => latestToolVersionRequests.get(tool.name) === requestId,
+    // 与 loadAllToolVersions 一致按工具并发探测：先完成的卡片立即写入缓存并呈现，
+    // 不因单个远端源超时（如 Cloud Run / GitHub+PyPI）阻塞其余工具与侧栏更新红点。
+    await Promise.all(
+      names.map(async (toolName) => {
+        try {
+          const updated = await settingsApi.getToolVersions([toolName]);
+          const { committed, installationsToRefresh } =
+            commitToolVersionResults(updated, requestId);
+          if (committed.length === 0) return;
+          anyCommitted = true;
+          // OpenCode 有新版时先弄清它是不是 Desktop 自带的，免得侧栏为一个这里升不了的
+          // 版本亮圆点。只定位、不跑命令，结果页面打开时直接复用。
+          if (
+            committed.some(
+              (tool) =>
+                tool.name === "opencode" &&
+                isUpdateAvailable(tool.version, tool.latest_version),
+            )
+          ) {
+            installationsToRefresh.push("opencode");
+          }
+          await refreshToolInstallations(installationsToRefresh);
+        } catch (error) {
+          console.error(
+            `[useToolManagement] Background update check failed for ${toolName}`,
+            error,
+          );
+        }
+      }),
     );
-    if (current.length === 0) return;
-    const installationsToRefresh = cacheToolVersions(current, refreshCacheTime);
-    await refreshToolInstallations(installationsToRefresh);
-  } catch (error) {
-    console.error("[useToolManagement] Background update check failed", error);
   } finally {
     finishToolVersionRequests(names, requestId);
+  }
+  // 只有这次后台检查覆盖了整个过期缓存时才重置 TTL：失败项恢复不延长其它工具的缓存。
+  if (anyCommitted && refreshCacheTime) {
+    const latest = toolManagementState.toolVersionsCache;
+    if (latest) {
+      updateToolManagementState({
+        toolVersionsCache: { ...latest, at: Date.now() },
+      });
+    }
   }
 }
 
 /** 已检查过的命令行应用里有没有可升级的（不触发检查，只读缓存）。 */
 export function useToolUpdatesAvailable(): boolean {
-  const { toolVersionsCache } = useSyncExternalStore(
+  const { toolVersionsCache, installReports } = useSyncExternalStore(
     subscribeToolManagement,
     getToolManagementState,
   );
   return (
-    toolVersionsCache?.data.some((tool) =>
-      isUpdateAvailable(tool.version, tool.latest_version),
+    toolVersionsCache?.data.some(
+      (tool) =>
+        !isDesktopManagedTool(tool.name, installReports) &&
+        isUpdateAvailable(tool.version, tool.latest_version),
     ) ?? false
   );
 }
@@ -566,7 +656,10 @@ export function useToolManagement() {
     const diagnostics: Partial<Record<ToolName, ToolInstallation[]>> = {};
     for (const name of diagnosedTools) {
       const report = installReports?.[name];
-      if (report?.is_conflict) diagnostics[name] = report.installs;
+      // 冲突只有诊断探针会判定；清单扫描写入的记录不带安装详情以外的字段。
+      if (report?.is_conflict) {
+        diagnostics[name] = report.installs as ToolInstallation[];
+      }
     }
     return diagnostics;
   }, [diagnosedTools, installReports]);
@@ -596,10 +689,11 @@ export function useToolManagement() {
           !busyTools.has(toolName) &&
           !loadingTools[toolName] &&
           !tool?.update_blocked_by_node &&
+          !isDesktopManagedTool(toolName, installReports) &&
           isUpdateAvailable(tool?.version, tool?.latest_version)
         );
       }),
-    [toolVersionByName, busyTools, loadingTools],
+    [toolVersionByName, busyTools, loadingTools, installReports],
   );
 
   const refreshToolVersions = useCallback(
@@ -625,20 +719,18 @@ export function useToolManagement() {
           toolNames,
           wslOverrides,
         );
-        const current = updated.filter(
-          (tool) => latestToolVersionRequests.get(tool.name) === requestId,
+        const { committed, installationsToRefresh } = commitToolVersionResults(
+          updated,
+          requestId,
         );
-        if (current.length === 0) return [];
-
-        const installationsToRefresh = new Set(cacheToolVersions(current));
+        if (committed.length === 0) return [];
         // 手动重试也校验尚未返回的初始报告，避免它迟到后写回过期路径。
         if (options?.refreshInstallations) {
-          current.forEach((tool) => installationsToRefresh.add(tool.name));
+          for (const tool of committed) installationsToRefresh.push(tool.name);
         }
-        await refreshToolInstallations([...installationsToRefresh]);
-
+        await refreshToolInstallations(installationsToRefresh);
         // 返回刷新结果，调用方可据此判断版本是否真的探到（避免读 state 撞 stale closure）。
-        return current;
+        return committed;
       } catch (error) {
         console.error("[useToolManagement] Failed to refresh tools", error);
         return [];
@@ -660,6 +752,12 @@ export function useToolManagement() {
 
   const loadAllToolVersions = useCallback(
     async (options?: { force?: boolean; skipPending?: boolean }) => {
+      const force = options?.force ?? false;
+      // 启动时的后台检查还在跑：直接等它，不再重复起一轮全量探测。
+      if (!force && backgroundToolCheck) {
+        setIsLoadingTools(true);
+        await backgroundToolCheck;
+      }
       const cache = toolManagementState.toolVersionsCache;
       const refreshCacheTime =
         options?.force ||
@@ -721,18 +819,30 @@ export function useToolManagement() {
     await refreshToolVersions([toolName], { [toolName]: nextPref });
   };
 
-  // 安装分布：路径、来源（npm / 原生 / Homebrew…）、有没有多处安装。只在本机探测，不联网。
   const loadInstallations = useCallback(
     async (options?: { force?: boolean }) => {
-      if (!options?.force && toolManagementState.installReports) return;
-      try {
-        await loadToolInstallationReports([...TOOL_NAMES]);
-      } catch (error) {
-        console.error(
-          "[useToolManagement] probeToolInstallations failed",
-          error,
-        );
+      if (!options?.force && installReportsComplete) return;
+      // 快速重挂 / 启动后台检查共用同一轮全量清单扫描。
+      if (!options?.force && inflightInstallations) {
+        await inflightInstallations;
+        return;
       }
+      let scan: Promise<void> | null = null;
+      scan = (async () => {
+        try {
+          await loadToolInstallationReports([...TOOL_NAMES]);
+          installReportsComplete = true;
+        } catch (error) {
+          console.error(
+            "[useToolManagement] listToolInstallations failed",
+            error,
+          );
+        } finally {
+          if (inflightInstallations === scan) inflightInstallations = null;
+        }
+      })();
+      inflightInstallations = scan;
+      await scan;
     },
     [],
   );
@@ -1218,14 +1328,16 @@ export function useToolManagement() {
         if (unmanaged.length > 0) {
           toast.warning(t("settings.toolUpgradeUnmanagedTitle"), {
             description: unmanaged
-              .map((r) =>
-                t("settings.toolUpgradeUnmanagedDetail", {
-                  tool: toolDisplayName(r.tool),
-                  path:
-                    (r.installs.find((i) => i.is_path_default) ?? r.installs[0])
-                      ?.path ?? "",
-                }),
-              )
+              .map((r) => {
+                const defaultInstall =
+                  r.installs.find((i) => i.is_path_default) ?? r.installs[0];
+                return defaultInstall?.source === "desktop"
+                  ? t("settings.toolUpgradeDesktopManagedDetail")
+                  : t("settings.toolUpgradeUnmanagedDetail", {
+                      tool: toolDisplayName(r.tool),
+                      path: defaultInstall?.path ?? "",
+                    });
+              })
               .join("\n"),
             closeButton: true,
           });

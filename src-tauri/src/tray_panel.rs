@@ -13,6 +13,7 @@
 //! 面板只换了外观：每一行沿用原生菜单的事件 id，点击走 `tray::handle_tray_menu_event`，
 //! 切换、路由、故障转移的行为和原生菜单一致。窗口懒创建，之后只隐藏不销毁；失焦即隐藏。
 
+use crate::sync_utils::MutexExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -33,6 +34,8 @@ pub fn uses_native_menu() -> bool {
 
 /// 弹出前发给面板：带上这次的方位，前端据此排版后回报尺寸（`tray_panel_layout`）。
 const SHOW_EVENT: &str = "tray-panel-show";
+/// 收起时发给面板：让隐藏态下的用量页暂停定时轮询。
+const HIDE_EVENT: &str = "tray-panel-hide";
 /// 托盘状态变了（切换、额度、问题区），面板重新取数据。
 const CHANGED_EVENT: &str = "tray-panel-changed";
 
@@ -320,10 +323,6 @@ static APPLIED_DARK: Mutex<Option<Option<bool>>> = Mutex::new(None);
 /// 这次弹出里上次摆的窗口位置和大小；没变就不动窗口，只挪玻璃（展开子面板不跳）。
 static APPLIED_FRAME: Mutex<Option<Frame>> = Mutex::new(None);
 
-fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|e| e.into_inner())
-}
-
 /// 主面板放在图标旁边：水平居中于图标、不出工作区；图标在屏幕下半（Windows 任务栏）时向上弹出。
 /// 子面板默认向右展开，右边放不下就向左。`icon` 和 `work` 是同一显示器上的逻辑坐标。
 fn place(
@@ -433,7 +432,7 @@ fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
 
 fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     // 新窗口还没套过深浅色（轻量模式下面板收起即销毁，会反复新建）。
-    *lock(&APPLIED_DARK) = None;
+    *APPLIED_DARK.lock_recover() = None;
     let window =
         WebviewWindowBuilder::new(app, PANEL_LABEL, WebviewUrl::App("tray-panel.html".into()))
             .title("CC Switch")
@@ -458,7 +457,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     let handle = window.clone();
     window.on_window_event(move |event| match event {
         tauri::WindowEvent::Focused(false) if handle.is_visible().unwrap_or(false) => {
-            *lock(&LAST_BLUR_HIDE) = Some(Instant::now());
+            *LAST_BLUR_HIDE.lock_recover() = Some(Instant::now());
             hide_window(&handle);
         }
         tauri::WindowEvent::CloseRequested { api, .. } => {
@@ -473,6 +472,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 fn hide_window(window: &WebviewWindow) {
     PENDING_REVEAL.store(false, Ordering::Release);
     let _ = window.hide();
+    let _ = window.emit_to(PANEL_LABEL, HIDE_EVENT, ());
     // 面板里已经显示过反馈行了，下次弹出不再显示。
     crate::tray::mark_feedback_seen();
     release_if_lightweight(window.app_handle());
@@ -534,14 +534,14 @@ fn show_at(app: &AppHandle, window: &WebviewWindow, icon: (f64, f64, f64, f64)) 
         scale,
         PanelTexts::current(),
     );
-    *lock(&ANCHOR) = Some(Anchor {
+    *ANCHOR.lock_recover() = Some(Anchor {
         x,
         y,
         scale,
         placement: placement.clone(),
     });
     PENDING_REVEAL.store(true, Ordering::Release);
-    *lock(&APPLIED_FRAME) = None;
+    *APPLIED_FRAME.lock_recover() = None;
     let _ = window.emit_to(PANEL_LABEL, SHOW_EVENT, placement);
 
     let fallback = window.clone();
@@ -575,7 +575,8 @@ pub fn toggle(app: &AppHandle, rect: &tauri::Rect) {
             return;
         }
     }
-    let just_blurred = lock(&LAST_BLUR_HIDE)
+    let just_blurred = LAST_BLUR_HIDE
+        .lock_recover()
         .take()
         .is_some_and(|at| at.elapsed() < BLUR_CLICK_GRACE);
     if just_blurred {
@@ -610,14 +611,22 @@ const CHANGED_THROTTLE: Duration = Duration::from_millis(250);
 /// 上次通知的时间，以及是否已经约好了一次补发。
 static CHANGED_STATE: Mutex<(Option<Instant>, bool)> = Mutex::new((None, false));
 
+fn is_panel_active(app: &AppHandle) -> bool {
+    let Some(window) = panel_window(app) else {
+        return false;
+    };
+    PENDING_REVEAL.load(Ordering::Acquire) || window.is_visible().unwrap_or(false)
+}
+
 /// 托盘状态变了：开着的面板重新取数据。隔得够久就立即通知（点了切换要马上看到勾），
 /// 否则约在窗口结束时补发一次，一串额度结果只让面板重取一两次。
+/// 面板收起时不发事件，避免唤醒隐藏的 WebView 并反复查询数据库（下次弹出时会主动重取）。
 pub fn notify_changed(app: &AppHandle) {
-    if panel_window(app).is_none() {
+    if !is_panel_active(app) {
         return;
     }
     let wait = {
-        let mut state = lock(&CHANGED_STATE);
+        let mut state = CHANGED_STATE.lock_recover();
         if state.1 {
             return;
         }
@@ -640,8 +649,10 @@ pub fn notify_changed(app: &AppHandle) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(wait).await;
-        *lock(&CHANGED_STATE) = (Some(Instant::now()), false);
-        let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
+        *CHANGED_STATE.lock_recover() = (Some(Instant::now()), false);
+        if is_panel_active(&app) {
+            let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
+        }
     });
 }
 
@@ -672,16 +683,16 @@ struct Frame {
 mod platform {
     use std::cell::RefCell;
 
-    use objc2_06::rc::Retained;
-    use objc2_06::runtime::{AnyClass, AnyObject, NSObjectProtocol};
-    use objc2_06::{msg_send, sel, MainThreadMarker};
-    use objc2_app_kit_03::{
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject, NSObjectProtocol};
+    use objc2::{msg_send, sel, MainThreadMarker};
+    use objc2_app_kit::{
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSGlassEffectView, NSGlassEffectViewStyle, NSScreen, NSView, NSVisualEffectBlendingMode,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
         NSWindowCollectionBehavior, NSWindowOrderingMode,
     };
-    use objc2_foundation_03::{NSPoint, NSRect, NSSize};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
     use tauri::WebviewWindow;
 
     use super::{style, CardRect, Frame};
@@ -1190,7 +1201,8 @@ pub fn tray_panel_placement(app: AppHandle) -> Option<PanelPlacement> {
     if !PENDING_REVEAL.load(Ordering::Acquire) && !visible {
         return None;
     }
-    lock(&ANCHOR)
+    ANCHOR
+        .lock_recover()
         .as_ref()
         .map(|anchor| anchor.placement.clone())
 }
@@ -1213,7 +1225,7 @@ pub struct PanelLayout {
 /// 前端排好版后回报尺寸：摆好窗口和玻璃；这次弹出还没显示的话随即显示。
 #[tauri::command]
 pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
-    let Some(anchor) = lock(&ANCHOR).clone() else {
+    let Some(anchor) = ANCHOR.lock_recover().clone() else {
         return;
     };
     if layout.seq != anchor.placement.seq || layout.width <= 0.0 || layout.height <= 0.0 {
@@ -1223,7 +1235,7 @@ pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
         return;
     };
     {
-        let mut applied = lock(&APPLIED_DARK);
+        let mut applied = APPLIED_DARK.lock_recover();
         if *applied != Some(layout.dark) {
             *applied = Some(layout.dark);
             platform::set_dark(&window, layout.dark);
@@ -1236,7 +1248,7 @@ pub fn tray_panel_layout(app: AppHandle, layout: PanelLayout) {
         height: layout.height,
     };
     let move_window = {
-        let mut applied = lock(&APPLIED_FRAME);
+        let mut applied = APPLIED_FRAME.lock_recover();
         let changed = *applied != Some(frame);
         *applied = Some(frame);
         changed

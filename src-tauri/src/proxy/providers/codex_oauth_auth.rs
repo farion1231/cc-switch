@@ -69,10 +69,10 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
 // Shared by model discovery and generation: ChatGPT gates models by this
-// client identity. GPT-6.1 Sol enters the ChatGPT-account catalog at 0.159.0.
+// client identity.
 // Bump together when a new model raises its minimal_client_version or catalog gate.
 pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
+pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.169.0";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -1057,19 +1057,6 @@ impl CodexOAuthManager {
         Ok(cached)
     }
 
-    /// 获取指定账号的有效 access_token 与 id_token（必要时自动刷新）
-    ///
-    /// id_token 用于让托管写入的 Codex auth.json 与原生浏览器登录保持
-    /// 一致的 tokens 字段形状（仅托管绑定路径使用）。旧账号若无 id_token
-    /// 会返回 `None`，前端据此提示重新登录。
-    pub async fn get_valid_token_and_id_token_for_account(
-        &self,
-        account_id: &str,
-    ) -> Result<(String, Option<String>), CodexOAuthError> {
-        let bundle = self.get_valid_token_bundle_for_account(account_id).await?;
-        Ok((bundle.access_token, bundle.id_token))
-    }
-
     /// 获取写入托管 Codex `auth.json` 所需的完整可刷新 token 束
     /// （access_token + id_token + refresh_token）。
     ///
@@ -1553,11 +1540,6 @@ impl CodexOAuthManager {
         }
 
         Ok(())
-    }
-
-    pub async fn is_authenticated(&self) -> bool {
-        let accounts = self.accounts.read().await;
-        !accounts.is_empty()
     }
 
     /// 获取认证状态摘要（与 Copilot 的格式保持一致，便于复用前端）
@@ -2103,6 +2085,26 @@ impl CodexOAuthManager {
     }
 }
 
+/// 按磁盘上的账号表给出 `(account_id -> 显示名, 默认账号 id)`（同 [`GitHubAccount::from`]）：托盘同步读状态用。
+pub fn labels_on_disk(data_dir: &std::path::Path) -> (HashMap<String, String>, Option<String>) {
+    let Ok(content) = fs::read_to_string(data_dir.join("codex_oauth_auth.json")) else {
+        return (HashMap::new(), None);
+    };
+    let Ok(store) = serde_json::from_str::<CodexOAuthStore>(&content) else {
+        return (HashMap::new(), None);
+    };
+    let default_id = store
+        .default_account_id
+        .filter(|id| store.accounts.contains_key(id))
+        .or_else(|| CodexOAuthManager::fallback_default_account_id(&store.accounts));
+    let labels = store
+        .accounts
+        .iter()
+        .map(|(id, data)| (id.clone(), GitHubAccount::from(data).login))
+        .collect();
+    (labels, default_id)
+}
+
 /// Codex OAuth 状态摘要
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexOAuthStatus {
@@ -2359,14 +2361,6 @@ mod tests {
         };
 
         assert_eq!(extract_account_metadata_from_tokens(&tokens), (None, None));
-    }
-
-    #[tokio::test]
-    async fn test_manager_initial_state() {
-        let temp = tempfile::tempdir().unwrap();
-        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
-        assert!(!manager.is_authenticated().await);
-        assert!(manager.list_accounts().await.is_empty());
     }
 
     #[tokio::test]

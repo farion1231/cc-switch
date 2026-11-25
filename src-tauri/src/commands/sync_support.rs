@@ -118,9 +118,7 @@ pub(crate) async fn test_connection<B: SyncBackend>(
 ) -> Result<Value, String> {
     let preserve_empty = preserve_empty_secret.unwrap_or(true);
     let resolved = resolve_secret_for_request::<B>(settings, B::load(), preserve_empty);
-    B::check_connection(&resolved)
-        .await
-        .map_err(|e| e.to_string())?;
+    B::check_connection(&resolved).await?;
     Ok(json!({
         "success": true,
         "message": format!("{} connection ok", B::NAME)
@@ -184,16 +182,21 @@ pub(crate) async fn sync_save_settings<B: SyncBackend>(
         *B::status_mut(&mut sync_settings) = status;
     }
 
-    B::normalize_and_validate(&mut sync_settings).map_err(|e| e.to_string())?;
-    B::store(Some(sync_settings)).map_err(|e| e.to_string())?;
+    B::normalize_and_validate(&mut sync_settings)?;
+    B::store(Some(sync_settings))?;
+    Ok(json!({ "success": true }))
+}
+
+/// Forget the saved config (connection, credentials, remote root, status) on
+/// this device. Remote snapshots are left untouched.
+pub(crate) async fn sync_clear_settings<B: SyncBackend>() -> Result<Value, String> {
+    run_with_sync_lock(async { B::store(None) }).await?;
     Ok(json!({ "success": true }))
 }
 
 pub(crate) async fn sync_fetch_remote_info<B: SyncBackend>() -> Result<Value, String> {
     let settings = require_enabled_settings::<B>()?;
-    let info = B::fetch_remote_info(&settings)
-        .await
-        .map_err(|e| e.to_string())?;
+    let info = B::fetch_remote_info(&settings).await?;
     Ok(info.unwrap_or(json!({ "empty": true })))
 }
 
@@ -275,7 +278,8 @@ pub(crate) fn success_payload_with_warning(backup_id: String, warning: Option<St
 mod tests {
     use super::{
         attach_warning, map_sync_result, persist_sync_error, post_sync_warning_from_result,
-        require_enabled_settings, resolve_secret_for_request, run_download_with_lock, SyncBackend,
+        require_enabled_settings, resolve_secret_for_request, run_download_with_lock,
+        sync_clear_settings, SyncBackend,
     };
     use crate::commands::{s3_sync::S3Backend, webdav_sync::WebDavBackend};
     use crate::error::AppError;
@@ -285,7 +289,6 @@ mod tests {
     use serde_json::json;
     use serial_test::serial;
     use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
     use std::time::Duration;
 
     fn webdav_sample(enabled: bool) -> WebDavSyncSettings {
@@ -451,6 +454,33 @@ mod tests {
         assert_eq!(without_status(&settings), without_status(&sample(true)));
     }
 
+    async fn clear_waits_for_lock_then_forgets<B: SyncBackend>(sample: fn(bool) -> B::Settings) {
+        use_test_home::<B>("clear");
+        B::store(Some(sample(true))).expect("seed settings");
+
+        let guard = sync_mutex().lock().await;
+        let clear = sync_clear_settings::<B>();
+        tokio::pin!(clear);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(40), clear.as_mut())
+                .await
+                .is_err(),
+            "clearing must wait while a sync operation holds the global lock"
+        );
+        assert!(
+            B::load().is_some(),
+            "the config must survive until the lock is free"
+        );
+
+        drop(guard);
+        let result = tokio::time::timeout(Duration::from_secs(1), clear.as_mut())
+            .await
+            .expect("clear should finish after lock release")
+            .expect("clear should succeed");
+        assert_eq!(result, json!({ "success": true }));
+        assert!(B::load().is_none(), "the saved config must be gone");
+    }
+
     /// Every behavior test runs for each backend, so a backend can only
     /// differ in its `SyncBackend` impl, never in the command logic.
     macro_rules! backend_tests {
@@ -488,6 +518,12 @@ mod tests {
                 fn require_enabled_settings_checks_enabled() {
                     super::require_enabled_settings_checks_enabled::<$backend>($sample);
                 }
+
+                #[tokio::test]
+                #[serial]
+                async fn clear_settings_waits_for_the_sync_lock_then_forgets_the_config() {
+                    super::clear_waits_for_lock_then_forgets::<$backend>($sample).await;
+                }
             }
         };
     }
@@ -509,30 +545,6 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn sync_mutex_serializes_concurrent_access() {
-        let guard = sync_mutex().lock().await;
-        let acquired = Arc::new(AtomicBool::new(false));
-        let acquired_bg = Arc::clone(&acquired);
-
-        let waiter = tokio::spawn(async move {
-            let _inner_guard = sync_mutex().lock().await;
-            acquired_bg.store(true, Ordering::SeqCst);
-        });
-
-        tokio::time::sleep(Duration::from_millis(40)).await;
-        assert!(!acquired.load(Ordering::SeqCst));
-
-        drop(guard);
-        tokio::time::timeout(Duration::from_secs(1), waiter)
-            .await
-            .expect("background task should complete after lock release")
-            .expect("background task should not panic");
-
-        assert!(acquired.load(Ordering::SeqCst));
-    }
-
-    #[tokio::test]
-    #[serial]
     async fn map_sync_result_runs_error_handler_after_lock_release() {
         let result =
             run_with_sync_lock(async { Err::<(), AppError>(AppError::Config("boom".to_string())) })
@@ -548,32 +560,15 @@ mod tests {
     }
 
     #[test]
-    fn post_sync_warning_from_result_returns_none_on_success() {
-        let warning = post_sync_warning_from_result(Ok(Ok(())));
-        assert!(warning.is_none());
-    }
+    fn post_sync_warning_formats_errors_and_attaches_to_payload() {
+        assert!(post_sync_warning_from_result(Ok(Ok(()))).is_none());
+        assert!(post_sync_warning_from_result(Ok(Err(AppError::Config("boom".into())))).is_some());
+        assert!(post_sync_warning_from_result(Err("task panicked".into())).is_some());
 
-    #[test]
-    fn post_sync_warning_from_result_returns_some_on_sync_error() {
-        let warning =
-            post_sync_warning_from_result(Ok(Err(crate::error::AppError::Config("boom".into()))));
-        assert!(warning.is_some());
-    }
-
-    #[tokio::test]
-    async fn post_sync_warning_from_result_returns_some_on_join_error() {
-        let handle = tokio::spawn(async move {
-            panic!("forced join error");
-        });
-        let join_err = handle.await.expect_err("task should panic");
-        let warning = post_sync_warning_from_result(Err(join_err.to_string()));
-        assert!(warning.is_some());
-    }
-
-    #[test]
-    fn attach_warning_adds_warning_without_dropping_existing_fields() {
-        let payload = json!({ "status": "downloaded" });
-        let updated = attach_warning(payload, Some("post sync warning".to_string()));
+        let updated = attach_warning(
+            json!({ "status": "downloaded" }),
+            Some("post sync warning".to_string()),
+        );
         assert_eq!(
             updated.get("status").and_then(|v| v.as_str()),
             Some("downloaded")

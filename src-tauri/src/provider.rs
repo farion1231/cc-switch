@@ -6,6 +6,28 @@ use std::collections::HashMap;
 
 use crate::provider_kind::ProviderKind;
 
+pub(crate) fn parse_billing_multiplier(raw: &str) -> Result<rust_decimal::Decimal, String> {
+    let raw = raw.trim();
+    let syntax_ok = !raw.is_empty() && raw.bytes().all(|c| c.is_ascii_digit() || c == b'.');
+    raw.parse::<rust_decimal::Decimal>()
+        .ok()
+        .filter(|v| {
+            syntax_ok
+                && *v >= rust_decimal::Decimal::ZERO
+                && *v <= rust_decimal::Decimal::from(1000)
+        })
+        .ok_or_else(|| "Billing multiplier must be a decimal from 0 to 1000.".to_string())
+}
+
+pub(crate) fn billing_multiplier(provider: &Provider) -> rust_decimal::Decimal {
+    provider
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.billing_multiplier.as_deref())
+        .and_then(|raw| parse_billing_multiplier(raw).ok())
+        .unwrap_or(rust_decimal::Decimal::ONE)
+}
+
 // SSOT 模式：不再写供应商副本文件
 
 /// 供应商结构体
@@ -45,7 +67,17 @@ pub struct Provider {
     pub in_failover_queue: bool,
 }
 
+/// `category` 是否标着官方卡。这是唯一比较 `"official"` 的地方；各应用的
+/// `is_official*` 在此之外还各有自己的认法。
+pub fn is_official_category(category: Option<&str>) -> bool {
+    category == Some("official")
+}
+
 impl Provider {
+    pub fn has_official_category(&self) -> bool {
+        is_official_category(self.category.as_deref())
+    }
+
     /// 从现有ID创建供应商
     pub fn with_id(
         id: String,
@@ -236,6 +268,17 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // CodeBuddy models.json entries keep the full chat/completions endpoint in
+            // `url`; usage scripts expect the API base, same trim as WorkBuddy.
+            AppType::Codebuddy => {
+                let url = str_at(settings.get("url"));
+                let base_url = url
+                    .trim_end_matches('/')
+                    .strip_suffix("/chat/completions")
+                    .map(str::to_string)
+                    .unwrap_or(url);
+                (base_url, str_at(settings.get("apiKey")))
+            }
             // Pi custom providers use the native models.json field names. Pi expands
             // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
             AppType::Pi => (
@@ -547,6 +590,9 @@ pub struct ProviderMeta {
         skip_serializing_if = "Option::is_none"
     )]
     pub partner_promotion_key: Option<String>,
+    /// Explicit opt-in multiplier for future proxy cost estimates. Legacy costMultiplier remains inert.
+    #[serde(rename = "billingMultiplier", skip_serializing_if = "Option::is_none")]
+    pub billing_multiplier: Option<String>,
     /// 已停用：供应商级成本倍率。新版不再读取，只为与旧版设备同步时原样往返保留
     #[serde(rename = "costMultiplier", skip_serializing_if = "Option::is_none")]
     pub cost_multiplier: Option<String>,
@@ -1740,6 +1786,22 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-hermes".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_codebuddy_trims_chat_completions() {
+        let p = provider_with(json!({
+            "id": "deepseek-chat",
+            "url": "https://api.deepseek.com/v1/chat/completions/",
+            "apiKey": "sk-codebuddy",
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Codebuddy),
+            (
+                "https://api.deepseek.com/v1".to_string(),
+                "sk-codebuddy".to_string()
             )
         );
     }

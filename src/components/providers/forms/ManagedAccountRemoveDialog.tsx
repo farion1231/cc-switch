@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -204,15 +205,20 @@ export function ManagedAccountRemoveDialog({
 /** 账号行上的「N 个供应商在用」；没有供应商在用时不显示 */
 export function ManagedAccountUsage({
   users,
+  className,
 }: {
   users: ManagedAccountUser[];
+  className?: string;
 }) {
   const { t } = useTranslation();
   if (users.length === 0) return null;
   const names = users.map((user) => user.name);
   return (
     <span
-      className="shrink-0 whitespace-nowrap text-caption text-fg-2"
+      className={cn(
+        "shrink-0 whitespace-nowrap text-caption text-fg-2",
+        className,
+      )}
       title={t("managedAuth.usedByTitle", {
         defaultValue: "在用的供应商：{{names}}",
         names: Array.from(new Set(names)).join(

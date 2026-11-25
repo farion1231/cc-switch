@@ -68,8 +68,20 @@ Platform ayrıca kurumsal düzeyde eşzamanlılığı, özel bir yönetim konsol
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için Modelflare'e teşekkürler! Modelflare: tam güçte, kararlı ve sulandırılmamış; dünyanın SOTA modellerine düşük maliyetle erişin. Site, ABD merkezli Havenbyte LLC tarafından işletilir; GPT, Claude, Gemini, Grok ve diğer önde gelen modelleri yaygın uyumlu protokollerle destekler, ayrıca 40'tan fazla görsel ve video modeli sunar. Çin anakarasında resmi ticari iş birliklerini de destekler.
+<b>Önbellek telafisi öne çıkan bir özelliktir:</b> OpenAI'nin bazı fiyat öncelikli, kararlı ve premium grupları günlük önbellek isabet oranını sırasıyla %65, %75 ve %85 olarak garanti eder. Koşulları karşılayan istekler hedefin altında kalırsa platform farkı telafi eder; bunu hesaplaşmadan sonra kullanım panosunda görebilirsiniz.
+<b>Özel kampanya:</b> Tek seferde 20 US$ yükleme, 0,015 kat fiyat çarpanlı GPT indirim grubunun; tek seferde 50 US$ yükleme ise 0,03 kat fiyat çarpanlı Claude indirim grubunun kilidini açar. Katılmak için <a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">özel bağlantıyla kaydolun</a>.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>Bu projeye sponsor olduğu için hao.ai'ye teşekkürler! hao.ai, geliştiriciler ve ekipler için hızlı ve kararlı, birleşik bir LLM API ağ geçididir. Tek bir API anahtarı ve birleşik bir arayüzle GPT, Claude, xAI Grok ve diğer önde gelen modellere erişebilirsiniz; OpenAI ve Anthropic gibi yaygın protokoller ve SDK'larla uyumludur. Platform; model yönlendirme, yük devretme, ekip yönetimi ve eksiksiz istek günlükleri sunar; model fiyatları resmi referans fiyatların %15'i kadar düşük olabilir ve yapay zeka uygulamaları geliştirmeyi daha basit, kararlı ve ucuz hale getirir. hao.ai, CC Switch kullanıcılarına özel bir avantaj sunar: <a href="https://hao.ai/invite/DTBZS3OR">bu bağlantıdan</a> kayıt olarak ilk siparişinizde %5 bonus kredi kazanın!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için StringAI'ye teşekkürler! StringAI; yapay zekâ ile kodlama, görsel üretimi, metinden sese (TTS) ve video üretimi olmak üzere dört yeteneğe tek noktadan erişim sunan, uygun maliyetli, hızlı ve istikrarlı bir model API platformudur. Dünyanın önde gelen pek çok modelini bir araya getirir; kendi barındırdığı, bulut sağlayıcılarından ve resmi API'lerden gelen kaynaklar arasında seçim sunarak üniversitelerin, şirketlerin, bireysel geliştiricilerin ve girişim ekiplerinin ihtiyaçlarını karşılar. Uzman bir ekip kurulum rehberliği ve teknik destek sağlar. StringAI, CC Switch kullanıcılarına özel bir avantaj sunuyor: <a href="https://www.string.ink/register?ref=661AE533A60AF110">bu bağlantı</a> üzerinden kaydolun, ilk 3,74 $'lık yüklemenize ek olarak 3,74 $ bonus kredi kazanın!</td>
 </tr>
 
 <tr>
@@ -355,6 +367,7 @@ Sağlayıcı yönetimi, MCP/İstemler/Skills, yerel yönlendirme ve yük devri v
 | MiniMax Code | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy Code | Birlikte | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **Geçiş**: aynı anda yalnızca bir sağlayıcı etkindir; **Birlikte**: birden fazla sağlayıcı aynı anda aracın kendi yapılandırmasına yazılır ve birini aracın içinden seçersiniz.
 - **Yerel Yönlendirme**: CC Switch istekleri makinenizde iletir ve API biçimlerini dönüştürür; aşağıdaki [Yerel Yönlendirme ve Yük Devretme](#yerel-yönlendirme-ve-yük-devretme) bölümüne bakın. Claude Desktop sağlayıcıları "Doğrudan" veya "Model Eşleme" kullanabilir; "Model Eşleme" ile istekler yerel yönlendirmeden geçer.
@@ -393,7 +406,7 @@ Sağlayıcı yönetimi, MCP/İstemler/Skills, yerel yönlendirme ve yük devri v
 
 ### MCP, İstemler ve Skills
 
-- **Birleşik MCP paneli** — Tüm MCP sunucularını tek yerden yönetin, her birinin hangi araçlarla eşitleneceğini seçin (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), her aracın mevcut yapılandırmalarını içe aktarın ve Deep Link ile içe aktarın
+- **Birleşik MCP paneli** — Tüm MCP sunucularını tek yerden yönetin, her birinin hangi araçlarla eşitleneceğini seçin (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy Code), her aracın mevcut yapılandırmalarını içe aktarın ve Deep Link ile içe aktarın
 - **İstemler** — Markdown düzenleyicili, araç başına bir istem kitaplığı; bir istemi etkinleştirmek onu aracın istem dosyasına (CLAUDE.md / AGENTS.md / GEMINI.md) yazar ve dosyanın mevcut içeriği önce kitaplığa kaydedilir, böylece hiçbir şey kaybolmaz. Pi ayrıca SYSTEM.md, APPEND_SYSTEM.md ve istem şablonlarını düzenleyebilir
 - **Skills** — skills.sh'de arayın veya GitHub depolarından ya da ZIP dosyalarından tek tıkla kurun; güncellemeleri denetleyin ve tümünü tek tıkla güncelleyin; her araca otomatik olarak, yalnızca sembolik bağlarla veya yalnızca kopyalarla eşitleyin; isteğe bağlı olarak `~/.agents/skills` içinde saklayabilirsiniz
 - Her üç panel de aramayı destekler; MCP ve Skills ayrıca araç başına tek seferde etkinleştirilip devre dışı bırakılabilir; sağlayıcılar, MCP sunucuları ve istemler içerik alanında tam sayfa düzenlenir ve kaydedilmemiş değişikliklerle ayrılmadan önce uyarılırsınız

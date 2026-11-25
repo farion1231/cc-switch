@@ -68,8 +68,20 @@ Die Plattform unterstützt außerdem Parallelität auf Unternehmensniveau, eine 
 </tr>
 
 <tr>
+<td width="180"><a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch"><img src="assets/partners/logos/modelflare-banner.png" alt="Modelflare" width="150"></a></td>
+<td>Danke an Modelflare für die Unterstützung dieses Projekts! Modelflare: volle Leistung, stabil und nicht verwässert – die weltweit besten SOTA-Modelle zu niedrigen Kosten. Die Seite wird von der US-amerikanischen Havenbyte LLC betrieben und unterstützt GPT, Claude, Gemini, Grok und weitere führende Modelle über gängige kompatible Protokolle sowie mehr als 40 Bild- und Videomodelle. Formelle Geschäftskooperationen in Festlandchina werden unterstützt.
+<b>Ein Highlight ist die Cache-Kompensation:</b> Einige OpenAI-Gruppen (preisorientiert, stabil und Premium) garantieren eine tägliche Cache-Trefferquote von 65 %, 75 % bzw. 85 %. Erreichen berechtigte Anfragen das Ziel nicht, gleicht die Plattform die Differenz aus; nach der Abrechnung ist das im Nutzungs-Dashboard sichtbar.
+<b>Sonderaktion:</b> Eine einmalige Aufladung von 20 US$ schaltet die GPT-Rabattgruppe mit einem Preisfaktor von 0,015 frei, eine einmalige Aufladung von 50 US$ die Claude-Rabattgruppe mit einem Preisfaktor von 0,03. <a href="https://modelflare.dev/sign-up?utm_source=github&utm_campaign=ccswitch">Registrieren Sie sich über den exklusiven Link</a>, um teilzunehmen.</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://hao.ai/invite/DTBZS3OR"><img src="assets/partners/logos/haoai-banner.png" alt="hao.ai" width="150"></a></td>
 <td>Danke an hao.ai für die Unterstützung dieses Projekts! hao.ai ist ein schnelles, stabiles, einheitliches LLM-API-Gateway für Entwickler und Teams. Mit einem API-Key und einer einheitlichen Schnittstelle greifen Sie auf GPT, Claude, xAI Grok und weitere führende Modelle zu – kompatibel mit gängigen Protokollen und SDKs wie OpenAI und Anthropic. Die Plattform bietet Modell-Routing, Failover, Teamverwaltung und vollständige Aufrufprotokolle, mit Modellpreisen ab 15 % der offiziellen Referenzpreise – so lassen sich AI-Anwendungen einfacher, stabiler und günstiger bauen. hao.ai bietet CC Switch-Nutzern einen besonderen Vorteil: Wer sich über <a href="https://hao.ai/invite/DTBZS3OR">diesen Link</a> registriert, erhält bei der ersten Bestellung 5 % Bonusguthaben!</td>
+</tr>
+
+<tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>Danke an StringAI für die Unterstützung dieses Projekts! StringAI ist eine preiswerte, schnelle und stabile Modell-API-Plattform, die vier Fähigkeiten aus einer Hand bietet: KI-Coding, Bildgenerierung, Sprachsynthese (TTS) und Videogenerierung. Sie bündelt viele bekannte Modelle aus aller Welt und bietet die Wahl zwischen selbst gehosteten Ressourcen, Cloud-Anbietern und offiziellen APIs – passend für Hochschulen, Unternehmen, einzelne Entwickler und Start-up-Teams. Ein professionelles Team unterstützt bei der Einrichtung und mit technischem Support. StringAI bietet CC-Switch-Nutzern ein besonderes Angebot: Registrieren Sie sich über <a href="https://www.string.ink/register?ref=661AE533A60AF110">diesen Link</a> und erhalten Sie bei Ihrer ersten Aufladung von 3,74 $ zusätzlich 3,74 $ Bonusguthaben!</td>
 </tr>
 
 <tr>
@@ -355,6 +367,7 @@ Ausführliche Anleitungen zu allen Funktionen finden Sie im **[Benutzerhandbuch]
 | MiniMax Code | Parallel | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | Parallel | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | Parallel | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy Code | Parallel | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **Wechsel**: Es ist jeweils nur ein Anbieter aktiv; **Parallel**: Mehrere Anbieter werden gleichzeitig in die eigene Konfiguration des Werkzeugs geschrieben; welcher verwendet wird, wählen Sie im Werkzeug aus.
 - **Lokales Routing**: CC Switch leitet Anfragen auf Ihrem Rechner weiter und konvertiert dabei die Schnittstellenformate, siehe [Lokales Routing & Failover](#lokales-routing--failover) weiter unten. Für Anbieter von Claude Desktop können Sie „Direkt“ oder „Modellzuordnung“ wählen; bei „Modellzuordnung“ laufen die Anfragen über das lokale Routing.
@@ -393,7 +406,7 @@ Ausführliche Anleitungen zu allen Funktionen finden Sie im **[Benutzerhandbuch]
 
 ### MCP, Prompts & Skills
 
-- **Einheitliches MCP-Panel** — Alle MCP-Server an einer Stelle verwalten, pro Werkzeug per Häkchen synchronisieren (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), bestehende Konfigurationen aus den einzelnen Werkzeugen importieren, Import per Deep Link
+- **Einheitliches MCP-Panel** — Alle MCP-Server an einer Stelle verwalten, pro Werkzeug per Häkchen synchronisieren (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy Code), bestehende Konfigurationen aus den einzelnen Werkzeugen importieren, Import per Deep Link
 - **Prompts** — Je Werkzeug separat verwaltete Prompt-Bibliothek mit Markdown-Editor; nach dem Aktivieren wird der Prompt in die Prompt-Datei des Werkzeugs geschrieben (CLAUDE.md / AGENTS.md / GEMINI.md), wobei der bisherige Inhalt der Datei vorher in die Prompt-Bibliothek zurückgesichert wird und nicht verloren geht. Bei Pi lassen sich außerdem SYSTEM.md, APPEND_SYSTEM.md und Prompt-Vorlagen bearbeiten
 - **Skills** — skills.sh durchsuchen oder mit einem Klick aus GitHub-Repositorys bzw. ZIP-Dateien installieren; nach Updates suchen und alle mit einem Klick aktualisieren; die Synchronisierung in die einzelnen Werkzeuge erfolgt wahlweise automatisch, nur per Symlink oder nur per Kopie, als Speicherort ist optional `~/.agents/skills` wählbar
 - Alle drei Panels unterstützen die Suche; bei MCP und Skills können Sie zudem pro Werkzeug alle Einträge mit einem Klick aktivieren oder deaktivieren. Anbieter, MCP und Prompts werden ganzseitig im Inhaltsbereich bearbeitet; wenn Sie die Seite mit ungespeicherten Änderungen verlassen, werden Sie vorher gewarnt

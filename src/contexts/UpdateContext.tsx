@@ -34,15 +34,18 @@ interface UpdateContextValue {
   autoUpdateSupported: boolean;
   /** 有应用在用路由服务（重启会切断进行中的请求），随 refreshAutoUpdate 更新 */
   routingInUse: boolean;
+  /** 后台正在下载新版本 */
+  autoUpdateDownloading: boolean;
   /** 重新向后端要一次自动更新状态（开关改动后调用） */
   refreshAutoUpdate: () => Promise<void>;
+  /** 立刻在后台检查并下载（开关打开时调用）；已在下载就不重复发起 */
+  startAutoDownload: () => Promise<void>;
 }
 
 const UpdateContext = createContext<UpdateContextValue | undefined>(undefined);
 
 export function UpdateProvider({ children }: { children: React.ReactNode }) {
   const DISMISSED_VERSION_KEY = "ccswitch:update:dismissedVersion";
-  const LEGACY_DISMISSED_KEY = "dismissedUpdateVersion"; // 兼容旧键
 
   const [hasUpdate, setHasUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -55,34 +58,45 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     const current = updateInfo?.availableVersion;
     if (!current) return;
 
-    // 读取新键；若不存在，尝试迁移旧键
-    let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-    if (!dismissedVersion) {
-      const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-      if (legacy) {
-        localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-        localStorage.removeItem(LEGACY_DISMISSED_KEY);
-        dismissedVersion = legacy;
-      }
-    }
-
-    setIsDismissed(dismissedVersion === current);
+    setIsDismissed(localStorage.getItem(DISMISSED_VERSION_KEY) === current);
   }, [updateInfo?.availableVersion]);
 
   const [readyUpdate, setReadyUpdate] = useState<ReadyUpdate | null>(null);
   const [autoUpdateSupported, setAutoUpdateSupported] = useState(false);
   const [routingInUse, setRoutingInUse] = useState(false);
+  const [autoUpdateEnabled, setAutoUpdateEnabled] = useState(false);
+  const [backendDownloading, setBackendDownloading] = useState(false);
+  const [downloadRequested, setDownloadRequested] = useState(false);
 
   const refreshAutoUpdate = useCallback(async () => {
     try {
       const status = await settingsApi.getAutoUpdateStatus();
       setAutoUpdateSupported(status.supported);
+      setAutoUpdateEnabled(status.enabled);
+      setBackendDownloading(status.downloading);
       setReadyUpdate(status.ready);
       setRoutingInUse(status.routingInUse);
     } catch (err) {
       console.error("读取自动更新状态失败:", err);
     }
   }, []);
+
+  const downloadInFlightRef = useRef(false);
+  const startAutoDownload = useCallback(async () => {
+    if (downloadInFlightRef.current) return;
+    downloadInFlightRef.current = true;
+    setDownloadRequested(true);
+    try {
+      await settingsApi.downloadAppUpdate();
+    } catch (err) {
+      console.error("后台下载更新失败:", err);
+    } finally {
+      downloadInFlightRef.current = false;
+      setDownloadRequested(false);
+      // 后台循环可能正好也在下（这次调用会立即返回），以后端的下载状态为准
+      await refreshAutoUpdate();
+    }
+  }, [refreshAutoUpdate]);
 
   // 后台下载在后端进行：挂载时取一次（轻量模式下主窗口会重建），之后听下载完成的事件
   useEffect(() => {
@@ -92,6 +106,7 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     // 载荷为 null：下好的版本被撤回，提示收起
     listen<ReadyUpdate | null>(UPDATE_READY_EVENT, (event) => {
       setReadyUpdate(event.payload ?? null);
+      setBackendDownloading(false);
     })
       .then((fn) => {
         if (disposed) fn();
@@ -120,16 +135,10 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
         setUpdateInfo(result.info);
 
         // 检查是否已经关闭过这个版本的提醒
-        let dismissedVersion = localStorage.getItem(DISMISSED_VERSION_KEY);
-        if (!dismissedVersion) {
-          const legacy = localStorage.getItem(LEGACY_DISMISSED_KEY);
-          if (legacy) {
-            localStorage.setItem(DISMISSED_VERSION_KEY, legacy);
-            localStorage.removeItem(LEGACY_DISMISSED_KEY);
-            dismissedVersion = legacy;
-          }
-        }
-        setIsDismissed(dismissedVersion === result.info.availableVersion);
+        setIsDismissed(
+          localStorage.getItem(DISMISSED_VERSION_KEY) ===
+            result.info.availableVersion,
+        );
         return true; // 有更新
       } else {
         setHasUpdate(false);
@@ -164,19 +173,44 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     }
   }, [readyVersion, updateInfo?.availableVersion, checkUpdate]);
 
+  // 启动检查发现了新版本、开关开着：马上让后端下载。后端自己的循环要等启动 60 秒后才查，
+  // 这段时间关于页只有「更新到 vX」，看上去像开关没生效。每个版本只主动触发一次，
+  // 下载失败交给后台循环重试，不跟着重渲染反复联网。
+  // 开发构建不主动下（和后端循环一样）：dev 与正式版共用 settings.json，dev 二进制也装不了。
+  const availableVersion = updateInfo?.availableVersion;
+  const kickedVersionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !import.meta.env.DEV &&
+      availableVersion &&
+      autoUpdateEnabled &&
+      autoUpdateSupported &&
+      !readyVersion &&
+      !backendDownloading &&
+      kickedVersionRef.current !== availableVersion
+    ) {
+      kickedVersionRef.current = availableVersion;
+      void startAutoDownload();
+    }
+  }, [
+    availableVersion,
+    autoUpdateEnabled,
+    autoUpdateSupported,
+    readyVersion,
+    backendDownloading,
+    startAutoDownload,
+  ]);
+
   const dismissUpdate = useCallback(() => {
     setIsDismissed(true);
     if (updateInfo?.availableVersion) {
       localStorage.setItem(DISMISSED_VERSION_KEY, updateInfo.availableVersion);
-      // 清理旧键
-      localStorage.removeItem(LEGACY_DISMISSED_KEY);
     }
   }, [updateInfo?.availableVersion]);
 
   const resetDismiss = useCallback(() => {
     setIsDismissed(false);
     localStorage.removeItem(DISMISSED_VERSION_KEY);
-    localStorage.removeItem(LEGACY_DISMISSED_KEY);
   }, []);
 
   // 应用启动时自动检查更新
@@ -213,7 +247,9 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
     readyUpdate,
     autoUpdateSupported,
     routingInUse,
+    autoUpdateDownloading: downloadRequested || backendDownloading,
     refreshAutoUpdate,
+    startAutoDownload,
   };
 
   return (
