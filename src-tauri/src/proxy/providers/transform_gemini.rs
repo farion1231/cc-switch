@@ -50,12 +50,6 @@ pub fn anthropic_to_gemini_with_shadow(
     session_id: Option<&str>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
-    let (shadow_turns, retained_signatures) = shadow_store
-        .zip(provider_id)
-        .zip(session_id)
-        .and_then(|((store, provider_id), session_id)| store.get_session(provider_id, session_id))
-        .map(|snapshot| (snapshot.turns, snapshot.thought_signatures))
-        .unwrap_or_default();
     let supports_multimodal_function_response = body
         .get("model")
         .and_then(Value::as_str)
@@ -72,10 +66,30 @@ pub fn anthropic_to_gemini_with_shadow(
     }
 
     if let Some(messages) = messages {
+        let (shadow_turns, retained_signatures) = shadow_store
+            .zip(provider_id)
+            .zip(session_id)
+            .and_then(|((store, provider_id), session_id)| {
+                let tool_call_ids: HashSet<_> = messages
+                    .iter()
+                    .filter(|message| {
+                        message.get("role").and_then(Value::as_str) == Some("assistant")
+                    })
+                    .filter_map(|message| message.get("content").and_then(Value::as_array))
+                    .flatten()
+                    .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+                    .filter_map(|block| block.get("id").and_then(Value::as_str))
+                    .filter(|id| !id.is_empty())
+                    .collect();
+                store.get_session(provider_id, session_id, tool_call_ids)
+            })
+            .map(|snapshot| (snapshot.turns, snapshot.thought_signatures))
+            .unwrap_or_default();
+
         let (mut contents, current_turn_start) = convert_messages_to_contents(
             messages,
             &shadow_turns,
-            &retained_signatures,
+            retained_signatures,
             supports_multimodal_function_response,
         )?;
         if body
@@ -532,7 +546,7 @@ fn gemini_thinking_control(model: &str) -> Option<GeminiThinkingControl> {
 fn convert_messages_to_contents(
     messages: &[Value],
     shadow_turns: &[GeminiAssistantTurn],
-    retained_signatures: &HashMap<String, String>,
+    mut thought_signature_by_id: HashMap<String, String>,
     supports_multimodal_function_response: bool,
 ) -> Result<(Vec<Value>, usize), ProxyError> {
     let messages = coalesce_split_tool_result_messages(messages);
@@ -554,7 +568,6 @@ fn convert_messages_to_contents(
     // These are used to resolve tool_result→functionResponse names and to
     // attach thought signatures when replaying tool_use→functionCall.
     let mut tool_name_by_id = build_tool_name_map_from_shadow_turns(shadow_turns);
-    let mut thought_signature_by_id = retained_signatures.clone();
     thought_signature_by_id.extend(build_thought_signature_map_from_shadow_turns(shadow_turns));
 
     // Pre-scan all assistant messages in the request body to seed

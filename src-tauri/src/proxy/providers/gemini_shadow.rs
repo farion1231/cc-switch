@@ -177,7 +177,7 @@ impl GeminiShadowStore {
         session_id: impl Into<String>,
         assistant_content: Value,
         tool_calls: Vec<GeminiToolCallMeta>,
-    ) -> GeminiShadowSessionSnapshot {
+    ) {
         let key = GeminiShadowKey::new(provider_id, session_id);
         let turn = GeminiAssistantTurn::new(assistant_content, tool_calls);
 
@@ -191,26 +191,21 @@ impl GeminiShadowStore {
             self.max_signature_bytes,
         );
 
-        let mut snapshot = {
-            let session = inner
-                .sessions
-                .entry(key.clone())
-                .or_insert_with(GeminiShadowSession::new);
-            session.turns.push_back(turn);
-            while session.turns.len() > self.max_turns_per_session {
-                session.turns.pop_front();
-            }
-            Self::snapshot_session(&key, session)
-        };
-        snapshot.thought_signatures = Self::signatures_for_session(&inner, &key);
+        let session = inner
+            .sessions
+            .entry(key)
+            .or_insert_with(GeminiShadowSession::new);
+        session.turns.push_back(turn);
+        while session.turns.len() > self.max_turns_per_session {
+            session.turns.pop_front();
+        }
         Self::prune_sessions(&mut inner, self.max_sessions);
-        snapshot
     }
 
     /// Get the latest assistant content for a provider/session pair.
     #[cfg(test)]
     pub fn latest_assistant_content(&self, provider_id: &str, session_id: &str) -> Option<Value> {
-        self.get_session(provider_id, session_id)
+        self.get_session(provider_id, session_id, [])
             .and_then(|snapshot| {
                 snapshot
                     .turns
@@ -226,37 +221,51 @@ impl GeminiShadowStore {
         provider_id: &str,
         session_id: &str,
     ) -> Option<Vec<GeminiToolCallMeta>> {
-        self.get_session(provider_id, session_id)
+        self.get_session(provider_id, session_id, [])
             .and_then(|snapshot| snapshot.turns.last().map(|turn| turn.tool_calls.clone()))
     }
 
-    /// Read a full session snapshot.
-    pub fn get_session(
+    /// Read recent turns and retained signatures for the requested tool calls.
+    pub fn get_session<'a>(
         &self,
         provider_id: &str,
         session_id: &str,
+        tool_call_ids: impl IntoIterator<Item = &'a str>,
     ) -> Option<GeminiShadowSessionSnapshot> {
         let key = GeminiShadowKey::new(provider_id, session_id);
         let mut inner = self.write_inner();
-        let mut snapshot = inner
+        let turns: Option<Vec<_>> = inner
             .sessions
             .get(&key)
-            .map(|session| Self::snapshot_session(&key, session));
-        if snapshot.is_some() {
+            .map(|session| session.turns.iter().cloned().collect());
+        if turns.is_some() {
             Self::touch_session_order(&mut inner.session_order, &key);
         }
-        let signatures = Self::signatures_for_session(&inner, &key);
-        if let Some(snapshot) = snapshot.as_mut() {
-            snapshot.thought_signatures = signatures;
-        } else if !signatures.is_empty() {
-            snapshot = Some(GeminiShadowSessionSnapshot {
-                provider_id: key.provider_id,
-                session_id: key.session_id,
-                turns: Vec::new(),
-                thought_signatures: signatures,
-            });
+
+        let mut signature_key = GeminiSignatureKey {
+            session: key.clone(),
+            tool_call_id: String::new(),
+        };
+        let thought_signatures: HashMap<_, _> = tool_call_ids
+            .into_iter()
+            .filter_map(|id| {
+                id.clone_into(&mut signature_key.tool_call_id);
+                inner
+                    .signatures
+                    .get(&signature_key)
+                    .map(|signature| (id.to_owned(), signature.clone()))
+            })
+            .collect();
+        if turns.is_none() && thought_signatures.is_empty() {
+            return None;
         }
-        snapshot
+
+        Some(GeminiShadowSessionSnapshot {
+            provider_id: key.provider_id,
+            session_id: key.session_id,
+            turns: turns.unwrap_or_default(),
+            thought_signatures,
+        })
     }
 
     /// Number of tracked sessions.
@@ -270,30 +279,6 @@ impl GeminiShadowStore {
             log::warn!("[GeminiShadow] recovering poisoned write lock");
             poisoned.into_inner()
         })
-    }
-
-    fn snapshot_session(
-        key: &GeminiShadowKey,
-        session: &GeminiShadowSession,
-    ) -> GeminiShadowSessionSnapshot {
-        GeminiShadowSessionSnapshot {
-            provider_id: key.provider_id.clone(),
-            session_id: key.session_id.clone(),
-            turns: session.turns.iter().cloned().collect(),
-            thought_signatures: HashMap::new(),
-        }
-    }
-
-    fn signatures_for_session(
-        inner: &GeminiShadowInner,
-        session: &GeminiShadowKey,
-    ) -> HashMap<String, String> {
-        inner
-            .signatures
-            .iter()
-            .filter(|(key, _)| &key.session == session)
-            .map(|(key, signature)| (key.tool_call_id.clone(), signature.clone()))
-            .collect()
     }
 
     fn signature_entry_size(key: &GeminiSignatureKey, signature: &str) -> usize {
@@ -387,7 +372,7 @@ mod tests {
             )],
         );
         store.record_assistant_turn("p", "s", json!({"text": "later"}), vec![]);
-        let snapshot = store.get_session("p", "s").unwrap();
+        let snapshot = store.get_session("p", "s", ["call_1"]).unwrap();
         assert_eq!(snapshot.turns.len(), 1);
         assert_eq!(
             snapshot
@@ -397,7 +382,7 @@ mod tests {
             Some("real-signature")
         );
         store.record_assistant_turn("p", "another", json!({"text": "another session"}), vec![]);
-        let retained = store.get_session("p", "s").unwrap();
+        let retained = store.get_session("p", "s", ["call_1"]).unwrap();
         assert!(retained.turns.is_empty());
         assert_eq!(
             retained
@@ -406,7 +391,7 @@ mod tests {
                 .map(String::as_str),
             Some("real-signature")
         );
-        assert!(store.get_session("p", "another").is_some());
+        assert!(store.get_session("p", "another", []).is_some());
     }
 
     #[test]
@@ -430,16 +415,22 @@ mod tests {
             );
         }
         assert!(store
-            .get_session("a", "s")
+            .get_session("a", "s", ["same-id"])
             .unwrap()
             .thought_signatures
             .is_empty());
         assert_eq!(
-            store.get_session("b", "s").unwrap().thought_signatures["same-id"],
+            store
+                .get_session("b", "s", ["same-id"])
+                .unwrap()
+                .thought_signatures["same-id"],
             "sig-b"
         );
         assert_eq!(
-            store.get_session("a", "other").unwrap().thought_signatures["same-id"],
+            store
+                .get_session("a", "other", ["same-id"])
+                .unwrap()
+                .thought_signatures["same-id"],
             "sig-other"
         );
     }
@@ -460,7 +451,10 @@ mod tests {
                 )],
             );
         }
-        let signatures = store.get_session("p", "s").unwrap().thought_signatures;
+        let signatures = store
+            .get_session("p", "s", ["first", "second"])
+            .unwrap()
+            .thought_signatures;
         assert!(!signatures.contains_key("first"));
         assert_eq!(signatures["second"], "x".repeat(80));
         store.record_assistant_turn(
@@ -475,7 +469,10 @@ mod tests {
             )],
         );
         assert_eq!(
-            store.get_session("p", "s").unwrap().thought_signatures["second"],
+            store
+                .get_session("p", "s", ["second"])
+                .unwrap()
+                .thought_signatures["second"],
             "updated"
         );
         store.record_assistant_turn(
@@ -489,7 +486,10 @@ mod tests {
                 Some("x".repeat(200)),
             )],
         );
-        let signatures = store.get_session("p", "s").unwrap().thought_signatures;
+        let signatures = store
+            .get_session("p", "s", ["oversize", "second"])
+            .unwrap()
+            .thought_signatures;
         assert!(!signatures.contains_key("oversize"));
         assert_eq!(signatures["second"], "updated");
     }
@@ -497,7 +497,7 @@ mod tests {
     #[test]
     fn record_and_read_latest_turn() {
         let store = GeminiShadowStore::with_limits(8, 4);
-        let snapshot = store.record_assistant_turn(
+        store.record_assistant_turn(
             "provider-a",
             "session-1",
             json!({"parts": [{"text": "hello", "thoughtSignature": "sig-1"}]}),
@@ -509,6 +509,8 @@ mod tests {
             )],
         );
 
+        let snapshot = store.get_session("provider-a", "session-1", []).unwrap();
+        assert!(snapshot.thought_signatures.is_empty());
         assert_eq!(snapshot.provider_id, "provider-a");
         assert_eq!(snapshot.session_id, "session-1");
         assert_eq!(snapshot.turns.len(), 1);
@@ -561,7 +563,7 @@ mod tests {
         store.record_assistant_turn("provider-a", "session-1", json!({"idx": 3}), vec![]);
 
         let snapshot = store
-            .get_session("provider-a", "session-1")
+            .get_session("provider-a", "session-1", [])
             .expect("snapshot");
         assert_eq!(snapshot.turns.len(), 2);
         assert_eq!(snapshot.turns[0].assistant_content, json!({"idx": 2}));
@@ -576,8 +578,8 @@ mod tests {
         store.record_assistant_turn("provider-a", "session-2", json!({"idx": 2}), vec![]);
         store.record_assistant_turn("provider-a", "session-3", json!({"idx": 3}), vec![]);
 
-        assert!(store.get_session("provider-a", "session-1").is_none());
-        assert!(store.get_session("provider-a", "session-2").is_some());
-        assert!(store.get_session("provider-a", "session-3").is_some());
+        assert!(store.get_session("provider-a", "session-1", []).is_none());
+        assert!(store.get_session("provider-a", "session-2", []).is_some());
+        assert!(store.get_session("provider-a", "session-3", []).is_some());
     }
 }

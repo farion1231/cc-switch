@@ -654,7 +654,10 @@ fn signature_replay_retains_evicted_calls_after_seventy_turns() {
                 "content": [{ "type": "tool_result", "tool_use_id": id, "content": "ok" }]
             }));
         }
-        assert_eq!(store.get_session("prov", "sess").unwrap().turns.len(), 64);
+        assert_eq!(
+            store.get_session("prov", "sess", []).unwrap().turns.len(),
+            64
+        );
 
         let result = anthropic_to_gemini_with_shadow(
             json!({ "model": "gemini-3.8-flash", "messages": messages }),
@@ -2313,7 +2316,9 @@ fn non_stream_shadow_id_matches_client_visible_id() {
         "client-facing id must be synthesized for no-id Gemini responses"
     );
 
-    let snapshot = store.get_session("prov", "sess").expect("shadow recorded");
+    let snapshot = store
+        .get_session("prov", "sess", [])
+        .expect("shadow recorded");
     // (c) tool_calls metadata must agree with the client-visible id.
     let shadow_tool_call_id = snapshot.turns[0].tool_calls[0]
         .id
@@ -2498,7 +2503,7 @@ fn non_stream_preserves_original_gemini_id_when_present() {
     )
     .unwrap();
     assert_eq!(response["content"][0]["id"], "call_real_1");
-    let snapshot = store.get_session("prov", "sess").unwrap();
+    let snapshot = store.get_session("prov", "sess", []).unwrap();
     assert_eq!(
         snapshot.turns[0].tool_calls[0].id.as_deref(),
         Some("call_real_1")
