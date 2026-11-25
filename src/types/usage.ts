@@ -101,7 +101,6 @@ export interface RuntimeTrendStats {
 
 export interface DailyStats extends Omit<RuntimeTrendStats, "appType"> {
   date: string;
-  appTypes?: string[];
   runtimeStats?: RuntimeTrendStats[];
   totalTokens: number;
 }

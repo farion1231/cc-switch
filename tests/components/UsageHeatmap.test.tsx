@@ -16,16 +16,29 @@ vi.mock("@/hooks/useMoneyFormat", () => ({
 
 function day(
   dayOfMonth: number,
-  appTypes?: string[],
-  requestCount = 1,
+  apps: [appType: string, requests: number, cost?: number][] = [],
+  unclassifiedRequests = 0,
 ): DailyStats {
+  const runtimeStats = apps.map(([appType, requests, cost = 0]) => ({
+    appType,
+    requestCount: requests,
+    totalCost: String(cost),
+    totalInputTokens: requests * 10,
+    totalOutputTokens: 0,
+    totalCacheCreationTokens: 0,
+    totalCacheReadTokens: 0,
+  }));
+  const requestCount = apps.reduce(
+    (sum, [, requests]) => sum + requests,
+    unclassifiedRequests,
+  );
   return {
     date: new Date(2025, 5, dayOfMonth).toISOString(),
-    appTypes,
+    runtimeStats,
     requestCount,
-    totalTokens: 10,
-    totalCost: "0",
-    totalInputTokens: 10,
+    totalTokens: requestCount * 10,
+    totalCost: String(apps.reduce((sum, [, , cost = 0]) => sum + cost, 0)),
+    totalInputTokens: requestCount * 10,
     totalOutputTokens: 0,
     totalCacheCreationTokens: 0,
     totalCacheReadTokens: 0,
@@ -46,15 +59,17 @@ describe("UsageHeatmap runtime colors", () => {
 
   afterEach(() => vi.useRealTimers());
 
-  it("splits mixed-runtime days and preserves the request intensity scale", () => {
+  it("uses one app color per day and scales intensity by the daily total", () => {
     trends.mockReturnValue({
       data: [
-        day(1, ["claude"]),
-        day(2, ["codex"]),
-        day(3, ["claude", "codex"], 10),
-        day(4, ["dsh"]),
-        day(5, undefined),
-        day(6, ["gemini"], 0),
+        day(1, [["claude", 1]]),
+        day(2, [["codex", 1]]),
+        day(3, [
+          ["claude", 8],
+          ["codex", 2],
+        ]),
+        day(4, [["dsh", 1]]),
+        day(5, [], 1),
       ],
     });
     const { container } = render(
@@ -66,7 +81,6 @@ describe("UsageHeatmap runtime colors", () => {
     const mixed = screen.getByRole("img", { name: /Claude Code.*Codex/ });
     expect(fills(mixed)).toEqual([
       expect.stringContaining("var(--agent-claude) var(--heat-strength-4)"),
-      expect.stringContaining("var(--agent-codex) var(--heat-strength-4)"),
     ]);
     expect(screen.getByText("DeepSeek Harness")).toBeInTheDocument();
     const scale = Array.from(
@@ -85,13 +99,38 @@ describe("UsageHeatmap runtime colors", () => {
       container.querySelector('.usage-heat-fill.flex-1[style*="--heat-1"]'),
     ).toBeInTheDocument();
     fireEvent.mouseEnter(mixed);
-    expect(
-      within(screen.getByRole("tooltip")).getByText("Claude Code · Codex"),
-    ).toBeInTheDocument();
+    const [claude, codex] = within(screen.getByRole("tooltip")).getAllByRole(
+      "listitem",
+    );
+    expect(claude).toHaveTextContent(/Claude Code\s*8/);
+    expect(codex).toHaveTextContent(/Codex\s*2/);
+  });
+
+  it("changes the dominant app with the selected metric and shows the cost breakdown", () => {
+    trends.mockReturnValue({
+      data: [
+        day(3, [
+          ["claude", 8, 2],
+          ["codex", 2, 8],
+          ["gemini", 1],
+        ]),
+      ],
+    });
+    render(<UsageHeatmap metric="cost" refreshIntervalMs={0} />);
+    const mixed = screen.getByRole("img", { name: /Claude Code.*Codex/ });
+    expect(fills(mixed)).toEqual([
+      expect.stringContaining("var(--agent-codex) var(--heat-strength-1)"),
+    ]);
+    expect(screen.getByText("Gemini CLI")).toBeInTheDocument();
+    fireEvent.mouseEnter(mixed);
+    const rows = within(screen.getByRole("tooltip")).getAllByRole("listitem");
+    expect(rows[0]).toHaveTextContent(/Claude Code\s*\$2\.00/);
+    expect(rows[1]).toHaveTextContent(/Codex\s*\$8\.00/);
+    expect(rows[2]).toHaveTextContent(/Gemini CLI\s*\$0\.00/);
   });
 
   it("keeps the selected runtime, provider and model filters on the trend query", () => {
-    trends.mockReturnValue({ data: [day(2, ["codex"])] });
+    trends.mockReturnValue({ data: [day(2, [["codex", 1]])] });
     render(
       <UsageHeatmap
         metric="hitRate"

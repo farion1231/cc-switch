@@ -3234,7 +3234,7 @@ fn test_get_daily_trends_respects_shorter_than_24_hours() -> Result<(), AppError
     let stats = db.get_daily_trends(Some(0), Some(15 * 60 * 60), Some("claude"), None, None)?;
     assert_eq!(stats.len(), 15);
     assert_eq!(stats[3].request_count, 1);
-    assert!(stats[3].app_types.is_empty());
+    assert!(stats[3].runtime_stats.is_empty());
 
     Ok(())
 }
@@ -3273,7 +3273,6 @@ fn test_get_daily_trends_hourly_runtime_stats_keep_the_inclusive_end() -> Result
         .get("runtimeStats")
         .is_none());
     let last = &all[1];
-    assert!(last.app_types.is_empty());
     assert_eq!(last.request_count, 5);
     assert_eq!(last.total_cost, "0.050000");
     assert_eq!(last.total_tokens, 330);
@@ -3282,16 +3281,12 @@ fn test_get_daily_trends_hourly_runtime_stats_keep_the_inclusive_end() -> Result
     assert_eq!(last.total_cache_creation_tokens, 25);
     assert_eq!(last.total_cache_read_tokens, 100);
     let serialized = serde_json::to_value(last).unwrap();
-    assert!(serialized.get("appTypes").is_none());
     assert_eq!(
         serialized["runtimeStats"],
         serde_json::json!([
-            {"appType": "claude", "requestCount": 3, "totalCost": "0.030000",
-             "totalInputTokens": 160, "totalOutputTokens": 30,
-             "totalCacheCreationTokens": 15, "totalCacheReadTokens": 60},
-            {"appType": "claude-desktop", "requestCount": 1, "totalCost": "0.010000",
-             "totalInputTokens": 70, "totalOutputTokens": 10,
-             "totalCacheCreationTokens": 5, "totalCacheReadTokens": 20},
+            {"appType": "claude", "requestCount": 4, "totalCost": "0.040000",
+             "totalInputTokens": 230, "totalOutputTokens": 40,
+             "totalCacheCreationTokens": 20, "totalCacheReadTokens": 80},
             {"appType": "codex", "requestCount": 1, "totalCost": "0.010000",
              "totalInputTokens": 50, "totalOutputTokens": 10,
              "totalCacheCreationTokens": 5, "totalCacheReadTokens": 20},
@@ -3306,10 +3301,9 @@ fn test_get_daily_trends_hourly_runtime_stats_keep_the_inclusive_end() -> Result
         Some("m1"),
     )?;
     assert_eq!(filtered[1].request_count, 3);
-    assert_eq!(filtered[1].runtime_stats.len(), 2);
+    assert_eq!(filtered[1].runtime_stats.len(), 1);
     assert_eq!(filtered[1].runtime_stats[0].app_type, "claude");
-    assert_eq!(filtered[1].runtime_stats[0].request_count, 2);
-    assert_eq!(filtered[1].runtime_stats[1].app_type, "claude-desktop");
+    assert_eq!(filtered[1].runtime_stats[0].request_count, 3);
 
     Ok(())
 }
@@ -3398,30 +3392,25 @@ fn test_get_daily_trends_groups_ranges_longer_than_24_hours_by_local_day() -> Re
     assert_eq!(stats.len(), 3);
     assert_eq!(stats[0].request_count, 3);
     assert_eq!(stats[0].total_tokens, 210);
-    assert_eq!(stats[0].app_types, ["claude"]);
     let runtime_stats = &stats[0].runtime_stats;
-    assert_eq!(runtime_stats.len(), 2);
+    assert_eq!(runtime_stats.len(), 1);
     assert_eq!(runtime_stats[0].app_type, "claude");
-    assert_eq!(runtime_stats[0].request_count, 2);
-    assert_eq!(runtime_stats[0].total_cost, "0.030000");
-    assert_eq!(runtime_stats[0].total_input_tokens, 120);
-    assert_eq!(runtime_stats[0].total_output_tokens, 60);
-    assert_eq!(runtime_stats[1].app_type, "claude-desktop");
-    assert_eq!(runtime_stats[1].request_count, 1);
+    assert_eq!(runtime_stats[0].request_count, 3);
+    assert_eq!(runtime_stats[0].total_cost, "0.050000");
+    assert_eq!(runtime_stats[0].total_input_tokens, 140);
+    assert_eq!(runtime_stats[0].total_output_tokens, 70);
     assert_eq!(stats[1].request_count, 4);
-    assert_eq!(stats[1].app_types, ["claude"]);
     assert_eq!(stats[1].runtime_stats[0].request_count, 4);
     assert_eq!(stats[1].total_tokens, 600);
     assert_eq!(stats[2].request_count, 1);
     assert_eq!(stats[2].total_tokens, 275);
 
     let all = db.get_daily_trends(Some(start), Some(end + 24 * 60 * 60), None, None, None)?;
-    assert_eq!(all[0].app_types, ["claude", "codex"]);
     assert_eq!(all[0].request_count, 4);
-    assert_eq!(all[0].runtime_stats[2].app_type, "codex");
-    assert_eq!(all[0].runtime_stats[2].request_count, 1);
-    assert_eq!(all[1].app_types, ["claude"]);
-    assert!(all[3].app_types.is_empty());
+    assert_eq!(all[0].runtime_stats.len(), 2);
+    assert_eq!(all[0].runtime_stats[1].app_type, "codex");
+    assert_eq!(all[0].runtime_stats[1].request_count, 1);
+    assert_eq!(all[1].runtime_stats[0].app_type, "claude");
     assert!(all[3].runtime_stats.is_empty());
 
     Ok(())

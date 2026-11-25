@@ -3,7 +3,6 @@ import type { AppId } from "@/lib/api";
 
 const RUNTIME_COLORS = new Map<string, string>([
   ["claude", "var(--agent-claude)"],
-  ["claude-desktop", "var(--usage-runtime-claude-desktop)"],
   ["openclaw", "var(--usage-runtime-openclaw)"],
   ["hermes", "var(--usage-runtime-hermes)"],
   ["codex", "var(--agent-codex)"],
@@ -27,6 +26,6 @@ export function runtimeName(app: string): string {
     : app;
 }
 
-export function runtimeColor(app: string): string | undefined {
-  return RUNTIME_COLORS.get(app);
+export function runtimeColor(app: string): string {
+  return RUNTIME_COLORS.get(app) ?? "var(--chart-usage)";
 }

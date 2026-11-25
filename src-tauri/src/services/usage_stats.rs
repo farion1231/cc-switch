@@ -112,10 +112,7 @@ pub struct DailyStats {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
-    /// Folded app types for the heatmap; omitted for hourly and empty buckets.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub app_types: Vec<String>,
-    /// Usage by raw runtime, sorted by app type; omitted for empty buckets.
+    /// Usage by display app type; omitted for empty buckets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runtime_stats: Vec<TrendRuntimeStats>,
 }
@@ -153,7 +150,7 @@ impl TrendTotals {
     }
 }
 
-/// Trend queries return one aggregate per (bucket, raw app type).
+/// Trend queries return one aggregate per (bucket, display app type).
 fn trend_row<K: rusqlite::types::FromSql>(
     row: &rusqlite::Row<'_>,
 ) -> rusqlite::Result<(K, String, TrendTotals)> {
@@ -179,20 +176,11 @@ impl TrendBucket {
         self.0.entry(app_type).or_default().add(&totals);
     }
 
-    fn into_stats(self, date: String, include_app_types: bool) -> DailyStats {
+    fn into_stats(self, date: String) -> DailyStats {
         let mut totals = TrendTotals::default();
-        let mut app_types = Vec::new();
         let mut runtime_stats = Vec::with_capacity(self.0.len());
         for (app_type, runtime) in self.0 {
             totals.add(&runtime);
-            if include_app_types {
-                // Keep the legacy daily heatmap grouping in sync with folded_app_type_sql.
-                app_types.push(if app_type == "claude-desktop" {
-                    "claude".to_string()
-                } else {
-                    app_type.clone()
-                });
-            }
             runtime_stats.push(TrendRuntimeStats {
                 app_type,
                 request_count: runtime.request_count,
@@ -203,8 +191,6 @@ impl TrendBucket {
                 total_cache_read_tokens: runtime.cache_read,
             });
         }
-        app_types.sort_unstable();
-        app_types.dedup();
         DailyStats {
             date,
             request_count: totals.request_count,
@@ -214,7 +200,6 @@ impl TrendBucket {
             total_output_tokens: totals.output,
             total_cache_creation_tokens: totals.cache_creation,
             total_cache_read_tokens: totals.cache_read,
-            app_types,
             runtime_stats,
         }
     }
@@ -1614,10 +1599,11 @@ impl Database {
         let effective_filter =
             effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
         let fresh_input = fresh_input_sql("l");
+        let detail_app_type = folded_app_type_sql("l.app_type");
         let detail_sql = format!(
             "SELECT
                 {bucket_expr} as bucket,
-                l.app_type,
+                {detail_app_type} AS display_app,
                 COUNT(*),
                 COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0),
                 COALESCE(SUM({fresh_input}), 0),
@@ -1627,7 +1613,7 @@ impl Database {
              FROM proxy_request_logs l {detail_join}
              WHERE l.created_at >= ?1 AND l.created_at <= ?2
                AND {effective_filter} {extra_filter}
-             GROUP BY bucket, l.app_type"
+             GROUP BY bucket, display_app"
         );
         let mut detail_stmt = conn.prepare(&detail_sql)?;
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> =
@@ -1648,12 +1634,7 @@ impl Database {
             for i in 0..hourly_bucket_count {
                 let date =
                     local_datetime_from_timestamp(start_ts + i * BUCKET_SECONDS)?.to_rfc3339();
-                stats.push(
-                    buckets
-                        .remove(&i)
-                        .unwrap_or_default()
-                        .into_stats(date, false),
-                );
+                stats.push(buckets.remove(&i).unwrap_or_default().into_stats(date));
             }
             return Ok(stats);
         }
@@ -1680,10 +1661,11 @@ impl Database {
             filter.rollup_where(&conn, &rollup_bounds)?.into_where();
         let rollup_join = filter.join("r", "p2");
         let fresh_input_rollup = fresh_input_sql("r");
+        let rollup_app_type = folded_app_type_sql("r.app_type");
         let rollup_sql = format!(
             "SELECT
                 r.date,
-                r.app_type,
+                {rollup_app_type} AS display_app,
                 COALESCE(SUM(r.request_count), 0),
                 COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
                 COALESCE(SUM({fresh_input_rollup}), 0),
@@ -1692,7 +1674,7 @@ impl Database {
                 COALESCE(SUM(r.cache_read_tokens), 0)
              FROM usage_daily_rollups r {rollup_join}
              {rollup_where}
-             GROUP BY r.date, r.app_type"
+             GROUP BY r.date, display_app"
         );
         let mut rollup_stmt = conn.prepare(&rollup_sql)?;
         let rollup_refs: Vec<&dyn rusqlite::ToSql> =
@@ -1711,7 +1693,7 @@ impl Database {
         for _ in 0..bucket_count {
             let date = local_day_start_rfc3339(current_day);
             let bucket = buckets.remove(&current_day).unwrap_or_default();
-            stats.push(bucket.into_stats(date, true));
+            stats.push(bucket.into_stats(date));
             current_day = current_day.succ_opt().unwrap_or(current_day);
         }
         Ok(stats)

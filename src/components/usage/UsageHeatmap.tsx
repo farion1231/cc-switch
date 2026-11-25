@@ -1,16 +1,28 @@
-import { Fragment, useMemo, useRef, useState, type CSSProperties } from "react";
+import {
+  Fragment,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUsageFirstDate, useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
-import type { DailyStats, UsageRangeSelection } from "@/types/usage";
+import type {
+  DailyStats,
+  RuntimeTrendStats,
+  UsageRangeSelection,
+} from "@/types/usage";
 import {
+  formatHitRatePercent,
   formatTokensShort,
   getLocaleFromLanguage,
-  parseFiniteNumber,
 } from "./format";
-import { hitRateOf, type UsageTrendStatLike } from "./UsageTrendChart";
+import { trendMetricsOf } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { UsageMetric } from "./rememberedChoice";
@@ -41,7 +53,8 @@ interface DayCell {
   requests: number;
   cost: number;
   future: boolean;
-  appTypes: string[];
+  dominantApp?: string;
+  runtimeStats: RuntimeTrendStats[];
 }
 
 /** 一段 53 周：最新一段右端是今天，更早的段首尾相接往前排 */
@@ -56,9 +69,10 @@ interface SpanGrid {
 
 interface HoverState {
   cell: DayCell;
-  /** 相对热力图卡片的格子顶部中点 */
+  /** Viewport coordinates of the cell. */
   x: number;
-  y: number;
+  top: number;
+  bottom: number;
 }
 
 function startOfDay(date: Date): Date {
@@ -112,29 +126,29 @@ function spanCountFor(
   return before > 0 ? 1 + Math.ceil(before / (WEEKS * 7)) : 1;
 }
 
-function metricValue(
-  stat: UsageTrendStatLike,
-  metric: Exclude<UsageMetric, "hitRate">,
-): number {
-  if (metric === "requests") return stat.requestCount ?? 0;
-  if (metric === "cost") return parseFiniteNumber(stat.totalCost) ?? 0;
-  return (
-    stat.totalInputTokens +
-    stat.totalOutputTokens +
-    stat.totalCacheCreationTokens +
-    stat.totalCacheReadTokens
-  );
-}
-
-/** 格子分档用的值：用量类指标 0 就是没用；命中率 0% 是真实数据，只有没有输入时才是空 */
-function heatValue(
-  stat: UsageTrendStatLike | undefined,
+function dominantRuntime(
+  runtimes: RuntimeTrendStats[],
   metric: UsageMetric,
-): number | null {
-  if (!stat) return null;
-  if (metric === "hitRate") return hitRateOf(stat);
-  const value = metricValue(stat, metric);
-  return value > 0 ? value : null;
+): string | undefined {
+  let app: string | undefined;
+  let largest = 0;
+  for (const runtime of runtimes) {
+    // For cache hit rate, choose the app with the most cacheable input.
+    const value =
+      metric === "hitRate"
+        ? runtime.totalInputTokens +
+          runtime.totalCacheCreationTokens +
+          runtime.totalCacheReadTokens
+        : (trendMetricsOf(runtime)[metric] ?? 0);
+    if (
+      value > largest ||
+      (value === largest && app && runtime.appType < app)
+    ) {
+      app = runtime.appType;
+      largest = value;
+    }
+  }
+  return app;
 }
 
 /** 按有数据的天的四分位分档，避免个别高峰日把其余格子都压成最浅 */
@@ -222,16 +236,22 @@ function buildSpan(
     for (let d = 0; d < 7; d++) {
       const date = addDays(start, w * 7 + d);
       const stat = byDay.get(dayKey(date));
+      const metrics = stat ? trendMetricsOf(stat) : undefined;
+      const value = metrics?.[metric] ?? null;
+      const runtimeStats = stat?.runtimeStats ?? [];
       const cell: DayCell = {
         key: dayKey(date),
         date,
-        value: heatValue(stat, metric),
-        hitRate: stat ? hitRateOf(stat) : null,
-        tokens: stat ? metricValue(stat, "tokens") : 0,
-        requests: stat?.requestCount ?? 0,
-        cost: stat ? metricValue(stat, "cost") : 0,
+        // Zero is a real cache hit rate, but an empty usage bucket.
+        value:
+          metric === "hitRate" || (value != null && value > 0) ? value : null,
+        hitRate: metrics?.hitRate ?? null,
+        tokens: metrics?.tokens ?? 0,
+        requests: metrics?.requests ?? 0,
+        cost: metrics?.cost ?? 0,
         future: date.getTime() > today.getTime(),
-        appTypes: stat?.appTypes ?? [],
+        dominantApp: dominantRuntime(runtimeStats, metric),
+        runtimeStats,
       };
       totals.tokens += cell.tokens;
       totals.requests += cell.requests;
@@ -260,22 +280,45 @@ export function UsageHeatmap({
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
   const { money } = useMoneyFormat();
-  const sectionRef = useRef<HTMLElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
   const [showEarlier, setShowEarlier] = useState(false);
 
   const showTooltip = (cell: DayCell, target: HTMLElement) => {
-    const section = sectionRef.current;
-    if (!section) return;
-    const box = section.getBoundingClientRect();
     const rect = target.getBoundingClientRect();
     setHover({
       cell,
-      x: rect.left + rect.width / 2 - box.left,
-      y: rect.top - box.top,
+      x: rect.left + rect.width / 2,
+      top: rect.top,
+      bottom: rect.bottom,
     });
   };
+  useLayoutEffect(() => {
+    const tooltip = tooltipRef.current;
+    if (!hover || !tooltip) return;
+    const margin = 8;
+    const { width, height } = tooltip.getBoundingClientRect();
+    const left = Math.min(
+      hover.x - width / 2,
+      window.innerWidth - width - margin,
+    );
+    const above = hover.top - height - margin;
+    const below = Math.min(
+      hover.bottom + margin,
+      window.innerHeight - height - margin,
+    );
+    tooltip.style.left = `${Math.max(margin, left)}px`;
+    tooltip.style.top = `${Math.max(margin, above >= margin ? above : below)}px`;
+
+    const close = () => setHover(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [hover, metric]);
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
 
@@ -310,7 +353,9 @@ export function UsageHeatmap({
       visibleSpans.flatMap((span) =>
         span.weeks.flatMap((week) =>
           week.flatMap((cell) =>
-            !cell.future && cell.value != null ? cell.appTypes : [],
+            cell.future
+              ? []
+              : cell.runtimeStats.map((runtime) => runtime.appType),
           ),
         ),
       ),
@@ -335,9 +380,24 @@ export function UsageHeatmap({
     );
   }, [locale]);
 
+  const breakdown = hover?.cell.runtimeStats.map((runtime) => {
+    const value = trendMetricsOf(runtime)[metric];
+    return {
+      label: runtimeName(runtime.appType),
+      color: runtimeColor(runtime.appType),
+      value:
+        value == null
+          ? "—"
+          : metric === "cost"
+            ? money(value, 4)
+            : metric === "hitRate"
+              ? formatHitRatePercent(value)
+              : formatTokensShort(value, language),
+    };
+  });
+
   return (
     <section
-      ref={sectionRef}
       aria-labelledby="usage-heatmap-title"
       className="relative px-4 pb-3 pt-5"
     >
@@ -415,14 +475,14 @@ export function UsageHeatmap({
                   {span.weeks.map((column) => {
                     const cell = column[d];
                     const level = levelOf(cell.value, heat.thresholds);
-                    const apps = !cell.future && level > 0 ? cell.appTypes : [];
+                    const apps = cell.future ? [] : cell.runtimeStats;
                     return (
                       <div
                         key={cell.key}
                         role={apps.length ? "img" : undefined}
                         aria-label={
                           apps.length
-                            ? `${formatDay(cell.date)} · ${apps.map(runtimeName).join(" · ")}`
+                            ? `${formatDay(cell.date)} · ${apps.map(({ appType }) => runtimeName(appType)).join(" · ")}`
                             : undefined
                         }
                         onMouseEnter={
@@ -436,16 +496,13 @@ export function UsageHeatmap({
                           !cell.future && level === 0 && "bg-subtle",
                         )}
                       >
-                        {!cell.future &&
-                          level > 0 &&
-                          (apps.length ? apps : [undefined]).map((app) => (
-                            <span
-                              key={app ?? ""}
-                              aria-hidden="true"
-                              className="usage-heat-fill flex-1"
-                              style={cellStyle(level, app)}
-                            />
-                          ))}
+                        {!cell.future && level > 0 && (
+                          <span
+                            aria-hidden="true"
+                            className="usage-heat-fill flex-1"
+                            style={cellStyle(level, cell.dominantApp)}
+                          />
+                        )}
                       </div>
                     );
                   })}
@@ -456,38 +513,29 @@ export function UsageHeatmap({
         ))
       )}
 
-      {hover && (
-        <div
-          role="tooltip"
-          className="pointer-events-none absolute z-20"
-          style={{
-            left: hover.x,
-            top: hover.y - 8,
-            // 靠近左右边缘时往里收，别被卡片裁掉
-            transform: `translate(${
-              hover.x < 110
-                ? "-15%"
-                : hover.x > (sectionRef.current?.clientWidth ?? 0) - 110
-                  ? "-85%"
-                  : "-50%"
-            }, -100%)`,
-          }}
-        >
-          <UsageTooltipCard
-            heading={hover.cell.date.toLocaleDateString(locale, {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-              weekday: "short",
-            })}
-            detail={hover.cell.appTypes.map(runtimeName).join(" · ")}
-            tokens={hover.cell.tokens}
-            requests={hover.cell.requests}
-            cost={hover.cell.cost}
-            hitRate={metric === "hitRate" ? hover.cell.hitRate : undefined}
-          />
-        </div>
-      )}
+      {hover &&
+        createPortal(
+          <div
+            ref={tooltipRef}
+            role="tooltip"
+            className="pointer-events-none fixed z-20"
+          >
+            <UsageTooltipCard
+              heading={hover.cell.date.toLocaleDateString(locale, {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+                weekday: "short",
+              })}
+              tokens={hover.cell.tokens}
+              requests={hover.cell.requests}
+              cost={hover.cell.cost}
+              hitRate={metric === "hitRate" ? hover.cell.hitRate : undefined}
+              breakdown={breakdown}
+            />
+          </div>,
+          document.body,
+        )}
 
       <div className="mt-2 flex items-center gap-1.5 text-badge text-fg-3">
         {!isLoading && earlierCount > 0 && (

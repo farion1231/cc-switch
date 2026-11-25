@@ -74,8 +74,8 @@ export interface UsageTrendChartPoint {
 type TrendMetrics = Pick<UsageTrendChartPoint, UsageMetric>;
 const DEFAULT_COLOR = "var(--chart-usage)";
 
-function trendMetricsOf(
-  stat: UsageTrendStatLike | RuntimeTrendStats,
+export function trendMetricsOf(
+  stat: Omit<UsageTrendStatLike, "date" | "runtimeStats">,
 ): TrendMetrics {
   return {
     requests: stat.requestCount ?? 0,
@@ -421,7 +421,7 @@ export function UsageTrendChart({
             renderValueRow(
               runtimeName(app),
               point.runtimeStats[app][metric],
-              runtimeColor(app) ?? DEFAULT_COLOR,
+              runtimeColor(app),
             ),
           )}
       </div>
@@ -452,7 +452,7 @@ export function UsageTrendChart({
               <span
                 aria-hidden="true"
                 className="h-2 w-2 rounded-[2px]"
-                style={{ background: runtimeColor(app) ?? DEFAULT_COLOR }}
+                style={{ background: runtimeColor(app) }}
               />
               {runtimeName(app)}
             </li>
@@ -507,8 +507,7 @@ export function UsageTrendChart({
               }
             />
             {(runtimes.length ? runtimes : [null]).map((app) => {
-              const color =
-                (app == null ? undefined : runtimeColor(app)) ?? DEFAULT_COLOR;
+              const color = app == null ? DEFAULT_COLOR : runtimeColor(app);
               const stackId =
                 app != null && metric !== "hitRate"
                   ? "runtime-usage"

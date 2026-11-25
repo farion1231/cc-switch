@@ -55,7 +55,7 @@ vi.mock("@/lib/query/usage", () => ({
         ...(fixture.mixed && {
           runtimeStats: [
             {
-              appType: "claude-desktop",
+              appType: "claude",
               requestCount: 8,
               totalInputTokens: 15,
               totalOutputTokens: 45,
@@ -162,21 +162,18 @@ describe("UsageTrendChart styles", () => {
     try {
       const { container } = renderWithChartType();
       const legend = screen.getByTestId("usage-trend-legend");
-      expect(legend).toHaveTextContent("Claude Desktop");
+      expect(legend).toHaveTextContent("Claude Code");
       expect(legend).toHaveTextContent("DeepSeek Harness");
-      const colors = [
-        "var(--usage-runtime-claude-desktop)",
-        "var(--heat-app-dsh)",
-      ];
+      const colors = ["var(--agent-claude)", "var(--heat-app-dsh)"];
       const bars = colors.map(
         (color) =>
           container.querySelector(`.recharts-rectangle[fill="${color}"]`)!,
       );
-      const [desktop, dsh] = bars.map((bar) =>
+      const [claude, dsh] = bars.map((bar) =>
         Number(bar.getAttribute("height")),
       );
       expect(dsh).toBeGreaterThan(0);
-      expect(desktop / dsh).toBeCloseTo(4);
+      expect(claude / dsh).toBeCloseTo(4);
       expect(bars[0].getAttribute("x")).toBe(bars[1].getAttribute("x"));
     } finally {
       fixture.mixed = false;
@@ -187,17 +184,17 @@ describe("UsageTrendChart styles", () => {
     fixture.mixed = true;
     try {
       const { container } = renderWithChartType(undefined, "hitRate");
-      const desktop = container.querySelector(
-        '.recharts-rectangle[fill="var(--usage-runtime-claude-desktop)"]',
+      const claude = container.querySelector(
+        '.recharts-rectangle[fill="var(--agent-claude)"]',
       )!;
       const dsh = container.querySelector(
         '.recharts-rectangle[fill="var(--heat-app-dsh)"]',
       )!;
       // Bars at different positions in the same bucket, sharing a baseline.
-      expect(desktop.getAttribute("x")).not.toBe(dsh.getAttribute("x"));
+      expect(claude.getAttribute("x")).not.toBe(dsh.getAttribute("x"));
       const baseline = (bar: Element) =>
         Number(bar.getAttribute("y")) + Number(bar.getAttribute("height"));
-      expect(baseline(desktop)).toBeCloseTo(baseline(dsh));
+      expect(baseline(claude)).toBeCloseTo(baseline(dsh));
     } finally {
       fixture.mixed = false;
     }
