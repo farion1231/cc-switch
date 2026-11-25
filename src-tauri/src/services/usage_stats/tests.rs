@@ -3234,7 +3234,10 @@ fn test_get_daily_trends_respects_shorter_than_24_hours() -> Result<(), AppError
     let stats = db.get_daily_trends(Some(0), Some(15 * 60 * 60), Some("claude"), None, None)?;
     assert_eq!(stats.len(), 15);
     assert_eq!(stats[3].request_count, 1);
-    assert!(stats[3].runtime_stats.is_empty());
+    assert_eq!(stats[3].runtime_stats.len(), 1);
+    assert_eq!(stats[3].runtime_stats[0].app_type, "claude");
+    assert_eq!(stats[3].runtime_stats[0].request_count, 1);
+    assert!(stats[4].runtime_stats.is_empty());
 
     Ok(())
 }
