@@ -263,17 +263,17 @@ describe("Genesis Claude Code preset", () => {
 
 describe("Kimi API 预设的 1M 窗口声明", () => {
   // Claude Code 对非 claude- 前缀 id 默认按 200K 自动压缩，K3.1 Pro 是 1M
-  // 模型，四档 id 必须带 [1M] 标记（上游 31038e68 的约定）
+  // 模型，四档 id 必须带 [1m] 标记（上游 31038e68 的约定）
   for (const name of ["Kimi", "Kimi Global"]) {
-    it(`${name} 的四档模型都带 [1M]`, () => {
+    it(`${name} 的四档模型都带 [1m]`, () => {
       const preset = providerPresets.find((p) => p.name === name);
       expect(preset).toBeDefined();
       const env = (preset!.settingsConfig as any).env;
       expect(env).toMatchObject({
-        ANTHROPIC_MODEL: "kimi-k3.1-pro[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro[1M]",
+        ANTHROPIC_MODEL: "kimi-k3.1-pro[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "kimi-k3.1-pro[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "kimi-k3.1-pro[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "kimi-k3.1-pro[1m]",
       });
     });
   }
@@ -281,14 +281,14 @@ describe("Kimi API 预设的 1M 窗口声明", () => {
 
 describe("1M 模型预设的窗口声明", () => {
   const cases: Array<[string, string]> = [
-    ["Volcengine Doubao", "doubao-seed-2-1-pro-260915[1M]"],
-    ["Gemini Native", "gemini-3.8-flash[1M]"],
-    ["StepFun", "step-5-preview[1M]"],
-    ["Novita AI", "zai-org/glm-5.3[1M]"],
+    ["Volcengine Doubao", "doubao-seed-2-1-pro-260915[1m]"],
+    ["Gemini Native", "gemini-3.8-flash[1m]"],
+    ["StepFun", "step-5-preview[1m]"],
+    ["Novita AI", "zai-org/glm-5.3[1m]"],
   ];
 
   for (const [name, model] of cases) {
-    it(`${name} 的四档模型都带 [1M]`, () => {
+    it(`${name} 的四档模型都带 [1m]`, () => {
       const preset = providerPresets.find((p) => p.name === name);
       const env = (preset!.settingsConfig as any).env;
       expect(env).toMatchObject({
@@ -297,7 +297,7 @@ describe("1M 模型预设的窗口声明", () => {
         ANTHROPIC_DEFAULT_OPUS_MODEL: model,
       });
       // Haiku 档也指向同一 1M 模型（Novita 的 Haiku 是 1M 的 glm-5.3-flash）
-      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toMatch(/\[1M\]$/);
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toMatch(/\[1m\]$/);
     });
   }
 
@@ -317,10 +317,10 @@ describe("Zhipu GLM 预设的档位分工", () => {
       const preset = providerPresets.find((p) => p.name === name);
       const env = (preset!.settingsConfig as any).env;
       expect(env).toMatchObject({
-        ANTHROPIC_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1M]",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1M]",
+        ANTHROPIC_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "glm-5.3[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "glm-5.3-flash[1m]",
       });
     });
   }
