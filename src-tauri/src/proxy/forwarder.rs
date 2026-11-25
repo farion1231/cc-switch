@@ -1691,7 +1691,7 @@ impl RequestForwarder {
                 .resolve_copilot_auto_route(attempt, &mapped_body, deadline, retry_auto)
                 .await?;
             base_url.clone_from(&route.key.api_base);
-            mapped_body["model"] = Value::String(route.model.id.clone());
+            mapped_body["model"] = Value::String(route.model_id.clone());
             Some(route)
         } else {
             None
@@ -1809,18 +1809,14 @@ impl RequestForwarder {
         // on the Codex bridge. Only auto mode may fall back from Responses to Chat.
         if is_copilot_codex_responses {
             let api_format = CodexCopilotApiFormat::from_meta(provider.meta.as_ref());
-            let resolved = if let Some(route) = &auto_route {
-                let model = &route.model;
-                Some(ResolvedCopilotModel {
-                    id: model.id.clone(),
-                    vendor: model.vendor.clone(),
-                    transport: transport_for(&model.supported_endpoints, api_format),
-                })
+            let transport = if let Some(route) = &auto_route {
+                route.transport.clone()
             } else {
-                self.resolve_codex_copilot_model(provider, &mapped_body, api_format)
-                    .await?
+                let resolved = self
+                    .resolve_codex_copilot_model(provider, &mapped_body, api_format)
+                    .await?;
+                apply_codex_copilot_model(&mut mapped_body, resolved, api_format)?
             };
-            let transport = apply_codex_copilot_model(&mut mapped_body, resolved, api_format)?;
             copilot_endpoint_override = Some(transport.endpoint);
             codex_responses_to_chat = matches!(transport.protocol, CopilotProtocol::Chat);
             codex_responses_to_anthropic = false;
@@ -1873,10 +1869,11 @@ impl RequestForwarder {
             None
         } else if let Some(route) = &auto_route {
             Some(
-                copilot_api_format_for_model(
-                    Some(&route.model.vendor),
-                    &route.model.supported_endpoints,
-                )
+                match route.transport.protocol {
+                    CopilotProtocol::Messages => "anthropic",
+                    CopilotProtocol::Responses => "openai_responses",
+                    CopilotProtocol::Chat => "openai_chat",
+                }
                 .to_string(),
             )
         } else {

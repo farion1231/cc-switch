@@ -690,36 +690,34 @@ async fn handle_claude_transform(
     if use_streaming {
         // 根据 api_format 选择流式转换器
         let stream = response.bytes_stream();
+        let stream = if let Some(hook) = terminal_hook.take() {
+            let succeeded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag = succeeded.clone();
+            terminal_hook = Some(Box::new(move || {
+                Box::pin(async move {
+                    if succeeded.load(std::sync::atomic::Ordering::Relaxed) {
+                        hook().await;
+                    }
+                })
+            }));
+            Box::pin(create_logged_passthrough_stream_with_terminal_hook(
+                stream,
+                ctx.tag,
+                None,
+                ctx.streaming_timeout_config(),
+                None,
+                Some(Box::new(move || {
+                    Box::pin(async move {
+                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    })
+                })),
+            ))
+        } else {
+            stream
+        };
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
-            let stream: std::pin::Pin<
-                Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
-            > = if let Some(hook) = terminal_hook.take() {
-                let succeeded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-                let flag = succeeded.clone();
-                terminal_hook = Some(Box::new(move || {
-                    Box::pin(async move {
-                        if succeeded.load(std::sync::atomic::Ordering::Relaxed) {
-                            hook().await;
-                        }
-                    })
-                }));
-                Box::pin(create_logged_passthrough_stream_with_terminal_hook(
-                    stream,
-                    ctx.tag,
-                    None,
-                    ctx.streaming_timeout_config(),
-                    None,
-                    Some(Box::new(move || {
-                        Box::pin(async move {
-                            flag.store(true, std::sync::atomic::Ordering::Relaxed);
-                        })
-                    })),
-                ))
-            } else {
-                Box::pin(stream)
-            };
             Box::new(Box::pin(
                 create_anthropic_sse_stream_from_responses_with_web_search_options(
                     stream,
@@ -5002,6 +5000,43 @@ mod copilot_native_responses_tests {
                 success,
                 "chat={chat}, success={success}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn claude_chat_auto_compaction_requires_an_unfiltered_summary() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (state, ctx) = context(true).await;
+        for (finish, done) in [
+            ("stop", "data: [DONE]\n\n"),
+            ("content_filter", "data: [DONE]\n\n"),
+            ("stop", ""),
+        ] {
+            let fired = Arc::new(AtomicBool::new(false));
+            let flag = fired.clone();
+            let chunk = json!({"id":"chat", "model":"chat-model", "choices":[{"index":0,
+                "delta":{"role":"assistant", "content":"Partial summary"}, "finish_reason":finish}]});
+            let stream = upstream(&format!("data: {chunk}\n\n{done}")).with_success_terminal_hook(
+                Box::new(move || {
+                    Box::pin(async move {
+                        flag.store(true, Ordering::Relaxed);
+                    })
+                }),
+            );
+            let response = handle_claude_transform(
+                stream,
+                &ctx,
+                &state,
+                ClaudeResponseContext::from_request(&json!({})),
+                true,
+                "openai_chat",
+                None,
+            )
+            .await
+            .unwrap();
+            let (_, events) = body_and_events(response).await;
+            assert!(events.iter().any(|e| e["type"] == "message_stop"));
+            assert_eq!(fired.load(Ordering::Relaxed), finish == "stop");
         }
     }
 

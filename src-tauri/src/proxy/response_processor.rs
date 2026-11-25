@@ -875,13 +875,7 @@ impl SuccessTerminalTracker {
         if let Some(choices) = value.get("choices").and_then(Value::as_array) {
             for choice in choices {
                 let delta = choice.get("delta").unwrap_or(&Value::Null);
-                if delta
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .is_some_and(|s| !s.trim().is_empty())
-                {
-                    self.chat_has_text = true;
-                }
+                self.chat_has_text |= chat_has_text(delta);
                 if delta
                     .get("tool_calls")
                     .and_then(Value::as_array)
@@ -925,6 +919,18 @@ pub(crate) fn terminal_value_response_succeeded(value: &Value) -> bool {
     response_completed(value, is_compact_object) && responses_have_summary(value)
 }
 
+fn chat_has_text(message: &Value) -> bool {
+    message.get("content").is_some_and(|content| match content {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(parts) => parts.iter().any(|part| {
+            part.get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        }),
+        _ => false,
+    })
+}
+
 fn chat_value_has_summary(value: &Value) -> bool {
     value
         .get("choices")
@@ -933,19 +939,10 @@ fn chat_value_has_summary(value: &Value) -> bool {
             !choices.is_empty()
                 && choices.iter().all(|choice| {
                     let message = choice.get("message").unwrap_or(&Value::Null);
-                    let has_text = message.get("content").is_some_and(|content| match content {
-                        Value::String(text) => !text.trim().is_empty(),
-                        Value::Array(parts) => parts.iter().any(|part| {
-                            part.get("text")
-                                .and_then(Value::as_str)
-                                .is_some_and(|text| !text.trim().is_empty())
-                        }),
-                        _ => false,
-                    });
                     matches!(
                         choice.get("finish_reason").and_then(Value::as_str),
                         Some("stop" | "end_turn" | "stop_sequence")
-                    ) && has_text
+                    ) && chat_has_text(message)
                         && message
                             .get("tool_calls")
                             .and_then(Value::as_array)
@@ -1177,6 +1174,12 @@ fn create_logged_passthrough_stream_with_max_pending_bytes(
                                     hook().await;
                                 }
                             }
+                        }
+                    }
+                    // Chat gateways can close cleanly after finish_reason without [DONE].
+                    if terminal_tracker.chat_success && !terminal_tracker.failed {
+                        if let Some(hook) = terminal_hook.take() {
+                            hook().await;
                         }
                     }
                     // 流正常结束

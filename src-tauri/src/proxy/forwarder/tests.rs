@@ -216,7 +216,7 @@ fn test_forwarder(
 }
 
 #[tokio::test]
-async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s() {
+async fn copilot_auto_forwarding_pairs_model_and_session_and_recovers_from_401s() {
     use crate::proxy::response_processor::create_logged_passthrough_stream_with_terminal_hook;
     use axum::{body::to_bytes, extract::Request, response::IntoResponse, Json};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -251,6 +251,8 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
                             let n = tokens.fetch_add(1, Ordering::Relaxed) + 1;
                             Json(json!({"token": format!("bearer-{n}"), "expires_at": expires_at})).into_response()
                         }
+                        "/models" if bearer == "Bearer bearer-1" && parts.headers["x-github-api-version"] == "2026-08-01" =>
+                            StatusCode::UNAUTHORIZED.into_response(),
                         "/models" => {
                             let auto_contract = parts.headers["x-github-api-version"] == "2026-08-01";
                             let mut models = vec![json!({
@@ -259,6 +261,8 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
                                 "capabilities": { "limits": { "max_context_window_tokens": 200000 } }
                             })];
                             if auto_contract {
+                                models.push(json!({"id":"kimi-k3", "name":"Kimi K3", "vendor":"Moonshot", "supported_endpoints":["/v1/messages"]}));
+                                models.push(json!({"id":"embed", "name":"Embeddings", "vendor":"Example", "supported_endpoints":["/embeddings"]}));
                                 models.push(json!({
                                     "id": "claude-haiku-4.6", "name": "Hidden", "vendor": "Anthropic",
                                     "supported_endpoints": ["/v1/messages"], "model_picker_enabled": false,
@@ -267,12 +271,17 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
                             }
                             Json(json!({"data": models})).into_response()
                         }
-                        "/auto" if bearer == "Bearer bearer-1" => StatusCode::UNAUTHORIZED.into_response(),
+                        "/auto" if bearer == "Bearer bearer-2" && body["prompt"] != "unsupported" => StatusCode::UNAUTHORIZED.into_response(),
                         "/auto" => {
                             let count = requests.lock().await.iter().filter(|(path, _, _)| path == "/auto").count();
-                            Json(json!({"selected_model": "claude-haiku-4.6", "session_token": format!("session-{count}"), "expires_at": expires_at})).into_response()
+                            let selected = match body["prompt"].as_str() {
+                                Some("unsupported") => "embed",
+                                Some("after") => "kimi-k3",
+                                _ => "claude-haiku-4.6",
+                            };
+                            Json(json!({"selected_model": selected, "session_token": format!("session-{count}"), "expires_at": expires_at})).into_response()
                         }
-                        "/v1/messages" if session == Some("session-2") && body["messages"][0]["content"] == "retry" =>
+                        "/v1/messages" if session == Some("session-3") && body["messages"][0]["content"] == "retry" =>
                             StatusCode::UNAUTHORIZED.into_response(),
                         "/v1/messages" if body["stream"] == true => {
                             let text = body["messages"][0]["content"].as_str().filter(|text| *text != "empty").unwrap_or("");
@@ -313,11 +322,12 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
 
     for (text, warmup, stream, expected_model) in [
         ("warmup", true, false, "claude-haiku-4.5"),
+        ("unsupported", false, false, "embed"),
         ("ordinary", false, false, "claude-haiku-4.6"),
         ("retry", false, false, "claude-haiku-4.6"),
         ("empty", false, true, "claude-haiku-4.6"),
         ("summary", false, true, "claude-haiku-4.6"),
-        ("after", false, false, "claude-haiku-4.6"),
+        ("after", false, false, "kimi-k3"),
     ] {
         let mut headers = HeaderMap::new();
         headers.insert("session-token", HeaderValue::from_static("client-alias"));
@@ -346,8 +356,14 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
                 Extensions::new(),
                 std::slice::from_ref(&provider),
             )
-            .await
-            .unwrap_or_else(|failure| panic!("{text}: {}", failure.error));
+            .await;
+        if text == "unsupported" {
+            assert!(
+                matches!(result, Err(failure) if matches!(failure.error, ProxyError::ConfigError(ref msg) if msg.contains("embed")))
+            );
+            continue;
+        }
+        let result = result.unwrap_or_else(|failure| panic!("{text}: {}", failure.error));
         assert_eq!(
             replay_count.load(Ordering::Relaxed),
             usize::from(matches!(text, "ordinary" | "retry")),
@@ -413,25 +429,25 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_retries_both_401s()
         sent,
         [
             None,
-            Some("session-2"),
-            Some("session-2"),
-            Some("session-3"),
             Some("session-3"),
             Some("session-3"),
             Some("session-4"),
+            Some("session-4"),
+            Some("session-4"),
+            Some("session-5"),
             None,
         ]
     );
     let (_, headers, _) = requests.last().unwrap();
     assert_eq!(headers["session-token"], "hyphen");
     assert_eq!(headers["session_token"], "underscore");
-    assert_eq!(tokens.load(Ordering::Relaxed), 3);
+    assert_eq!(tokens.load(Ordering::Relaxed), 4);
     let paths: Vec<_> = requests.iter().map(|(path, _, _)| path.as_str()).collect();
     assert_eq!(
         &paths[..3],
         ["/copilot_internal/v2/token", "/models", "/v1/messages"]
     );
-    assert_eq!(paths.iter().filter(|&&path| path == "/auto").count(), 4);
+    assert_eq!(paths.iter().filter(|&&path| path == "/auto").count(), 5);
     assert!(!is_copilot_auto_messages_endpoint(
         "/v1/messages/count_tokens"
     ));

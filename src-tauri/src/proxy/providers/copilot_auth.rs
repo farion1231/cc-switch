@@ -436,6 +436,9 @@ pub enum CopilotAuthError {
     #[error("GitHub 令牌无效或已过期")]
     GitHubTokenInvalid,
 
+    #[error("Copilot /models returned HTTP 401")]
+    ModelsUnauthorized,
+
     #[error("Copilot 令牌获取失败: {0}")]
     CopilotTokenFetchFailed(String),
 
@@ -1222,6 +1225,11 @@ impl CopilotAuthManager {
             .send()
             .await?;
 
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.invalidate_token_if_matches(account_id, &copilot_token)
+                .await;
+            return Err(CopilotAuthError::ModelsUnauthorized);
+        }
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();

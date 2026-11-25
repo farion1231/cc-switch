@@ -5,6 +5,7 @@ use crate::proxy::copilot_auto_session::AutoSessionKey;
 use crate::proxy::providers::{
     copilot_auth::CopilotModel,
     copilot_auto::{extract_prompt_summary_for_auto, RequestProtocol},
+    copilot_model_map::advertised_transport,
 };
 
 /// True for the supported chat routes that may execute a Copilot Auto choice.
@@ -115,6 +116,7 @@ pub(super) fn codex_copilot_lookup_error(model_id: &str, error: CopilotAuthError
         | CopilotAuthError::AuthorizationPending
         | CopilotAuthError::AccessDenied
         | CopilotAuthError::ExpiredToken
+        | CopilotAuthError::ModelsUnauthorized
         | CopilotAuthError::GitHubTokenInvalid
         | CopilotAuthError::NoCopilotSubscription
         | CopilotAuthError::AccountNotFound(_) => ProxyError::AuthError(message),
@@ -190,7 +192,8 @@ pub(super) fn copilot_api_format_for_model(
 
 pub(super) struct CopilotAutoRoute {
     pub(super) key: AutoSessionKey,
-    pub(super) model: CopilotModel,
+    pub(super) model_id: String,
+    pub(super) transport: CopilotTransport,
     pub(super) session_token: String,
     pub(super) access_token: String,
     pub(super) compaction: bool,
@@ -245,7 +248,15 @@ impl RequestForwarder {
                 .fetch_catalog_for_account(&account_id)
                 .await
                 .map_err(|err| {
-                    ProxyError::ForwardFailed(format!("Copilot catalogue lookup failed: {err}"))
+                    if matches!(err, CopilotAuthError::ModelsUnauthorized) {
+                        *retry_auto = true;
+                        ProxyError::UpstreamError {
+                            status: 401,
+                            body: Some(err.to_string()),
+                        }
+                    } else {
+                        ProxyError::ForwardFailed(format!("Copilot catalogue lookup failed: {err}"))
+                    }
                 })?;
             Ok::<_, ProxyError>((token, catalogue, auth.get_api_endpoint(&account_id).await))
         })
@@ -296,30 +307,45 @@ impl RequestForwarder {
             *retry_auto = true;
         }
         let snapshot = snapshot?;
-        let model = catalogue
-            .into_iter()
-            .find(|model| model.id == snapshot.selected_model)
-            .ok_or_else(|| {
-                ProxyError::ConfigError(format!(
-                    "Copilot Auto selected model '{}' is absent from the account catalogue",
-                    snapshot.selected_model
-                ))
-            })?;
-        if protocol == RequestProtocol::ChatCompletions
-            && transport_for(
-                &model.supported_endpoints,
-                CodexCopilotApiFormat::OpenaiChat,
-            )
-            .is_none()
-        {
+        let model = catalogue.iter().find(|m| m.id == snapshot.selected_model);
+        let transport = model.and_then(|m| match protocol {
+            RequestProtocol::ChatCompletions => {
+                transport_for(&m.supported_endpoints, CodexCopilotApiFormat::OpenaiChat)
+            }
+            RequestProtocol::CodexResponses => transport_for(
+                &m.supported_endpoints,
+                CodexCopilotApiFormat::from_meta(provider.meta.as_ref()),
+            ),
+            RequestProtocol::AnthropicMessages => {
+                use CopilotProtocol::{Chat, Messages, Responses};
+                let preferred = if m.vendor.eq_ignore_ascii_case("anthropic") {
+                    [Messages, Chat, Responses]
+                } else if m.vendor.eq_ignore_ascii_case("openai") {
+                    [Responses, Chat, Messages]
+                } else {
+                    [Chat, Responses, Messages]
+                };
+                advertised_transport(&m.supported_endpoints, &preferred)
+            }
+        });
+        let Some(transport) = transport else {
+            self.copilot_auto_sessions
+                .invalidate_if_token_matches(&key, &snapshot.session_token)
+                .await;
+            let reason = if model.is_none() {
+                "is absent from the account catalogue"
+            } else {
+                "has no advertised endpoint compatible with the request"
+            };
             return Err(ProxyError::ConfigError(format!(
-                "Copilot Auto selected model '{}' does not support Chat Completions",
-                model.id
+                "Copilot Auto selected model '{}' {reason}",
+                snapshot.selected_model
             )));
-        }
+        };
         Ok(CopilotAutoRoute {
             key,
-            model,
+            model_id: snapshot.selected_model,
+            transport,
             session_token: snapshot.session_token,
             access_token,
             compaction: is_copilot_auto_compaction_request(app_type, endpoint, body),
