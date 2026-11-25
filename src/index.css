@@ -403,6 +403,7 @@
   --h-nav-row: 28px;
   --h-card: 58px;
   --card-py: 10px;
+  --w-sidebar-rail-item: 36px;
 }
 
 html[data-density="comfortable"] {
@@ -428,6 +429,7 @@ html[data-density="comfortable"] {
   --h-nav-row: 34px;
   --h-card: 68px;
   --card-py: 14px;
+  --w-sidebar-rail-item: 40px;
 }
 
 * {
