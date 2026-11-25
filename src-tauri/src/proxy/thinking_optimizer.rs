@@ -112,6 +112,17 @@ pub(crate) fn thinking_cannot_be_disabled(model: &str) -> bool {
     ["fable-5", "mythos-5"]
         .iter()
         .any(|needle| normalized.contains(needle))
+        || is_opus_5_5(model)
+}
+
+/// Opus 5.5 requires adaptive thinking, but accepts tool history without signed
+/// thinking and rejects forced `any`/`tool` selection. Keep this compatibility
+/// scoped to the verified generation rather than changing legacy Claude models.
+pub(crate) fn is_opus_5_5(model: &str) -> bool {
+    let normalized = normalize_model_name(model);
+    normalized
+        .split_once("opus-5-5")
+        .is_some_and(|(_, suffix)| suffix.is_empty() || suffix.starts_with('-'))
 }
 
 fn normalize_model_name(model: &str) -> String {
