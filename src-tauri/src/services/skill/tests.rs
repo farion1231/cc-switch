@@ -675,16 +675,28 @@ async fn set_and_delete_repo_token_reprobe_the_platform() {
         .unwrap();
     assert_eq!(host, "git.example.com");
     assert!(!service.platform_cache.lock_recover().contains_key(&host));
-    // 这台主机的发现缓存作废，别的主机不动
+    // A catalog on another host can include this host as a submodule.
     {
         let discovery = service.discovery_cache.lock_recover();
-        assert!(!discovery.contains_key(&cached("git.example.com")));
-        assert!(discovery.contains_key(&cached("other.example.com")));
+        assert!(discovery.is_empty());
     }
+    // A download started before the credential change cannot repopulate it.
+    service.cache_repo_skills(
+        cached("other.example.com"),
+        Instant::now(),
+        stale_epoch,
+        &[],
+    );
+    assert!(service.discovery_cache.lock_recover().is_empty());
     // 按旧身份得出的探测结论不入缓存，新的照常记
     service.remember_platform(&host, RepoPlatform::GitLab, stale_epoch);
     assert!(!service.platform_cache.lock_recover().contains_key(&host));
     let epoch = service.credential_epoch.load(Ordering::SeqCst);
+    service.cache_repo_skills(cached("other.example.com"), Instant::now(), epoch, &[]);
+    assert!(service
+        .discovery_cache
+        .lock_recover()
+        .contains_key(&cached("other.example.com")));
     service.remember_platform(&host, RepoPlatform::Gitea, epoch);
     assert_eq!(
         service.platform_cache.lock_recover().get(&host).copied(),
@@ -705,6 +717,7 @@ async fn set_and_delete_repo_token_reprobe_the_platform() {
         .lock_recover()
         .insert(host.clone(), RepoPlatform::Gitea);
     service.delete_repo_token(&host).unwrap();
+    assert!(service.discovery_cache.lock_recover().is_empty());
     assert!(!service.platform_cache.lock_recover().contains_key(&host));
     assert_eq!(service.repo_token(&host).await.unwrap(), None);
     assert!(secrets.entries.lock_recover().is_empty());

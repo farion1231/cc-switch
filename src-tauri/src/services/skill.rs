@@ -28,6 +28,7 @@ mod discovery;
 mod download;
 mod repo;
 mod skills_sh;
+mod submodules;
 mod sync;
 mod update;
 mod zip_install;
@@ -619,6 +620,8 @@ struct LocalSkillMetadataCandidate {
 pub struct SkillService {
     #[cfg(test)]
     repo_fixture: Option<PathBuf>,
+    #[cfg(test)]
+    submodule_http_fixture: Option<Arc<HashMap<String, Vec<u8>>>>,
     /// 发现结果按仓库缓存（键是 owner/name/branch），只存读成功的仓库。
     /// 发现要把每个仓库的归档整包下下来，添加、启用仓库或导入后的重拉不该把
     /// 没变的仓库再下一遍；手动刷新会绕过它（`force_refresh`）。
@@ -649,6 +652,8 @@ impl SkillService {
         Self {
             #[cfg(test)]
             repo_fixture: None,
+            #[cfg(test)]
+            submodule_http_fixture: None,
             discovery_cache: Mutex::new(HashMap::new()),
             platform_cache: Mutex::new(HashMap::new()),
             credential_epoch: AtomicU64::new(0),
@@ -705,7 +710,7 @@ impl SkillService {
         // 不在整条地址里搜：仓库可以叫 `tree`，仓库里也可以有 `blob/`、`src/branch/` 目录。
         let anchored = url.split_once("://").and_then(|(_, rest)| {
             let after_repo = rest.splitn(4, '/').nth(3)?;
-            ["src/branch/", "blob/", "tree/"]
+            ["src/branch/", "src/commit/", "blob/", "tree/"]
                 .into_iter()
                 .find_map(|marker| after_repo.strip_prefix(marker))
         });
@@ -715,6 +720,36 @@ impl SkillService {
                 .into_iter()
                 .find_map(|marker| url.split_once(marker).map(|(_, tail)| tail))
         })
+    }
+
+    /// Identify the source repository independently of its branch or commit.
+    fn doc_url_repository(url: &str) -> Option<String> {
+        let url = url::Url::parse(url).ok()?;
+        if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+            return None;
+        }
+        let path = url.path();
+        let repository = if let Some((prefix, _)) = path
+            .split_once("/-/blob/")
+            .or_else(|| path.split_once("/-/tree/"))
+        {
+            prefix.to_string()
+        } else {
+            let mut parts = path.trim_start_matches('/').split('/');
+            let owner = parts.next()?;
+            let name = parts.next()?;
+            match parts.next()? {
+                "blob" | "tree" => {}
+                "src" if matches!(parts.next(), Some("branch" | "commit")) => {}
+                _ => return None,
+            }
+            format!("/{owner}/{name}")
+        };
+        Some(format!(
+            "{}{}",
+            url.origin().ascii_serialization(),
+            repository
+        ))
     }
 
     // ========== 路径管理 ==========
@@ -987,6 +1022,7 @@ impl SkillService {
         let mut repo_branch = skill.repo_branch.clone();
         // 真实解析出的源目录推导的文档路径（仅本次真正下载解析时可得）
         let mut resolved_doc_path: Option<String> = None;
+        let mut resolved_submodule_doc_url: Option<String> = None;
         let mut downloaded_source: Option<(tempfile::TempDir, PathBuf)> = None;
 
         // 如果已存在则跳过下载
@@ -1000,7 +1036,7 @@ impl SkillService {
             };
 
             // 下载仓库
-            let (temp_guard, used_branch) = self.download_repo_bounded(&repo).await?;
+            let (temp_guard, used_branch, mounts) = self.download_repo_bounded(&repo).await?;
             let temp_dir = temp_guard.path();
             repo_branch = used_branch;
 
@@ -1036,6 +1072,7 @@ impl SkillService {
             // 用真实解析出的源目录推导文档路径——skills.sh 的 directory 只是
             // skillId（末级目录名），嵌套目录场景直接拼接会丢路径、链接 404（#6111）
             resolved_doc_path = Self::doc_path_for_source(&canonical_temp, &canonical_source);
+            resolved_submodule_doc_url = Self::submodule_doc_url(&source, &mounts);
 
             downloaded_source = Some((temp_guard, canonical_source));
 
@@ -1059,14 +1096,16 @@ impl SkillService {
 
         // 目标目录已存在时上面没下载，这个主机可能还没探测过（重启后界面先显示
         // 上次的发现结果），所以平台要参考发现时给出的链接。
-        let readme_url = Self::build_skill_doc_url(
-            self.platform_for_doc_url(skill),
-            &skill.repo_host,
-            &skill.repo_owner,
-            &skill.repo_name,
-            &repo_branch,
-            &doc_path,
-        );
+        let readme_url = resolved_submodule_doc_url.or_else(|| {
+            Self::build_skill_doc_url(
+                self.platform_for_doc_url(skill),
+                &skill.repo_host,
+                &skill.repo_owner,
+                &skill.repo_name,
+                &repo_branch,
+                &doc_path,
+            )
+        });
 
         // Re-check after the network download: another install/uninstall may have
         // completed while the lock was intentionally released around `.await`.
