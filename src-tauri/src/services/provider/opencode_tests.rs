@@ -341,8 +341,10 @@ fn opencode_v2_mcp_import_sync_and_remove_preserve_native_settings() {
     let source = r#"{
   // Keep the user's layout and settings.
   "mcp": {
+    "timeout": {"startup": 45000, "catalog": 30000},
     "shared": {"type": "local", "command": ["legacy"]},
     "legacy": {"type": "local", "command": ["keep"]},
+    "legacy-paused": {"type": "local", "command": ["legacy-paused"], "enabled": false},
     "servers": {
       "shared": {"type": "local", "command": ["native"], "cwd": "/workspace", "environment": {"OLD": "value"}},
       "paused": {"type": "local", "command": ["paused"], "disabled": true}
@@ -350,11 +352,17 @@ fn opencode_v2_mcp_import_sync_and_remove_preserve_native_settings() {
   }
 }"#;
     fs::write(&path, source).unwrap();
+    let live_servers = opencode_config::get_mcp_servers().unwrap();
+    assert!(!live_servers.contains_key("timeout"));
+    assert!(!live_servers.contains_key("servers"));
+
     let mut config = crate::app_config::MultiAppConfig::default();
     assert_eq!(crate::mcp::import_from_opencode(&mut config).unwrap(), 2);
     let imported = config.mcp.servers.unwrap();
     assert_eq!(imported["shared"].server["command"], "native");
     assert_eq!(imported["legacy"].server["command"], "keep");
+    assert!(!imported.contains_key("paused"));
+    assert!(!imported.contains_key("legacy-paused"));
     assert_eq!(fs::read_to_string(&path).unwrap(), source);
 
     crate::mcp::sync_single_server_to_opencode("shared", &json!({"command": "updated"})).unwrap();
@@ -363,7 +371,13 @@ fn opencode_v2_mcp_import_sync_and_remove_preserve_native_settings() {
         &json!({"type": "http", "url": "https://example.com/mcp"}),
     )
     .unwrap();
+    crate::mcp::sync_single_server_to_opencode("timeout", &json!({"command": "timeout-server"}))
+        .unwrap();
     let live = opencode_config::read_opencode_config().unwrap();
+    assert_eq!(
+        live["mcp"]["timeout"],
+        json!({"startup": 45000, "catalog": 30000})
+    );
     assert_eq!(
         live["mcp"]["servers"]["shared"],
         json!({"type": "local", "command": ["updated"], "cwd": "/workspace"})
@@ -372,16 +386,63 @@ fn opencode_v2_mcp_import_sync_and_remove_preserve_native_settings() {
         live["mcp"]["servers"]["new"],
         json!({"type": "remote", "url": "https://example.com/mcp"})
     );
+    assert_eq!(
+        live["mcp"]["servers"]["timeout"],
+        json!({"type": "local", "command": ["timeout-server"]})
+    );
     assert_eq!(live["mcp"]["servers"]["paused"]["disabled"], true);
     assert_eq!(live["mcp"]["legacy"]["command"], json!(["keep"]));
+    assert_eq!(live["mcp"]["legacy-paused"]["enabled"], false);
+    assert_eq!(
+        opencode_config::get_mcp_servers().unwrap()["timeout"]["command"],
+        json!(["timeout-server"])
+    );
 
     crate::mcp::remove_server_from_opencode("shared").unwrap();
-    assert!(!opencode_config::get_mcp_servers()
-        .unwrap()
-        .contains_key("shared"));
+    crate::mcp::remove_server_from_opencode("timeout").unwrap();
+    let remaining = opencode_config::get_mcp_servers().unwrap();
+    assert!(!remaining.contains_key("shared"));
+    assert!(!remaining.contains_key("timeout"));
+    assert_eq!(
+        opencode_config::read_opencode_config().unwrap()["mcp"]["timeout"],
+        json!({"startup": 45000, "catalog": 30000})
+    );
     assert!(fs::read_to_string(&path)
         .unwrap()
         .contains("// Keep the user's layout and settings."));
+}
+
+#[test]
+#[serial]
+fn opencode_v2_mcp_timeout_only_and_legacy_timeout_server_are_distinguished() {
+    let fixture = Fixture::new();
+    fs::write(
+        &fixture.config_path,
+        r#"{"mcp":{"timeout":{"execution":600000}}}"#,
+    )
+    .unwrap();
+    assert!(opencode_config::get_mcp_servers().unwrap().is_empty());
+    crate::mcp::sync_single_server_to_opencode("new", &json!({"command": "echo"})).unwrap();
+    let live = opencode_config::read_opencode_config().unwrap();
+    assert_eq!(live["mcp"]["timeout"], json!({"execution": 600000}));
+    assert_eq!(
+        live["mcp"]["servers"]["new"],
+        json!({"type": "local", "command": ["echo"]})
+    );
+
+    fs::write(
+        &fixture.config_path,
+        r#"{"mcp":{"timeout":{"type":"local","command":["legacy-timeout"]}}}"#,
+    )
+    .unwrap();
+    let mut config = crate::app_config::MultiAppConfig::default();
+    assert_eq!(crate::mcp::import_from_opencode(&mut config).unwrap(), 1);
+    assert_eq!(
+        config.mcp.servers.unwrap()["timeout"].server["command"],
+        "legacy-timeout"
+    );
+    crate::mcp::remove_server_from_opencode("timeout").unwrap();
+    assert!(opencode_config::get_mcp_servers().unwrap().is_empty());
 }
 
 #[test]
