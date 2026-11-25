@@ -517,8 +517,22 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         extend_mise_node_search_paths(&mut search_paths, &home);
     }
 
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(pnpm_home) = std::env::var_os("PNPM_HOME").filter(|value| !value.is_empty()) {
+            let pnpm_home = std::path::PathBuf::from(pnpm_home);
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
+        if !home.as_os_str().is_empty() {
+            let pnpm_home = home.join("Library").join("pnpm");
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/opt/homebrew/bin"),
@@ -544,6 +558,11 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
+        if !home.as_os_str().is_empty() {
+            let pnpm_home = home.join(".local/share/pnpm");
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/usr/local/bin"),
@@ -1168,13 +1187,38 @@ pub(crate) fn cached_login_shell_path() -> Option<String> {
     LOGIN_SHELL_PATH.clone()
 }
 
-/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
-/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
 #[cfg(not(target_os = "windows"))]
-pub(super) fn resolve_path_default(
+const COMMAND_V_MARKER: &str = "__CC_SWITCH_COMMAND_V__";
+
+/// 从 `echo __CC_SWITCH_COMMAND_V__; command -v <tool>` 的输出里取标记之后的绝对路径行。
+/// 交互式登录 shell（`-lic`）启动时 `.zshrc` 可能把任意带 `/` 的路径打印到 stdout，
+/// 甚至在 `<tool>` 是别名（`alias pi=...`）时也会残留前序路径；只看最后一个标记之后
+/// 的输出才能避免被启动噪音截胡（#9960）。
+#[cfg(not(target_os = "windows"))]
+fn command_v_abs_path_line(raw: &str) -> Option<&str> {
+    let lines: Vec<&str> = raw.lines().map(str::trim).collect();
+    let tail = match lines.iter().rposition(|&line| line == COMMAND_V_MARKER) {
+        Some(index) => &lines[index + 1..],
+        None => &lines[..],
+    };
+    tail.iter().copied().find(|line| line.starts_with('/'))
+}
+
+/// PATH 命中的默认入口：同时保留原始入口路径（执行时维持软链/multicall shim 的
+/// `argv[0]` 身份）和 `canonicalize` 后的真身路径（去重与身份比对用）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedPathDefault {
+    pub(super) launcher: std::path::PathBuf,
+    pub(super) real: std::path::PathBuf,
+}
+
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
+/// 同时返回原始入口与 canonicalize 后的真身。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn resolve_path_default_entry(
     tool: &str,
     deadline: Option<CommandDeadline>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<Option<ResolvedPathDefault>, String> {
     use std::process::{Command, Stdio};
 
     let shell = std::env::var("SHELL")
@@ -1184,7 +1228,7 @@ pub(super) fn resolve_path_default(
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg(format!("command -v {tool}"))
+        .arg(format!("echo {COMMAND_V_MARKER}; command -v {tool}"))
         // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
         // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
         .stdin(Stdio::null())
@@ -1199,12 +1243,24 @@ pub(super) fn resolve_path_default(
         return Ok(None);
     }
     let raw = decode_command_output(&out.stdout);
-    // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
-    // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
-    let Some(first) = first_abs_path_line(&raw) else {
+    let Some(first) = command_v_abs_path_line(&raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(first).ok())
+    let launcher = std::path::PathBuf::from(first);
+    let Some(real) = std::fs::canonicalize(&launcher).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedPathDefault { launcher, real }))
+}
+
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
+/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_entry(tool, deadline)?.map(|entry| entry.real))
 }
 
 #[cfg(target_os = "windows")]
@@ -1236,10 +1292,10 @@ fn windows_path_lookup_command(
 }
 
 #[cfg(target_os = "windows")]
-pub(super) fn resolve_path_default(
+pub(super) fn resolve_path_default_entry(
     tool: &str,
     deadline: Option<CommandDeadline>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<Option<ResolvedPathDefault>, String> {
     // Restrict `where` to the merged effective PATH. A bare `where {tool}` also
     // searches the current directory first, which would let a project-local
     // `codex.cmd` be executed by a passive version check. The `$PATH:pattern`
@@ -1260,7 +1316,21 @@ pub(super) fn resolve_path_default(
     let Some(preferred) = windows_preferred_path_default(tool, &raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(preferred).ok())
+    let Some(real) = std::fs::canonicalize(&preferred).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedPathDefault {
+        launcher: preferred,
+        real,
+    }))
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_entry(tool, deadline)?.map(|entry| entry.real))
 }
 
 /// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
@@ -1567,17 +1637,28 @@ pub(super) fn locate_default_tool(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<std::path::PathBuf, String> {
-    let path_default = resolve_path_default(tool, deadline)?;
+    let path_default = resolve_path_default_entry(tool, deadline)?;
+    locate_default_tool_in(tool, path_default, &build_tool_search_paths(tool), deadline)
+}
 
+fn locate_default_tool_in(
+    tool: &str,
+    path_default: Option<ResolvedPathDefault>,
+    search_paths: &[std::path::PathBuf],
+    #[cfg_attr(target_os = "windows", allow(unused_variables))] deadline: Option<CommandDeadline>,
+) -> Result<std::path::PathBuf, String> {
     let mut seen = std::collections::HashSet::new();
     let mut candidates = Vec::new();
-    for dir in build_tool_search_paths(tool) {
-        for candidate in tool_executable_candidates(tool, &dir) {
+    for dir in search_paths {
+        for candidate in tool_executable_candidates(tool, dir) {
             if !candidate.exists() {
                 continue;
             }
             let real = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
-            if path_default.as_ref() == Some(&real) {
+            if path_default
+                .as_ref()
+                .is_some_and(|default| default.real == real)
+            {
                 return Ok(candidate);
             }
             if seen.insert(real.clone()) {
@@ -1586,8 +1667,10 @@ pub(super) fn locate_default_tool(
         }
     }
 
-    if let Some(path) = path_default {
-        return Ok(path);
+    if let Some(default) = path_default {
+        // 保留原始入口路径而非 canonicalize 后的真身：指向 multicall 二进制（如 pnpm/mise/volta）
+        // 的软链如果展开后直接执行，会丢失 `argv[0]` 身份导致跑成宿主工具本身（#9960）。
+        return Ok(default.launcher);
     }
 
     #[cfg(not(target_os = "windows"))]

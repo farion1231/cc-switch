@@ -688,6 +688,25 @@ mod anchored_upgrade {
         );
         assert_eq!(first_abs_path_line("welcome\nbye\n"), None);
 
+        // `.zshrc` 在标记之前打印了无关绝对路径（甚至另一个二进制路径）时不能截胡
+        assert_eq!(
+            command_v_abs_path_line(&format!(
+                "/opt/homebrew/bin/pnpm\n{COMMAND_V_MARKER}\n/Users/me/Library/pnpm/bin/pi\n"
+            )),
+            Some("/Users/me/Library/pnpm/bin/pi")
+        );
+        // 工具是 shell 别名时，标记之后没有绝对路径，绝不能退回去捡标记前的路径
+        assert_eq!(
+            command_v_abs_path_line(&format!(
+                "/opt/homebrew/bin/pnpm\n{COMMAND_V_MARKER}\nalias pi='pnpm install'\n"
+            )),
+            None
+        );
+        assert_eq!(
+            command_v_abs_path_line("/Users/me/.local/bin/pi\n"),
+            Some("/Users/me/.local/bin/pi")
+        );
+
         let raw =
             "🚀 Welcome!\nSOME_SCRIPT=line1\nPATH=not-a-path\nPATH=/opt/homebrew/bin:/usr/bin\n";
         assert_eq!(
@@ -704,6 +723,53 @@ mod anchored_upgrade {
             "/Users/me/.nvm/versions/node/v22/bin:/usr/bin:/bin:/usr/sbin"
         );
         assert_eq!(merge_path_segments("/usr/bin::/bin", ""), "/usr/bin:/bin");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_search_paths_include_pnpm_global_bin_dirs() {
+        let home = crate::config::get_home_dir();
+        let paths = build_tool_search_paths("pi");
+        assert!(paths.contains(&home.join("Library/pnpm/bin")));
+        assert!(paths.contains(&home.join("Library/pnpm")));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_search_paths_include_pnpm_global_bin_dirs() {
+        let home = crate::config::get_home_dir();
+        let paths = build_tool_search_paths("pi");
+        assert!(paths.contains(&home.join(".local/share/pnpm/bin")));
+        assert!(paths.contains(&home.join(".local/share/pnpm")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn locate_default_tool_preserves_multicall_symlink_launcher() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let target = dir.path().join("store/pnpm");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "#!/bin/sh\n").unwrap();
+
+        let launcher = dir.path().join("custom-bin/pi");
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &launcher).unwrap();
+
+        let real = std::fs::canonicalize(&launcher).unwrap();
+        assert_ne!(launcher, real);
+
+        // 原始入口不在 search_paths 里时，也必须返回未展开软链的 launcher，保留 argv[0] = pi
+        let resolved = locate_default_tool_in(
+            "pi",
+            Some(ResolvedPathDefault {
+                launcher: launcher.clone(),
+                real,
+            }),
+            &[],
+            None,
+        )
+        .unwrap();
+        assert_eq!(resolved, launcher);
     }
 
     #[test]

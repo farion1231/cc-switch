@@ -346,14 +346,20 @@ fn strip_ansi(text: &str) -> String {
 
 /// `pi list` 的 user 段：`[(来源, 安装目录)]`。
 ///
+/// 合法输出要么是 `No packages installed.`，要么包含 `User packages:` / `Project packages:` 段。
+/// 如果命令退出码为 0 却输出了无关内容（例如命中了同名 `pnpm` / 包装脚本的 `Legend: ... 0 packages`），
+/// 报错而不是静默当成「已安装 0 个」，避免用户继续在「发现」页点安装把 `~/.pi/agent`
+/// 当成普通项目目录往里装依赖（#9960）。
+///
 /// ```text
 /// User packages:
 ///   npm:@scope/tools
 ///     /home/me/.pi/agent/npm/node_modules/@scope/tools
 ///   ./local-pkg (filtered)
 /// ```
-fn parse_list_output(stdout: &str) -> Vec<(String, Option<String>)> {
+fn parse_list_output(stdout: &str) -> Result<Vec<(String, Option<String>)>, String> {
     let text = strip_ansi(stdout);
+    let mut recognized = false;
     let mut in_user = false;
     let mut packages: Vec<(String, Option<String>)> = Vec::new();
     for line in text.lines() {
@@ -364,7 +370,15 @@ fn parse_list_output(stdout: &str) -> Vec<(String, Option<String>)> {
         let indent = trimmed.len() - trimmed.trim_start().len();
         let content = trimmed.trim_start();
         if indent == 0 {
-            in_user = content == "User packages:";
+            if content == "User packages:" {
+                recognized = true;
+                in_user = true;
+            } else if content == "Project packages:" || content == "No packages installed." {
+                recognized = true;
+                in_user = false;
+            } else {
+                in_user = false;
+            }
             continue;
         }
         if !in_user {
@@ -381,7 +395,24 @@ fn parse_list_output(stdout: &str) -> Vec<(String, Option<String>)> {
             packages.push((source.to_string(), None));
         }
     }
-    packages
+    if !recognized {
+        let preview = text
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .map(|line| {
+                let mut truncated: String = line.chars().take(160).collect();
+                if line.chars().count() > 160 {
+                    truncated.push('…');
+                }
+                truncated
+            })
+            .unwrap_or_else(|| "<empty>".to_string());
+        return Err(format!(
+            "Unexpected output from `pi list` (the resolved `pi` command may not be Pi coding agent): {preview}"
+        ));
+    }
+    Ok(packages)
 }
 
 #[derive(Default)]
@@ -448,7 +479,7 @@ pub(super) fn list_installed() -> Result<Vec<PluginEntry>, String> {
     if !out.success {
         return Err(super::failure_detail(&out));
     }
-    let listed = parse_list_output(&out.stdout);
+    let listed = parse_list_output(&out.stdout)?;
     // CLI 刚读过同一份文件；这里读不了只影响开关状态的显示
     let settings_packages = read_settings_packages().unwrap_or_default();
     let wsl_root = super::wsl_root_for_app(super::PluginApp::Pi);
@@ -605,7 +636,7 @@ mod tests {
     fn list_output_reads_user_section_only() {
         let stdout = "\u{1b}[1mUser packages:\u{1b}[22m\n  npm:@scope/tools\n\u{1b}[2m    /home/me/.pi/agent/npm/node_modules/@scope/tools\u{1b}[22m\n  ./local-pkg (filtered)\n  git:github.com/o/missing\n\nProject packages:\n  npm:project-only\n    /work/.pi/npm/node_modules/project-only\n";
         assert_eq!(
-            parse_list_output(stdout),
+            parse_list_output(stdout).unwrap(),
             vec![
                 (
                     "npm:@scope/tools".to_string(),
@@ -615,7 +646,19 @@ mod tests {
                 ("git:github.com/o/missing".to_string(), None),
             ]
         );
-        assert!(parse_list_output("No packages installed.\n").is_empty());
+        assert!(parse_list_output("No packages installed.\n")
+            .unwrap()
+            .is_empty());
+        assert!(parse_list_output("Project packages:\n  npm:project-only\n")
+            .unwrap()
+            .is_empty());
+        let err = parse_list_output(
+            "Legend: production dependency, optional only, dev only\n\n/Users/me/.pi/agent\n\n0 packages\n",
+        )
+        .unwrap_err();
+        assert!(err.contains("Unexpected output from `pi list`"), "{err}");
+        assert!(err.contains("Legend: production dependency"), "{err}");
+        assert!(parse_list_output("").is_err());
     }
 
     #[test]
