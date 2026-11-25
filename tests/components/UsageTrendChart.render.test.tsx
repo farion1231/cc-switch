@@ -39,17 +39,41 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+const { fixture } = vi.hoisted(() => ({ fixture: { mixed: false } }));
+
 vi.mock("@/lib/query/usage", () => ({
   useUsageTrends: () => ({
     data: [
       {
         date: "2026-09-30T00:00:00Z",
         requestCount: 12,
-        totalInputTokens: 100,
-        totalOutputTokens: 50,
+        totalInputTokens: fixture.mixed ? 25 : 100,
+        totalOutputTokens: fixture.mixed ? 55 : 50,
         totalCacheCreationTokens: 0,
-        totalCacheReadTokens: 0,
+        totalCacheReadTokens: fixture.mixed ? 70 : 0,
         totalCost: "0.01",
+        ...(fixture.mixed && {
+          runtimeStats: [
+            {
+              appType: "claude-desktop",
+              requestCount: 8,
+              totalInputTokens: 15,
+              totalOutputTokens: 45,
+              totalCacheCreationTokens: 0,
+              totalCacheReadTokens: 60,
+              totalCost: "0.008",
+            },
+            {
+              appType: "dsh",
+              requestCount: 4,
+              totalInputTokens: 10,
+              totalOutputTokens: 10,
+              totalCacheCreationTokens: 0,
+              totalCacheReadTokens: 10,
+              totalCost: "0.002",
+            },
+          ],
+        }),
       },
     ],
     isLoading: false,
@@ -132,6 +156,52 @@ describe("UsageTrendChart styles", () => {
       expect(container.querySelector(".recharts-bar-rectangle")).toBeNull();
     },
   );
+
+  it("stacks actual token contributions and labels the runtime colors", () => {
+    fixture.mixed = true;
+    try {
+      const { container } = renderWithChartType();
+      const legend = screen.getByTestId("usage-trend-legend");
+      expect(legend).toHaveTextContent("Claude Desktop");
+      expect(legend).toHaveTextContent("DeepSeek Harness");
+      const colors = [
+        "var(--usage-runtime-claude-desktop)",
+        "var(--heat-app-dsh)",
+      ];
+      const bars = colors.map(
+        (color) =>
+          container.querySelector(`.recharts-rectangle[fill="${color}"]`)!,
+      );
+      const [desktop, dsh] = bars.map((bar) =>
+        Number(bar.getAttribute("height")),
+      );
+      expect(dsh).toBeGreaterThan(0);
+      expect(desktop / dsh).toBeCloseTo(4);
+      expect(bars[0].getAttribute("x")).toBe(bars[1].getAttribute("x"));
+    } finally {
+      fixture.mixed = false;
+    }
+  });
+
+  it("compares individual cache hit rates without stacking percentages", () => {
+    fixture.mixed = true;
+    try {
+      const { container } = renderWithChartType(undefined, "hitRate");
+      const desktop = container.querySelector(
+        '.recharts-rectangle[fill="var(--usage-runtime-claude-desktop)"]',
+      )!;
+      const dsh = container.querySelector(
+        '.recharts-rectangle[fill="var(--heat-app-dsh)"]',
+      )!;
+      // Bars at different positions in the same bucket, sharing a baseline.
+      expect(desktop.getAttribute("x")).not.toBe(dsh.getAttribute("x"));
+      const baseline = (bar: Element) =>
+        Number(bar.getAttribute("y")) + Number(bar.getAttribute("height"));
+      expect(baseline(desktop)).toBeCloseTo(baseline(dsh));
+    } finally {
+      fixture.mixed = false;
+    }
+  });
 
   it("falls back to a bar chart for an unknown saved style", () => {
     const { container } = renderWithChartType("unknown");

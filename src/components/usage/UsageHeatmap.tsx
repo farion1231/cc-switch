@@ -1,6 +1,4 @@
 import { Fragment, useMemo, useRef, useState, type CSSProperties } from "react";
-import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
-import type { AppId } from "@/lib/api";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,34 +14,12 @@ import { hitRateOf, type UsageTrendStatLike } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { UsageMetric } from "./rememberedChoice";
+import { runtimeColor, runtimeName } from "./runtimePalette";
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** 0 档用底色；1–4 档由主题色和深浅共同决定。 */
 const LEVELS = [0, 1, 2, 3, 4];
-
-const RUNTIME_COLORS = new Map<string, string>([
-  ["claude", "var(--agent-claude)"],
-  ["codex", "var(--agent-codex)"],
-  ["gemini", "var(--agent-gemini)"],
-  ["opencode", "var(--agent-opencode)"],
-  ["pi", "var(--agent-pi)"],
-  ["agy", "var(--heat-app-agy)"],
-  ["codebuddy", "var(--heat-app-codebuddy)"],
-  ["copilot", "var(--heat-app-copilot)"],
-  ["dsh", "var(--heat-app-dsh)"],
-  ["grokbuild", "var(--heat-app-grokbuild)"],
-  ["kimi", "var(--heat-app-kimi)"],
-  ["mcode", "var(--heat-app-mcode)"],
-  ["omp", "var(--heat-app-omp)"],
-  ["workbuddy", "var(--heat-app-workbuddy)"],
-]);
-
-function runtimeName(app: string): string {
-  return Object.prototype.hasOwnProperty.call(APP_DISPLAY_NAME, app)
-    ? APP_DISPLAY_NAME[app as AppId]
-    : app;
-}
 
 interface UsageHeatmapProps {
   /** 格子深浅按哪个指标分档：由上方指标条选 */
@@ -180,13 +156,16 @@ function levelOf(value: number | null, thresholds: number[]): number {
   return 4;
 }
 
-function cellStyle(level: number, app?: string): CSSProperties {
-  const color = app ? RUNTIME_COLORS.get(app) : undefined;
+function heatFillStyle(level: number, color?: string): CSSProperties {
   return {
     "--heat-fill": color
       ? `color-mix(in srgb, ${color} var(--heat-strength-${level}), transparent)`
       : `var(--heat-${level})`,
   } as CSSProperties;
+}
+
+function cellStyle(level: number, app?: string): CSSProperties {
+  return heatFillStyle(level, app ? runtimeColor(app) : undefined);
 }
 
 /**
@@ -369,27 +348,19 @@ export function UsageHeatmap({
         >
           {t("usage.heatmap.title")}
         </h2>
-        <p className="m-0 text-caption text-fg-3">
-          {t("usage.heatmap.subtitle")}
-        </p>
         {!isLoading && visibleApps.length > 0 && (
-          <>
-            <p className="mb-0 mt-1 text-caption text-fg-3">
-              {t("usage.heatmap.runtimeColors")}
-            </p>
-            <ul className="mb-0 mt-1 flex flex-wrap gap-x-3 gap-y-1 p-0 text-badge text-fg-3">
-              {visibleApps.map((app) => (
-                <li key={app} className="flex items-center gap-1.5">
-                  <span
-                    aria-hidden="true"
-                    className="usage-heat-fill h-2.5 w-2.5 rounded-[2px]"
-                    style={cellStyle(4, app)}
-                  />
-                  {runtimeName(app)}
-                </li>
-              ))}
-            </ul>
-          </>
+          <ul className="mb-0 mt-1 flex flex-wrap gap-x-3 gap-y-1 p-0 text-badge text-fg-3">
+            {visibleApps.map((app) => (
+              <li key={app} className="flex items-center gap-1.5">
+                <span
+                  aria-hidden="true"
+                  className="usage-heat-fill h-2.5 w-2.5 rounded-[2px]"
+                  style={cellStyle(4, app)}
+                />
+                {runtimeName(app)}
+              </li>
+            ))}
+          </ul>
         )}
       </div>
 
@@ -548,7 +519,10 @@ export function UsageHeatmap({
               "h-2.5 w-2.5 rounded-[2px]",
               level === 0 ? "bg-subtle" : "usage-heat-fill",
             )}
-            style={level === 0 ? undefined : cellStyle(level)}
+            aria-hidden="true"
+            style={
+              level === 0 ? undefined : heatFillStyle(level, "var(--text-2)")
+            }
           />
         ))}
         {t("usage.heatmap.more")}

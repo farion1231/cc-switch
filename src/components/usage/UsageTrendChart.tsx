@@ -21,10 +21,11 @@ import {
   resolveTrendChartType,
 } from "./format";
 import { resolveUsageRange } from "@/lib/usageRange";
-import type { UsageRangeSelection } from "@/types/usage";
+import type { RuntimeTrendStats, UsageRangeSelection } from "@/types/usage";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useSettingsQuery } from "@/lib/query";
 import type { UsageMetric } from "./rememberedChoice";
+import { runtimeColor, runtimeName } from "./runtimePalette";
 
 interface UsageTrendChartProps {
   range: UsageRangeSelection;
@@ -44,6 +45,7 @@ export interface UsageTrendStatLike {
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
   totalCost: string | number;
+  runtimeStats?: RuntimeTrendStats[];
 }
 
 export interface UsageTrendChartPoint {
@@ -66,10 +68,34 @@ export interface UsageTrendChartPoint {
   cost: number | null;
   /** 缓存命中率（0–1）= 缓存命中 ÷（新增输入 + 缓存写入 + 缓存命中），和指标条同口径；没有输入时为 null */
   hitRate: number | null;
+  runtimeStats: Record<string, TrendMetrics>;
+}
+
+type TrendMetrics = Pick<UsageTrendChartPoint, UsageMetric>;
+const DEFAULT_COLOR = "var(--chart-usage)";
+
+function trendMetricsOf(
+  stat: UsageTrendStatLike | RuntimeTrendStats,
+): TrendMetrics {
+  return {
+    requests: stat.requestCount ?? 0,
+    tokens:
+      stat.totalInputTokens +
+      stat.totalOutputTokens +
+      stat.totalCacheCreationTokens +
+      stat.totalCacheReadTokens,
+    cost: parseFiniteNumber(stat.totalCost) ?? null,
+    hitRate: hitRateOf(stat),
+  };
 }
 
 /** 缓存命中率（0–1）；分母（新增输入 + 缓存写入 + 缓存命中）为 0 时没有意义，返回 null */
-export function hitRateOf(stat: UsageTrendStatLike): number | null {
+export function hitRateOf(
+  stat: Pick<
+    UsageTrendStatLike,
+    "totalInputTokens" | "totalCacheCreationTokens" | "totalCacheReadTokens"
+  >,
+): number | null {
   const cacheable =
     stat.totalInputTokens +
     stat.totalCacheCreationTokens +
@@ -116,7 +142,6 @@ export function buildUsageTrendChartData(
   return (
     trends?.map((stat) => {
       const pointDate = new Date(stat.date);
-      const cost = parseFiniteNumber(stat.totalCost);
       // Prefer a stable unique key from the source timestamp / date string.
       // Falling back to ISO keeps categories unique even if the backend
       // returns sparse points that share the same local MM/DD across years.
@@ -166,14 +191,13 @@ export function buildUsageTrendChartData(
         outputTokens: stat.totalOutputTokens,
         cacheCreationTokens: stat.totalCacheCreationTokens,
         cacheReadTokens: stat.totalCacheReadTokens,
-        requests: stat.requestCount ?? 0,
-        tokens:
-          stat.totalInputTokens +
-          stat.totalOutputTokens +
-          stat.totalCacheCreationTokens +
-          stat.totalCacheReadTokens,
-        cost: cost ?? null,
-        hitRate: hitRateOf(stat),
+        ...trendMetricsOf(stat),
+        runtimeStats: Object.fromEntries(
+          (stat.runtimeStats ?? []).map((runtime) => [
+            runtime.appType,
+            trendMetricsOf(runtime),
+          ]),
+        ),
       };
     }) || []
   );
@@ -345,37 +369,61 @@ export function UsageTrendChart({
     return formatUsageTrendTokenTickLabel(value, tokenTickFormatter);
   };
 
-  const hitRateFloor = useMemo(
-    () => hitRateAxisFloor(chartData.map((point) => point.hitRate)),
+  const runtimes = useMemo(
+    () =>
+      Array.from(
+        new Set(chartData.flatMap((point) => Object.keys(point.runtimeStats))),
+      ).sort(),
     [chartData],
   );
-
+  const hitRateFloor = useMemo(
+    () =>
+      hitRateAxisFloor(
+        chartData.flatMap((point) => [
+          point.hitRate,
+          ...Object.values(point.runtimeStats).map((stats) => stats.hitRate),
+        ]),
+      ),
+    [chartData],
+  );
   const Chart = chartType === "bar" ? BarChart : AreaChart;
   const [chartBoxRef, chartWidth] = useContainerWidth();
-  // 成本先换算成显示币种再画，Y 轴才会按这个币种挑整齐的刻度。
-  const dataKey =
-    metric === "cost"
-      ? (point: UsageTrendChartPoint) =>
-          point.cost == null ? null : point.cost * rate
-      : metric;
-
+  const renderValueRow = (label: string, value: unknown, color?: string) => (
+    <div key={label} className="flex items-center gap-2 tabular-nums">
+      {color && (
+        <span
+          aria-hidden="true"
+          className="h-2 w-2 rounded-[2px]"
+          style={{ background: color }}
+        />
+      )}
+      <span className="text-fg-2">{label}</span>
+      <span className="ms-auto ps-3">{formatMetric(value)}</span>
+    </div>
+  );
   const renderTooltip = ({ active, payload }: any) => {
-    if (!active || !payload || payload.length === 0) return null;
+    if (!active || !payload?.length) return null;
     const point = payload[0]?.payload as UsageTrendChartPoint | undefined;
-    const heading = point?.tooltipLabel ?? point?.label ?? "";
+    if (!point) return null;
     return (
       <div className="rounded-[8px] border border-border bg-surface px-3 py-2 text-caption text-fg-1 shadow-v7-md">
-        <p className="mb-1 font-semibold">{heading}</p>
-        <div className="flex items-center gap-2 tabular-nums">
-          <span
-            aria-hidden="true"
-            className="h-2 w-2 rounded-[2px] bg-chart-usage"
-          />
-          <span className="text-fg-2">{metricLabel}</span>
-          <span className="ms-auto ps-3">
-            {formatMetric(point ? point[metric] : payload[0]?.value)}
-          </span>
-        </div>
+        <p className="mb-1 font-semibold">{point.tooltipLabel}</p>
+        {renderValueRow(
+          metricLabel,
+          point[metric],
+          runtimes.length ? undefined : DEFAULT_COLOR,
+        )}
+        {runtimes
+          .filter((app) =>
+            Object.prototype.hasOwnProperty.call(point.runtimeStats, app),
+          )
+          .map((app) =>
+            renderValueRow(
+              runtimeName(app),
+              point.runtimeStats[app][metric],
+              runtimeColor(app) ?? DEFAULT_COLOR,
+            ),
+          )}
       </div>
     );
   };
@@ -394,6 +442,23 @@ export function UsageTrendChart({
         })}
       </h2>
 
+      {runtimes.length > 0 && (
+        <ul
+          data-testid="usage-trend-legend"
+          className="m-0 flex flex-wrap gap-x-4 gap-y-1 p-0 text-caption text-fg-2"
+        >
+          {runtimes.map((app) => (
+            <li key={app} className="flex items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 rounded-[2px]"
+                style={{ background: runtimeColor(app) ?? DEFAULT_COLOR }}
+              />
+              {runtimeName(app)}
+            </li>
+          ))}
+        </ul>
+      )}
       <div ref={chartBoxRef} className="mt-1 h-[132px] w-full">
         {isLoading ? (
           <div className="flex h-full items-center justify-center">
@@ -441,29 +506,50 @@ export function UsageTrendChart({
                   : { stroke: "var(--text-3)", strokeDasharray: "3 3" }
               }
             />
-            {chartType === "bar" ? (
-              <Bar
-                dataKey={dataKey}
-                name={metricLabel}
-                fill="var(--chart-usage)"
-                radius={[3, 3, 0, 0]}
-                maxBarSize={36}
-                isAnimationActive={false}
-              />
-            ) : (
-              <Area
-                type="monotone"
-                dataKey={dataKey}
-                name={metricLabel}
-                stroke="var(--chart-usage)"
-                strokeWidth={2}
-                fill="var(--chart-usage)"
-                fillOpacity={0.16}
-                dot={chartData.length === 1 ? { r: 3 } : false}
-                activeDot={{ r: 4 }}
-                isAnimationActive={false}
-              />
-            )}
+            {(runtimes.length ? runtimes : [null]).map((app) => {
+              const color =
+                (app == null ? undefined : runtimeColor(app)) ?? DEFAULT_COLOR;
+              const stackId =
+                app != null && metric !== "hitRate"
+                  ? "runtime-usage"
+                  : undefined;
+              const dataKey = (point: UsageTrendChartPoint) => {
+                const value =
+                  app == null
+                    ? point[metric]
+                    : point.runtimeStats[app]?.[metric];
+                if (value == null) return stackId ? 0 : null;
+                return metric === "cost" ? value * rate : value;
+              };
+              const name = app == null ? metricLabel : runtimeName(app);
+              return chartType === "bar" ? (
+                <Bar
+                  key={app ?? "total"}
+                  dataKey={dataKey}
+                  name={name}
+                  stackId={stackId}
+                  fill={color}
+                  radius={stackId ? undefined : [3, 3, 0, 0]}
+                  maxBarSize={36}
+                  isAnimationActive={false}
+                />
+              ) : (
+                <Area
+                  key={app ?? "total"}
+                  type="monotone"
+                  dataKey={dataKey}
+                  name={name}
+                  stackId={stackId}
+                  stroke={color}
+                  strokeWidth={2}
+                  fill={color}
+                  fillOpacity={stackId ? 0.3 : 0.16}
+                  dot={chartData.length === 1 ? { r: 3 } : false}
+                  activeDot={{ r: 4 }}
+                  isAnimationActive={false}
+                />
+              );
+            })}
           </Chart>
         )}
       </div>

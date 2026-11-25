@@ -2090,7 +2090,7 @@ fn test_provider_and_model_filters_cover_detail_and_rollup() -> Result<(), AppEr
     let total_req: u64 = trends.iter().map(|d| d.request_count).sum();
     assert_eq!(total_req, 7, "明细 2 + rollup 5");
 
-    // ⑨ 趋势 ≤24h 走小时分桶分支（?1/?2/?3 编号参数与追加过滤混用的路径），
+    // ⑨ 趋势 ≤24h 走小时分桶分支（?1/?2 编号参数与追加过滤混用的路径），
     //    同时验证 Provider + 模型组合过滤。
     let h_start = local_ts(2026, 6, 10, 0, 0, 0);
     let h_end = local_ts(2026, 6, 10, 20, 0, 0);
@@ -3240,6 +3240,81 @@ fn test_get_daily_trends_respects_shorter_than_24_hours() -> Result<(), AppError
 }
 
 #[test]
+fn test_get_daily_trends_hourly_runtime_stats_keep_the_inclusive_end() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config) VALUES
+                 ('p1', 'claude', 'Shared', '{}'),
+                 ('p1', 'claude-desktop', 'Shared', '{}')",
+            [],
+        )?;
+        for (id, app, model, source, ts, input) in [
+            ("cli", "claude", "m1", "proxy", 3600, 100),
+            ("cli-end", "claude", "m1", "proxy", 7200, 50),
+            ("desktop-end", "claude-desktop", "m1", "proxy", 7200, 70),
+            ("desktop-duplicate", "claude", "m1", "session_log", 7199, 70),
+            ("other-model", "claude", "m2", "proxy", 7200, 10),
+            ("codex", "codex", "m1", "proxy", 7100, 70),
+            ("past-end", "claude", "m1", "proxy", 7201, 100),
+        ] {
+            insert_usage_log(
+                &conn, id, app, "p1", model, source, ts, input, 10, 20, 5, 200, "0.01",
+            )?;
+        }
+    }
+
+    let all = db.get_daily_trends(Some(0), Some(7200), None, None, None)?;
+    assert_eq!(all.len(), 2);
+    assert_eq!(all[0].request_count, 0);
+    assert!(serde_json::to_value(&all[0])
+        .unwrap()
+        .get("runtimeStats")
+        .is_none());
+    let last = &all[1];
+    assert!(last.app_types.is_empty());
+    assert_eq!(last.request_count, 5);
+    assert_eq!(last.total_cost, "0.050000");
+    assert_eq!(last.total_tokens, 330);
+    assert_eq!(last.total_input_tokens, 280);
+    assert_eq!(last.total_output_tokens, 50);
+    assert_eq!(last.total_cache_creation_tokens, 25);
+    assert_eq!(last.total_cache_read_tokens, 100);
+    let serialized = serde_json::to_value(last).unwrap();
+    assert!(serialized.get("appTypes").is_none());
+    assert_eq!(
+        serialized["runtimeStats"],
+        serde_json::json!([
+            {"appType": "claude", "requestCount": 3, "totalCost": "0.030000",
+             "totalInputTokens": 160, "totalOutputTokens": 30,
+             "totalCacheCreationTokens": 15, "totalCacheReadTokens": 60},
+            {"appType": "claude-desktop", "requestCount": 1, "totalCost": "0.010000",
+             "totalInputTokens": 70, "totalOutputTokens": 10,
+             "totalCacheCreationTokens": 5, "totalCacheReadTokens": 20},
+            {"appType": "codex", "requestCount": 1, "totalCost": "0.010000",
+             "totalInputTokens": 50, "totalOutputTokens": 10,
+             "totalCacheCreationTokens": 5, "totalCacheReadTokens": 20},
+        ])
+    );
+
+    let filtered = db.get_daily_trends(
+        Some(0),
+        Some(7200),
+        Some("claude"),
+        Some("Shared"),
+        Some("m1"),
+    )?;
+    assert_eq!(filtered[1].request_count, 3);
+    assert_eq!(filtered[1].runtime_stats.len(), 2);
+    assert_eq!(filtered[1].runtime_stats[0].app_type, "claude");
+    assert_eq!(filtered[1].runtime_stats[0].request_count, 2);
+    assert_eq!(filtered[1].runtime_stats[1].app_type, "claude-desktop");
+
+    Ok(())
+}
+
+#[test]
 fn test_get_daily_trends_groups_ranges_longer_than_24_hours_by_local_day() -> Result<(), AppError> {
     let db = Database::memory()?;
     let start = local_ts(2024, 3, 1, 0, 0, 0);
@@ -3282,7 +3357,7 @@ fn test_get_daily_trends_groups_ranges_longer_than_24_hours_by_local_day() -> Re
                 "0.02",
                 110,
                 200,
-                local_ts(2024, 3, 3, 10, 0, 0)
+                end
             ],
         )?;
         conn.execute(
@@ -3306,8 +3381,8 @@ fn test_get_daily_trends_groups_ranges_longer_than_24_hours_by_local_day() -> Re
                 120
             ],
         )?;
-        // Same day as the first detail row, but from archived usage and two runtimes.
-        for app in ["claude-desktop", "codex"] {
+        // Same day as the first detail row: one matching runtime and two other runtimes.
+        for app in ["claude", "claude-desktop", "codex"] {
             conn.execute(
                 "INSERT INTO usage_daily_rollups (
                     date, app_type, provider_id, model,
@@ -3321,20 +3396,33 @@ fn test_get_daily_trends_groups_ranges_longer_than_24_hours_by_local_day() -> Re
 
     let stats = db.get_daily_trends(Some(start), Some(end), Some("claude"), None, None)?;
     assert_eq!(stats.len(), 3);
-    assert_eq!(stats[0].request_count, 2);
-    assert_eq!(stats[0].total_tokens, 180);
+    assert_eq!(stats[0].request_count, 3);
+    assert_eq!(stats[0].total_tokens, 210);
     assert_eq!(stats[0].app_types, ["claude"]);
+    let runtime_stats = &stats[0].runtime_stats;
+    assert_eq!(runtime_stats.len(), 2);
+    assert_eq!(runtime_stats[0].app_type, "claude");
+    assert_eq!(runtime_stats[0].request_count, 2);
+    assert_eq!(runtime_stats[0].total_cost, "0.030000");
+    assert_eq!(runtime_stats[0].total_input_tokens, 120);
+    assert_eq!(runtime_stats[0].total_output_tokens, 60);
+    assert_eq!(runtime_stats[1].app_type, "claude-desktop");
+    assert_eq!(runtime_stats[1].request_count, 1);
     assert_eq!(stats[1].request_count, 4);
     assert_eq!(stats[1].app_types, ["claude"]);
+    assert_eq!(stats[1].runtime_stats[0].request_count, 4);
     assert_eq!(stats[1].total_tokens, 600);
     assert_eq!(stats[2].request_count, 1);
     assert_eq!(stats[2].total_tokens, 275);
 
     let all = db.get_daily_trends(Some(start), Some(end + 24 * 60 * 60), None, None, None)?;
     assert_eq!(all[0].app_types, ["claude", "codex"]);
-    assert_eq!(all[0].request_count, 3);
+    assert_eq!(all[0].request_count, 4);
+    assert_eq!(all[0].runtime_stats[2].app_type, "codex");
+    assert_eq!(all[0].runtime_stats[2].request_count, 1);
     assert_eq!(all[1].app_types, ["claude"]);
     assert!(all[3].app_types.is_empty());
+    assert!(all[3].runtime_stats.is_empty());
 
     Ok(())
 }

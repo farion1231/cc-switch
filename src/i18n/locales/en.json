@@ -2713,8 +2713,6 @@
     },
     "heatmap": {
       "title": "Usage heatmap",
-      "subtitle": "Daily usage over the last 53 weeks; earlier usage continues in 53-week spans, with shading comparable across spans",
-      "runtimeColors": "Hue identifies the runtime; split cells show multiple runtimes. Intensity shows the selected metric.",
       "spanSummary": "{{tokens}} tokens · {{requests}} requests · {{cost}}",
       "showMore": "Show more",
       "showLess": "Show less",

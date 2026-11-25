@@ -2713,8 +2713,6 @@
     },
     "heatmap": {
       "title": "用量熱力圖",
-      "subtitle": "最近 53 週的每日用量；展開後每 53 週一段往前排，各段顏色深淺可以直接比較",
-      "runtimeColors": "色相區分執行環境；同一天使用多個執行環境時分色。顏色深淺代表所選指標。",
       "spanSummary": "{{tokens}} Token · {{requests}} 次請求 · {{cost}}",
       "showMore": "顯示更多",
       "showLess": "收起",

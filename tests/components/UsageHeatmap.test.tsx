@@ -69,6 +69,17 @@ describe("UsageHeatmap runtime colors", () => {
       expect.stringContaining("var(--agent-codex) var(--heat-strength-4)"),
     ]);
     expect(screen.getByText("DeepSeek Harness")).toBeInTheDocument();
+    const scale = Array.from(
+      container.querySelectorAll<HTMLElement>('[style*="--text-2"]'),
+    );
+    expect(
+      scale.map((swatch) => swatch.style.getPropertyValue("--heat-fill")),
+    ).toEqual(
+      [1, 2, 3, 4].map(
+        (level) =>
+          `color-mix(in srgb, var(--text-2) var(--heat-strength-${level}), transparent)`,
+      ),
+    );
     expect(screen.queryByText("Gemini CLI")).not.toBeInTheDocument();
     expect(
       container.querySelector('.usage-heat-fill.flex-1[style*="--heat-1"]'),
