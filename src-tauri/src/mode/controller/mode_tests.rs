@@ -604,15 +604,55 @@ async fn failover_moves_the_route_without_writing_client_files() {
     )
     .await;
     enter(&state, &AppType::Claude, false).await.expect("enter");
+    let app = &AppType::Claude;
+    state.db.add_to_failover_queue(app, "b").unwrap();
+    state.db.set_auto_failover_enabled_sync(app, true).unwrap();
     let before = settled_bytes();
 
-    assert!(record_failover_route(&state, &AppType::Claude, "b")
-        .await
-        .expect("record failover"));
+    assert!(
+        record_failover_route(&state, app, "b", state.db.failover_queue_revision())
+            .await
+            .expect("record failover")
+    );
     assert_eq!(settled_bytes(), before);
     assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("b"));
     assert_eq!(direct(&state, &AppType::Claude).as_deref(), Some("a"));
     exit(&state, &AppType::Claude).await.expect("exit");
+}
+
+#[tokio::test]
+#[serial]
+async fn an_old_failover_response_cannot_restore_a_removed_queue_member() {
+    let _home = Home::new();
+    seed_settings(USER_SETTINGS);
+    let app = &AppType::Claude;
+    let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+    enter(&state, app, false).await.unwrap();
+    for id in ["a", "kimi"] {
+        state.db.add_to_failover_queue(app, id).unwrap();
+    }
+    state.db.set_auto_failover_enabled_sync(app, true).unwrap();
+    let old = state.db.failover_queue_revision();
+    state
+        .proxy_service
+        .remove_from_failover_queue(app, "kimi")
+        .await
+        .unwrap();
+    assert!(!record_failover_route(&state, app, "kimi", old)
+        .await
+        .unwrap());
+    assert_eq!(in_use(&state, app).as_deref(), Some("a"));
+
+    state.db.add_to_failover_queue(app, "kimi").unwrap();
+    assert!(!record_failover_route(&state, app, "kimi", old)
+        .await
+        .unwrap());
+    let fresh = state.db.failover_queue_revision();
+    assert!(record_failover_route(&state, app, "kimi", fresh)
+        .await
+        .unwrap());
+    assert_eq!(in_use(&state, app).as_deref(), Some("kimi"));
+    exit(&state, app).await.unwrap();
 }
 
 #[tokio::test]
@@ -1960,7 +2000,7 @@ async fn codex_official_routes_for_different_accounts_swap_the_login() {
         json!("acct-b"),
         "Codex signs in as the route's account"
     );
-    switch_route_checked(&state, &AppType::Codex, "acct-a", false)
+    set_route(&state, &AppType::Codex, "acct-a")
         .await
         .expect("route back to a");
     assert_eq!(account(), json!("acct-a"));
@@ -4361,13 +4401,18 @@ async fn a_failover_finishing_after_entering_stack_mode_is_dropped() {
     let _home = Home::new();
     seed_settings(USER_SETTINGS);
     let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+    let app = &AppType::Claude;
+    state.db.add_to_failover_queue(app, "kimi").unwrap();
+    state.db.set_auto_failover_enabled_sync(app, true).unwrap();
     enter(&state, &AppType::Claude, true).await.expect("enter");
     let before = settled_bytes();
 
     // 进入 Stack 模式之前发出的路由请求，这时才转移到 kimi 成功。
-    assert!(!record_failover_route(&state, &AppType::Claude, "kimi")
-        .await
-        .expect("record failover"));
+    assert!(
+        !record_failover_route(&state, app, "kimi", state.db.failover_queue_revision())
+            .await
+            .expect("record failover")
+    );
     assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
     assert_eq!(stack_state().members, vec!["a"]);
     assert_eq!(settled_bytes(), before);
@@ -4392,9 +4437,12 @@ async fn enabling_failover_cannot_move_the_default_in_stack_mode() {
     failpoint::crash_at(None);
     assert!(!crate::mode::stack::stack_mode_now(&AppType::Claude));
 
-    switch_route_for_failover(&state, &AppType::Claude, "kimi")
-        .await
-        .expect_err("stack mode");
+    {
+        let _guard = lock_settled(&state, &AppType::Claude).await.unwrap();
+        switch_route_for_failover_locked(&state, &AppType::Claude, "kimi")
+            .await
+            .expect_err("stack mode");
+    }
     assert!(crate::mode::stack::stack_mode_now(&AppType::Claude));
     assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
 
@@ -4402,9 +4450,12 @@ async fn enabling_failover_cannot_move_the_default_in_stack_mode() {
     enter(&state, &AppType::Claude, false)
         .await
         .expect("routing");
-    switch_route_for_failover(&state, &AppType::Claude, "kimi")
-        .await
-        .expect("switch");
+    {
+        let _guard = lock_settled(&state, &AppType::Claude).await.unwrap();
+        switch_route_for_failover_locked(&state, &AppType::Claude, "kimi")
+            .await
+            .expect("switch");
+    }
     assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("kimi"));
     state.proxy_service.stop().await.unwrap();
 }
@@ -5991,7 +6042,7 @@ async fn codex_a_broken_stacked_provider_is_skipped_and_cannot_be_stacked() {
         catalog_slugs(),
         vec!["gpt-a", "ccs-deepseek/deepseek-v4-pro"]
     );
-    switch_route_checked(&state, &AppType::Codex, "deepseek", false)
+    set_route(&state, &AppType::Codex, "deepseek")
         .await
         .expect("switch route");
     assert_eq!(

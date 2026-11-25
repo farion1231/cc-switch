@@ -253,37 +253,77 @@ impl Database {
         }
     }
 
-    /// 更新应用级代理配置
+    /// Set both policy flags and tuning for tests that seed saved configurations.
+    #[cfg(test)]
     pub async fn update_proxy_config_for_app(
         &self,
         config: AppProxyConfig,
     ) -> Result<(), AppError> {
-        self.run_blocking(move |db| db.update_proxy_config_for_app_sync(config))
+        let app = config.app_type.parse::<AppType>()?;
+        self.run_blocking(move |db| {
+            db.set_proxy_flags_sync(&app, config.enabled, config.auto_failover_enabled)?;
+            db.update_proxy_tuning_for_app_sync(config)
+        })
+        .await
+    }
+
+    pub(crate) async fn update_proxy_tuning_for_app(
+        &self,
+        config: AppProxyConfig,
+    ) -> Result<(), AppError> {
+        self.run_blocking(move |db| db.update_proxy_tuning_for_app_sync(config))
             .await
     }
 
-    fn update_proxy_config_for_app_sync(&self, config: AppProxyConfig) -> Result<(), AppError> {
+    pub(crate) fn set_auto_failover_enabled_sync(
+        &self,
+        app: &AppType,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        if enabled && !super::failover::has_eligible_failover_provider(&conn, app, None)? {
+            return Err(AppError::NoProvidersConfigured);
+        }
+        conn.execute(
+            "UPDATE proxy_config SET auto_failover_enabled = ?2, updated_at = datetime('now')
+             WHERE app_type = ?1 AND auto_failover_enabled IS NOT ?2",
+            rusqlite::params![app, enabled],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn mirror_proxy_enabled_sync(
+        &self,
+        app: &AppType,
+        enabled: bool,
+    ) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        conn.execute(
+            "UPDATE proxy_config SET enabled = ?2, updated_at = datetime('now')
+             WHERE app_type = ?1 AND enabled IS NOT ?2",
+            rusqlite::params![app, enabled],
+        )?;
+        Ok(())
+    }
+
+    fn update_proxy_tuning_for_app_sync(&self, config: AppProxyConfig) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
 
         conn.execute(
             "UPDATE proxy_config SET
-                enabled = ?2,
-                auto_failover_enabled = ?3,
-                max_retries = ?4,
-                streaming_first_byte_timeout = ?5,
-                streaming_idle_timeout = ?6,
-                non_streaming_timeout = ?7,
-                circuit_failure_threshold = ?8,
-                circuit_success_threshold = ?9,
-                circuit_timeout_seconds = ?10,
-                circuit_error_rate_threshold = ?11,
-                circuit_min_requests = ?12,
+                max_retries = ?2,
+                streaming_first_byte_timeout = ?3,
+                streaming_idle_timeout = ?4,
+                non_streaming_timeout = ?5,
+                circuit_failure_threshold = ?6,
+                circuit_success_threshold = ?7,
+                circuit_timeout_seconds = ?8,
+                circuit_error_rate_threshold = ?9,
+                circuit_min_requests = ?10,
                 updated_at = datetime('now')
              WHERE app_type = ?1",
             rusqlite::params![
                 config.app_type,
-                if config.enabled { 1 } else { 0 },
-                if config.auto_failover_enabled { 1 } else { 0 },
                 config.max_retries as i32,
                 config.streaming_first_byte_timeout as i32,
                 config.streaming_idle_timeout as i32,
@@ -479,6 +519,7 @@ impl Database {
         success: bool,
         error_msg: Option<String>,
         failure_threshold: u32,
+        queue_revision: Option<u64>,
     ) -> Result<(), AppError> {
         let provider_id = provider_id.to_owned();
         let app_type = app_type.clone();
@@ -489,6 +530,7 @@ impl Database {
                 success,
                 error_msg,
                 failure_threshold,
+                queue_revision,
             )
         })
         .await
@@ -501,8 +543,12 @@ impl Database {
         success: bool,
         error_msg: Option<String>,
         failure_threshold: u32,
+        queue_revision: Option<u64>,
     ) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        if queue_revision.is_some_and(|revision| revision != self.failover_queue_revision()) {
+            return Ok(());
+        }
 
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -717,9 +763,8 @@ impl Database {
         .unwrap_or((false, false))
     }
 
-    /// 同步设置应用的 proxy 启用状态和自动故障转移状态
-    ///
-    /// 用于托盘菜单点击等同步场景
+    /// Set both flags in tests that seed the legacy persisted state.
+    #[cfg(test)]
     pub fn set_proxy_flags_sync(
         &self,
         app_type: &AppType,
@@ -747,6 +792,46 @@ mod tests {
     use crate::app_config::AppType;
     use crate::database::Database;
     use crate::error::AppError;
+
+    #[tokio::test]
+    async fn saving_proxy_tuning_does_not_restore_stale_failover_flags() {
+        let db = Database::memory().unwrap();
+        let app = &AppType::Claude;
+        db.set_proxy_flags_sync(app, true, true).unwrap();
+        let mut stale_form = db.get_proxy_config_for_app(app).await.unwrap();
+        db.set_auto_failover_enabled_sync(app, false).unwrap();
+        db.mirror_proxy_enabled_sync(app, false).unwrap();
+
+        stale_form.max_retries = 7;
+        db.update_proxy_tuning_for_app(stale_form).await.unwrap();
+        let actual = db.get_proxy_config_for_app(app).await.unwrap();
+        assert_eq!(actual.max_retries, 7);
+        assert!(!actual.enabled);
+        assert!(!actual.auto_failover_enabled);
+    }
+
+    #[tokio::test]
+    async fn stale_failover_health_cannot_recreate_a_removed_record() {
+        let db = Database::memory().unwrap();
+        let app = &AppType::Claude;
+        let provider =
+            crate::provider::Provider::with_id("a".into(), "A".into(), serde_json::json!({}), None);
+        db.save_provider(app, &provider).unwrap();
+        db.add_to_failover_queue(app, "a").unwrap();
+        let revision = db.failover_queue_revision();
+        db.update_provider_health_with_threshold("a", app, true, None, 3, Some(revision))
+            .await
+            .unwrap();
+        let health = db.get_provider_health("a", app).await.unwrap();
+        assert!(health.last_success_at.is_some());
+
+        db.remove_from_failover_queue(app, "a").unwrap();
+        db.update_provider_health_with_threshold("a", app, true, None, 3, Some(revision))
+            .await
+            .unwrap();
+        let health = db.get_provider_health("a", app).await.unwrap();
+        assert!(health.last_success_at.is_none());
+    }
 
     #[tokio::test]
     async fn test_pricing_model_source_round_trip_and_validation() -> Result<(), AppError> {

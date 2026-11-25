@@ -49,6 +49,7 @@ Grok Build's Grok Official cards can now be bound to xAI accounts in the Auth Ce
 - **Duplicate Skills in Discover**: Two skills with the same final path segment in one repository install into the same directory, so Discover now lists only the one closest to the repository root (ties broken by path); update checks still see every copy.
 - **npm Upgrade Offered for OpenCode Desktop's CLI** (#9099): The `opencode-cli` bundled with OpenCode Desktop is shown as "OpenCode Desktop", gets an inline note that it updates with the Desktop app, and is excluded from Update All; standalone and mixed installs still upgrade.
 - **SSE Pending Limit Skipped Normal Events Near the Cap** (#9867): The 64 MiB pending limit from 4.0.39 is checked per event instead of per chunk, so an event close to the cap no longer gets dropped with the next one in the same chunk, and earlier complete events in an overflowing chunk are kept.
+- **Automatic Failover Queue Consistency**: While automatic failover is enabled, the last eligible provider cannot be removed or deleted. Requests using an older empty queue use the current route. An in-flight request skips removed backups and no longer writes back a route or health result from an outdated queue. Saving proxy timeouts and circuit breaker settings preserves the current failover switch.
 
 ### Internal
 

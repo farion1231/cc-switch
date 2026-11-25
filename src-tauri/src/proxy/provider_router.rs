@@ -18,11 +18,14 @@ pub struct ProviderPermit {
     _guard: Option<HalfOpenPermitGuard>,
 }
 
+/// Official providers that cannot be selected for proxy routing cannot be queued.
 /// Codex Official requests carry the selected account's native Authorization
 /// header. Reusing that request against another account card would cross the
 /// account boundary, so these cards must never participate in provider retry.
 pub(crate) fn provider_supports_failover(app_type: &AppType, provider: &Provider) -> bool {
-    *app_type != AppType::Codex || !crate::proxy::providers::is_codex_official_provider(provider)
+    !provider.has_official_category()
+        && (*app_type != AppType::Codex
+            || !crate::proxy::providers::is_codex_official_provider(provider))
 }
 
 /// 供应商路由器
@@ -40,6 +43,26 @@ impl ProviderRouter {
             db,
             circuit_breakers: Arc::new(RwLock::new(HashMap::new())),
         }
+    }
+
+    pub(super) fn queue_revision(&self) -> u64 {
+        self.db.failover_queue_revision()
+    }
+
+    pub(super) async fn is_eligible_queue_member(
+        &self,
+        app: &AppType,
+        id: &str,
+    ) -> Result<bool, AppError> {
+        let app = app.clone();
+        let id = id.to_owned();
+        self.db
+            .run_blocking(move |db| {
+                Ok(db.get_provider_by_id(&id, &app)?.is_some_and(|provider| {
+                    provider.in_failover_queue && provider_supports_failover(&app, &provider)
+                }))
+            })
+            .await
     }
 
     /// 选择可用的供应商（支持故障转移）
@@ -81,9 +104,10 @@ impl ProviderRouter {
         let mut circuit_open_count = 0usize;
 
         if auto_failover_enabled
+            && *app_type == AppType::Codex
             && current_provider
                 .as_ref()
-                .is_some_and(|provider| !provider_supports_failover(app_type, provider))
+                .is_some_and(crate::proxy::providers::is_codex_official_provider)
         {
             // A selected Codex Official account is an explicit account choice.
             // Keep it as a single route even if an old failover setting remains
@@ -113,6 +137,12 @@ impl ProviderRouter {
                 } else {
                     circuit_open_count += 1;
                 }
+            }
+            // Older databases can contain an enabled queue with no eligible rows.
+            // Keep the active route usable until the queue is repaired.
+            if let Some(current) = current_provider.filter(|_| total_providers == 0) {
+                total_providers = 1;
+                result.push(current);
             }
         } else {
             // 故障转移关闭：仅使用当前供应商，跳过熔断器检查
@@ -164,6 +194,7 @@ impl ProviderRouter {
     }
 
     /// 记录供应商请求结果
+    #[cfg(test)]
     pub async fn record_result(
         &self,
         provider_id: &str,
@@ -172,16 +203,45 @@ impl ProviderRouter {
         success: bool,
         error_msg: Option<String>,
     ) -> Result<(), AppError> {
+        self.record_result_at_queue_revision(
+            provider_id,
+            app_type,
+            used_half_open_permit,
+            success,
+            error_msg,
+            None,
+        )
+        .await
+    }
+
+    pub(super) async fn record_result_at_queue_revision(
+        &self,
+        provider_id: &str,
+        app_type: &AppType,
+        used_half_open_permit: bool,
+        success: bool,
+        error_msg: Option<String>,
+        queue_revision: Option<u64>,
+    ) -> Result<(), AppError> {
         // 1. 按应用独立获取熔断器配置
         let failure_threshold = match self.db.get_proxy_config_for_app(app_type).await {
             Ok(app_config) => app_config.circuit_failure_threshold,
             Err(_) => 5, // 默认值
         };
 
+        let stale_queue =
+            || queue_revision.is_some_and(|revision| revision != self.queue_revision());
+        if stale_queue() {
+            return Ok(());
+        }
+
         // 2. 更新熔断器状态
         let breaker = self
             .get_or_create_circuit_breaker(app_type, provider_id)
             .await;
+        if stale_queue() {
+            return Ok(());
+        }
 
         if success {
             breaker.record_success(used_half_open_permit).await;
@@ -195,8 +255,9 @@ impl ProviderRouter {
                 provider_id,
                 app_type,
                 success,
-                error_msg.clone(),
+                error_msg,
                 failure_threshold,
+                queue_revision,
             )
             .await?;
 
@@ -357,6 +418,24 @@ mod tests {
 
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn legacy_empty_failover_queue_uses_the_current_route() {
+        let _home = temp_home();
+        let app = &AppType::Claude;
+        let db = Arc::new(Database::memory().unwrap());
+        let current = Provider::with_id("a".into(), "A".into(), json!({}), None);
+        db.save_provider(app, &current).unwrap();
+        db.set_current_provider(app, &current.id).unwrap();
+        let mut config = db.get_proxy_config_for_app(app).await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let selected = ProviderRouter::new(db).select_providers(app).await.unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].id, "a");
     }
 
     #[tokio::test]

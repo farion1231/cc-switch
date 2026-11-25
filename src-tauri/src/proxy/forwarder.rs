@@ -203,6 +203,7 @@ pub struct RequestForwarder {
     /// 这个请求走故障转移队列（故障转移开着）。Codex 换家时据此按目标家改模型名，见
     /// [`super::model_mapper::map_codex_failover_model`]。
     failover_chain: bool,
+    queue_revision: Option<u64>,
     /// 最近一次 `forward()` 定下的出站模型名，失败时随 [`ForwardError`] 交给日志。
     /// 每次 `forward()` 开头清空，映射失败等没走到出站的尝试留 None（日志回落到请求名）。
     last_outbound_model: std::sync::Mutex<Option<String>>,
@@ -366,6 +367,7 @@ impl RequestForwarder {
             max_attempts,
             stack_request: false,
             failover_chain: false,
+            queue_revision: None,
             last_outbound_model: std::sync::Mutex::new(None),
             privacy_filter: PrivacyFilterConfig::default(),
         }
@@ -484,6 +486,16 @@ impl RequestForwarder {
         self
     }
 
+    pub(super) fn queue_revision(mut self, revision: Option<u64>) -> Self {
+        self.queue_revision = revision;
+        self
+    }
+
+    fn stale_failover_queue(&self) -> bool {
+        self.queue_revision
+            .is_some_and(|revision| revision != self.router.queue_revision())
+    }
+
     /// 故障转移换家时按目标家改 Codex 模型名，只对对话请求。图片、搜索这些独立接口带的是
     /// 图片 / 搜索模型，不在目标家的文本模型目录里，换成它的文本模型就发错了。
     fn maps_codex_failover_model(&self, app_type: &AppType, endpoint: &str) -> bool {
@@ -515,7 +527,14 @@ impl RequestForwarder {
         if used_half_open_permit {
             if let Err(e) = self
                 .router
-                .record_result(provider_id, app_type, false, true, None)
+                .record_result_at_queue_revision(
+                    provider_id,
+                    app_type,
+                    false,
+                    true,
+                    None,
+                    self.queue_revision,
+                )
                 .await
             {
                 log::warn!(
@@ -528,9 +547,17 @@ impl RequestForwarder {
         let router = self.router.clone();
         let provider_id = provider_id.to_string();
         let app_type = app_type.clone();
+        let queue_revision = self.queue_revision;
         tokio::spawn(async move {
             if let Err(e) = router
-                .record_result(&provider_id, &app_type, false, true, None)
+                .record_result_at_queue_revision(
+                    &provider_id,
+                    &app_type,
+                    false,
+                    true,
+                    None,
+                    queue_revision,
+                )
                 .await
             {
                 log::warn!(
@@ -591,6 +618,9 @@ impl RequestForwarder {
             return;
         }
         let mut status = self.status.write().await;
+        if self.stale_failover_queue() {
+            return;
+        }
         status.current_provider = Some(provider.name.clone());
         status.current_provider_id = Some(provider.id.clone());
     }
@@ -628,10 +658,12 @@ impl RequestForwarder {
 
         {
             let mut current_providers = self.current_providers.write().await;
-            current_providers.insert(
-                app_type.to_string(),
-                (provider.id.clone(), provider.name.clone()),
-            );
+            if !self.stale_failover_queue() {
+                current_providers.insert(
+                    app_type.to_string(),
+                    (provider.id.clone(), provider.name.clone()),
+                );
+            }
         }
 
         {
@@ -641,14 +673,19 @@ impl RequestForwarder {
             if self.current_provider_id_at_start.as_str() != provider.id.as_str() {
                 status.failover_count += 1;
 
-                let fm = self.failover_manager.clone();
-                let ah = self.app_handle.clone();
-                let pid = provider.id.clone();
-                let pname = provider.name.clone();
-                let at = app_type.to_string();
-                tokio::spawn(async move {
-                    let _ = fm.try_switch(ah.as_ref(), &at, &pid, &pname).await;
-                });
+                if let Some(revision) = self.queue_revision.filter(|_| !self.stale_failover_queue())
+                {
+                    let fm = self.failover_manager.clone();
+                    let ah = self.app_handle.clone();
+                    let pid = provider.id.clone();
+                    let pname = provider.name.clone();
+                    let at = app_type.to_string();
+                    tokio::spawn(async move {
+                        let _ = fm
+                            .try_switch(ah.as_ref(), &at, &pid, &pname, revision)
+                            .await;
+                    });
+                }
             }
             refresh_success_rate(&mut status);
         }
@@ -669,12 +706,13 @@ impl RequestForwarder {
         }
         let _ = self
             .router
-            .record_result(
+            .record_result_at_queue_revision(
                 &provider.id,
                 app_type,
                 false,
                 false,
                 Some(error.to_string()),
+                self.queue_revision,
             )
             .await;
         self.status.write().await.last_error = Some(last_error);
@@ -798,6 +836,7 @@ impl RequestForwarder {
         let mut last_error = None;
         let mut last_provider = None;
         let mut attempted_providers = 0usize;
+        let mut skipped_removed_provider = false;
 
         // 单 Provider 场景下跳过熔断器检查（故障转移关闭时）；Stack 模型的请求不碰熔断器。
         let bypass_circuit_breaker = providers.len() == 1 || !self.routing_state_enabled();
@@ -845,6 +884,22 @@ impl RequestForwarder {
                     provider.name,
                     provider.id
                 );
+                continue;
+            }
+
+            if self.stale_failover_queue()
+                && !self
+                    .router
+                    .is_eligible_queue_member(app_type, &provider.id)
+                    .await
+                    .map_err(|error| ForwardError {
+                        error: ProxyError::DatabaseError(error.to_string()),
+                        provider: None,
+                        outbound_model: None,
+                    })?
+            {
+                // An admitted attempt can finish, but a removed provider cannot start another.
+                skipped_removed_provider = true;
                 continue;
             }
 
@@ -1364,9 +1419,12 @@ impl RequestForwarder {
         }
 
         if attempted_providers == 0 {
-            // providers 列表非空，但全部被熔断器拒绝（典型：HalfOpen 探测名额被占用）
-            self.record_failed_request("所有供应商暂时不可用（熔断器限制）".to_string())
-                .await;
+            let reason = if skipped_removed_provider {
+                "故障转移队列已变更，旧候选不可用"
+            } else {
+                "所有供应商暂时不可用（熔断器限制）"
+            };
+            self.record_failed_request(reason.to_string()).await;
             return Err(ForwardError {
                 error: ProxyError::NoAvailableProvider,
                 provider: None,

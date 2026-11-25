@@ -41,8 +41,9 @@ impl FailoverSwitchManager {
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
+        queue_revision: u64,
     ) -> Result<bool, AppError> {
-        let switch_key = format!("{app_type}:{provider_id}");
+        let switch_key = format!("{app_type}:{provider_id}:{queue_revision}");
 
         // 去重检查：如果相同切换已在进行中，跳过
         {
@@ -56,7 +57,13 @@ impl FailoverSwitchManager {
 
         // 执行切换（确保最后清理 pending 标记）
         let result = self
-            .do_switch(app_handle, app_type, provider_id, provider_name)
+            .do_switch(
+                app_handle,
+                app_type,
+                provider_id,
+                provider_name,
+                queue_revision,
+            )
             .await;
 
         // 清理 pending 标记
@@ -74,6 +81,7 @@ impl FailoverSwitchManager {
         app_type: &str,
         provider_id: &str,
         provider_name: &str,
+        queue_revision: u64,
     ) -> Result<bool, AppError> {
         // 只有处于代理模式的应用才允许执行故障转移切换
         let Ok(app_enum) = app_type.parse::<crate::app_config::AppType>() else {
@@ -84,8 +92,6 @@ impl FailoverSwitchManager {
             return Ok(false);
         }
 
-        log::info!("[FO-001] 切换: {app_type} → {provider_name}");
-
         let mut switched = false;
 
         if let Some(app) = app_handle {
@@ -95,6 +101,7 @@ impl FailoverSwitchManager {
                     app_state.inner(),
                     &app_enum,
                     provider_id,
+                    queue_revision,
                 )
                 .await
                 .map_err(AppError::Message)?;
@@ -102,6 +109,7 @@ impl FailoverSwitchManager {
                 if !switched {
                     return Ok(false);
                 }
+                log::info!("[FO-001] 切换: {app_type} → {provider_name}");
 
                 // Linux 重建原生菜单，其它平台通知托盘面板（不挂原生菜单）
                 crate::tray::refresh_tray_menu(app);

@@ -27,7 +27,12 @@ fn require_failover_provider(
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     if !crate::proxy::provider_router::provider_supports_failover(app_type, &provider) {
-        return Err("Codex Official 账号卡不支持自动故障转移".to_string());
+        return Err(crate::error::AppError::localized(
+            "failover.queue.unsupported_provider",
+            "该官方供应商不支持自动故障转移。",
+            "This official provider does not support automatic failover.",
+        )
+        .into());
     }
     Ok(provider)
 }
@@ -104,8 +109,10 @@ pub async fn add_to_failover_queue(
     provider_id: String,
 ) -> Result<(), String> {
     let app_enum = require_failover_app(&app_type)?;
+    let guard = crate::mode::controller::lock_settled(state.inner(), &app_enum).await?;
     require_failover_provider(&state.db, &app_enum, &provider_id)?;
     state.db.add_to_failover_queue(&app_enum, &provider_id)?;
+    drop(guard);
     crate::tray::refresh_tray_menu(&app);
     Ok(())
 }
@@ -119,10 +126,12 @@ pub async fn remove_from_failover_queue(
     provider_id: String,
 ) -> Result<(), String> {
     let app_enum = require_failover_app(&app_type)?;
+    let guard = crate::mode::controller::lock_settled(state.inner(), &app_enum).await?;
     state
         .proxy_service
         .remove_from_failover_queue(&app_enum, &provider_id)
         .await?;
+    drop(guard);
     crate::tray::refresh_tray_menu(&app);
     Ok(())
 }
@@ -156,8 +165,7 @@ pub async fn set_auto_failover_enabled(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );
 
-    // 读取当前配置
-    let mut config = state.db.get_proxy_config_for_app(&app_enum).await?;
+    let guard = crate::mode::controller::lock_settled(state.inner(), &app_enum).await?;
 
     if enabled && !crate::mode::current::is_proxy(&app_enum) {
         return Err("需要先让该应用进入路由模式，再开启故障转移".to_string());
@@ -166,26 +174,17 @@ pub async fn set_auto_failover_enabled(
     // 队列为空时把当前供应商自动加入作为 P1，避免用户陷入"必须先加队列才能开启"的死锁
     let mut auto_added_provider_id: Option<String> = None;
     let p1_provider_id = if enabled {
-        let all_providers = state
+        let first = state
             .db
-            .get_provider_rows(&app_enum)?
-            .into_readable("开启故障转移");
-        let mut queue = state
-            .db
-            .get_failover_queue(&app_enum)?
+            .get_failover_providers(&app_enum)?
             .into_iter()
-            .filter(|item| {
-                all_providers
-                    .get(&item.provider_id)
-                    .is_some_and(|provider| {
-                        crate::proxy::provider_router::provider_supports_failover(
-                            &app_enum, provider,
-                        )
-                    })
-            })
-            .collect::<Vec<_>>();
+            .find(|provider| {
+                crate::proxy::provider_router::provider_supports_failover(&app_enum, provider)
+            });
 
-        if queue.is_empty() {
+        if let Some(first) = first {
+            Some(first.id)
+        } else {
             let current_id = crate::mode::current::provider_for(
                 &state.db,
                 &app_enum,
@@ -199,40 +198,20 @@ pub async fn set_auto_failover_enabled(
             require_failover_provider(&state.db, &app_enum, &current_id)?;
 
             state.db.add_to_failover_queue(&app_enum, &current_id)?;
-            auto_added_provider_id = Some(current_id);
-
-            queue = state
-                .db
-                .get_failover_queue(&app_enum)?
-                .into_iter()
-                .filter(|item| {
-                    all_providers
-                        .get(&item.provider_id)
-                        .is_some_and(|provider| {
-                            crate::proxy::provider_router::provider_supports_failover(
-                                &app_enum, provider,
-                            )
-                        })
-                })
-                .collect();
+            auto_added_provider_id = Some(current_id.clone());
+            Some(current_id)
         }
-
-        queue
-            .first()
-            .map(|item| item.provider_id.clone())
-            .ok_or_else(|| "故障转移队列为空，无法开启故障转移".to_string())?
     } else {
-        String::new()
+        None
     };
 
     // 开启前先切到 P1。只有切换成功后才写入 auto_failover_enabled=true，
     // 避免 P1 不可切换（例如 official provider）时留下“开关已开但目标未切”的脏状态。
-    // Stack 模式不做故障转移，切换在锁内拒绝（见 `switch_route_for_failover`）。
-    if enabled {
-        if let Err(e) = crate::mode::controller::switch_route_for_failover(
+    if let Some(provider_id) = &p1_provider_id {
+        if let Err(e) = crate::mode::controller::switch_route_for_failover_locked(
             state.inner(),
             &app_enum,
-            &p1_provider_id,
+            provider_id,
         )
         .await
         {
@@ -246,18 +225,16 @@ pub async fn set_auto_failover_enabled(
         }
     }
 
-    // 更新 auto_failover_enabled 字段（enabled 是模式的镜像，保持和模式一致）
-    config.auto_failover_enabled = enabled;
-    config.enabled = crate::mode::current::is_proxy(&app_enum);
+    state
+        .db
+        .set_auto_failover_enabled_sync(&app_enum, enabled)?;
+    drop(guard);
 
-    // 写回数据库
-    state.db.update_proxy_config_for_app(config).await?;
-
-    if enabled {
+    if let Some(provider_id) = p1_provider_id {
         // 发射 provider-switched 事件（让前端刷新当前供应商）
         let event_data = serde_json::json!({
             "appType": app_type,
-            "providerId": p1_provider_id,
+            "providerId": provider_id,
             "source": "failoverEnabled"
         });
         let _ = app.emit("provider-switched", event_data);
