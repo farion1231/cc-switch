@@ -379,7 +379,17 @@ impl SkillService {
             let (host, path) = rest
                 .split_once(':')
                 .ok_or_else(|| anyhow!("Invalid Git URL"))?;
-            url::Url::parse(&format!("https://{host}/{path}"))?
+            let mut target = url::Url::parse(&format!("https://{host}/{path}"))?;
+            let parent_origin = url::Url::parse(&format!("https://{}", parent.host))?;
+            if target.username().is_empty()
+                && target.password().is_none()
+                && target.host_str() == parent_origin.host_str()
+            {
+                target
+                    .set_port(parent_origin.port())
+                    .map_err(|_| anyhow!("Invalid Git URL"))?;
+            }
+            target
         } else {
             let parsed = url::Url::parse(raw).map_err(|_| anyhow!("Invalid Git URL"))?;
             if parsed.scheme() == "ssh" && parsed.username() == "git" && parsed.password().is_none()
@@ -421,6 +431,9 @@ impl SkillService {
             .path_segments()
             .ok_or_else(|| anyhow!("Invalid Git URL"))?
             .collect();
+        while segments.last() == Some(&"") {
+            segments.pop();
+        }
         let name = segments.pop().ok_or_else(|| anyhow!("Invalid Git URL"))?;
         let name = name.strip_suffix(".git").unwrap_or(name).to_owned();
         let child = SkillRepo {
@@ -858,13 +871,105 @@ mod tests {
         assert!(!installed_dir.join("scripts/shared/tool.txt").exists());
     }
 
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn repeated_mounts_update_their_own_pinned_content() {
+        let test_home = crate::test_support::TestHome::new();
+        let modules = concat!(
+            "[submodule \"v1\"]\n path = skills/v1\n url = ../child.git\n",
+            "[submodule \"v2\"]\n path = skills/v2\n url = ../child.git\n",
+        );
+        let parent = archive(
+            &[("catalog/.gitmodules", modules)],
+            &["catalog/skills/v1/", "catalog/skills/v2/"],
+        );
+        let mut responses = HashMap::new();
+        responses.insert(
+            "https://github.com/example/catalog/archive/refs/heads/main.zip".into(),
+            parent.clone(),
+        );
+        responses.insert(
+            format!("https://github.com/example/catalog/archive/{PARENT_SHA}.zip"),
+            parent,
+        );
+        responses.insert(
+            "https://api.github.com/repos/example/catalog/branches/main".into(),
+            serde_json::json!({"commit":{"sha": PARENT_SHA}})
+                .to_string()
+                .into_bytes(),
+        );
+        responses.insert(
+            format!(
+                "https://api.github.com/repos/example/catalog/git/trees/{PARENT_SHA}?recursive=1"
+            ),
+            serde_json::json!({"truncated":false,"tree":[
+                {"path":"skills/v1","mode":"160000","type":"commit","sha":CHILD_SHA},
+                {"path":"skills/v2","mode":"160000","type":"commit","sha":HELPER_SHA}
+            ]})
+            .to_string()
+            .into_bytes(),
+        );
+        for (revision, content) in [(CHILD_SHA, "version one"), (HELPER_SHA, "version two")] {
+            responses.insert(
+                format!("https://github.com/example/child/archive/{revision}.zip"),
+                archive(
+                    &[
+                        ("child/SKILL.md", "---\nname: child\n---\n"),
+                        ("child/version.txt", content),
+                    ],
+                    &[],
+                ),
+            );
+        }
+
+        let credentials_dir = tempfile::tempdir().unwrap();
+        let (store, _) =
+            crate::services::skill_repo_tokens::tests::memory_store(credentials_dir.path());
+        let mut service = SkillService::new().with_repo_tokens(store);
+        service.submodule_http_fixture = Some(Arc::new(responses));
+        let discovery = service.discover_repo(&repo()).await;
+        assert!(discovery.failures.is_empty(), "{:?}", discovery.failures);
+        assert_eq!(discovery.skills.len(), 2);
+
+        let db = Arc::new(Database::memory().unwrap());
+        let mut installed = Vec::new();
+        for (directory, expected) in [("skills/v1", "version one"), ("skills/v2", "version two")] {
+            let skill = discovery
+                .skills
+                .iter()
+                .find(|skill| skill.directory == directory)
+                .unwrap();
+            let item = service.install(&db, skill, &AppType::Claude).await.unwrap();
+            let installed_dir = SkillService::get_installed_skill_dir(&item.directory).unwrap();
+            assert!(installed_dir.starts_with(test_home.path()));
+            assert_eq!(
+                fs::read_to_string(installed_dir.join("version.txt")).unwrap(),
+                expected
+            );
+            installed.push((item, installed_dir, expected));
+        }
+
+        let report = service.check_updates_report(&db).await.unwrap();
+        assert!(report.failures.is_empty(), "{:?}", report.failures);
+        assert!(report.updates.is_empty(), "{:?}", report.updates);
+        for (item, installed_dir, expected) in installed {
+            service.update_skill(&db, &item.id).await.unwrap();
+            assert_eq!(
+                fs::read_to_string(installed_dir.join("version.txt")).unwrap(),
+                expected
+            );
+        }
+    }
+
     #[test]
     fn submodule_urls_preserve_relative_repository_and_host_boundaries() {
         let parent = repo();
         let allowed = HashSet::new();
         for raw in [
             "../child.git",
+            "../child.git/",
             "https://github.com/example/child.git",
+            "https://github.com/example/child.git///",
             "git@github.com:example/child.git",
             "ssh://git@github.com/example/child.git",
         ] {
@@ -891,6 +996,33 @@ mod tests {
                 "{raw}"
             );
         }
+    }
+
+    #[test]
+    fn submodule_scp_urls_preserve_same_host_https_port() {
+        let parent = SkillRepo {
+            host: "git.example.test:8443".into(),
+            owner: "team".into(),
+            ..repo()
+        };
+        for raw in [
+            "git@git.example.test:team/child.git",
+            "ssh://git@git.example.test/team/child.git",
+        ] {
+            let child = SkillService::resolve_submodule_repo(&parent, raw, &HashSet::new())
+                .unwrap_or_else(|error| panic!("{raw}: {error}"));
+            assert_eq!(child.host, parent.host);
+            assert_eq!(
+                (child.owner.as_str(), child.name.as_str()),
+                ("team", "child")
+            );
+        }
+
+        let external = "git@other.example.test:team/child.git";
+        assert!(SkillService::resolve_submodule_repo(&parent, external, &HashSet::new()).is_err());
+        let allowed = HashSet::from(["other.example.test".to_string()]);
+        let child = SkillService::resolve_submodule_repo(&parent, external, &allowed).unwrap();
+        assert_eq!(child.host, "other.example.test");
     }
 
     #[test]
@@ -981,6 +1113,52 @@ mod tests {
             SkillService::find_remote_skill_for_install(&skills, "old-name", Some(&old_url))
                 .unwrap();
         assert_eq!(found.name, "wanted");
+    }
+
+    #[test]
+    fn update_matching_disambiguates_repeated_mounts_or_refuses_ambiguity() {
+        let example = |directory: &str, revision: &str| DiscoverableSkill {
+            key: directory.into(),
+            name: "child".into(),
+            description: String::new(),
+            directory: directory.into(),
+            readme_url: Some(format!(
+                "https://github.com/example/child/blob/{revision}/SKILL.md"
+            )),
+            repo_host: GITHUB_HOST.into(),
+            repo_owner: "example".into(),
+            repo_name: "catalog".into(),
+            repo_branch: "main".into(),
+        };
+        let stored = format!("https://github.com/example/child/blob/{CHILD_SHA}/SKILL.md");
+        let skills = [
+            example("skills/v1", CHILD_SHA),
+            example("skills/v2", HELPER_SHA),
+        ];
+        for (install_name, expected) in [("v1", "skills/v1"), ("v2", "skills/v2")] {
+            assert_eq!(
+                SkillService::find_remote_skill_for_install(&skills, install_name, Some(&stored))
+                    .map(|skill| skill.directory.as_str()),
+                Some(expected)
+            );
+        }
+        assert!(
+            SkillService::find_remote_skill_for_install(&skills, "renamed", Some(&stored))
+                .is_none()
+        );
+
+        let ambiguous = [
+            example("first/v1", CHILD_SHA),
+            example("second/v1", HELPER_SHA),
+        ];
+        assert!(
+            SkillService::find_remote_skill_for_install(&ambiguous, "v1", Some(&stored)).is_none()
+        );
+        assert_eq!(
+            SkillService::find_remote_skill_for_install(&skills[..1], "renamed", Some(&stored))
+                .map(|skill| skill.directory.as_str()),
+            Some("skills/v1")
+        );
     }
 
     #[tokio::test]

@@ -35,8 +35,8 @@ impl SkillService {
         walk(root, target_name, 0)
     }
 
-    /// 在仓库扫描结果中定位已安装的技能：已保存的源路径优先，其次目录名，
-    /// metadata name 仅作唯一兜底。
+    /// Prefer the saved source, but disambiguate repeated mounts by install name.
+    /// Fall back to the directory name, then to a unique metadata name.
     pub(super) fn find_remote_skill_for_install<'a>(
         remote_skills: &'a [DiscoverableSkill],
         install_name: &str,
@@ -44,10 +44,10 @@ impl SkillService {
     ) -> Option<&'a DiscoverableSkill> {
         let stored_doc_path = stored_readme_url.and_then(Self::extract_doc_path_from_url);
         let stored_repo = stored_readme_url.and_then(Self::doc_url_repository);
-        stored_doc_path
-            .as_deref()
-            .and_then(|doc_path| {
-                remote_skills.iter().find(|skill| {
+        if let Some(doc_path) = stored_doc_path.as_deref() {
+            let matches: Vec<_> = remote_skills
+                .iter()
+                .filter(|skill| {
                     let candidate = skill.readme_url.as_deref();
                     candidate
                         .and_then(Self::extract_doc_path_from_url)
@@ -58,16 +58,33 @@ impl SkillService {
                                 == Some(repository)
                         })
                 })
-            })
-            .or_else(|| {
-                remote_skills.iter().find(|skill| {
-                    skill
-                        .directory
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&skill.directory)
-                        .eq_ignore_ascii_case(install_name)
-                })
+                .collect();
+            match matches.as_slice() {
+                [only] => return Some(only),
+                [] => {}
+                _ => {
+                    let mut named = matches.into_iter().filter(|skill| {
+                        skill
+                            .directory
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&skill.directory)
+                            .eq_ignore_ascii_case(install_name)
+                    });
+                    let found = named.next()?;
+                    return named.next().is_none().then_some(found);
+                }
+            }
+        }
+        remote_skills
+            .iter()
+            .find(|skill| {
+                skill
+                    .directory
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&skill.directory)
+                    .eq_ignore_ascii_case(install_name)
             })
             .or_else(|| {
                 let mut matches = remote_skills
