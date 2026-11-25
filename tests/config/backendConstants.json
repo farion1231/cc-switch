@@ -105,7 +105,8 @@
     "JPY",
     "TWD",
     "TRY",
-    "KRW"
+    "KRW",
+    "THB"
   ],
   "customIcon": {
     "prefix": "data:image/png;base64,",

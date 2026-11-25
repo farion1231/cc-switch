@@ -53,6 +53,7 @@ describe("UsageDisplaySection", () => {
       "TWD",
       "TRY",
       "KRW",
+      "THB",
     ]);
     await user.keyboard("{Escape}");
 
