@@ -476,6 +476,7 @@ impl SkillService {
             AppType::Omp,
             AppType::Copilot,
             AppType::WorkBuddy,
+            AppType::Codebuddy,
         ] {
             if skill.apps.is_enabled_for(&app) {
                 let destination =
@@ -498,7 +499,8 @@ impl SkillService {
             || skill.apps.kimi
             || skill.apps.dsh
             || skill.apps.copilot
-            || skill.apps.workbuddy)
+            || skill.apps.workbuddy
+            || skill.apps.codebuddy)
         {
             Self::replace_dir_staged(&source, &dest)?;
         }
@@ -510,6 +512,7 @@ impl SkillService {
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
+            || skill.apps.codebuddy
         {
             &source
         } else {
@@ -556,6 +559,7 @@ impl SkillService {
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
+            || skill.apps.codebuddy
         {
             Self::update_managed_skill_files(
                 &source,
@@ -569,6 +573,7 @@ impl SkillService {
                     AppType::Dsh,
                     AppType::Copilot,
                     AppType::WorkBuddy,
+                    AppType::Codebuddy,
                 ]
                 .iter()
                 .filter(|app| skill.apps.is_enabled_for(app))
@@ -609,6 +614,7 @@ impl SkillService {
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
+                    | AppType::Codebuddy
             ) {
                 continue;
             }

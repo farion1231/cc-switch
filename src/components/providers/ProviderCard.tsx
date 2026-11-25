@@ -25,15 +25,19 @@ import CodexOauthQuotaFooter from "@/components/CodexOauthQuotaFooter";
 import XaiOauthQuotaFooter from "@/components/XaiOauthQuotaFooter";
 import AgyAccountQuotaFooter from "@/components/AgyAccountQuotaFooter";
 import { ClaudeBoundAccountLine } from "@/components/providers/forms/ClaudeOfficialSection";
+import { GrokBoundAccountLine } from "@/components/providers/forms/GrokOfficialAccount";
 import ClaudeAccountQuotaFooter from "@/components/ClaudeAccountQuotaFooter";
 import { claudePlanLabel } from "@/lib/claudePlan";
 import {
+  agyAuthStatusQuery,
   subscriptionKeys,
   useClaudeDefaultPlan,
 } from "@/lib/query/subscription";
 import { useQuotaPlan } from "@/lib/query/accountPlans";
 import type { CopilotQuota } from "@/lib/query/copilot";
 import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
+import CodebuddyAccountQuotaFooter from "@/components/CodebuddyAccountQuotaFooter";
+import { codebuddyRegion } from "@/components/providers/forms/CodebuddyLogin";
 import { PROVIDER_TYPES, TEMPLATE_TYPES } from "@/config/constants";
 import {
   extractCodexExperimentalBearerToken,
@@ -260,6 +264,33 @@ export function ProviderCard({
       account.id ===
       (managedCodexAccountId ?? codexAuthStatus?.default_account_id),
   );
+  // CodeBuddy 官方登录卡：第二行写绑定的账号，右侧写这个号的套餐积分
+  const isCodebuddyOfficial =
+    appId === "codebuddy" && provider.category === "official";
+  const codebuddyAccountId = isCodebuddyOfficial
+    ? resolveManagedAccountId(provider.meta, "codebuddy_oauth")?.trim() || null
+    : null;
+  const {
+    data: codebuddyAuthStatus,
+    isSuccess: isCodebuddyStatusSuccess,
+    isError: isCodebuddyStatusError,
+  } = useQuery({
+    queryKey: ["managed-auth-status", "codebuddy_oauth"],
+    queryFn: () => authApi.authGetStatus("codebuddy_oauth"),
+    enabled: isCodebuddyOfficial,
+    staleTime: 30_000,
+  });
+  const codebuddyAccount = codebuddyAuthStatus?.accounts.find(
+    (account) => account.id === codebuddyAccountId,
+  );
+  const codebuddyRegionLabel = (() => {
+    const region = codebuddyRegion(codebuddyAccount?.github_domain);
+    if (region === "mainland")
+      return t("authCenter.codebuddy.mainland", { defaultValue: "国内版" });
+    if (region === "global")
+      return t("authCenter.codebuddy.global", { defaultValue: "国际版" });
+    return codebuddyAccount?.github_domain || null;
+  })();
   const manualNote = provider.notes?.trim() || undefined;
   const providerNameIncludesAccountLogin = Boolean(
     managedCodexAccount?.login &&
@@ -309,10 +340,20 @@ export function ProviderCard({
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
         null
       : null;
-  // 绑了账号的官方卡（Codex / Claude）默认查额度，和 Kimi、agy 的账号卡一样
+  // Grok 官方卡绑了授权中心的 xAI 账号：额度按这个号查，和 xai_oauth 卡同一份缓存
+  const grokBoundAccountId =
+    appId === "grokbuild" && isOfficial
+      ? resolveManagedAccountId(
+          provider.meta,
+          PROVIDER_TYPES.XAI_OAUTH,
+        )?.trim() || null
+      : null;
+  // 绑了账号的官方卡（Codex / Claude / Grok）默认查额度，和 Kimi、agy 的账号卡一样（同托盘）
   const usageEnabled =
     provider.meta?.usage_script?.enabled ??
-    (isBoundCodexOfficial || Boolean(claudeBoundAccountId));
+    (isBoundCodexOfficial ||
+      Boolean(claudeBoundAccountId) ||
+      Boolean(grokBoundAccountId));
   const supportsOfficialSubscription =
     isOfficial && appHas(appId, "officialSubscription");
   const isOfficialSubscriptionUsage =
@@ -371,13 +412,47 @@ export function ProviderCard({
   const providerNameIncludesCopilotLogin = Boolean(
     copilotAccount?.login && provider.name.includes(copilotAccount.login),
   );
-  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，与 codex_oauth 同构
-  const isXaiOauth = provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  // xAI OAuth (SuperGrok 反代)：额度经自管 OAuth token 自动显示，副标题同 Copilot / Codex OAuth 写账号
+  const isXaiOauthProvider =
+    provider.meta?.providerType === PROVIDER_TYPES.XAI_OAUTH;
+  // 绑了 xAI 账号的 Grok 官方卡额度也走 xai_oauth；副标题另由 GrokBoundAccountLine 显示
+  const isXaiOauth = isXaiOauthProvider || Boolean(grokBoundAccountId);
+  const xaiAccountId = isXaiOauthProvider
+    ? resolveManagedAccountId(
+        provider.meta,
+        PROVIDER_TYPES.XAI_OAUTH,
+      )?.trim() || undefined
+    : undefined;
+  const { data: xaiAuthStatus, isSuccess: isXaiAuthStatusSuccess } = useQuery({
+    queryKey: ["managed-auth-status", "xai_oauth"],
+    queryFn: () => authApi.authGetStatus("xai_oauth"),
+    enabled: isXaiOauthProvider,
+    staleTime: 30_000,
+    // The proxy can expire an account and replace the default without an Auth
+    // Center mutation. Keep the subtitle and reauth badge in sync while open.
+    refetchInterval: 15_000,
+  });
+  const xaiAccount = xaiAuthStatus?.accounts.find(
+    (account) =>
+      account.id === (xaiAccountId ?? xaiAuthStatus?.default_account_id),
+  );
+  const providerNameIncludesXaiLogin = Boolean(
+    xaiAccount?.login && provider.name.includes(xaiAccount.login),
+  );
   // 支持 agy 切号的平台上，Antigravity 官方卡查询所绑定账号的额度。
-  const agyBoundAccountId =
-    appId === "agy" && isOfficial && canSwitchAgyAccount()
-      ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
-      : null;
+  const canShowAgyAccount =
+    appId === "agy" && isOfficial && canSwitchAgyAccount();
+  const agyBoundAccountId = canShowAgyAccount
+    ? resolveManagedAccountId(provider.meta, "agy_oauth")?.trim() || null
+    : null;
+  const { data: agyAuthStatus } = useQuery({
+    ...agyAuthStatusQuery,
+    enabled: canShowAgyAccount,
+  });
+  const activeAgyAccountId = agyAuthStatus?.default_account_id;
+  const agyAccount = agyAuthStatus?.accounts.find(
+    (account) => account.id === (agyBoundAccountId ?? activeAgyAccountId),
+  );
   // 副标题末尾的套餐：读右边额度那个查询的缓存（键和各额度 footer 一致），额度查到才有。
   // Claude 官方卡另有写法（claudeDefaultPlanLabel / ClaudeBoundAccountLine）
   const quotaPlanKey: QueryKey | null = isCopilot
@@ -399,12 +474,16 @@ export function ProviderCard({
           ]
         : null
       : isXaiOauth
-        ? [
-            "xai_oauth",
-            "quota",
-            resolveManagedAccountId(provider.meta, PROVIDER_TYPES.XAI_OAUTH) ??
-              "default",
-          ]
+        ? !grokBoundAccountId || usageEnabled
+          ? [
+              "xai_oauth",
+              "quota",
+              resolveManagedAccountId(
+                provider.meta,
+                PROVIDER_TYPES.XAI_OAUTH,
+              ) ?? "default",
+            ]
+          : null
         : appId === "kimi" && isOfficial
           ? ["kimi_oauth", "quota", provider.id]
           : isOfficial && officialSubscriptionEnabled && appId !== "claude"
@@ -515,6 +594,15 @@ export function ProviderCard({
             {presentation.chips.map((chip) => (
               <CardChipBadge key={chip.key} chip={chip} />
             ))}
+            {agyAccount && agyAccount.id === activeAgyAccountId && (
+              <CardChipBadge
+                chip={{
+                  key: "agy-login",
+                  label: t("authCenter.inUseBy", { app: "agy" }),
+                  tone: "success",
+                }}
+              />
+            )}
             {presentation.showHealth && health && (
               <HealthChip
                 consecutiveFailures={health.consecutive_failures}
@@ -523,7 +611,70 @@ export function ProviderCard({
             )}
           </div>
 
-          {appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
+          {isCodebuddyOfficial ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              {codebuddyAccount ? (
+                <>
+                  <span
+                    className="min-w-0 truncate"
+                    title={manualNote ?? codebuddyAccount.login}
+                  >
+                    {manualNote ??
+                      [codebuddyAccount.login, codebuddyRegionLabel]
+                        .filter(Boolean)
+                        .join(" · ")}
+                  </span>
+                  {codebuddyAccount.requires_reauth && (
+                    <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
+                      <AlertTriangle className="h-3.5 w-3.5" />
+                      {t("authCenter.needsReauth", {
+                        defaultValue: "需要重新登录",
+                      })}
+                    </span>
+                  )}
+                </>
+              ) : isCodebuddyStatusError ? (
+                <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    {t("authCenter.codebuddy.statusLoadFailed", {
+                      defaultValue: "无法读取 CodeBuddy 账号，请重试。",
+                    })}
+                  </span>
+                </span>
+              ) : isCodebuddyStatusSuccess || !codebuddyAccountId ? (
+                <>
+                  <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate">
+                      {codebuddyAccountId
+                        ? t("codebuddy.official.accountDeleted", {
+                            defaultValue: "账号已删除，请重新选择",
+                          })
+                        : t("codebuddy.official.unbound", {
+                            defaultValue: "还没有选择账号，请编辑卡片选择一个",
+                          })}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="shrink-0 text-body font-medium text-action-text hover:underline"
+                    onClick={() => onEdit(provider)}
+                  >
+                    {t("codex.chooseAccount", {
+                      defaultValue: "选择账号",
+                    })}
+                  </button>
+                </>
+              ) : (
+                <span className="min-w-0 truncate">
+                  {t("codebuddy.official.statusLoading", {
+                    defaultValue: "正在读取账号…",
+                  })}
+                </span>
+              )}
+            </div>
+          ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
             <WorkBuddyOfficialAccountLine provider={provider} onEdit={onEdit} />
           ) : codexOfficialIdentity === "native_login" || isCodexOauth ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
@@ -595,6 +746,13 @@ export function ProviderCard({
                 </span>
               )}
             </div>
+          ) : grokBoundAccountId ? (
+            <GrokBoundAccountLine
+              accountId={grokBoundAccountId}
+              providerName={provider.name}
+              note={manualNote}
+              plan={subtitlePlan}
+            />
           ) : claudeBoundAccountId ? (
             <ClaudeBoundAccountLine
               accountId={claudeBoundAccountId}
@@ -602,11 +760,19 @@ export function ProviderCard({
               note={manualNote}
               showPlan={usageEnabled}
             />
-          ) : agyModel ? (
+          ) : agyModel || agyAccount ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
-              <span className="min-w-0 truncate" title={agyModel}>
-                {agyModel}
-              </span>
+              {agyAccount && (
+                <span className="min-w-0 truncate" title={agyAccount.login}>
+                  {agyAccount.login}
+                </span>
+              )}
+              {agyAccount && agyModel && <span aria-hidden="true">·</span>}
+              {agyModel && (
+                <span className="min-w-0 truncate" title={agyModel}>
+                  {agyModel}
+                </span>
+              )}
               {planSuffix("-ms-0.5")}
             </div>
           ) : isCopilot && copilotAccount ? (
@@ -631,6 +797,32 @@ export function ProviderCard({
                 {t("copilot.statusUnavailable", {
                   defaultValue: "状态不可用",
                 })}
+              </span>
+            </div>
+          ) : isXaiOauth && xaiAccount ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
+              <span
+                className="min-w-0 truncate"
+                title={manualNote ?? xaiAccount.login}
+              >
+                {manualNote ??
+                  (providerNameIncludesXaiLogin
+                    ? t("xaiOauth.account")
+                    : xaiAccount.login)}
+              </span>
+              {planSuffix()}
+              {xaiAccount.requires_reauth && (
+                <span className="inline-flex shrink-0 items-center gap-1 text-warning-text">
+                  <AlertTriangle className="h-3.5 w-3.5" />
+                  {t("xaiOauth.reauthRequired")}
+                </span>
+              )}
+            </div>
+          ) : isXaiOauth && xaiAccountId && isXaiAuthStatusSuccess ? (
+            <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-warning-text">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 truncate">
+                {t("copilot.statusUnavailable")}
               </span>
             </div>
           ) : displayUrl && subtitlePlan ? (
@@ -698,14 +890,27 @@ export function ProviderCard({
                   />
                 ) : null
               ) : isXaiOauth ? (
-                <XaiOauthQuotaFooter
-                  meta={provider.meta}
-                  inline={true}
-                  isCurrent={isCurrent}
-                />
+                !grokBoundAccountId || usageEnabled ? (
+                  <XaiOauthQuotaFooter
+                    meta={provider.meta}
+                    inline={true}
+                    isCurrent={isCurrent}
+                    autoQueryInterval={
+                      grokBoundAccountId
+                        ? (provider.meta?.usage_script?.autoQueryInterval ?? 5)
+                        : undefined
+                    }
+                  />
+                ) : null
               ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
                 // 官方登录卡的额度按卡上绑定的账号查（只有 WorkBuddy 运行时当前账号能刷新）
                 <WorkBuddyQuotaFooter provider={provider} />
+              ) : isCodebuddyOfficial ? (
+                codebuddyAccount && !codebuddyAccount.requires_reauth ? (
+                  <CodebuddyAccountQuotaFooter
+                    accountId={codebuddyAccount.id}
+                  />
+                ) : null
               ) : appId === "kimi" && isOfficial ? (
                 // 每张 Kimi 官方卡就是授权中心里的一个账号，额度按卡上那个号查
                 <KimiAccountQuotaFooter
@@ -790,7 +995,11 @@ export function ProviderCard({
             onEdit={() => onEdit(provider)}
             onDelete={() => onDelete(provider)}
             onDuplicate={
-              onDuplicate && !(appId === "kimi" && isOfficial)
+              // CodeBuddy 的卡片 ID 就是 models.json 里的模型 id（发给上游的模型名），副本只能换一个
+              // 不存在的 id 且编辑时改不了；官方登录卡另建即可，所以 CodeBuddy 不提供复制
+              onDuplicate &&
+              !(appId === "kimi" && isOfficial) &&
+              appId !== "codebuddy"
                 ? () => onDuplicate(provider)
                 : undefined
             }
@@ -806,7 +1015,7 @@ export function ProviderCard({
                 !isCopilotCliOfficial) ||
               isCopilot ||
               (isCodexOauth && !isBoundCodexOfficial) ||
-              isXaiOauth
+              (isXaiOauth && !grokBoundAccountId)
                 ? undefined
                 : () => onConfigureUsage(provider)
             }

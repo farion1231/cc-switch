@@ -441,8 +441,42 @@ fn expand_env_chars_with_lookup(
 /// 构建某工具的候选搜索目录（原生安装优先，PATH 兜底）。
 /// 单探兜底 (`scan_cli_version`) 与全量枚举 (`enumerate_tool_installations`) 共用，
 /// 确保两条路径看到的是同一组安装位置。
+/// 在终端里启动 CLI 时用的可执行文件：按工具搜索路径找，跳过版本管理器的 shim 目录
+/// （mise/asdf/scoop 的 shim 可能已失效，例如 `mise ERROR codebuddy is not a valid shim`），
+/// 找不到真实安装时再退回 shim。都没有就返回 `None`，由调用方用裸命令名兜底。
+pub(crate) fn locate_cli_for_terminal(tool: &str) -> Option<std::path::PathBuf> {
+    let mut shim = None;
+    for dir in build_tool_search_paths(tool) {
+        let in_shims = dir.file_name().is_some_and(|name| name == "shims");
+        for candidate in tool_executable_candidates(tool, &dir) {
+            if !is_launchable_file(&candidate) {
+                continue;
+            }
+            if !in_shims {
+                return Some(candidate);
+            }
+            shim.get_or_insert(candidate);
+        }
+    }
+    shim
+}
+
+#[cfg(unix)]
+fn is_launchable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_launchable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
 pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
-    let home = dirs::home_dir().unwrap_or_default();
+    let home = crate::config::get_home_dir();
 
     // 常见的安装路径（原生安装优先）
     // Preserve search priority without scanning all previous paths for every insertion.
@@ -483,8 +517,22 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         extend_mise_node_search_paths(&mut search_paths, &home);
     }
 
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(pnpm_home) = std::env::var_os("PNPM_HOME").filter(|value| !value.is_empty()) {
+            let pnpm_home = std::path::PathBuf::from(pnpm_home);
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
+        if !home.as_os_str().is_empty() {
+            let pnpm_home = home.join("Library").join("pnpm");
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/opt/homebrew/bin"),
@@ -510,6 +558,11 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
+        if !home.as_os_str().is_empty() {
+            let pnpm_home = home.join(".local/share/pnpm");
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/usr/local/bin"),
@@ -1007,6 +1060,38 @@ fn infer_install_source_for_install(launcher: &Path, real: &Path) -> &'static st
     }
 }
 
+/// OpenCode Desktop 自带的命令行（`opencode-cli.exe`，在 GUI 的 `opencode.exe` 同目录或其
+/// `resources/` 下）由 Desktop 应用自己更新；不和 GUI 在一起的 `opencode-cli.exe` 不算。
+fn is_opencode_desktop_sidecar(path: &Path) -> bool {
+    if !path.file_name().is_some_and(|name| {
+        name.to_string_lossy()
+            .eq_ignore_ascii_case("opencode-cli.exe")
+    }) {
+        return false;
+    }
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if parent.join("opencode.exe").is_file() {
+        return true;
+    }
+    parent
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("resources"))
+        && parent
+            .parent()
+            .is_some_and(|root| root.join("opencode.exe").is_file())
+}
+
+/// 安装来源，在 [`infer_install_source_for_install`] 之上认出 OpenCode Desktop 自带的命令行。
+fn infer_install_source_for_tool(tool: &str, launcher: &Path, real: &Path) -> &'static str {
+    if tool == "opencode" && is_opencode_desktop_sidecar(launcher) {
+        "desktop"
+    } else {
+        infer_install_source_for_install(launcher, real)
+    }
+}
+
 /// 从 shell 输出里挑出第一个绝对路径行（trim 后以 `/` 开头），跳过交互式登录 shell
 /// （`-lic`）里 .zshrc 打印的欢迎语/提示符等噪音。canonicalize 由调用方做（碰 FS）。
 #[cfg(not(target_os = "windows"))]
@@ -1102,13 +1187,38 @@ pub(crate) fn cached_login_shell_path() -> Option<String> {
     LOGIN_SHELL_PATH.clone()
 }
 
-/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
-/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
 #[cfg(not(target_os = "windows"))]
-pub(super) fn resolve_path_default(
+const COMMAND_V_MARKER: &str = "__CC_SWITCH_COMMAND_V__";
+
+/// 从 `echo __CC_SWITCH_COMMAND_V__; command -v <tool>` 的输出里取标记之后的绝对路径行。
+/// 交互式登录 shell（`-lic`）启动时 `.zshrc` 可能把任意带 `/` 的路径打印到 stdout，
+/// 甚至在 `<tool>` 是别名（`alias pi=...`）时也会残留前序路径；只看最后一个标记之后
+/// 的输出才能避免被启动噪音截胡（#9960）。
+#[cfg(not(target_os = "windows"))]
+fn command_v_abs_path_line(raw: &str) -> Option<&str> {
+    let lines: Vec<&str> = raw.lines().map(str::trim).collect();
+    let tail = match lines.iter().rposition(|&line| line == COMMAND_V_MARKER) {
+        Some(index) => &lines[index + 1..],
+        None => &lines[..],
+    };
+    tail.iter().copied().find(|line| line.starts_with('/'))
+}
+
+/// PATH 命中的默认入口：同时保留原始入口路径（执行时维持软链/multicall shim 的
+/// `argv[0]` 身份）和 `canonicalize` 后的真身路径（去重与身份比对用）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedPathDefault {
+    pub(super) launcher: std::path::PathBuf,
+    pub(super) real: std::path::PathBuf,
+}
+
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
+/// 同时返回原始入口与 canonicalize 后的真身。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn resolve_path_default_entry(
     tool: &str,
     deadline: Option<CommandDeadline>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<Option<ResolvedPathDefault>, String> {
     use std::process::{Command, Stdio};
 
     let shell = std::env::var("SHELL")
@@ -1118,7 +1228,7 @@ pub(super) fn resolve_path_default(
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg(format!("command -v {tool}"))
+        .arg(format!("echo {COMMAND_V_MARKER}; command -v {tool}"))
         // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
         // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
         .stdin(Stdio::null())
@@ -1133,12 +1243,24 @@ pub(super) fn resolve_path_default(
         return Ok(None);
     }
     let raw = decode_command_output(&out.stdout);
-    // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
-    // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
-    let Some(first) = first_abs_path_line(&raw) else {
+    let Some(first) = command_v_abs_path_line(&raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(first).ok())
+    let launcher = std::path::PathBuf::from(first);
+    let Some(real) = std::fs::canonicalize(&launcher).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedPathDefault { launcher, real }))
+}
+
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
+/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_entry(tool, deadline)?.map(|entry| entry.real))
 }
 
 #[cfg(target_os = "windows")]
@@ -1170,10 +1292,10 @@ fn windows_path_lookup_command(
 }
 
 #[cfg(target_os = "windows")]
-pub(super) fn resolve_path_default(
+pub(super) fn resolve_path_default_entry(
     tool: &str,
     deadline: Option<CommandDeadline>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<Option<ResolvedPathDefault>, String> {
     // Restrict `where` to the merged effective PATH. A bare `where {tool}` also
     // searches the current directory first, which would let a project-local
     // `codex.cmd` be executed by a passive version check. The `$PATH:pattern`
@@ -1194,7 +1316,21 @@ pub(super) fn resolve_path_default(
     let Some(preferred) = windows_preferred_path_default(tool, &raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(preferred).ok())
+    let Some(real) = std::fs::canonicalize(&preferred).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedPathDefault {
+        launcher: preferred,
+        real,
+    }))
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_entry(tool, deadline)?.map(|entry| entry.real))
 }
 
 /// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
@@ -1270,18 +1406,27 @@ pub(super) fn run_probe_version_command(
     )
 }
 
-/// 枚举工具在系统中的所有安装（不短路）。与 `scan_cli_version` 共用
-/// `build_tool_search_paths`，但不在首个命中处停止——而是对每个去重后的真实
-/// 可执行文件都跑一次 `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。
-pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
+/// 工具的一处安装位置：只定位，不跑 `--version`。
+pub(super) struct LocatedInstall {
+    /// 候选入口路径（mise shim 已换成真身）。
+    pub(super) path: std::path::PathBuf,
+    /// canonicalize 后的真身路径，去重与默认判定都按它。
+    pub(super) real: std::path::PathBuf,
+    pub(super) source: &'static str,
+    pub(super) is_path_default: bool,
+}
+
+/// 定位工具的所有安装（不短路、不跑 `--version`）：搜索目录与 `scan_cli_version` 共用
+/// `build_tool_search_paths`，按真身去重，并做和诊断 / 升级预检一样的校正——Windows 上
+/// Hermes 被 PATHEXT 遮住的旧入口不算（#8839）、mise shim 换成真身（#9515）、命令行默认
+/// 那处（登录 shell `command -v` / Windows `where`）标出来并排最前。
+///
+/// 第二个返回值是解析到的命令行默认入口真身（可能不在搜索目录里，例如只在登录 shell
+/// PATH 里的 asdf、pnpm 全局安装）。
+pub(super) fn locate_tool_installations(
+    tool: &str,
+) -> (Vec<LocatedInstall>, Option<std::path::PathBuf>) {
     let search_paths = build_tool_search_paths(tool);
-    #[cfg(target_os = "windows")]
-    let current_path = effective_path_string();
-    #[cfg(not(target_os = "windows"))]
-    let current_path = install_probe_base_path(
-        cached_login_shell_path().as_deref(),
-        &effective_path_os().unwrap_or_default(),
-    );
     // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
     // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
     // 标记，非致命。
@@ -1293,16 +1438,11 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     .flatten();
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
-    let mut installs: Vec<ToolInstallation> = Vec::new();
+    let mut installs: Vec<LocatedInstall> = Vec::new();
     #[cfg(target_os = "windows")]
     let pathext = std::env::var("PATHEXT").ok();
 
     for dir in &search_paths {
-        #[cfg(target_os = "windows")]
-        let new_path = format!("{};{}", dir.display(), current_path);
-        #[cfg(not(target_os = "windows"))]
-        let new_path = prepend_search_dir_to_path(dir, &current_path);
-
         for tool_path in tool_executable_candidates(tool, dir) {
             // 与 scan_cli_version 一致，只认文件，同名目录不算一处安装
             if !tool_path.is_file() {
@@ -1328,18 +1468,54 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
             if !seen.insert(real.clone()) {
                 continue;
             }
+            let source = infer_install_source_for_tool(tool, &tool_path, &real);
+            installs.push(LocatedInstall {
+                path: tool_path,
+                real,
+                source,
+                // 循环结束后统一标：默认入口可能在后面才被 mise shim 换成真身。
+                is_path_default: false,
+            });
+        }
+    }
 
-            // mise shim 换成真身后，探测用真身所在的 bin 目录：`#!/usr/bin/env node` 入口若仍走
-            // shims 目录里的 node，会在 GUI 的工作目录下重新选版本，可能找不到或选错 Node。
+    for install in &mut installs {
+        install.is_path_default = path_default.as_ref() == Some(&install.real);
+    }
+    // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
+    installs.sort_by_key(|i| std::cmp::Reverse(i.is_path_default));
+    (installs, path_default)
+}
+
+/// 枚举工具在系统中的所有安装（不短路），并对每个去重后的真实可执行文件都跑一次
+/// `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。定位见
+/// [`locate_tool_installations`]。
+pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
+    let (located, _) = locate_tool_installations(tool);
+    if located.is_empty() {
+        return Vec::new();
+    }
+    #[cfg(target_os = "windows")]
+    let current_path = effective_path_string();
+    #[cfg(not(target_os = "windows"))]
+    let current_path = install_probe_base_path(
+        cached_login_shell_path().as_deref(),
+        &effective_path_os().unwrap_or_default(),
+    );
+
+    located
+        .into_iter()
+        .map(|install| {
+            // 探测时把入口所在目录前置到 PATH（mise shim 换成真身后就是真身的 bin 目录：
+            // `#!/usr/bin/env node` 入口若仍走 shims 目录里的 node，会在 GUI 的工作目录下
+            // 重新选版本，可能找不到或选错 Node）。
+            let dir = install.path.parent().unwrap_or(Path::new(""));
+            #[cfg(target_os = "windows")]
+            let new_path = format!("{};{}", dir.display(), current_path);
             #[cfg(not(target_os = "windows"))]
-            let new_path = match tool_path.parent() {
-                Some(parent) if parent != dir.as_path() => {
-                    prepend_search_dir_to_path(parent, &current_path)
-                }
-                _ => new_path.clone(),
-            };
+            let new_path = prepend_search_dir_to_path(dir, &current_path);
 
-            let output = run_probe_version_command(&tool_path, &new_path);
+            let output = run_probe_version_command(&install.path, &new_path);
 
             let (version, runnable, error, exited_with_error) = match output {
                 Ok(out) if out.status.success() => {
@@ -1363,31 +1539,51 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
                 Err(e) => (None, false, Some(e), false),
             };
 
-            let path_str = tool_path.display().to_string();
-            let source = infer_install_source_for_install(&tool_path, &real);
-
-            installs.push(ToolInstallation {
-                path: path_str,
+            ToolInstallation {
+                path: install.path.display().to_string(),
                 version,
                 runnable,
                 error,
                 exited_with_error,
-                source: source.to_string(),
-                // 循环结束后统一标：默认入口可能在后面才被 mise shim 换成真身。
-                is_path_default: false,
-                // 复用上面 line ~1357 已 canonicalize 的真身,避免下游
-                // installs_anchored_command 再 canonicalize 一遍同一文件。
-                real: real.clone(),
-            });
-        }
-    }
+                source: install.source.to_string(),
+                is_path_default: install.is_path_default,
+                // 复用定位时已 canonicalize 的真身，避免下游 installs_anchored_command
+                // 再 canonicalize 一遍同一文件。
+                real: install.real,
+            }
+        })
+        .collect()
+}
 
-    for install in &mut installs {
-        install.is_path_default = path_default.as_ref() == Some(&install.real);
+/// 「应用」页安装概览里的一处安装：只有路径和来源，不跑命令。
+#[derive(Debug, serde::Serialize)]
+pub(super) struct ToolInstallLocation {
+    path: String,
+    source: &'static str,
+    is_path_default: bool,
+}
+
+/// 「应用」页打开时的安装概览：和诊断 / 升级预检同一份定位（同样的去重与默认判定），
+/// 但不对每处安装跑 `--version`。命令行默认入口不在搜索目录里时（只在登录 shell PATH
+/// 里的 asdf、pnpm 全局、自定义 npm prefix 等）也列出来，免得装了的工具先被归进「未安装」。
+pub(super) fn list_tool_install_locations(tool: &str) -> Vec<ToolInstallLocation> {
+    let (located, path_default) = locate_tool_installations(tool);
+    let mut locations: Vec<ToolInstallLocation> = Vec::with_capacity(located.len() + 1);
+    if let Some(default) = path_default
+        .filter(|path| path.is_file() && !located.iter().any(|install| &install.real == path))
+    {
+        locations.push(ToolInstallLocation {
+            source: infer_install_source_for_tool(tool, &default, &default),
+            path: default.display().to_string(),
+            is_path_default: true,
+        });
     }
-    // PATH 默认那处排最前，UI 一眼看到"命令行默认用的是哪处"。
-    installs.sort_by_key(|i| std::cmp::Reverse(i.is_path_default));
-    installs
+    locations.extend(located.into_iter().map(|install| ToolInstallLocation {
+        path: install.path.display().to_string(),
+        source: install.source,
+        is_path_default: install.is_path_default,
+    }));
+    locations
 }
 
 /// mise 的 shim 是指向 mise 本体的软链，canonicalize 只能解析到 mise（Homebrew 装的 mise
@@ -1441,17 +1637,28 @@ pub(super) fn locate_default_tool(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<std::path::PathBuf, String> {
-    let path_default = resolve_path_default(tool, deadline)?;
+    let path_default = resolve_path_default_entry(tool, deadline)?;
+    locate_default_tool_in(tool, path_default, &build_tool_search_paths(tool), deadline)
+}
 
+fn locate_default_tool_in(
+    tool: &str,
+    path_default: Option<ResolvedPathDefault>,
+    search_paths: &[std::path::PathBuf],
+    #[cfg_attr(target_os = "windows", allow(unused_variables))] deadline: Option<CommandDeadline>,
+) -> Result<std::path::PathBuf, String> {
     let mut seen = std::collections::HashSet::new();
     let mut candidates = Vec::new();
-    for dir in build_tool_search_paths(tool) {
-        for candidate in tool_executable_candidates(tool, &dir) {
+    for dir in search_paths {
+        for candidate in tool_executable_candidates(tool, dir) {
             if !candidate.exists() {
                 continue;
             }
             let real = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
-            if path_default.as_ref() == Some(&real) {
+            if path_default
+                .as_ref()
+                .is_some_and(|default| default.real == real)
+            {
                 return Ok(candidate);
             }
             if seen.insert(real.clone()) {
@@ -1460,8 +1667,10 @@ pub(super) fn locate_default_tool(
         }
     }
 
-    if let Some(path) = path_default {
-        return Ok(path);
+    if let Some(default) = path_default {
+        // 保留原始入口路径而非 canonicalize 后的真身：指向 multicall 二进制（如 pnpm/mise/volta）
+        // 的软链如果展开后直接执行，会丢失 `argv[0]` 身份导致跑成宿主工具本身（#9960）。
+        return Ok(default.launcher);
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1476,10 +1685,21 @@ pub(super) fn locate_default_tool(
 
     match candidates.as_slice() {
         [(only, _)] => Ok(only.clone()),
-        [] => Err(format!("{tool} is not installed")),
+        [] => desktop_bundled_tool(tool).ok_or_else(|| format!("{tool} is not installed")),
         _ => Err(format!(
             "{tool} is installed but its default installation is ambiguous"
         )),
+    }
+}
+
+/// 只装了 Codex 桌面版的人没有独立 CLI：运行时命令（插件页、守护进程重启）退到桌面版自带的
+/// 那个（#9850），与模型目录探测用的是同一份候选。只在这里兜底、不进安装枚举：应用页的检测、
+/// 升级、卸载仍只管独立安装的 CLI（#8468）。
+fn desktop_bundled_tool(tool: &str) -> Option<std::path::PathBuf> {
+    if tool == "codex" {
+        crate::codex_config::codex_desktop_cli()
+    } else {
+        None
     }
 }
 
@@ -1509,9 +1729,7 @@ fn mise_shim_target(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     // GUI 进程的工作目录是 `/`；在 home 下解析，与新开终端看到的 mise 配置一致。
-    if let Some(home) = dirs::home_dir() {
-        cmd.current_dir(home);
-    }
+    cmd.current_dir(crate::config::get_home_dir());
     isolate_child_process_group(&mut cmd);
     let out = wait_child_output(cmd.spawn().ok()?, deadline).ok()?;
     if !out.status.success() {

@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API Anahtarını Girin",
     "show": "API Anahtarını Göster",
-    "hide": "API Anahtarını Gizle"
+    "hide": "API Anahtarını Gizle",
+    "copied": "API anahtarı kopyalandı",
+    "copyFailed": "API anahtarı kopyalanamadı"
   },
   "jsonEditor": {
     "mustBeObject": "Yapılandırma bir dizi veya başka türde değil, JSON nesnesi olmalıdır",
@@ -233,7 +235,7 @@
         "account": "Hesap",
         "accountFollow": "agy'nin mevcut oturum açma hesabını kullan",
         "accountMissing": "Bu bilgisayarda bulunmayan hesap",
-        "accountHelp": "Bir hesap seçildiğinde Terminal Aç, önce agy'nin oturumunu bu hesaba geçirir (bu değişiklik genel olarak geçerlidir: bundan sonra başlatılan agy oturumları bu hesabı kullanır). Hesapları Kimlik Doğrulama Merkezi'ne ekleyin."
+        "accountHelp": "Yeni bir hesap bağlantısı kaydedildiğinde yeni agy oturumları bu hesabı kullanır. Bu karttan terminal açıldığında da bağlı hesaba geçilir. Hesapları Kimlik Doğrulama Merkezi'nden ekleyin."
       },
       "gemini": {
         "model": "Model",
@@ -241,17 +243,19 @@
         "oauthHint": "Google’ın resmî hizmeti kişisel OAuth kimlik doğrulaması kullanır; API anahtarı girmeniz gerekmez. İlk kullanımda oturum açmanız için tarayıcı otomatik açılır.",
         "apiKeyPlaceholder": "Gemini API Anahtarını girin"
       },
+      "managedAccount": {
+        "label": "Oturum açma yöntemi",
+        "missing": "Bu bilgisayarda bulunmayan hesap",
+        "reauthBadge": "Yeniden oturum açılması gerekiyor"
+      },
       "claudeAccount": {
-        "label": "Sign-in method",
         "default": "Follow Claude Code login",
         "defaultDescription": "The account changes with the current Claude Code login",
-        "missing": "Account not on this computer",
         "manage": "Add or manage Claude accounts",
         "helpTerminal": "The Claude config folder is overridden in Settings, so switching to this card doesn't change Claude Code's sign-in. Use Open Terminal on the card to use the selected account.",
         "helpWsl": "The Claude config folder is in WSL, where Claude accounts aren't supported yet. Switching to this card doesn't change Claude Code's sign-in.",
         "help": "Switching to this card changes Claude Code's sign-in to the selected account right away, including sessions already running. To use several accounts at once, use Open Terminal on the card.",
         "claudeAccount": "Claude account",
-        "reauthBadge": "Re-login required",
         "terminalHint": "Use via Open Terminal",
         "wslHint": "Not supported in WSL",
         "plan": {
@@ -263,6 +267,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI oturumunu kullan",
+        "defaultDescription": "Grok CLI'nin oturum açtığı hesap kullanılır",
+        "manage": "xAI hesaplarını ekle veya yönet",
+        "help": "Bu karta geçtiğinizde Grok CLI'nin oturumu (~/.grok/auth.json) seçilen hesaba geçer. Önceden oturum açılmış hesap önce Kimlik Doğrulama Merkezi'ne kaydedilir ve \"Grok CLI oturumunu kullan\" kartına geri döndüğünüzde geri yüklenir.",
+        "xaiAccount": "xAI hesabı"
       }
     },
     "duplicateLiveIdsLoadFailed": "Sağlayıcı tanımlayıcıları yapılandırmadan okunamadı. Lütfen yapılandırmayı düzeltip tekrar deneyin.",
@@ -597,6 +608,9 @@
       "safetyBackupId": "Güvenlik Yedekleme Kimliği",
       "intervalLabel": "Otomatik Yedekleme Aralığı",
       "retainLabel": "Yedekleme Saklama",
+      "maxTotalLabel": "Yedekleme Boyut Sınırı",
+      "maxTotalUnlimited": "Sınırsız",
+      "maxTotalHint": "Varsayılan olarak kapalıdır. Ayarlandığında, yedekleme klasörü bu boyutu aştığında en eski yedeklerden başlanarak silinir. En yeni yedek ve geri yüklemenin kullandığı yedek her zaman korunur; bu yüzden tek bir yedek sınırdan büyükse klasör sınırın üzerinde kalabilir. Bir sonraki yedeklemede veya günlük bakımda uygulanır.",
       "intervalDisabled": "Devre dışı",
       "intervalHours": "{{hours}} saat",
       "intervalDays": "{{days}} gün",
@@ -903,6 +917,14 @@
     "minimizeToTrayDescription": "İşaretlendiğinde kapat düğmesine basıldığında sistem tepsisinde gizlenir, aksi halde uygulama doğrudan çıkar.",
     "useAppWindowControls": "Uygulama düzeyinde pencere kontrollerini etkinleştir",
     "useAppWindowControlsDescription": "Uygulama başlığındaki yerleşik küçültme, büyütme/geri yükleme ve kapatma düğmelerini kullanın.",
+    "copilotVscode": {
+      "enable": "VS Code Copilot uzantısına uygula",
+      "description": "CLI'ye eklenen modelleri ve API anahtarlarını algılanan tüm VS Code profillerine otomatik uygular. Sağlayıcı değişiklikleri de otomatik eşitlenir.",
+      "pending": "VS Code model eşitlemesi bekliyor",
+      "pendingDescription": "VS Code önceki yapılandırmayı kullanıyor olabilir. Son değişiklikleri eşitlemek için yeniden deneyin.",
+      "noTargets": "VS Code yapılandırması bulunamadı. VS Code'u bir kez başlatıp yeniden deneyin.",
+      "failed": "VS Code Copilot eşitlenemedi"
+    },
     "enableClaudePluginIntegration": "Claude Code uzantısına uygula",
     "enableClaudePluginIntegrationDescription": "Etkinleştirildiğinde VS Code Claude Code uzantı sağlayıcısı bu uygulamayla geçiş yapacak",
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
@@ -1086,6 +1108,7 @@
     "toolUpgradeUnanchoredHint": "Komut satırınızın hangi yüklemeyi kullandığı belirlenemiyor; varsayılan yükseltme komutunu çalıştıracaktır (PATH'deki ilk npm'ye yüklenebilir).",
     "toolUpgradeUnmanagedTitle": "Bu araçların yükseltilmesi atlandı",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}), npm veya tanınan bir yükleyici tarafından kurulmadığından CC Switch, onu nasıl yükselteceğini söyleyemez. Kurulum şeklinizi yükseltin (örn. Winget, Scoop veya resmi kurulum betiğini yeniden çalıştırın).",
+    "toolUpgradeDesktopManagedDetail": "Bu OpenCode CLI, OpenCode Desktop ile birlikte gelir ve Desktop uygulamasıyla güncellenir.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Windows",
@@ -1454,6 +1477,7 @@
     "selectSessionLabel": "{{title}}'yi seçin",
     "agyDeleteHint": "Çalışma zamanı durumunu da kaldırmak için bu oturumu Antigravity'de silin.",
     "mcodeDeleteHint": "MiniMax Code'de silin",
+    "codebuddyDeleteHint": "Bu oturumu CodeBuddy Code'da yönetin: arka plan işleri, ekip üyeleri ve dosya geçmişi bu kayda başvurur",
     "groupMeta": "{{count}} oturumları · {{time}}",
     "bucketToday": "Bugün",
     "bucketYesterday": "Dün",
@@ -1747,6 +1771,7 @@
       "subrouter": "SubRouter, bir anahtarın birden fazla modele ve sağlayıcıya erişmesine olanak tanıyan bir AI aktarma toplayıcıdır.",
       "qiniu": "Qiniu Cloud, çok protokollü bir yapay zeka aktarımıdır: yerel Claude, GPT ve Gemini modelleri için tek bir anahtar; Anthropic, OpenAI ve Gemini API'lerinin tümü desteklenir.",
       "haoai": "hao.ai; geliştiriciler ve ekipler için hızlı ve kararlı, birleşik bir LLM API ağ geçididir. Tek bir anahtarla, OpenAI ve Anthropic uyumlu API'ler üzerinden GPT, Claude, Grok ve diğer önde gelen modellere; model yönlendirme, otomatik yedek geçiş ve tüm isteklerin günlükleriyle erişebilirsiniz. Fiyatlar resmî referans ücretlerinin %15'i kadar düşük olabilir. Bu bağlantı üzerinden kaydolan CC Switch kullanıcıları ilk siparişlerinde %5 bonus bakiye kazanır!",
+      "stringai": "StringAI; yapay zekâ ile kodlama, görsel üretimi, metinden sese ve video üretimine tek noktadan erişim sunan, uygun maliyetli, hızlı ve istikrarlı bir model API platformudur. Özel CC Switch teklifi: Bu bağlantı aracılığıyla kaydolun, ilk 3,74 $'lık yüklemenize ek olarak 3,74 $ bonus kredi kazanın!",
       "fenno": "Fenno.ai, geniş bir ana akım model yelpazesine erişmenizi sağlayan istikrarlı, verimli bir API rölesidir. Özel CC Switch teklifi: Bu bağlantı aracılığıyla 7 gün geçerli, 50$ kredi değerindeki 1,99$ Deneme Planına abone olun!",
       "teamorouter": "TeamoRouter, %90'a varan indirimlerle kurumsal düzeyde bir Agentic LLM ağ geçididir. CC Switch kullanıcılarına özel avantajlar sunar: ilk yüklemenizde %10 indirim için bu bağlantı aracılığıyla yeni bir kullanıcı olarak kaydolun!",
       "ppio": "PPIO, Çin'in önde gelen bağımsız Aracı Bulut sağlayıcısıdır ve her amiral gemisi açık kaynak modeline tek bir API anahtarı aracılığıyla hizmet verir. 10 ¥ değerinde kredi kuponu almak için bu bağlantı aracılığıyla kaydolun ve kimlik doğrulamayı tamamlayın.",
@@ -2038,6 +2063,7 @@
     "selectAccount": "Hesap seçin",
     "selectAccountPlaceholder": "Bir xAI hesabı seçin",
     "useDefaultAccount": "Varsayılan hesabı kullan",
+    "account": "xAI hesabı",
     "accounts": "xAI hesapları",
     "defaultAccount": "Varsayılan",
     "expired": "Kimlik bilgilerinin süresi doldu",
@@ -2288,6 +2314,7 @@
     "loginWith": {
       "deepseek": "DeepSeek hesabıyla giriş yap",
       "workbuddy": "WorkBuddy hesabıyla giriş yap",
+      "codebuddy": "CodeBuddy hesabıyla giriş yap",
       "kimi": "Kimi hesabıyla oturum aç",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
@@ -2644,14 +2671,14 @@
     "speedValue": "{{value}} tok/sn",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "Hız nasıl hesaplanır?",
-    "speedHelp": "İlk token’dan yanıtın sonuna kadar saniyede üretilen çıktı token’ı sayısı. Yönlendirme hizmetinden geçen veya Antigravity yerel zaman ölçümüne sahip ve en az 100 çıktı token’ı içeren istekler hesaba katılır; akıl yürütme verilerini gizleyen modellerde bu bir yaklaşımdır. ≈ işaretli değer, diğer oturum günlüğü zamanlarından tahmin edilir: ilk token’ı bekleme süresi de dahil olduğundan daha düşük görünür. Yalnızca en az 200 çıktı token’ı içeren istekler için tahmin yapılır.",
+    "speedHelp": "İlk token’dan yanıtın sonuna kadar saniyede üretilen çıktı token’ı sayısı. Yalnızca yönlendirme hizmetinden geçen ve en az 100 çıktı token’ı içeren istekler hesaba katılır; akıl yürütme verilerini gizleyen modellerde bu bir yaklaşımdır. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından tahmin edilir: ilk token’ı bekleme süresi de dahil olduğundan daha düşük görünür. Yalnızca en az 200 çıktı token’ı içeren istekler için tahmin yapılır.",
     "speedSumHelpTitle": "Genel hız nasıl hesaplanır?",
-    "speedSumHelp": "Toplam çıktı tokenlarının istek başına ortalama hızlara değil, toplam üretim süresine bölünmesiyle kısa istekler çarpıklık yaratmaz. Yönlendirme hizmeti aracılığıyla yapılan veya Antigravity yerel zaman ölçümüne sahip ve en az 100 çıkış tokenu içeren istekler sayılır. ≈ içeren bir değer, diğer oturum günlüklerinden tahmin edilir (ilk token için beklemeyi içerir ve yalnızca en az 200 çıkış tokenu sayımına sahip istekler içerir) ve yalnızca satırda kesin zaman ölçümü verisi bulunmadığında gösterilir.",
+    "speedSumHelp": "Toplam çıktı tokenlarının istek başına ortalama hızlara değil, toplam üretim süresine bölünmesiyle kısa istekler çarpıklık yaratmaz. Yalnızca yönlendirme hizmeti aracılığıyla yapılan ve en az 100 çıkış tokenu içeren istekler sayılır. ≈ içeren bir değer, oturum günlüklerinden tahmin edilir (ilk token için beklemeyi içerir ve yalnızca en az 200 çıkış tokenu sayımına sahip istekler içerir) ve yalnızca satırda yönlendirilmiş veri bulunmadığında gösterilir.",
     "firstToken": "İlk token",
     "firstTokenHelpTitle": "İlk token süresi",
-    "firstTokenHelp": "İsteğin gönderildiği andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen ve yönlendirme hizmeti ya da Antigravity yerel veritabanı tarafından ölçülen süre. ≈ işaretli değer, diğer oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
+    "firstTokenHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. ≈ işaretli değer, yönlendirme kapalıyken oturum günlüğü zamanlarından hesaplanır: önceki günlük satırının yazıldığı andan başladığı için istemcinin isteği hazırlama süresini de içerir ve daha yüksek görünür. Claude Code’da yalnızca yanıt düşünme ile başladığında; Codex’te yalnızca yeni günlüklerde ve yanıt bir araç çağrısıyla başlamadığında hesaplanabilir.",
     "firstTokenSumHelpTitle": "İlk token süresi nasıl hesaplanır?",
-    "firstTokenSumHelp": "İsteğin gönderildiği andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen ve yönlendirme hizmeti ya da Antigravity yerel veritabanı tarafından ölçülen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca başarılı ve kesin zaman ölçümlü istekler hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer diğer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda kesin zaman ölçümü verisi yoksa gösterilir.",
+    "firstTokenSumHelp": "Yönlendirme hizmetinin isteği aldığı andan sağlayıcının çıktı üretmeye başladığı ana kadar geçen süre. Satır, isteklerin medyanını gösterir; böylece ara sıra yavaşlayan bir istek (kuyruk, soğuk başlangıç) değeri yükseltmez. Yalnızca yönlendirme hizmetinden geçen başarılı akış istekleri hesaba katılır; 30 günden eski ve günlük toplamlara dahil edilmiş istekler sayılmaz. ≈ işaretli değer oturum günlüklerinden türetilir (daha yüksek görünür ve yalnızca bazı isteklerde hesaplanabilir); yalnızca satırda yönlendirilmiş istek verisi yoksa gösterilir.",
     "timingTip": "Süre {{duration}} · ilk token {{ttft}}",
     "estimatedTimingTip": "{{duration}}'ler hakkında (ilk tokenun beklenmesi de dahil olmak üzere oturum günlüğü zaman damgalarından tahmin edilir)",
     "estimatedTimingTipWithFirstToken": "Yaklaşık {{duration}} sn · ilk token yaklaşık {{ttft}} sn (oturum günlüğü zamanlarından tahmin edildi)",
@@ -3677,7 +3704,10 @@
       "command": "Komut",
       "args": "Argümanlar",
       "env": "Zarf",
-      "url": "URL'si"
+      "url": "URL'si",
+      "type": "Tür",
+      "cwd": "Çalışma Dizini",
+      "headers": "Başlıklar"
     },
     "prompt": {
       "title": "Sistem İstemini İçe Aktar",
@@ -3711,7 +3741,8 @@
     "risk": {
       "envHijack": "Bu yapılandırma, yükleme kodunun işlenme biçimini değiştiren ortam değişkenlerini ayarlar (örneğin, kitaplıkları enjekte etme veya CA sertifikalarını değiştirme). Yalnızca güvendiğiniz bir kaynaktan içe aktarın.",
       "privateEndpoint": "Bu adres localhost'a veya özel bir ağa işaret eder. Kendi yerel hizmetiniz olmadığı sürece ithalat yapmayın.",
-      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin."
+      "shellCommand": "Bu yapılandırma, bir kabuk aracılığıyla tam bir komut satırı çalıştırır; gerçekte yürütülen şey argümanlardadır. Her satırı inceleyin.",
+      "mcpDangerousField": "Bu MCP yapılandırması, ana makine ortam değişkenlerini okuyabilen (ör. bearer_token_env_var, env_http_headers, env_vars), yardımcı komutlar çalıştırabilen (http_headers_helper) veya çalışma dizinini değiştirebilen (cwd) yüksek riskli alanlar içeriyor. Yalnızca tamamen güvendiğiniz bir kaynaktan içe aktarın."
     }
   },
   "iconPicker": {
@@ -4704,6 +4735,7 @@
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
       "claudeNote": " (üst düzey mcpServers)",
+      "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json içinden ilk mevcut olan)",
       "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp. Ana düzeydeki ~/.dsh/cordis.patch.yml okunmaz ve yazılmaz; içindeki MCP sunucularını o dosyada yönetin)",
       "ok": "Anladım"
     },
@@ -4983,7 +5015,7 @@
   "pluginsPage": {
     "title": "Eklentiler",
     "helpTitle": "Eklentiler",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw ve Pi eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi ve Antigravity CLI eklentilerini yükleyin, etkinleştirin ve kaldırın. CC Switch her uygulamanın kendi CLI'ını çalıştırır; sonuç terminalde eklenti komutunu kullanmakla aynıdır. Pi'de eklentiler Pi paketleridir ve katalog npm'den gelir.",
     "appAria": "Uygulama",
     "viewAria": "Eklenti görünümleri",
     "viewInstalled": "Yüklü",
@@ -5043,9 +5075,11 @@
     "confirmRemoveMarketBody": "{{app}} bu pazar yerindeki eklentileri artık listelemez ve buradan yüklediğiniz eklentileri de kaldırabilir. Daha sonra yeniden ekleyebilirsiniz.",
     "toast": {
       "installed": "{{name}} yüklendi",
+      "installedNeedsConfig": "Devre dışı olarak yüklendi. MCP sunucularını yapılandırıp etkinleştirmek için {{app}} içinde /plugin komutunu çalıştırın.",
       "installFailed": "{{name}} yüklenemedi",
       "installNeedsTerminal": "Bu eklenti kurulum sırasında pazar yerinin bildirdiği bir komutu bilgisayarınızda çalıştırır ve CC Switch bunu sizin yerinize onaylamaz. Bir terminalde {{command}} komutunu çalıştırıp orada onaylayın, ardından geri dönüp yenileyin.",
       "authRequired": "{{app}} önce oturum açmanızı istiyor. Bir terminalde {{command}} komutunu çalıştırıp oturum açın, ardından geri dönüp tekrar deneyin.",
+      "pluginInUse": "Bu eklenti şu anda başka bir {{app}} / {{cli}} işlemi tarafından kullanılıyor (örneğin çalışan bir oturum, Hub veya arka plan hizmeti). İlgili işlemi kapatıp yeniden deneyin.",
       "uninstalled": "{{name}} kaldırıldı",
       "uninstallFailed": "{{name}} kaldırılamadı",
       "enabled": "{{name}} etkinleştirildi",
@@ -5054,6 +5088,7 @@
       "updated": "{{name}} güncellendi",
       "upToDate": "{{name}} zaten güncel",
       "updateFailed": "{{name}} güncellenemedi",
+      "updateNeedsReinstall": "Bu eklenti Antigravity'nin eski sürümlerinin kullandığı bir klasörde olduğu için CC Switch onu güncelleyemez. En son sürümü almak için kaldırın, ardından Keşfet'ten yeniden yükleyin.",
       "refreshed": "Pazar yerleri yenilendi",
       "refreshFailed": "Pazar yerleri yenilenemedi",
       "marketAdded": "{{source}} pazar yeri eklendi",
@@ -5090,6 +5125,7 @@
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
+      "codebuddyHelp": "CodeBuddy Code'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için sağlayıcı listesinde hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup Ekle'ye tıklayın. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
       "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
@@ -5150,6 +5186,32 @@
       "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",
       "switched": "Hesap değiştirildi. Yeni agy oturumları bu hesabı kullanacak.",
       "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın."
+    },
+    "codebuddy": {
+      "mainland": "Çin",
+      "global": "Uluslararası",
+      "expiredNote": "Oturumun süresi doldu, yeniden oturum açın",
+      "addedOn": "{{date}} tarihinde eklendi",
+      "imported": "{{login}} eklendi.",
+      "uncollected": "CodeBuddy şu anda {{login}} ile oturum açmış, ancak bu hesap henüz listede yok.",
+      "importCurrent": "Geçerli hesabı ekle",
+      "unrecognized": "CodeBuddy'nin oturum dosyasının biçimi tanınmadı",
+      "unrecognizedNote": "WorkBuddy tarafından şifrelenmiş olabilir. CC Switch dosyaya dokunmaz ve hesap değiştiremez.",
+      "statusLoadFailed": "CodeBuddy hesapları okunamadı. Tekrar deneyin.",
+      "empty": "Henüz CodeBuddy hesabı yok. Oturum açmak için Hesap ekle'ye tıklayın veya CodeBuddy'nin şu anki hesabını ekleyin.",
+      "login": "Yeni hesapla oturum aç",
+      "current": "CodeBuddy kullanıyor",
+      "pendingNote": "codebuddy bir terminalde açıldı. Oturum açmak için yönergeleri izleyin (oturum açma ekranı çıkmazsa /login yazın); bitince hesap buraya eklenir.",
+      "reopenTerminal": "Terminali yeniden aç",
+      "removeNote": "Yalnızca CC Switch'teki kopyayı siler. CodeBuddy oturumu açık kalır.",
+      "quota": {
+        "credits": "Kredi",
+        "enterprise": "Kurumsal",
+        "unlimited": "Sınırsız",
+        "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
+        "usedDetail": "Bu dönemde {{used}} kredi kullanıldı",
+        "refreshPending": "Belirteç CodeBuddy tarafından yenilenmeyi bekliyor. Bu hesaba geçip bir kez kullanın, sonra tekrar kontrol edin."
+      }
     },
     "claude": {
       "pasteSubmitted": "Submitted. Finishing sign-in…",
@@ -5299,6 +5361,47 @@
       "legacyModelsJson": "Oh My Pi'de eski biçimde bir models.json dosyası var. omp, sonraki açılışında bunu models.yml biçimine geçirir. omp'yi bir kez çalıştırın, ardından sağlayıcıyı yeniden ekleyin."
     }
   },
+  "codebuddy": {
+    "empty": {
+      "title": "Henüz özel model yok",
+      "description": "CodeBuddy'nin resmi modelleri CodeBuddy Code tarafından yönetilir. Resmi hesaplar arasında geçiş için hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup burada Ekle'ye tıklayın. ~/.codebuddy/models.json içinde zaten bulunan özel modeller burada otomatik olarak görünür. Ön ayar veya özel model eklemek için sağ üst köşedeki + düğmesini kullanın."
+    },
+    "modelsHint": "Model kimliği models.json'a yazılan id ve /model içinde seçtiğiniz addır; genellikle uç noktanın model adıdır ve eklendikten sonra değiştirilemez. Görünen ad, yukarıdaki İsim ile aynı değerdir.",
+    "modelIdDuplicate": "Bu model kimliği zaten kullanılıyor",
+    "modelIdInvalid": "Model kimliği boşlukla başlayamaz veya bitemez.",
+    "vendor": "Sağlayıcı firma",
+    "urlHint": "Tam yolu girin, genellikle /chat/completions ile biter. ${VAR} ortam değişkeni başvuruları desteklenir.",
+    "urlInvalid": "Geçerli bir http(s) adresi girin.",
+    "apiKeyPlaceholder": "API anahtarını girin veya ${MY_API_KEY} ile bir ortam değişkenine başvurun",
+    "maxInputTokens": "Maksimum giriş token",
+    "maxOutputTokens": "Maksimum çıkış token",
+    "jsonHint": "models.json içindeki tek bir model girdisi (id yukarıdaki Model kimliğinden gelir). Kaydettikten sonra CodeBuddy Code dosyayı kendisi yeniden yükler.",
+    "official": {
+      "presetName": "CodeBuddy Resmi Oturum",
+      "account": "Hesap",
+      "accountHint": "Bu kartın kullanacağı CodeBuddy hesabını seçin. CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir: sağlayıcı listesinde bu karttaki Ekle'ye tıklayınca CodeBuddy bu hesapla oturum açar; çalışan CodeBuddy de otomatik olarak geçiş yapar.",
+      "accountDeleted": "Hesap silindi. Başka bir hesap seçin.",
+      "accountDeletedChip": "Hesap silindi",
+      "unbound": "Henüz hesap seçilmedi. Kartı düzenleyip bir hesap seçin.",
+      "statusLoading": "Hesaplar yükleniyor…",
+      "expired": "Bu hesabın oturumunun süresi doldu. Eklemeden önce Yetkilendirme Merkezi'nde yeniden oturum açın.",
+      "importCurrent": "Geçerli oturumu ekle ({{login}})",
+      "adding": "Ekleniyor…",
+      "added": "{{name}} eklendi. CodeBuddy artık bu hesapla oturum açtı; çalışan CodeBuddy otomatik geçiş yapar, yeni oturumlar da bunu kullanır.",
+      "addFailed": "Eklenemedi: {{error}}",
+      "removeHint": "CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin."
+    },
+    "login": {
+      "confirmTitle": "Başka bir CodeBuddy hesabıyla oturum aç",
+      "confirmMessage": "CodeBuddy şu anda {{login}} ile oturum açmış durumda ve aynı anda yalnızca bir hesap kullanabilir. Devam ederseniz önce bu hesap Yetkilendirme Merkezi'ne eklenir, ardından CodeBuddy'nin oturumu geçici olarak kapatılır (oturum bilgileri silinmez, sunucuya bildirilmez) ve yeni hesapla oturum açmak için bir terminal açılır.\n\nBundan sonra oturum açmayı bitirene kadar çalışan CodeBuddy oturumları oturum kapalı görünür. Vazgeçerseniz özgün oturumu tek tıkla geri yükleyebilirsiniz.",
+      "confirm": "Devam et",
+      "signedInHint": "CodeBuddy oturum açıkken yeni bir hesapla oturum açmak önce mevcut oturumu geçici olarak kapatır: oturum açmayı bitirene kadar çalışan CodeBuddy oturumları oturum kapalı görünür.",
+      "pendingReplacing": "CodeBuddy'nin mevcut oturumu geçici olarak kapatıldı ve codebuddy bir terminalde açıldı. Yeni hesapla oturum açmak için yönergeleri izleyin; bitince hesap buraya eklenir.",
+      "restore": "Özgün oturumu geri yükle",
+      "restored": "Özgün CodeBuddy oturumu geri yüklendi.",
+      "restoreFailed": "Özgün oturum geri yüklenemedi (CodeBuddy oturum dosyasını yazıyor olabilir). Yetkilendirme Merkezi'nden veya bir terminalden yeniden oturum açın."
+    }
+  },
   "dsh": {
     "empty": {
       "title": "DeepSeek Harness sağlayıcısı ekle",
@@ -5382,6 +5485,8 @@
       "credits": "Kredi",
       "leftOf": "{{remaining}} / {{total}} kaldı",
       "usedOf": "{{used}} / {{total}} kullanıldı",
+      "unlimited": "Sınırsız",
+      "unlimitedUsed": "Sınırsız, {{used}} kullanıldı",
       "usedUp": "Tükendi ({{total}} üzerinden)",
       "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
       "staleNotRunning": "WorkBuddy çalışmıyor; son sonuç gösteriliyor",

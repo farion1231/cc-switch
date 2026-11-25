@@ -167,6 +167,8 @@ const CHILD_A_PAGE_2_ID: &str = "00000000-0000-4000-8000-000000000006";
 thread_local! {
     static CODEX_PARSE_COUNTS: std::cell::RefCell<HashMap<PathBuf, usize>> =
         std::cell::RefCell::new(HashMap::new());
+    static FORK_EVIDENCE_READ_COUNTS: std::cell::RefCell<HashMap<PathBuf, usize>> =
+        std::cell::RefCell::new(HashMap::new());
 }
 
 pub(super) fn record_codex_parse(path: &Path) {
@@ -177,6 +179,16 @@ pub(super) fn record_codex_parse(path: &Path) {
 
 fn codex_parse_count(path: &Path) -> usize {
     CODEX_PARSE_COUNTS.with(|counts| counts.borrow().get(path).copied().unwrap_or(0))
+}
+
+pub(super) fn record_fork_evidence_read(path: &Path) {
+    FORK_EVIDENCE_READ_COUNTS.with(|counts| {
+        *counts.borrow_mut().entry(path.to_path_buf()).or_default() += 1;
+    });
+}
+
+fn fork_evidence_read_count(path: &Path) -> usize {
+    FORK_EVIDENCE_READ_COUNTS.with(|counts| counts.borrow().get(path).copied().unwrap_or(0))
 }
 
 fn retryable_parent_and_child(dir: &Path) -> (PathBuf, PathBuf) {
@@ -610,6 +622,737 @@ fn assert_unchanged_codex_file_is_skipped(db: &Database, file: &Path) -> Result<
         changes_after, changes_before,
         "unchanged file rewrote its cursor"
     );
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_archived_legacy_idle_fork_recovery_and_append() -> Result<(), AppError> {
+    for compressed in [false, true] {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let (parent, child) = archived_legacy_fork(dir.path());
+        let parent = if compressed {
+            compress_rollout(&parent)
+        } else {
+            parent
+        };
+        let files = [parent.as_path(), child.as_path()];
+        // The parent has additional usage after the child's copied prefix:
+        // a rewind must not require replaying the parent's entire history.
+        assert_eq!(sync_test_file(&db, &parent, &files)?.imported, 3);
+        let result = sync_test_file(&db, &child, &files)?;
+        assert_eq!(
+            (result.imported, result.skipped, result.deferred),
+            (1, 2, false)
+        );
+        assert_unchanged_codex_file_is_skipped(&db, &child)?;
+        clear_codex_replay_caches();
+        {
+            let conn = lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        append_jsonl(
+            &child,
+            token_count_with_last_at(275, 140, 28, 25, 15, 3, "codex", "2026-07-10T03:00:22Z"),
+        );
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+        // A genuine child compaction fallback keeps its native response ID.
+        append_jsonl(
+            &child,
+            token_usage_record_at("resp_child_compact", 40, 20, 4, "2026-07-10T03:00:23Z"),
+        );
+        append_jsonl(
+            &child,
+            token_count_with_last_at(315, 160, 32, 0, 0, 0, "codex", "2026-07-10T03:00:23Z"),
+        );
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        let conn = lock_conn!(db.conn);
+        let usage: (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), SUM(input_tokens), SUM(cache_read_tokens), SUM(output_tokens)
+                 FROM proxy_request_logs WHERE session_id = ?1",
+            [CHILD_A_ID],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(usage, (3, 115, 60, 12));
+    }
+    Ok(())
+}
+
+fn archived_legacy_fork(dir: &Path) -> (PathBuf, PathBuf) {
+    let archive = dir.join("archived_sessions");
+    fs::create_dir_all(&archive).unwrap();
+    let parent = rollout_path(&archive, PARENT_ID);
+    let child = rollout_path(dir, CHILD_A_ID);
+    write_jsonl(
+        &parent,
+        &[
+            session_meta(PARENT_ID),
+            token_count_with_last_at(100, 50, 10, 100, 50, 10, "codex", "2026-07-10T03:00:01Z"),
+            token_count_with_last_at(200, 100, 20, 100, 50, 10, "codex", "2026-07-10T03:00:02Z"),
+            token_count_with_last_at(300, 150, 30, 100, 50, 10, "codex", "2026-07-10T03:00:03Z"),
+        ],
+    );
+    write_jsonl(
+        &child,
+        &[
+            session_meta_at(CHILD_A_ID, Some(PARENT_ID), None, "2026-07-10T03:00:20Z"),
+            turn_context_at("2026-07-10T03:00:20Z"),
+            token_count_with_last_at(
+                100,
+                50,
+                10,
+                100,
+                50,
+                10,
+                "codex",
+                "2026-07-10T03:00:20.001Z",
+            ),
+            token_count_with_last_at(
+                200,
+                100,
+                20,
+                100,
+                50,
+                10,
+                "codex",
+                "2026-07-10T03:00:20.002Z",
+            ),
+            token_count_with_last_at(250, 125, 25, 50, 25, 5, "codex", "2026-07-10T03:00:21Z"),
+        ],
+    );
+    (parent, child)
+}
+
+fn owned_legacy_fork(dir: &Path) -> (PathBuf, PathBuf) {
+    let (archived, child) = archived_legacy_fork(dir);
+    let active = dir.join("sessions");
+    fs::create_dir_all(&active).unwrap();
+    let parent = active.join(archived.file_name().unwrap());
+    fs::rename(archived, &parent).unwrap();
+    for (path, is_child) in [(&parent, false), (&child, true)] {
+        let values = fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        let mut records = Vec::new();
+        let mut request = 0;
+        for value in values {
+            if value
+                .pointer("/payload/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("token_count")
+            {
+                request += 1;
+                let own_request = is_child && request == 3;
+                // The parent's copied requests can themselves belong to an
+                // ancestor; comparing ownership only with parent_id is wrong.
+                let owner = if own_request { CHILD_A_ID } else { CHILD_B_ID };
+                let response_id = if own_request {
+                    "resp_child".to_string()
+                } else {
+                    format!("resp_inherited_{request}")
+                };
+                let usage = value
+                    .pointer("/payload/info/last_token_usage")
+                    .unwrap()
+                    .clone();
+                records.push(serde_json::json!({
+                        "timestamp": value["timestamp"], "type": "token_usage_record",
+                        "payload": { "response_id": response_id, "thread_id": owner, "session_id": owner, "usage": usage }
+                    }));
+            }
+            records.push(value);
+        }
+        write_jsonl(path, &records);
+    }
+    (parent, child)
+}
+
+#[test]
+#[serial_test::serial]
+fn test_owned_legacy_fork_recovers_from_active_idle_parent() -> Result<(), AppError> {
+    for compressed in [false, true] {
+        clear_codex_replay_caches();
+        let dir = tempdir().unwrap();
+        let db = Database::memory()?;
+        let (parent, child) = owned_legacy_fork(dir.path());
+        let parent = if compressed {
+            compress_rollout(&parent)
+        } else {
+            parent
+        };
+        let files = [parent.as_path(), child.as_path()];
+        let result = sync_test_file(&db, &child, &files)?;
+        assert_eq!(
+            (result.imported, result.skipped, result.deferred),
+            (1, 2, false)
+        );
+        assert_unchanged_codex_file_is_skipped(&db, &child)?;
+        lock_conn!(db.conn).execute("DELETE FROM session_log_sync", [])?;
+        clear_codex_replay_caches();
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        let mut usage = token_usage_record_at("resp_append", 25, 15, 3, "2026-07-10T03:00:22Z");
+        usage["payload"]["thread_id"] = serde_json::json!(CHILD_A_ID);
+        usage["payload"]["session_id"] = serde_json::json!(CHILD_A_ID);
+        append_jsonl(&child, usage);
+        append_jsonl(
+            &child,
+            token_count_with_last_at(275, 140, 28, 25, 15, 3, "codex", "2026-07-10T03:00:22Z"),
+        );
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+        let mut compaction =
+            token_usage_record_at("resp_compact_owned", 40, 20, 4, "2026-07-10T03:00:23Z");
+        compaction["payload"]["thread_id"] = serde_json::json!(CHILD_A_ID);
+        append_jsonl(&child, compaction);
+        append_jsonl(
+            &child,
+            token_count_with_last_at(315, 160, 32, 0, 0, 0, "codex", "2026-07-10T03:00:23Z"),
+        );
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        assert_eq!(codex_usage_rows(&db)?.len(), 3);
+    }
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_owned_legacy_fork_rejects_unverified_request_identity() -> Result<(), AppError> {
+    for case in [
+        "missing_record",
+        "missing_response",
+        "foreign_live_owner",
+        "forged_replay_response",
+        "replay_usage_mismatch",
+        "conflicting_session",
+        "duplicate_response",
+    ] {
+        clear_codex_replay_caches();
+        let dir = tempdir().unwrap();
+        let db = Database::memory()?;
+        let (parent, child) = owned_legacy_fork(dir.path());
+        let mut records = fs::read_to_string(&child)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        let positions = records
+            .iter()
+            .enumerate()
+            .filter_map(|(i, v)| (v["type"] == "token_usage_record").then_some(i))
+            .collect::<Vec<_>>();
+        let first = positions[0];
+        let last = positions[2];
+        match case {
+            "missing_record" => {
+                records.remove(last);
+            }
+            "missing_response" => {
+                records[last]["payload"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("response_id");
+            }
+            "foreign_live_owner" => {
+                records[last]["payload"]["thread_id"] = serde_json::json!(CHILD_B_ID);
+                records[last]["payload"]["session_id"] = serde_json::json!(CHILD_B_ID);
+            }
+            "forged_replay_response" => {
+                records[first]["payload"]["response_id"] = serde_json::json!("resp_unknown")
+            }
+            "replay_usage_mismatch" => {
+                records[first]["payload"]["usage"]["input_tokens"] = serde_json::json!(999)
+            }
+            "conflicting_session" => {
+                records[last]["payload"]["session_id"] = serde_json::json!(CHILD_B_ID)
+            }
+            "duplicate_response" => {
+                records[last]["payload"]["response_id"] =
+                    records[first]["payload"]["response_id"].clone()
+            }
+            _ => unreachable!(),
+        }
+        write_jsonl(&child, &records);
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(result.deferred, "{case}");
+        assert!(codex_usage_rows(&db)?.is_empty(), "{case}");
+    }
+    Ok(())
+}
+
+fn read_test_records(path: &Path) -> Vec<serde_json::Value> {
+    fs::read_to_string(path)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[test]
+#[serial_test::serial]
+fn test_normal_forks_skip_request_evidence_reads() -> Result<(), AppError> {
+    for owned in [false, true] {
+        for compressed in [false, true] {
+            clear_codex_replay_caches();
+            let dir = tempdir().unwrap();
+            let db = Database::memory()?;
+            let (parent, child) = if owned {
+                owned_legacy_fork(dir.path())
+            } else {
+                archived_legacy_fork(dir.path())
+            };
+            append_jsonl(&parent, turn_context_at("2026-07-10T03:00:30Z"));
+            let parent = if compressed {
+                compress_rollout(&parent)
+            } else {
+                parent
+            };
+            let files = [parent.as_path(), child.as_path()];
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            append_jsonl(
+                &child,
+                token_count_with_last_at(275, 140, 28, 25, 15, 3, "codex", "2026-07-10T03:00:22Z"),
+            );
+            assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+            assert_eq!(fork_evidence_read_count(&parent), 0);
+            assert_eq!(fork_evidence_read_count(&child), 0);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_legacy_idle_fork_without_request_records_skips_evidence_reads() -> Result<(), AppError> {
+    let dir = tempdir().unwrap();
+    let db = Database::memory()?;
+    let (archive, child) = archived_legacy_fork(dir.path());
+    let parent = rollout_path(dir.path(), PARENT_ID);
+    fs::rename(archive, &parent).unwrap();
+    let result = sync_test_file(&db, &child, &[&parent, &child])?;
+    assert!(result.deferred);
+    assert_eq!(fork_evidence_read_count(&parent), 0);
+    assert_eq!(fork_evidence_read_count(&child), 0);
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_owned_fork_caches_prefix_and_parent_evidence_on_append() -> Result<(), AppError> {
+    for compressed in [false, true] {
+        clear_codex_replay_caches();
+        let dir = tempdir().unwrap();
+        let db = Database::memory()?;
+        let (parent, child) = owned_legacy_fork(dir.path());
+        let parent = if compressed {
+            compress_rollout(&parent)
+        } else {
+            parent
+        };
+        let files = [parent.as_path(), child.as_path()];
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+        assert_eq!(
+            replay_caches()
+                .lock()
+                .unwrap()
+                .replay_prefixes
+                .get(&child)
+                .unwrap()
+                .prefix,
+            2
+        );
+        assert_eq!(fork_evidence_read_count(&parent), 1);
+        assert_eq!(fork_evidence_read_count(&child), 1);
+        // Force a reparse with an unchanged child: a prefix-cache hit must
+        // bypass ownership recovery, not just reuse evidence after rereading.
+        lock_conn!(db.conn).execute("DELETE FROM session_log_sync", [])?;
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 0);
+        assert_eq!(fork_evidence_read_count(&parent), 1);
+        assert_eq!(fork_evidence_read_count(&child), 1);
+        let mut usage = token_usage_record_at("resp_new_cached", 25, 15, 3, "2026-07-10T03:00:22Z");
+        usage["payload"]["thread_id"] = serde_json::json!(CHILD_A_ID);
+        append_jsonl(&child, usage);
+        append_jsonl(
+            &child,
+            token_count_with_last_at(275, 140, 28, 25, 15, 3, "codex", "2026-07-10T03:00:22Z"),
+        );
+        assert_eq!(sync_test_file(&db, &child, &files)?.imported, 1);
+        assert_eq!(
+            fork_evidence_read_count(&parent),
+            1,
+            "unchanged parent must not be decompressed again"
+        );
+        assert_eq!(fork_evidence_read_count(&child), 2);
+    }
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_owned_fork_ignores_heartbeats_without_losing_pending_record() -> Result<(), AppError> {
+    let dir = tempdir().unwrap();
+    let db = Database::memory()?;
+    let (parent, child) = owned_legacy_fork(dir.path());
+    for path in [&parent, &child] {
+        let mut result = Vec::new();
+        for value in read_test_records(path) {
+            let is_record = value["type"] == "token_usage_record";
+            let timestamp = value["timestamp"].clone();
+            result.push(value);
+            if is_record {
+                for payload in [
+                    serde_json::Value::Null,
+                    serde_json::json!({}),
+                    serde_json::json!({"type": null}),
+                    serde_json::json!({"type": "token_count", "info": null}),
+                    serde_json::json!({"type": "token_count", "info": {}}),
+                ] {
+                    result.push(serde_json::json!({"timestamp":timestamp,"type":"event_msg","payload":payload}));
+                }
+                result.push(serde_json::json!({"timestamp":timestamp,"type":"event_msg"}));
+            }
+        }
+        write_jsonl(path, &result);
+    }
+    let result = sync_test_file(&db, &child, &[&parent, &child])?;
+    assert_eq!(
+        (result.imported, result.skipped, result.deferred),
+        (1, 2, false)
+    );
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_valid_total_only_event_consumes_pending_evidence_like_main_parser() -> Result<(), AppError>
+{
+    let dir = tempdir().unwrap();
+    let db = Database::memory()?;
+    let (parent, child) = owned_legacy_fork(dir.path());
+    let mut values = read_test_records(&child);
+    let last_usage = values
+        .iter()
+        .rposition(|v| v["type"] == "token_usage_record")
+        .unwrap();
+    values.insert(
+        last_usage + 1,
+        token_count_at(250, 125, 25, "2026-07-10T03:00:20.999Z"),
+    );
+    write_jsonl(&child, &values);
+    // A valid total-only snapshot consumes the pending record in the main
+    // parser too. Do not attach that stale identity to the following request.
+    let result = sync_test_file(&db, &child, &[&parent, &child])?;
+    assert!(result.deferred);
+    assert!(codex_usage_rows(&db)?.is_empty());
+    assert!(!read_fork_file_evidence(&child)
+        .unwrap()
+        .token_lines
+        .contains_key(&(values.len() as i64)));
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_legacy_recovery_only_checks_events_after_copied_prefix() -> Result<(), AppError> {
+    for owned in [false, true] {
+        for mode in ["original_timestamp", "same_millisecond", "cumulative_only"] {
+            clear_codex_replay_caches();
+            let dir = tempdir().unwrap();
+            let db = Database::memory()?;
+            let (parent, child) = if owned {
+                owned_legacy_fork(dir.path())
+            } else {
+                archived_legacy_fork(dir.path())
+            };
+            for path in [&parent, &child] {
+                let mut values = read_test_records(path);
+                let mut tokens = 0;
+                for value in &mut values {
+                    if value
+                        .pointer("/payload/type")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("token_count")
+                    {
+                        tokens += 1;
+                        if tokens <= 2 {
+                            if path == &child {
+                                value["timestamp"] =
+                                    serde_json::json!(if mode == "original_timestamp" {
+                                        "2026-07-10T03:00:02Z"
+                                    } else {
+                                        "2026-07-10T03:00:20Z"
+                                    });
+                            }
+                            if mode == "cumulative_only" {
+                                value["payload"]["info"]
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .remove("last_token_usage");
+                            }
+                        }
+                    }
+                }
+                write_jsonl(path, &values);
+            }
+            let result = sync_test_file(&db, &child, &[&parent, &child])?;
+            assert_eq!(
+                (result.imported, result.skipped, result.deferred),
+                (1, 2, false),
+                "{owned} {mode}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_legacy_recovery_still_rejects_invalid_live_request_boundaries() -> Result<(), AppError> {
+    for owned in [false, true] {
+        for mode in ["before_fork", "at_fork", "missing_last"] {
+            clear_codex_replay_caches();
+            let dir = tempdir().unwrap();
+            let db = Database::memory()?;
+            let (parent, child) = if owned {
+                owned_legacy_fork(dir.path())
+            } else {
+                archived_legacy_fork(dir.path())
+            };
+            let mut values = read_test_records(&child);
+            let last = values.last_mut().unwrap();
+            match mode {
+                "before_fork" => last["timestamp"] = serde_json::json!("2026-07-10T03:00:19Z"),
+                "at_fork" => last["timestamp"] = serde_json::json!("2026-07-10T03:00:20Z"),
+                "missing_last" => {
+                    last["payload"]["info"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("last_token_usage");
+                }
+                _ => unreachable!(),
+            }
+            write_jsonl(&child, &values);
+            assert!(
+                sync_test_file(&db, &child, &[&parent, &child])?.deferred,
+                "{owned} {mode}"
+            );
+            assert!(codex_usage_rows(&db)?.is_empty());
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_request_evidence_keeps_latest_duplicate_timestamp() {
+    let dir = tempdir().unwrap();
+    let (_, child) = owned_legacy_fork(dir.path());
+    let mut values = read_test_records(&child);
+    let record = values
+        .iter()
+        .find(|v| v["type"] == "token_usage_record")
+        .unwrap()
+        .clone();
+    let id = record["payload"]["response_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut future = record.clone();
+    future["timestamp"] = serde_json::json!("2026-07-10T03:00:30Z");
+    values.push(future);
+    values.push(record);
+    write_jsonl(&child, &values);
+    let evidence = read_fork_file_evidence(&child).unwrap();
+    assert_eq!(
+        evidence.requests[&id].0,
+        "2026-07-10T03:00:30Z".parse::<DateTime<Utc>>().unwrap()
+    );
+}
+
+#[test]
+#[serial_test::serial]
+fn test_owned_fork_rejects_child_changed_since_primary_parse() -> Result<(), AppError> {
+    let dir = tempdir().unwrap();
+    let (parent, child) = owned_legacy_fork(dir.path());
+    let parsed = parse_codex_file(&child, Some(CHILD_A_ID.to_string()))?;
+    let stamp = ParentFileStamp::from_file(&fs::File::open(&child).unwrap()).unwrap();
+    let index = build_rollout_index(&[parent.clone(), child.clone()]);
+    assert_eq!(
+        verified_owned_fork_prefix(&parsed, &child, &index, Some(stamp)),
+        Some(2)
+    );
+    append_jsonl(&child, turn_context_at("2026-07-10T03:00:22Z"));
+    assert_eq!(
+        verified_owned_fork_prefix(&parsed, &child, &index, Some(stamp)),
+        None
+    );
+    assert_eq!(
+        verified_owned_fork_prefix(&parsed, &child, &index, None),
+        None
+    );
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_transient_final_parent_stamp_failure_does_not_poison_cache() -> Result<(), AppError> {
+    clear_codex_replay_caches();
+    let dir = tempdir().unwrap();
+    let (parent, _) = owned_legacy_fork(dir.path());
+    let stamp = ParentFileStamp::from_file(&fs::File::open(&parent).unwrap()).unwrap();
+    let incomplete = Arc::new(ParentTokenTimeline {
+        events: Vec::new(),
+        max_timestamp: None,
+        has_token_without_timestamp: false,
+        high_water: None,
+        verified_snapshot: false,
+    });
+    cache_parent_timeline(&parent, Some(stamp), None, &incomplete);
+    assert!(!replay_caches()
+        .lock()
+        .unwrap()
+        .parent_timelines
+        .contains_key(&parent));
+    let mut changed = stamp;
+    changed.size += 1;
+    cache_parent_timeline(&parent, Some(stamp), Some(changed), &incomplete);
+    assert!(!replay_caches()
+        .lock()
+        .unwrap()
+        .parent_timelines
+        .contains_key(&parent));
+    // Once metadata is readable again, the unchanged parent must be read
+    // successfully rather than reuse a permanently unverified timeline.
+    let recovered = load_parent_timeline(&parent).unwrap();
+    assert!(recovered.verified_snapshot);
+    assert_eq!(recovered.events.len(), 3);
+    assert!(replay_caches()
+        .lock()
+        .unwrap()
+        .parent_timelines
+        .contains_key(&parent));
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_archived_legacy_idle_fork_rejects_unverified_parent() -> Result<(), AppError> {
+    for case in [
+        "live_copy",
+        "malformed_json",
+        "invalid_utf8",
+        "conflicting_copy",
+        "missing_timestamp",
+    ] {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let (parent, child) = archived_legacy_fork(dir.path());
+        let mut files = vec![parent.clone(), child.clone()];
+        match case {
+            "live_copy" | "conflicting_copy" => {
+                let copy_dir = if case == "live_copy" {
+                    dir.path().join("sessions")
+                } else {
+                    dir.path().join("other").join("archived_sessions")
+                };
+                fs::create_dir_all(&copy_dir).unwrap();
+                let copy = rollout_path(&copy_dir, PARENT_ID);
+                fs::copy(&parent, &copy).unwrap();
+                if case == "conflicting_copy" {
+                    append_jsonl(&copy, token_count_at(999, 0, 99, "2026-07-10T03:00:04Z"));
+                }
+                files.push(copy);
+            }
+            "missing_timestamp" => append_jsonl(&parent, token_count_without_timestamp(999, 0, 99)),
+            _ => {
+                use std::io::Write;
+                let mut file = fs::OpenOptions::new().append(true).open(&parent).unwrap();
+                file.write_all(if case == "invalid_utf8" {
+                    b"\xff\n"
+                } else {
+                    b"{unfinished"
+                })
+                .unwrap();
+            }
+        }
+        let paths = files.iter().map(PathBuf::as_path).collect::<Vec<_>>();
+        let result = sync_test_file(&db, &child, &paths)?;
+        assert!(result.deferred, "{case}");
+        assert!(codex_usage_rows(&db)?.is_empty(), "{case}");
+        assert_eq!(get_sync_state(&db, &child.to_string_lossy())?, (0, 0));
+    }
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn test_archived_legacy_idle_fork_rejects_ambiguous_replay() -> Result<(), AppError> {
+    for case in [
+        "no_match",
+        "cumulative_only",
+        "bounded_history",
+        "copied_fallback",
+        "replay_after_live",
+    ] {
+        clear_codex_replay_caches();
+        let db = Database::memory()?;
+        let dir = tempdir().unwrap();
+        let (parent, child) = archived_legacy_fork(dir.path());
+        let mut records = fs::read_to_string(&child)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        match case {
+            "no_match" => {
+                records.drain(2..4);
+            }
+            "cumulative_only" => {
+                records[4]["payload"]["info"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("last_token_usage");
+            }
+            "bounded_history" => {
+                records[0]["payload"]["history_base"] = serde_json::json!({"thread_id": PARENT_ID});
+            }
+            "copied_fallback" => {
+                records.insert(
+                    3,
+                    token_usage_record_at("resp_copied", 40, 20, 4, "2026-07-10T03:00:20.001Z"),
+                );
+                records.insert(
+                    4,
+                    token_count_with_last_at(
+                        200,
+                        100,
+                        20,
+                        0,
+                        0,
+                        0,
+                        "codex",
+                        "2026-07-10T03:00:20.001Z",
+                    ),
+                );
+                // This zero-last snapshot is part of the parent's history too.
+                let mut inherited = records[4].clone();
+                inherited["timestamp"] = serde_json::json!("2026-07-10T03:00:02.001Z");
+                append_jsonl(&parent, inherited);
+            }
+            "replay_after_live" => records.push(records[2].clone()),
+            _ => unreachable!(),
+        }
+        write_jsonl(&child, &records);
+        let result = sync_test_file(&db, &child, &[&parent, &child])?;
+        assert!(result.deferred, "{case}");
+        assert!(codex_usage_rows(&db)?.is_empty(), "{case}");
+    }
     Ok(())
 }
 
@@ -3883,21 +4626,32 @@ fn test_normalize_codex_model_strip_prefix() {
 }
 
 #[test]
-fn test_normalize_codex_model_strip_iso_date() {
-    assert_eq!(normalize_codex_model("gpt-5.4-2026-03-05"), "gpt-5.4");
-    assert_eq!(
-        normalize_codex_model("gpt-5.4-pro-2026-03-05"),
-        "gpt-5.4-pro"
-    );
-}
-
-#[test]
-fn test_normalize_codex_model_strip_compact_date() {
-    assert_eq!(normalize_codex_model("gpt-5.4-20260305"), "gpt-5.4");
-    assert_eq!(
-        normalize_codex_model("claude-opus-4-6-20260206"),
-        "claude-opus-4-6"
-    );
+fn test_normalize_codex_model_strips_date_suffixes() {
+    for (case, dated, dated_pro, expected_pro) in [
+        (
+            "test_normalize_codex_model_strip_iso_date",
+            "gpt-5.4-2026-03-05",
+            "gpt-5.4-pro-2026-03-05",
+            "gpt-5.4-pro",
+        ),
+        (
+            "test_normalize_codex_model_strip_compact_date",
+            "gpt-5.4-20260305",
+            "claude-opus-4-6-20260206",
+            "claude-opus-4-6",
+        ),
+        // prefix + uppercase + ISO date
+        // prefix + compact date
+        (
+            "test_normalize_codex_model_combined",
+            "openai/GPT-5.4-2026-03-05",
+            "openai/gpt-5.4-20260305",
+            "gpt-5.4",
+        ),
+    ] {
+        assert_eq!(normalize_codex_model(dated), "gpt-5.4", "{case}");
+        assert_eq!(normalize_codex_model(dated_pro), expected_pro, "{case}");
+    }
 }
 
 #[test]
@@ -3908,39 +4662,46 @@ fn test_normalize_codex_model_no_change() {
     assert_eq!(normalize_codex_model("deepseek-chat"), "deepseek-chat");
 }
 
+/// 缓存读取是 input 的一部分：上游报出的 cached 比本次 input 还大时（异常数据），
+/// 入库的 cache_read 也不超过这次的 input。逐条增量和压缩用量记录都一样。
 #[test]
-fn test_normalize_codex_model_combined() {
-    // prefix + uppercase + ISO date
-    assert_eq!(
-        normalize_codex_model("openai/GPT-5.4-2026-03-05"),
-        "gpt-5.4"
-    );
-    // prefix + compact date
-    assert_eq!(normalize_codex_model("openai/gpt-5.4-20260305"), "gpt-5.4");
-}
+fn cached_tokens_never_exceed_the_input_they_belong_to() -> Result<(), AppError> {
+    fn rows(lines: &[serde_json::Value]) -> Result<Vec<(i64, i64)>, AppError> {
+        let db = Database::memory()?;
+        let temp = tempdir().unwrap();
+        let path = rollout_path(temp.path(), PARENT_ID);
+        let mut all = vec![session_meta(PARENT_ID), turn_context()];
+        all.extend_from_slice(lines);
+        write_jsonl(&path, &all);
+        sync_test_file(&db, &path, &[&path])?;
+        let conn = lock_conn!(db.conn);
+        let mut stmt = conn
+            .prepare(
+                "SELECT input_tokens, cache_read_tokens FROM proxy_request_logs
+                 WHERE data_source = 'codex_session' ORDER BY request_id",
+            )
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|error| AppError::Database(error.to_string()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        Ok(rows)
+    }
 
-#[test]
-fn test_cached_clamped_to_input() {
-    // cached > input 的异常场景应被 min() 钳制
-    let prev = Some(CumulativeTokens {
-        input: 100,
-        cached_input: 0,
-        cache_write_input: 0,
-        output: 50,
-    });
-    let current = CumulativeTokens {
-        input: 110,       // delta = 10
-        cached_input: 80, // delta = 80（异常：大于 input delta）
-        cache_write_input: 0,
-        output: 60,
-    };
-    let delta = compute_delta(&prev, &current);
-    // 钳制前：cached_input = 80, input = 10
-    assert_eq!(delta.cached_input, 80);
-    assert_eq!(delta.input, 10);
-    // 实际钳制在调用侧：delta.cached_input.min(delta.input)
-    let clamped = delta.cached_input.min(delta.input);
-    assert_eq!(clamped, 10);
+    // 累计 input 100 → 110（这次 10），累计 cached 0 → 80（这次 80）。
+    let increments = rows(&[
+        token_count_at(100, 0, 50, "2026-07-10T03:00:02Z"),
+        token_count_at(110, 80, 60, "2026-07-10T03:00:03Z"),
+    ])?;
+    assert_eq!(increments, vec![(100, 0), (10, 10)]);
+
+    let compaction = rows(&[
+        token_usage_record_at("resp_compact", 100, 150, 20, "2026-07-10T03:00:02Z"),
+        token_count_with_last_at(0, 0, 0, 0, 0, 0, "default", "2026-07-10T03:00:02Z"),
+    ])?;
+    assert_eq!(compaction, vec![(100, 100)]);
+    Ok(())
 }
 
 /// 真实语料回放验收 harness（仅手动运行，勿在 CI 跑）。

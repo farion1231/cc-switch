@@ -343,6 +343,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               ?.replace(/\/+$/, "")
               .replace(/\/chat\/completions$/, ""),
           };
+        } else if (appId === "codebuddy") {
+          // CodeBuddy models.json entry: url is the full chat/completions endpoint,
+          // same trim as the backend resolver.
+          const root = config as any;
+          const url: string | undefined = root.url;
+          return {
+            apiKey: root.apiKey,
+            baseUrl: url
+              ?.replace(/\/+$/, "")
+              .replace(/\/chat\/completions$/, ""),
+          };
         } else if (appId === "openclaw") {
           // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
           return {
@@ -395,9 +406,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
         null
       : null;
+  // 绑了授权中心 xAI 账号的 Grok 官方卡：额度按这个号查（同 ProviderCard 的 grokBoundAccountId）
+  const grokBoundAccountId =
+    appId === "grokbuild" && isOfficialSubscription
+      ? resolveManagedAccountId(
+          provider.meta,
+          PROVIDER_TYPES.XAI_OAUTH,
+        )?.trim() || null
+      : null;
   // 绑了账号的官方卡没保存过开关时默认开（卡片和托盘同一规则）
   const defaultsToEnabled =
-    isBoundCodexOfficial || Boolean(claudeBoundAccountId);
+    isBoundCodexOfficial ||
+    Boolean(claudeBoundAccountId) ||
+    Boolean(grokBoundAccountId);
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
@@ -613,7 +634,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
           ? await subscriptionApi.getCodexOauthQuota(accountId)
           : claudeBoundAccountId
             ? await subscriptionApi.getClaudeAccountQuota(claudeBoundAccountId)
-            : await subscriptionApi.getQuota(appId);
+            : grokBoundAccountId
+              ? await subscriptionApi.getXaiOauthQuota(grokBoundAccountId)
+              : await subscriptionApi.getQuota(appId);
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -627,7 +650,9 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               ? ["codex_oauth", "quota", accountId ?? "default"]
               : claudeBoundAccountId
                 ? ["claude_official", "quota", claudeBoundAccountId]
-                : ["subscription", "quota", appId],
+                : grokBoundAccountId
+                  ? ["xai_oauth", "quota", grokBoundAccountId]
+                  : ["subscription", "quota", appId],
             quota,
           );
         } else {

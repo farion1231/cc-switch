@@ -291,7 +291,8 @@ export function useProviderActions(
             activeApp === "opencode" ||
             activeApp === "openclaw" ||
             activeApp === "mcode" ||
-            activeApp === "workbuddy"
+            activeApp === "workbuddy" ||
+            activeApp === "codebuddy"
           ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
@@ -495,10 +496,5 @@ export function useProviderActions(
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
-    isLoading:
-      addProviderMutation.isPending ||
-      updateProviderMutation.isPending ||
-      deleteProviderMutation.isPending ||
-      switchProviderMutation.isPending,
   };
 }

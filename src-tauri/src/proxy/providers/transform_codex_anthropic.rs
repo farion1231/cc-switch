@@ -3110,15 +3110,16 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
     }
 
     #[test]
-    fn test_anthropic_sse_aggregation_missing_message_start_errors() {
-        let sse = "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n";
-        assert!(anthropic_sse_to_message_value(sse).is_err());
-    }
+    fn test_anthropic_sse_aggregation_errors() {
+        for (case, stream) in [
+            ("test_anthropic_sse_aggregation_missing_message_start_errors", "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"),
+            ("test_anthropic_sse_aggregation_error_event_errors", "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"overloaded\"}}\n\n"),
+            ("test_anthropic_sse_aggregation_truncated_without_output_errors", "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n"),
+        ] {
+            let sse = stream;
+            assert!(anthropic_sse_to_message_value(sse).is_err(), "{case}");
 
-    #[test]
-    fn test_anthropic_sse_aggregation_error_event_errors() {
-        let sse = "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"overloaded\"}}\n\n";
-        assert!(anthropic_sse_to_message_value(sse).is_err());
+        }
     }
 
     #[test]
@@ -3145,13 +3146,6 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
             response["incomplete_details"]["reason"],
             "max_output_tokens"
         );
-    }
-
-    #[test]
-    fn test_anthropic_sse_aggregation_truncated_without_output_errors() {
-        let sse =
-            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n";
-        assert!(anthropic_sse_to_message_value(sse).is_err());
     }
 
     #[test]

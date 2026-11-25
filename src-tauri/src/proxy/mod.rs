@@ -14,7 +14,7 @@ pub mod copilot_optimizer;
 pub mod error;
 pub mod error_mapper;
 pub(crate) mod failover_switch;
-mod forwarder;
+pub(crate) mod forwarder;
 pub mod gemini_url;
 pub mod handler_config;
 pub mod handler_context;
@@ -40,7 +40,8 @@ pub mod thinking_optimizer;
 pub mod thinking_rectifier;
 pub(crate) mod tool_media;
 pub(crate) mod types;
-mod upstream_guard;
+pub(crate) mod upstream_guard;
+pub(crate) mod upstream_pool;
 pub mod usage;
 
 #[cfg(test)]

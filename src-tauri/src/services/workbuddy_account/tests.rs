@@ -513,6 +513,7 @@ fn parses_the_resource_summary_like_workbuddy_does() {
             total: 1500.0,
             remaining: 750.5,
             used: 749.5,
+            unlimited: false,
             queried_at: 42,
             expiries: None,
         }
@@ -521,6 +522,59 @@ fn parses_the_resource_summary_like_workbuddy_does() {
     let refused = json!({"code": 11001, "msg": "invalid", "data": null});
     assert!(matches!(
         quota::parse_summary(&serde_json::to_vec(&refused).unwrap(), 0),
+        Err(quota::FetchError::Failed(_))
+    ));
+}
+
+/// 字段形态取自 #9694 里企业账号经 WBIPC 查到的回包。
+#[test]
+fn parses_the_enterprise_usage_like_workbuddy_does() {
+    let now = 1_795_000_000_000; // 2026-11-18
+    let body = json!({
+        "code": 0,
+        "data": {
+            "credit": 6542.27,
+            "limitNum": 8000,
+            "cycleStartTime": "2026-10-27 00:00:00",
+            "cycleEndTime": "2026-11-26 23:59:59",
+            "cycleResetTime": "2026-11-27 00:00:00",
+        }
+    });
+    let snapshot =
+        quota::parse_enterprise_usage(&serde_json::to_vec(&body).unwrap(), now).expect("parses");
+    assert!(snapshot.is_paid && !snapshot.unlimited);
+    assert_eq!(snapshot.plan_name, None);
+    assert_eq!(snapshot.total, 8000.0);
+    assert_eq!(snapshot.used, 6542.27);
+    assert!((snapshot.remaining - 1457.73).abs() < 1e-9);
+    // 剩下的限额到本周期结束（北京时间 11-26 23:59:59）作废
+    assert_eq!(
+        snapshot.expiries,
+        Some(vec![quota::WorkBuddyCreditExpiry {
+            credits: snapshot.remaining,
+            expires_at: Some(1_795_708_799_000),
+        }])
+    );
+
+    // 另一种拼法；超额时剩余记 0，没有可到期的
+    let snake = json!({"code": 0, "data": {"limit_num": "100", "used_num": 130}});
+    let over =
+        quota::parse_enterprise_usage(&serde_json::to_vec(&snake).unwrap(), now).expect("parses");
+    assert_eq!((over.total, over.remaining, over.used), (100.0, 0.0, 130.0));
+    assert_eq!(over.expiries, Some(vec![]));
+
+    // 不限额
+    let unlimited = json!({"code": 0, "data": {"limitNum": -1, "credit": 12.5}});
+    let unlimited =
+        quota::parse_enterprise_usage(&serde_json::to_vec(&unlimited).unwrap(), now).unwrap();
+    assert!(unlimited.unlimited);
+    assert_eq!(unlimited.used, 12.5);
+    assert_eq!(unlimited.expiries, Some(vec![]));
+
+    // 没给限额不能当 0 显示成「已用完」
+    let missing = json!({"code": 0, "data": {"credit": 1}});
+    assert!(matches!(
+        quota::parse_enterprise_usage(&serde_json::to_vec(&missing).unwrap(), now),
         Err(quota::FetchError::Failed(_))
     ));
 }
@@ -643,6 +697,7 @@ fn quota_cache_survives_re_captures_of_the_login() {
         total: 10.0,
         remaining: 4.0,
         used: 6.0,
+        unlimited: false,
         queried_at: 1,
         expiries: Some(vec![quota::WorkBuddyCreditExpiry {
             credits: 4.0,
@@ -894,6 +949,61 @@ mod wbipc {
         let within_ttl = account_quota(reloaded, "u-1".into(), false).await.unwrap();
         assert_eq!(within_ttl.unavailable, None);
         assert_eq!(within_ttl.snapshot, Some(snapshot));
+    }
+
+    #[tokio::test]
+    async fn enterprise_accounts_query_the_enterprise_usage_only() {
+        let fx = Fixture::new();
+        let mut doc: Value = serde_json::from_str(&info_doc("u-1", 1)).unwrap();
+        fx.sign_in("u-1", 1);
+        doc["account"]["enterpriseId"] = json!("ent-9");
+        std::fs::write(fx.paths.info(), doc.to_string()).unwrap();
+        fx.running.store(true, Ordering::SeqCst);
+        let manager = Arc::new(fx.manager());
+        manager.import_current().unwrap();
+        let broker = start(
+            &fx,
+            "the-ticket",
+            "the-ticket",
+            vec![
+                // 企业号在个人接口下是空的：要是还查它就会显示成 0
+                (
+                    quota::SUMMARY_PATH,
+                    json!({"code": 0, "data": {"Packages": [], "IsPaidUser": false}}),
+                ),
+                (
+                    quota::ENTERPRISE_USAGE_PATH,
+                    json!({"code": 0, "data": {"credit": 483.6, "limitNum": 20000}}),
+                ),
+            ],
+        );
+
+        let quota = account_quota(manager, "u-1".into(), true).await.unwrap();
+        assert_eq!(quota.unavailable, None);
+        let snapshot = quota.snapshot.expect("fresh snapshot");
+        assert_eq!((snapshot.total, snapshot.used), (20000.0, 483.6));
+        assert_eq!(snapshot.remaining, 20000.0 - 483.6);
+        broker.task.await.unwrap();
+
+        // 只发了一次查询：空 body 的企业限额，不带 WBIPC 不放行的头
+        let frames = broker.frames.lock().unwrap().clone();
+        let fetches: Vec<&Value> = frames
+            .iter()
+            .filter(|frame| frame["method"] == json!("c:wb.request/http.fetch"))
+            .collect();
+        assert_eq!(fetches.len(), 1);
+        assert_eq!(
+            fetches[0]["params"]["path"],
+            json!(quota::ENTERPRISE_USAGE_PATH)
+        );
+        assert_eq!(
+            fetches[0]["params"]["body_b64"],
+            json!(STANDARD.encode("{}"))
+        );
+        let headers = fetches[0]["params"]["headers"].as_object().unwrap();
+        assert!(headers
+            .keys()
+            .all(|name| name == "content-type" || name == "accept"));
     }
 
     #[tokio::test]

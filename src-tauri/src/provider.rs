@@ -268,6 +268,17 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // CodeBuddy models.json entries keep the full chat/completions endpoint in
+            // `url`; usage scripts expect the API base, same trim as WorkBuddy.
+            AppType::Codebuddy => {
+                let url = str_at(settings.get("url"));
+                let base_url = url
+                    .trim_end_matches('/')
+                    .strip_suffix("/chat/completions")
+                    .map(str::to_string)
+                    .unwrap_or(url);
+                (base_url, str_at(settings.get("apiKey")))
+            }
             // Pi custom providers use the native models.json field names. Pi expands
             // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
             AppType::Pi => (
@@ -1775,6 +1786,22 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-hermes".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_codebuddy_trims_chat_completions() {
+        let p = provider_with(json!({
+            "id": "deepseek-chat",
+            "url": "https://api.deepseek.com/v1/chat/completions/",
+            "apiKey": "sk-codebuddy",
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Codebuddy),
+            (
+                "https://api.deepseek.com/v1".to_string(),
+                "sk-codebuddy".to_string()
             )
         );
     }

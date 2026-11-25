@@ -785,7 +785,8 @@ impl SkillService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Copilot
-            | AppType::WorkBuddy => {}
+            | AppType::WorkBuddy
+            | AppType::Codebuddy => {}
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
@@ -811,6 +812,7 @@ impl SkillService {
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::Copilot => crate::copilot_config::skills_dir(),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
+            AppType::Codebuddy => crate::codebuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -1176,6 +1178,7 @@ impl SkillService {
                         AppType::Dsh,
                         AppType::Copilot,
                         AppType::WorkBuddy,
+                        AppType::Codebuddy,
                     ] {
                         if skill.apps.is_enabled_for(&app) {
                             let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
@@ -1263,6 +1266,7 @@ impl SkillService {
                             app,
                             AppType::Pi
                                 | AppType::WorkBuddy
+                                | AppType::Codebuddy
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
@@ -1403,6 +1407,7 @@ impl SkillService {
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
+                AppType::Codebuddy,
             ] {
                 if skill.apps.is_enabled_for(&app) {
                     let destination = Self::get_app_skills_dir(&app)?.join(&directory);
@@ -1511,7 +1516,12 @@ impl SkillService {
 
         if matches!(
             app,
-            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+            AppType::Agy
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Copilot
+                | AppType::WorkBuddy
+                | AppType::Codebuddy
         ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
@@ -1732,6 +1742,7 @@ impl SkillService {
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
+                AppType::Codebuddy,
             ] {
                 if apps.is_enabled_for(&app) {
                     let projection = (|| -> Result<()> {
@@ -1781,6 +1792,7 @@ impl SkillService {
                         | AppType::Agy
                         | AppType::Kimi
                         | AppType::Dsh
+                        | AppType::Codebuddy
                         | AppType::Omp
                         | AppType::Copilot
                         | AppType::WorkBuddy

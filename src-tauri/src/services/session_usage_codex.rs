@@ -163,6 +163,9 @@ struct ParentTokenTimeline {
     max_timestamp: Option<DateTime<Utc>>,
     has_token_without_timestamp: bool,
     high_water: Option<CumulativeTokens>,
+    /// Every record decoded successfully and the file stamp stayed unchanged.
+    /// Required before treating an archived, idle parent as a complete snapshot.
+    verified_snapshot: bool,
 }
 
 impl ParentTokenTimeline {
@@ -486,6 +489,7 @@ struct ParsedCodexFile {
     /// root meta 的 `ordinal` 正好等于 `forked_from_ordinal_exclusive`：分叉子
     /// rollout 从父线程的截止序号接着编号，文件里只有分叉之后的记录。
     starts_at_fork_ordinal: bool,
+    has_fork_provenance: bool,
     root_timestamp: Option<DateTime<Utc>>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
@@ -525,6 +529,7 @@ struct PendingEntry {
 #[derive(Debug, Default)]
 struct CodexReplayCaches {
     parent_timelines: HashMap<PathBuf, CachedParentTimeline>,
+    fork_evidence: HashMap<PathBuf, Arc<ForkFileEvidence>>,
     replay_prefixes: HashMap<PathBuf, CachedReplayPrefix>,
     pending: HashMap<PathBuf, PendingEntry>,
 }
@@ -783,35 +788,24 @@ fn token_snapshot_source(payload: &serde_json::Value) -> Option<String> {
 ///   不丢数据、不双算。
 /// - `pricing`：模型定价 pass 级缓存。定价表在 pass 进行中被修改时本 pass
 ///   仍用旧价，下一个同步 pass 生效。
-struct CodexSyncPass {
-    cursors: HashMap<String, (i64, i64)>,
+struct CodexSyncPass<'a> {
+    cursors: std::borrow::Cow<'a, crate::services::session_usage::SyncCursors>,
     /// rollout 逻辑文件名（去掉 `.zst`）→ 记过游标的路径，供游标继承按名查找
     rollout_cursor_paths: HashMap<String, Vec<String>>,
-    byte_offsets: HashMap<String, Option<i64>>,
     pricing: HashMap<String, Option<ModelPricing>>,
 }
 
-impl CodexSyncPass {
+impl<'a> CodexSyncPass<'a> {
+    #[cfg(test)]
     fn load(db: &Database) -> Result<Self, AppError> {
-        let conn = lock_conn!(db.conn);
-        let mut stmt = conn
-            .prepare("SELECT file_path, last_modified, last_line_offset FROM session_log_sync")
-            .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
-        let cursors = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
-                ))
-            })
-            .and_then(|rows| rows.collect::<Result<HashMap<_, _>, _>>())
-            .map_err(|e| AppError::Database(format!("预载同步游标失败: {e}")))?;
-        let mut stmt = conn.prepare("SELECT file_path, last_byte_offset FROM session_log_sync")?;
-        let byte_offsets = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Option<i64>>(1)?))
-            })?
-            .collect::<Result<HashMap<_, _>, _>>()?;
+        Ok(Self::from_cursors(std::borrow::Cow::Owned(
+            crate::services::session_usage::load_sync_cursors(db)?,
+        )))
+    }
+
+    fn from_cursors(
+        cursors: std::borrow::Cow<'a, crate::services::session_usage::SyncCursors>,
+    ) -> Self {
         let mut rollout_cursor_paths: HashMap<String, Vec<String>> = HashMap::new();
         for path in cursors.keys() {
             let name = codex_rollout_file::logical_file_name(path);
@@ -822,12 +816,11 @@ impl CodexSyncPass {
                     .push(path.clone());
             }
         }
-        Ok(Self {
+        Self {
             cursors,
             rollout_cursor_paths,
-            byte_offsets,
             pricing: HashMap::new(),
-        })
+        }
     }
 }
 
@@ -843,7 +836,11 @@ fn get_codex_sync_state(
     pass: &CodexSyncPass,
 ) -> Result<(i64, i64), AppError> {
     let file_path_str = file_path.to_string_lossy().to_string();
-    let state = pass.cursors.get(&file_path_str).copied().unwrap_or((0, 0));
+    let state = pass
+        .cursors
+        .get(&file_path_str)
+        .map(|c| (c.last_modified, c.last_line_offset))
+        .unwrap_or((0, 0));
     let logical_name = codex_rollout_file::logical_file_name(&file_path_str);
     let Some(paths) = pass.rollout_cursor_paths.get(logical_name) else {
         return Ok(state);
@@ -854,7 +851,7 @@ fn get_codex_sync_state(
         .iter()
         .filter(|path| path.as_str() != file_path_str)
         .filter_map(|path| pass.cursors.get(path))
-        .map(|&(modified, offset)| (offset, modified))
+        .map(|cursor| (cursor.last_line_offset, cursor.last_modified))
         .max();
 
     match inherited {
@@ -1059,10 +1056,17 @@ struct CodexFileSyncResult {
 
 /// 同步 Codex 使用数据（从 JSONL 会话日志）
 pub fn sync_codex_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_codex_usage_with_cursors(db, &crate::services::session_usage::load_sync_cursors(db)?)
+}
+
+pub(crate) fn sync_codex_usage_with_cursors(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let codex_dir = get_codex_config_dir();
     let files = collect_codex_session_files(&codex_dir);
     let rollout_index = build_rollout_index(&files);
-    let mut pass = CodexSyncPass::load(db)?;
+    let mut pass = CodexSyncPass::from_cursors(std::borrow::Cow::Borrowed(cursors));
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -1273,6 +1277,7 @@ fn parse_codex_file_with_index(
     let mut root_meta_seen = false;
     let mut bounded_history = None;
     let mut starts_at_fork_ordinal = false;
+    let mut has_fork_provenance = false;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
     let mut parent = ParentResolution::None;
@@ -1641,6 +1646,8 @@ fn parse_codex_file_with_index(
                     .get("response_id")
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
+                has_fork_provenance |= !response_id.trim().is_empty()
+                    && non_empty_string(payload.get("thread_id")).is_some();
                 let key = if response_id.is_empty() {
                     format!("line{line_offset}")
                 } else {
@@ -1666,6 +1673,7 @@ fn parse_codex_file_with_index(
         root_meta_seen,
         bounded_history,
         starts_at_fork_ordinal,
+        has_fork_provenance,
         root_timestamp,
         parent,
         token_events,
@@ -1892,6 +1900,7 @@ fn load_parent_timeline(
     let mut max_timestamp: Option<DateTime<Utc>> = None;
     let mut has_token_without_timestamp = false;
     let mut high_water: Option<CumulativeTokens> = None;
+    let mut complete_records = true;
 
     // 必须扫描完整父文件，不能在首个未来时间戳处 break：rollout 写入顺序
     // 不承诺时间戳严格单调。缓存完整时间线后，不同 child cutoff 只需内存过滤。
@@ -1918,9 +1927,14 @@ fn load_parent_timeline(
         // Decode separately from reading: malformed UTF-8 is a skipped record,
         // just like malformed JSON, rather than a retryable reader failure.
         let Ok(line) = std::str::from_utf8(&bytes) else {
+            complete_records = false;
             continue;
         };
+        if line.trim().is_empty() {
+            continue;
+        }
         let Ok(record) = parse_parent_record(line) else {
+            complete_records = false;
             continue;
         };
         let timestamp = parse_timestamp(record.timestamp.as_ref());
@@ -1973,22 +1987,38 @@ fn load_parent_timeline(
         }
     }
 
+    let after_stamp = fs::File::open(parent_path)
+        .ok()
+        .and_then(|file| ParentFileStamp::from_file(&file));
     let timeline = Arc::new(ParentTokenTimeline {
         events,
         max_timestamp,
         has_token_without_timestamp,
         high_water,
+        verified_snapshot: complete_records && stamp.is_some() && stamp == after_stamp,
     });
-    if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
-        caches.parent_timelines.insert(
-            parent_path.to_path_buf(),
-            CachedParentTimeline {
-                stamp,
-                timeline: Arc::clone(&timeline),
-            },
-        );
-    }
+    cache_parent_timeline(parent_path, stamp, after_stamp, &timeline);
     Ok(timeline)
+}
+
+fn cache_parent_timeline(
+    path: &Path,
+    stamp: Option<ParentFileStamp>,
+    after_stamp: Option<ParentFileStamp>,
+    timeline: &Arc<ParentTokenTimeline>,
+) {
+    // A failed final metadata read is transient, not a stable invalid snapshot.
+    if stamp.is_some() && stamp == after_stamp {
+        if let (Some(stamp), Ok(mut caches)) = (stamp, replay_caches().lock()) {
+            caches.parent_timelines.insert(
+                path.to_path_buf(),
+                CachedParentTimeline {
+                    stamp,
+                    timeline: Arc::clone(timeline),
+                },
+            );
+        }
+    }
 }
 
 /// 父线程的一个分段（首页或某个续写页），可能有多份内容一致的副本。
@@ -2003,6 +2033,7 @@ fn resolve_parent_signatures(
     parent_id: &str,
     cutoff: DateTime<Utc>,
     rollout_index: &RolloutIndex,
+    child: &ParsedCodexFile,
 ) -> Result<Vec<TokenUsageSignature>, ParentSignatureError> {
     let Some(candidates) = rollout_index.get(parent_id) else {
         return Err(ParentSignatureError::transient(format!(
@@ -2022,11 +2053,18 @@ fn resolve_parent_signatures(
         max_timestamp: None,
         has_token_without_timestamp: false,
         high_water: None,
+        verified_snapshot: true,
     };
     let mut segments: Vec<ParentSegment> = Vec::new();
     let mut latest_path: Option<&Path> = None;
     for candidate in ordered {
         let timeline = load_parent_timeline(candidate)?;
+        // Any live copy or malformed/unstable archive retains the timestamp guard.
+        merged.verified_snapshot &= timeline.verified_snapshot
+            && candidate
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "archived_sessions");
         // 无论是否为重复副本，只要任一候选存在无时间戳错误标志，必须合入以保留防御校验
         merged.has_token_without_timestamp |= timeline.has_token_without_timestamp;
         let rollout_id = thread_id_from_filename(candidate);
@@ -2064,6 +2102,37 @@ fn resolve_parent_signatures(
             "找不到父 rollout: {parent_id}"
         )));
     };
+    // Legacy forks copy token snapshots and may rewrite their timestamps to the
+    // fork time, without recording ordinal/history_base boundaries. An archived
+    // parent will never advance to that time. Use its verified snapshot only
+    // when we can identify a copied prefix and all child events have exact
+    // request usage after the fork. Keep prefix stripping and native request IDs.
+    if merged.verified_snapshot
+        && !merged.has_token_without_timestamp
+        && merged.max_timestamp.is_some_and(|last| last < cutoff)
+        && child.bounded_history.is_none()
+    {
+        let signatures = merged.signatures_at(cutoff);
+        let prefix = matching_replay_prefix(&child.token_events, &signatures);
+        if let Some(last_replayed) = prefix
+            .checked_sub(1)
+            .and_then(|index| child.token_events.get(index))
+        {
+            // Fallback usage records lack token signatures for parent matching.
+            // Do not recover a file if any such record lies in copied history.
+            if child
+                .usage_record_events
+                .iter()
+                .all(|event| event.line_offset > last_replayed.line_offset)
+                && child_events_after_replay(child, prefix).is_some()
+                && child.token_events[prefix..]
+                    .iter()
+                    .all(|event| !signatures.contains(&event.signature))
+            {
+                return Ok(signatures);
+            }
+        }
+    }
     merged
         .signatures_before(latest_path, cutoff)
         .map_err(ParentSignatureError::content)
@@ -2174,12 +2243,24 @@ fn update_codex_sync_state(
 /// Every billable event is the child's own request: exact `last_token_usage`
 /// and a timestamp after the fork. Copied parent history fails the time check.
 fn child_events_after_fork(parsed: &ParsedCodexFile) -> Option<()> {
+    child_events_after_replay(parsed, 0)
+}
+
+/// Copied legacy snapshots are verified by prefix alignment, so their original
+/// timestamps and cumulative-only usage must not constrain the child's requests.
+fn child_events_after_replay(parsed: &ParsedCodexFile, prefix: usize) -> Option<()> {
     let cutoff = parsed.root_timestamp?;
-    for event in parsed
-        .token_events
-        .iter()
-        .chain(&parsed.usage_record_events)
-    {
+    let replay_end = if prefix == 0 {
+        0
+    } else {
+        parsed.token_events.get(prefix - 1)?.line_offset
+    };
+    for event in parsed.token_events.get(prefix..)?.iter().chain(
+        parsed
+            .usage_record_events
+            .iter()
+            .filter(|event| event.line_offset > replay_end),
+    ) {
         let last = event.signature.last.as_ref()?;
         if last.input.is_none()
             || last.output.is_none()
@@ -2204,6 +2285,249 @@ fn verified_ordinal_fork(parsed: &ParsedCodexFile) -> bool {
         && parsed.starts_at_fork_ordinal
         && !parsed.token_events.is_empty()
         && child_events_after_fork(parsed).is_some()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ForkRequestEvidence {
+    response_id: String,
+    thread_id: String,
+    usage: CumulativeTokens,
+}
+
+#[derive(Debug)]
+struct ForkFileEvidence {
+    requests: HashMap<String, (DateTime<Utc>, ForkRequestEvidence)>,
+    token_lines: HashMap<i64, ForkRequestEvidence>,
+    stamp: ParentFileStamp,
+}
+
+/// Legacy copied history retains response IDs and the original request owner,
+/// even when every envelope timestamp is rewritten. Read a complete, stable
+/// snapshot and pair records exactly as the ordinary token parser does.
+fn read_fork_file_evidence(path: &Path) -> Option<Arc<ForkFileEvidence>> {
+    let file = fs::File::open(path).ok()?;
+    let stamp = ParentFileStamp::from_file(&file)?;
+    if let Some(cached) = replay_caches().lock().ok().and_then(|caches| {
+        caches
+            .fork_evidence
+            .get(path)
+            .filter(|entry| entry.stamp == stamp)
+            .cloned()
+    }) {
+        return Some(cached);
+    }
+    #[cfg(test)]
+    tests::record_fork_evidence_read(path);
+    let mut reader = codex_rollout_file::reader_from_file(path, file).ok()?;
+    let mut requests: HashMap<String, (DateTime<Utc>, ForkRequestEvidence)> = HashMap::new();
+    let mut token_lines = HashMap::new();
+    let mut pending: Option<ForkRequestEvidence> = None;
+    let mut bytes = Vec::new();
+    let mut line_offset = 0i64;
+    loop {
+        bytes.clear();
+        if reader.read_until(b'\n', &mut bytes).ok()? == 0 {
+            break;
+        }
+        line_offset += 1;
+        let line = std::str::from_utf8(&bytes).ok()?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        // Validate every record, including bodies omitted from the projection.
+        let record = parse_parent_record(line).ok()?;
+        let kind = record
+            .event_type
+            .as_ref()
+            .and_then(serde_json::Value::as_str);
+        if kind == Some("token_usage_record") {
+            pending = None;
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            let payload = value.get("payload")?;
+            let usage = payload.get("usage").and_then(parse_cumulative_tokens)?;
+            if usage_is_zero(&usage) {
+                continue;
+            }
+            let response_id = non_empty_string(payload.get("response_id"))?;
+            let owner = non_empty_string(payload.get("thread_id"))?;
+            let thread_id = uuid::Uuid::parse_str(&owner).ok()?.hyphenated().to_string();
+            if let Some(session_id) = payload
+                .get("session_id")
+                .and_then(serde_json::Value::as_str)
+            {
+                if uuid::Uuid::parse_str(session_id)
+                    .ok()?
+                    .hyphenated()
+                    .to_string()
+                    != thread_id
+                {
+                    return None;
+                }
+            }
+            let evidence = ForkRequestEvidence {
+                response_id: response_id.clone(),
+                thread_id,
+                usage,
+            };
+            let timestamp = parse_timestamp(record.timestamp.as_ref())?;
+            if let Some((previous_ts, previous)) = requests.get_mut(&response_id) {
+                if previous != &evidence {
+                    return None;
+                }
+                *previous_ts = (*previous_ts).max(timestamp);
+            } else {
+                requests.insert(response_id, (timestamp, evidence.clone()));
+            }
+            pending = Some(evidence);
+        } else if kind == Some("event_msg")
+            && record
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.event_type.as_ref())
+                .and_then(serde_json::Value::as_str)
+                == Some("token_count")
+        {
+            let Some(info) = record
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.info.as_ref())
+                .filter(|info| !info.is_null())
+                .filter(|info| parse_token_signature(info).is_some())
+            else {
+                continue;
+            };
+            if let Some(evidence) = pending.take() {
+                let last = info
+                    .get("last_token_usage")
+                    .and_then(parse_cumulative_tokens);
+                // Total-only copied history can be paired too: the caller checks
+                // its computed delta. New child requests still require exact last.
+                if last
+                    .as_ref()
+                    .is_none_or(|last| usage_matches(last, &evidence.usage) || usage_is_zero(last))
+                {
+                    token_lines.insert(line_offset, evidence);
+                }
+            }
+        }
+    }
+    if ParentFileStamp::from_file(&fs::File::open(path).ok()?)? != stamp {
+        return None;
+    }
+    let evidence = Arc::new(ForkFileEvidence {
+        requests,
+        token_lines,
+        stamp,
+    });
+    if let Ok(mut caches) = replay_caches().lock() {
+        caches
+            .fork_evidence
+            .insert(path.to_path_buf(), Arc::clone(&evidence));
+    }
+    Some(evidence)
+}
+
+/// A non-archived parent can remain idle forever too. Do not waive the time
+/// guard based on idleness alone: verify each copied response against its parent
+/// and require explicit child ownership for every new billable request.
+fn verified_owned_fork_prefix(
+    parsed: &ParsedCodexFile,
+    child_path: &Path,
+    index: &RolloutIndex,
+    child_file: Option<ParentFileStamp>,
+) -> Option<usize> {
+    let ParentResolution::Parent(parent_id) = &parsed.parent else {
+        return None;
+    };
+    if parsed.bounded_history.is_some() || !parsed.has_fork_provenance {
+        return None;
+    }
+    let candidates = index.get(parent_id)?;
+    // Multiple copies/pages need their existing resolution and conflict checks.
+    if candidates.len() != 1 {
+        return None;
+    }
+    let parent_path = &candidates[0];
+    let timeline = load_parent_timeline(parent_path).ok()?;
+    if !timeline.verified_snapshot || timeline.has_token_without_timestamp {
+        return None;
+    }
+    let cutoff = parsed.root_timestamp?;
+    // Recovery is only needed for the idle-parent timestamp failure. Normal
+    // forks must not trigger a second read/decompression of either rollout.
+    if timeline.max_timestamp.is_none_or(|last| last >= cutoff) {
+        return None;
+    }
+    let signatures = timeline.signatures_at(cutoff);
+    let prefix = matching_replay_prefix(&parsed.token_events, &signatures);
+    let replay_end = parsed.token_events.get(prefix.checked_sub(1)?)?.line_offset;
+    child_events_after_replay(parsed, prefix)?;
+    let child_id = parsed.meta_thread_id.as_deref()?;
+    let parent = read_fork_file_evidence(parent_path)?;
+    let child = read_fork_file_evidence(child_path)?;
+    if Some(child.stamp) != child_file {
+        return None;
+    }
+    for event in parsed
+        .token_events
+        .iter()
+        .filter(|event| event.event_index.is_some())
+        .chain(parsed.usage_record_events.iter())
+    {
+        let evidence = child.token_lines.get(&event.line_offset)?;
+        let delta = delta_from_usage(&evidence.usage);
+        if (
+            delta.input,
+            delta.cached_input,
+            delta.cache_write_input,
+            delta.output,
+        ) != (
+            event.delta.input,
+            event.delta.cached_input,
+            event.delta.cache_write_input,
+            event.delta.output,
+        ) {
+            return None;
+        }
+        if event.line_offset <= replay_end {
+            // Fallback records have a separate insertion path; copied fallbacks
+            // must stay deferred until that path can also strip them safely.
+            if event.event_index.is_none() || evidence.thread_id == child_id {
+                return None;
+            }
+            let (timestamp, inherited) = parent.requests.get(&evidence.response_id)?;
+            if *timestamp > cutoff || inherited != evidence {
+                return None;
+            }
+        } else if evidence.thread_id != child_id
+            || parent.requests.contains_key(&evidence.response_id)
+        {
+            return None;
+        }
+    }
+    // The parent must still be the same snapshot used for the identity checks.
+    if ParentFileStamp::from_file(&fs::File::open(parent_path).ok()?)? != parent.stamp {
+        return None;
+    }
+    Some(prefix)
+}
+
+/// Called only on a replay-cache miss. Successful normal alignment needs no
+/// request-evidence scan; an idle-parent recovery shares the same prefix cache.
+fn resolve_parent_replay_prefix(
+    parent_id: &str,
+    cutoff: DateTime<Utc>,
+    index: &RolloutIndex,
+    parsed: &ParsedCodexFile,
+    child_path: &Path,
+    child_file: Option<ParentFileStamp>,
+) -> Result<usize, ParentSignatureError> {
+    match resolve_parent_signatures(parent_id, cutoff, index, parsed) {
+        Ok(signatures) => Ok(matching_replay_prefix(&parsed.token_events, &signatures)),
+        Err(error) => {
+            verified_owned_fork_prefix(parsed, child_path, index, child_file).ok_or(error)
+        }
+    }
 }
 
 // A bounded-reference fork stores only its own requests. Accept this narrow case
@@ -2329,7 +2653,10 @@ fn sync_single_codex_file(
 
     // Windows may keep mtime unchanged while Codex holds its write handle open.
     // Legacy cursors have no byte offset: rescan once to catch up and persist it.
-    let last_byte_offset = pass.byte_offsets.get(&file_path_str).copied().flatten();
+    let last_byte_offset = pass
+        .cursors
+        .get(&file_path_str)
+        .and_then(|c| c.last_byte_offset);
     if file_modified == last_modified && last_byte_offset == i64::try_from(file_size).ok() {
         return Ok(CodexFileSyncResult::default());
     }
@@ -2450,33 +2777,34 @@ fn sync_single_codex_file(
                 Some(Some(prefix)) => prefix,
                 Some(None) => {
                     let parent_files = parent_dependency_stamp(parent_id, rollout_index);
-                    let parent_signatures =
-                        match resolve_parent_signatures(parent_id, cutoff, rollout_index) {
-                            Ok(signatures) => signatures,
-                            Err(error) => {
-                                let pending_reason = if rollout_index.contains_key(parent_id) {
-                                    PendingReason::Retryable {
-                                        reason: error.reason,
-                                        parent_id: parent_id.clone(),
-                                        child_file,
-                                        parent_files: if error.cacheable {
-                                            parent_files
-                                        } else {
-                                            None
-                                        },
-                                    }
-                                } else {
-                                    PendingReason::MissingParent(parent_id.clone())
-                                };
-                                return Ok(mark_deferred(
-                                    file_path,
-                                    file_modified,
-                                    file_size,
-                                    pending_reason,
-                                ));
-                            }
-                        };
-                    let prefix = matching_replay_prefix(&parsed.token_events, &parent_signatures);
+                    let prefix = match resolve_parent_replay_prefix(
+                        parent_id,
+                        cutoff,
+                        rollout_index,
+                        &parsed,
+                        file_path,
+                        child_file,
+                    ) {
+                        Ok(prefix) => prefix,
+                        Err(error) => {
+                            let pending_reason = if rollout_index.contains_key(parent_id) {
+                                PendingReason::Retryable {
+                                    reason: error.reason,
+                                    parent_id: parent_id.clone(),
+                                    child_file,
+                                    parent_files: if error.cacheable { parent_files } else { None },
+                                }
+                            } else {
+                                PendingReason::MissingParent(parent_id.clone())
+                            };
+                            return Ok(mark_deferred(
+                                file_path,
+                                file_modified,
+                                file_size,
+                                pending_reason,
+                            ));
+                        }
+                    };
                     if let Ok(mut caches) = replay_caches().lock() {
                         caches.replay_prefixes.insert(
                             file_path.to_path_buf(),
@@ -2489,12 +2817,15 @@ fn sync_single_codex_file(
                     }
                     prefix
                 }
-                None => {
-                    let parent_signatures =
-                        resolve_parent_signatures(parent_id, cutoff, rollout_index)
-                            .map_err(|error| AppError::Config(error.reason))?;
-                    matching_replay_prefix(&parsed.token_events, &parent_signatures)
-                }
+                None => resolve_parent_replay_prefix(
+                    parent_id,
+                    cutoff,
+                    rollout_index,
+                    &parsed,
+                    file_path,
+                    child_file,
+                )
+                .map_err(|error| AppError::Config(error.reason))?,
             }
         }
     };

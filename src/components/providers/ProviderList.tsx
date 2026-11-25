@@ -52,8 +52,9 @@ import { cn } from "@/lib/utils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/codexConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
+import { useCodebuddyOfficialCards } from "@/lib/query/codebuddy";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
-import { isHermesReadOnlyProvider } from "@/config/hermesProviderPresets";
+import { isHermesReadOnlyProvider } from "@/config/hermesProviderMeta";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
 import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
 import {
@@ -186,6 +187,14 @@ export function ProviderList({
     Object.values(providers).some((provider) => isWorkBuddyOfficial(provider));
   const { state: workbuddyOfficial, switchTo: switchWorkBuddyAccount } =
     useWorkBuddyOfficial(hasWorkBuddyOfficial);
+  // CodeBuddy 官方登录卡：绑定的账号是不是 CodeBuddy 现在登着的号（决定「已添加 / 可添加」）、卡片上的「添加」
+  const hasCodebuddyOfficial =
+    appId === "codebuddy" &&
+    Object.values(providers).some(
+      (provider) => provider.category === "official",
+    );
+  const { state: codebuddyAccounts, switchAccount: switchCodebuddyAccount } =
+    useCodebuddyOfficialCards(hasCodebuddyOfficial);
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -201,6 +210,7 @@ export function ProviderList({
         case "kimi":
         case "dsh":
         case "mcode":
+        case "codebuddy":
         case "copilot":
         case "workbuddy":
           return provider.meta?.liveConfigManaged === true;
@@ -431,6 +441,7 @@ export function ProviderList({
       piStateUnavailable: appHas(appId, "piFamily") && !isPiStateReady,
       kimiCurrentId: currentProviderId,
       workbuddyOfficial,
+      codebuddyAccounts,
       copilotDefaultId: appId === "copilot" ? currentProviderId : null,
       extraAdded: showDshAccountCard ? 1 : 0,
       actions: {
@@ -444,7 +455,10 @@ export function ProviderList({
             ? onDisableOmoSlim?.()
             : onDisableOmo?.(),
         setDefault: (provider, modelId) => onSetAsDefault?.(provider, modelId),
-        switchAccount: (provider) => void switchWorkBuddyAccount(provider),
+        switchAccount: (provider) =>
+          appId === "codebuddy"
+            ? switchCodebuddyAccount(provider)
+            : void switchWorkBuddyAccount(provider),
         openTerminal: (provider) => onOpenTerminal?.(provider),
       },
     });
@@ -466,6 +480,8 @@ export function ProviderList({
     hermesModelConfig?.provider,
     isPiStateReady,
     currentProviderId,
+    codebuddyAccounts,
+    switchCodebuddyAccount,
     showDshAccountCard,
     onRemoveFromConfig,
     onDelete,
@@ -560,7 +576,8 @@ export function ProviderList({
             appId === "mcode" ||
             appId === "kimi" ||
             appId === "dsh" ||
-            appId === "workbuddy"
+            appId === "workbuddy" ||
+            appId === "codebuddy"
               ? undefined
               : () => importMutation.mutate()
           }

@@ -242,6 +242,72 @@ context_window = 250000
     expect(onSubmit.mock.calls[0][0].meta.custom_endpoints).toBeUndefined();
   });
 
+  it("keeps the xAI account bound to an official card when saving", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        providerId="grok-official-2"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Grok Official (a@example.com)",
+          category: "official",
+          settingsConfig: { config: "" },
+          meta: {
+            authBinding: {
+              source: "managed_account",
+              authProvider: "xai_oauth",
+              accountId: "user-a",
+            },
+          },
+        }}
+      />,
+    );
+
+    // 官方卡显示登录方式选择，不显示 API Key / 模型等字段
+    expect(screen.getByRole("combobox", { name: "登录方式" })).toBeTruthy();
+    expect(document.querySelector("#codexBaseUrl")).toBeNull();
+    // 这台电脑的授权中心里没有这个号：照样显示出来，不悄悄改成跟随 Grok CLI 登录
+    expect(await screen.findByText("不在这台电脑上的账号")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    const submitted = onSubmit.mock.calls[0][0];
+    expect(submitted.presetCategory).toBe("official");
+    expect(submitted.meta.authBinding).toEqual({
+      source: "managed_account",
+      authProvider: "xai_oauth",
+      accountId: "user-a",
+    });
+  });
+
+  it("leaves an unbound official card following the Grok CLI sign-in", async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        providerId="grokbuild-official"
+        submitLabel="Save"
+        onSubmit={onSubmit}
+        onCancel={() => {}}
+        initialData={{
+          name: "Grok Official",
+          category: "official",
+          settingsConfig: { config: "" },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("跟随 Grok CLI 登录")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].meta?.authBinding).toBeUndefined();
+  });
+
   // #6427 复用 Codex 表单时把 Codex 专属文案原样带进了 Grok Build 表单。
   // 按 appId 分流后，Grok 表单不得再出现 Codex 字样或不适用条款（模型映射）。
   it("uses Grok-specific copy for the model field and collapsed advanced section", async () => {

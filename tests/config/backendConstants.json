@@ -61,6 +61,9 @@
     "http://localhost:11434": null,
     "https://ollama.com.example.com/v1": null,
     "https://proxy.example.com/ollama.com/v1": null,
+    "https://token-plan-cn.xiaomimimo.com/anthropic": "mimo",
+    "https://token-plan-cn.xiaomimimo.com/v1": "mimo",
+    "https://api.xiaomimimo.com/anthropic": null,
     "https://api.openai.com/v1": null,
     "https://api.kimi.com:443/coding/v1": "kimi",
     "https://opencode.ai./zen/go": "opencode_go",
@@ -82,6 +85,9 @@
     "https://api.siliconflow.com/v1": "siliconflow",
     "https://openrouter.ai/api/v1": "openrouter",
     "https://api.novita.ai/openai": "novita",
+    "https://api.xiaomimimo.com/anthropic": "mimo",
+    "https://api.xiaomimimo.com/v1": "mimo",
+    "https://token-plan-cn.xiaomimimo.com/v1": null,
     "HTTPS://API.DEEPSEEK.COM:443/v1": "deepseek",
     "https://api.deepseek.com./v1": "deepseek",
     "https://relay.example.com/openrouter.ai/api/v1": null,
@@ -122,7 +128,8 @@
     "agy": null,
     "omp": null,
     "copilot": null,
-    "workbuddy": null
+    "workbuddy": null,
+    "codebuddy": null
   },
   "userAgentValid": {
     "": true,

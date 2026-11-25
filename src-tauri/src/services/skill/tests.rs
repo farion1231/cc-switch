@@ -1672,6 +1672,7 @@ fn agy_and_kimi_skill_toggle_rolls_back_on_database_failure() {
         AppType::Kimi,
         AppType::Dsh,
         AppType::WorkBuddy,
+        AppType::Codebuddy,
     ] {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
@@ -1766,12 +1767,14 @@ fn mcode_unmanaged_copy_survives_sync_migration_and_uninstall() {
 
 #[test]
 #[serial_test::serial]
-fn kimi_and_workbuddy_unmanaged_copy_survives_resync_migration_and_uninstall() {
+fn kimi_workbuddy_and_codebuddy_unmanaged_copy_survives_resync_migration_and_uninstall() {
     for (app, native_content) in [
         (AppType::Kimi, "same-content"),
         (AppType::Kimi, "external"),
         (AppType::WorkBuddy, "same-content"),
         (AppType::WorkBuddy, "external"),
+        (AppType::Codebuddy, "same-content"),
+        (AppType::Codebuddy, "external"),
     ] {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
@@ -1809,8 +1812,9 @@ fn kimi_and_workbuddy_unmanaged_copy_survives_resync_migration_and_uninstall() {
 
 #[test]
 #[serial_test::serial]
-fn kimi_and_workbuddy_skill_enable_rejects_external_directory_without_changing_files_or_flags() {
-    for app in [AppType::Kimi, AppType::WorkBuddy] {
+fn kimi_workbuddy_and_codebuddy_skill_enable_rejects_external_directory_without_changing_files_or_flags(
+) {
+    for app in [AppType::Kimi, AppType::WorkBuddy, AppType::Codebuddy] {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
         let _location = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
@@ -2448,6 +2452,7 @@ fn mcode_and_kimi_uninstall_keep_modified_copy_and_record_until_cleanup_succeeds
         AppType::Kimi,
         AppType::Dsh,
         AppType::WorkBuddy,
+        AppType::Codebuddy,
     ] {
         let temp = tempdir().unwrap();
         let _home = TestHomeGuard::set(temp.path());
@@ -3251,6 +3256,7 @@ fn migrate_storage_retargets_managed_pi_mcode_and_kimi_symlinks() {
         AppType::Kimi,
         AppType::Dsh,
         AppType::WorkBuddy,
+        AppType::Codebuddy,
     ] {
         let temp = tempdir().expect("tempdir");
         let _home = TestHomeGuard::set(temp.path());
@@ -3616,6 +3622,35 @@ fn update_lookup_uses_unique_metadata_name_without_overriding_directory_match() 
         SkillService::find_remote_skill_for_install(&root_skills, "removed-child", None).is_none(),
         "a removed child skill must not fall back to an unrelated root skill"
     );
+}
+
+#[test]
+fn discovery_lists_one_copy_per_install_name_like_waza_layout() {
+    // tw93/Waza 把每个技能放两份：skills/<名> 和 plugins/waza/skills/<名>。
+    let temp = tempdir().expect("tempdir");
+    for name in ["check", "hunt"] {
+        write_skill(&temp.path().join("plugins/waza/skills").join(name), name);
+        write_skill(&temp.path().join("skills").join(name), name);
+    }
+    write_skill(&temp.path().join("b/Utils"), "utils-b");
+    write_skill(&temp.path().join("a/utils"), "utils-a");
+    let repo = SkillRepo {
+        host: default_repo_host(),
+        owner: "tw93".to_string(),
+        name: "Waza".to_string(),
+        branch: "main".to_string(),
+        enabled: true,
+    };
+    let mut skills = Vec::new();
+    SkillService::new()
+        .scan_dir_recursive(temp.path(), temp.path(), &repo, &mut skills)
+        .expect("scan skills");
+    assert_eq!(skills.len(), 6, "检查更新要看到每一份，扫描本身不去重");
+
+    SkillService::keep_one_per_install_name(&mut skills);
+    let mut directories: Vec<_> = skills.iter().map(|s| s.directory.as_str()).collect();
+    directories.sort_unstable();
+    assert_eq!(directories, ["a/utils", "skills/check", "skills/hunt"]);
 }
 
 #[test]

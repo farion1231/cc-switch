@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "請輸入 API Key",
     "show": "顯示 API Key",
-    "hide": "隱藏 API Key"
+    "hide": "隱藏 API Key",
+    "copied": "API Key 已複製",
+    "copyFailed": "API Key 複製失敗"
   },
   "jsonEditor": {
     "mustBeObject": "設定必須是 JSON 物件，不能是陣列或其他類型",
@@ -233,7 +235,7 @@
         "account": "帳號",
         "accountFollow": "跟隨 agy 目前登入",
         "accountMissing": "不在這台電腦上的帳號",
-        "accountHelp": "選了帳號的話，「開啟終端機」前會先把 agy 的登入切換到它（全域生效，之後新開的 agy 都用它）。帳號在授權中心新增。"
+        "accountHelp": "儲存新的綁定帳號後，新開啟的 agy 會使用它。用這張卡片開啟終端機時也會切回綁定帳號。帳號可在授權中心新增。"
       },
       "gemini": {
         "model": "模型",
@@ -241,17 +243,19 @@
         "oauthHint": "Google 官方使用 OAuth 個人驗證，無需填寫 API Key。首次使用時會自動開啟瀏覽器進行登入。",
         "apiKeyPlaceholder": "請輸入 Gemini API Key"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "登入方式",
+        "missing": "不在這台電腦上的帳號",
+        "reauthBadge": "需要重新登入"
+      },
+      "claudeAccount": {
         "default": "跟隨 Claude Code 登入",
         "defaultDescription": "帳號會隨 Claude Code 目前登入而變更",
-        "missing": "不在這台電腦上的帳號",
         "manage": "新增或管理 Claude 帳號",
         "helpTerminal": "設定裡覆寫了 Claude 設定目錄，切到這張卡不會切換 Claude Code 的登入，請從卡片「開啟終端機」使用選取的帳號。",
         "helpWsl": "Claude 設定目錄在 WSL 裡，暫不支援 Claude 帳號，切到這張卡不會切換 Claude Code 的登入。",
         "help": "切到這張卡後，Claude Code 的登入會即時換成選取的帳號，正在執行的工作階段也一樣。想同時用幾個帳號，從卡片「開啟終端機」。",
         "claudeAccount": "Claude 帳號",
-        "reauthBadge": "需要重新登入",
         "terminalHint": "從卡片開啟終端機使用",
         "wslHint": "WSL 暫不支援",
         "plan": {
@@ -263,6 +267,13 @@
           "teamPremium": "Team 進階席位",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "跟隨 Grok CLI 登入",
+        "defaultDescription": "帳號會隨 Grok CLI 目前的登入變化",
+        "manage": "新增或管理 xAI 帳號",
+        "help": "切到這張卡後，Grok CLI 的登入（~/.grok/auth.json）會換成選取的帳號；原本登入的帳號會先收進授權中心，切回「跟隨 Grok CLI 登入」的卡時還原。",
+        "xaiAccount": "xAI 帳號"
       }
     },
     "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",
@@ -597,6 +608,9 @@
       "safetyBackupId": "安全備份 ID",
       "intervalLabel": "自動備份間隔",
       "retainLabel": "備份保留數量",
+      "maxTotalLabel": "備份總大小上限",
+      "maxTotalUnlimited": "不限制",
+      "maxTotalHint": "預設不限制。設定後，備份資料夾超過此大小時，會從最舊的備份開始刪除。最新的一份備份和還原正在使用的備份一律保留，所以單份備份比上限還大時，資料夾仍可能超過上限。在下次備份或每日維護時生效。",
       "intervalDisabled": "停用",
       "intervalHours": "{{hours}} 小時",
       "intervalDays": "{{days}} 天",
@@ -903,6 +917,14 @@
     "minimizeToTrayDescription": "勾選後點擊關閉按鈕會隱藏至系統匣，取消則直接退出應用程式。",
     "useAppWindowControls": "啟用應用程式等級視窗按鈕",
     "useAppWindowControlsDescription": "開啟後使用應用程式自建的最小化、最大化/還原、關閉按鈕；關閉後沿用系統視窗模式。",
+    "copilotVscode": {
+      "enable": "套用至 VS Code Copilot 外掛程式",
+      "description": "開啟後自動將 CLI 中已加入的模型和金鑰套用至偵測到的全部 VS Code 設定，後續供應商變更自動同步。",
+      "pending": "VS Code 連動待同步",
+      "pendingDescription": "VS Code 可能仍使用上次設定，可重試同步最新變更。",
+      "noTargets": "找不到 VS Code 設定，請先啟動一次 VS Code 後重試。",
+      "failed": "同步至 VS Code Copilot 失敗"
+    },
     "enableClaudePluginIntegration": "套用至 Claude Code 外掛程式",
     "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
@@ -1086,6 +1108,7 @@
     "toolUpgradeUnanchoredHint": "無法判定命令列實際使用的安裝位置；將執行預設更新指令（可能安裝至 PATH 中第一個 npm）。",
     "toolUpgradeUnmanagedTitle": "以下工具已略過更新",
     "toolUpgradeUnmanagedDetail": "{{tool}}（{{path}}）不是透過 npm 或可辨識的安裝程式安裝的，CC Switch 無法判斷如何更新它。請使用你原本的安裝方式更新（例如 winget、Scoop 或重新執行官方安裝指令碼）。",
+    "toolUpgradeDesktopManagedDetail": "這個 OpenCode CLI 由 OpenCode Desktop 隨附，並會隨 Desktop 應用程式一起更新。",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1261,6 +1284,8 @@
       "credits": "積分",
       "leftOf": "剩餘 {{remaining}} / {{total}}",
       "usedOf": "已用 {{used}} / {{total}}",
+      "unlimited": "不限量",
+      "unlimitedUsed": "不限量，已用 {{used}}",
       "usedUp": "已用完（共 {{total}}）",
       "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
       "staleNotRunning": "WorkBuddy 沒在執行，顯示的是上次查到的結果",
@@ -1522,6 +1547,7 @@
     "deleteEllipsis": "刪除",
     "selectSessionLabel": "選擇 {{title}}",
     "mcodeDeleteHint": "請在 MiniMax Code 中刪除",
+    "codebuddyDeleteHint": "請在 CodeBuddy Code 中管理此會話：背景任務、團隊成員和檔案歷史都引用它的記錄",
     "agyDeleteHint": "請在 Antigravity 中刪除工作階段，以同步清理執行狀態",
     "groupMeta": "{{count}} 個工作階段 · {{time}}",
     "bucketToday": "今天",
@@ -1816,6 +1842,7 @@
       "subrouter": "SubRouter 是中轉站聚合平台，一個 Key 可接入多個模型與供應商。",
       "qiniu": "七牛雲是多協定 AI 中轉平台，一個 Key 即可呼叫原生 Claude、GPT、Gemini 模型，相容 Anthropic、OpenAI、Gemini 多種介面。",
       "haoai": "hao.ai 是面向開發者與團隊的高速、穩定大模型統一 API 閘道：一個 Key 即可接入 GPT、Claude、Grok 等主流模型，相容 OpenAI、Anthropic 協定，提供模型路由、故障回退與完整呼叫日誌，價格低至官方參考價的 1.5 折。CC Switch 使用者透過此連結註冊，首單可享 5% 贈送額度！",
+      "stringai": "弦界 StringAI 是高性價比、高效穩定的模型 API 平台，一站式接入 AI 程式設計、圖像生成、語音合成和影片生成四大能力。CC Switch 使用者專屬福利：透過此連結註冊，首儲 3.74 美元送 3.74 美元額外獎勵額度！",
       "fenno": "Fenno.ai 是穩定高效的 API 中轉服務商，可接入多種主流模型。CC Switch 使用者專屬福利：透過此連結訂閱 1.99 刀 /50 刀額度的 Trial 方案，有效期 7 天！",
       "teamorouter": "TeamoRouter 讓 Claude Code 一把 Key 直接使用 Opus 5.5、Sonnet 5.5、Fable 5.1，Opus 5.5 約為官方價 2.8 折，按量計費，原生 Anthropic 協定。CC Switch 使用者透過此連結註冊，首次儲值 $10 / $20 / $50 額外多送 10% 額度！",
       "ppio": "PPIO 是中國領先的獨立 Agentic Cloud 服務商，一個 API Key 調用全部旗艦開源模型。透過此連結註冊並完成實名認證，即可獲得 ¥10 代金券。",
@@ -2107,6 +2134,7 @@
     "selectAccount": "選擇帳號",
     "selectAccountPlaceholder": "選擇 xAI 帳號",
     "useDefaultAccount": "使用預設帳號",
+    "account": "xAI 帳號",
     "accounts": "xAI 帳號",
     "defaultAccount": "預設",
     "expired": "憑證已失效",
@@ -2357,6 +2385,7 @@
     "loginWith": {
       "deepseek": "使用 DeepSeek 帳號登入",
       "workbuddy": "用 WorkBuddy 帳號登入",
+      "codebuddy": "用 CodeBuddy 帳號登入",
       "kimi": "使用 Kimi 帳號登入",
       "claude": "用 Claude 帳號登入",
       "chatgpt": "用 ChatGPT 帳號登入",
@@ -2713,14 +2742,14 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "速度怎麼算",
-    "speedHelp": "每秒輸出多少 token，從首字算到結束。統計經路由服務或具 Antigravity 原生計時、輸出不少於 100 token 的請求；思考過程不外露的模型是近似值。帶 ≈ 的是按其他工作階段日誌的時間戳記估算的：等首字的時間也算在內，所以偏低；只估輸出不少於 200 token 的請求。",
+    "speedHelp": "每秒輸出多少 token，從首字算到結束。只算經路由服務、輸出不少於 100 token 的請求；思考過程不外露的模型是近似值。帶 ≈ 的是沒開路由時按工作階段日誌的時間戳記估算的：等首字的時間也算在內，所以偏低；只估輸出不少於 200 token 的請求。",
     "speedSumHelpTitle": "彙總速度怎麼算",
-    "speedSumHelp": "輸出 token 總數除以生成時間總和，不是逐筆平均，免得短請求把數字帶歪。統計經路由服務或具 Antigravity 原生計時、輸出不少於 100 token 的請求。帶 ≈ 的是按其他工作階段日誌估算的（含首字等待，只估輸出不少於 200 token 的請求），這一列沒有精確計時資料時才顯示。",
+    "speedSumHelp": "輸出 token 總數除以生成時間總和，不是逐筆平均，免得短請求把數字帶歪。只算經路由服務、輸出不少於 100 token 的請求。帶 ≈ 的是按工作階段日誌估算的（含首字等待，只估輸出不少於 200 token 的請求），這一列沒有路由資料時才顯示。",
     "firstToken": "首字",
     "firstTokenHelpTitle": "首字時間",
-    "firstTokenHelp": "從路由服務收到請求（或 Antigravity 原生記錄）到上游開始輸出的時間。帶 ≈ 的是按其他工作階段日誌的時間戳記推出來的：起點是上一筆日誌寫入的時刻，含用戶端組裝請求的時間，所以偏高；Claude Code 只有回覆以思考開頭時推得出，Codex 只有新版日誌、而且回覆不是一開頭就呼叫工具時推得出。",
+    "firstTokenHelp": "從路由服務收到請求，到上游開始輸出的時間。帶 ≈ 的是沒開路由時按工作階段日誌的時間戳記推出來的：起點是上一筆日誌寫入的時刻，含用戶端組裝請求的時間，所以偏高；Claude Code 只有回覆以思考開頭時推得出，Codex 只有新版日誌、而且回覆不是一開頭就呼叫工具時推得出。",
     "firstTokenSumHelpTitle": "首字時間怎麼算",
-    "firstTokenSumHelp": "從路由服務收到請求（或 Antigravity 原生記錄）到上游開始輸出的時間。取這一列所有請求的中位數，不會被個別排隊、冷啟動的慢請求拉高。只算經路由服務或 Antigravity 原生計時的成功請求；超過 30 天、已併入每日彙總的請求不計。帶 ≈ 的是按其他工作階段日誌推出來的（偏高，只有部分請求推得出），這一列沒有精確計時資料時才顯示。",
+    "firstTokenSumHelp": "從路由服務收到請求，到上游開始輸出的時間。取這一列所有請求的中位數，不會被個別排隊、冷啟動的慢請求拉高。只算經路由服務、成功的串流請求；超過 30 天、已併入每日彙總的請求不計。帶 ≈ 的是按工作階段日誌推出來的（偏高，只有部分請求推得出），這一列沒有路由資料時才顯示。",
     "timingTip": "耗時 {{duration}}s · 首字 {{ttft}}s",
     "estimatedTimingTip": "耗時約 {{duration}}s（按工作階段日誌的時間戳記估算，含首字等待）",
     "estimatedTimingTipWithFirstToken": "耗時約 {{duration}}s · 首字約 {{ttft}}s（按工作階段日誌的時間戳記估算）",
@@ -3746,7 +3775,10 @@
       "command": "命令",
       "args": "參數",
       "env": "環境",
-      "url": "位址"
+      "url": "位址",
+      "type": "類型",
+      "cwd": "工作目錄",
+      "headers": "標頭"
     },
     "prompt": {
       "title": "匯入系統提示詞",
@@ -3780,7 +3812,8 @@
     "risk": {
       "envHijack": "該設定包含可改變處理程序載入行為的環境變數（例如注入動態程式庫、替換 CA 憑證），請確認來源可信。",
       "privateEndpoint": "該位址指向本機或內部網路。若非你自建的本機服務，請勿匯入。",
-      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。"
+      "shellCommand": "該設定透過 shell 執行整段命令，實際執行的內容在參數裡，請逐行核對。",
+      "mcpDangerousField": "該 MCP 設定包含高風險擴充欄位，可能會讀取主機環境變數並外傳（如 bearer_token_env_var、env_http_headers、env_vars）、執行輔助指令（http_headers_helper）或劫持工作目錄（cwd）。請務必確認來源完全可信。"
     }
   },
   "iconPicker": {
@@ -4773,6 +4806,7 @@
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
       "claudeNote": "（頂層 mcpServers）",
+      "codebuddyNote": "（依 .mcp.json → mcp.json → ~/.codebuddy.json 讀取最先存在的一個）",
       "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp。home 層級的 ~/.dsh/cordis.patch.yml 不讀取也不改寫，其中的 MCP 請在該檔案裡管理）",
       "ok": "知道了"
     },
@@ -5052,7 +5086,7 @@
   "pluginsPage": {
     "title": "外掛",
     "helpTitle": "外掛",
-    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw 和 Pi 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
+    "help": "安裝、啟用、移除 Claude Code、Codex、Grok Build、MiniMax Code、OpenClaw、Pi 和 Antigravity CLI 的外掛。CC Switch 呼叫各應用程式自帶的命令列，效果和在終端機執行它的外掛指令相同。Pi 的外掛就是 Pi 套件，目錄取自 npm。",
     "appAria": "應用程式",
     "viewAria": "外掛檢視",
     "viewInstalled": "已安裝",
@@ -5112,9 +5146,11 @@
     "confirmRemoveMarketBody": "{{app}} 將不再列出這個市集裡的外掛，從這個市集安裝的外掛也可能一併解除安裝。之後可以重新加入。",
     "toast": {
       "installed": "已安裝 {{name}}",
+      "installedNeedsConfig": "已安裝但預設停用。請在 {{app}} 中執行 /plugin 設定其 MCP 伺服器後再啟用。",
       "installFailed": "安裝 {{name}} 失敗",
       "installNeedsTerminal": "這個外掛安裝時要在本機執行市集宣告的命令，CC Switch 不會替你同意。請在終端機裡執行 {{command}}，確認後再回來重新整理。",
       "authRequired": "{{app}} 需要先登入帳號。請在終端機裡執行 {{command}} 登入，再回來重試。",
+      "pluginInUse": "該外掛正被其他 {{app}} / {{cli}} 行程佔用（如執行中的工作階段、Hub 或背景服務）。請關閉執行中的工作階段或相關行程後重試。",
       "uninstalled": "已解除安裝 {{name}}",
       "uninstallFailed": "解除安裝 {{name}} 失敗",
       "enabled": "已啟用 {{name}}",
@@ -5123,6 +5159,7 @@
       "updated": "已更新 {{name}}",
       "upToDate": "{{name}} 已是最新版本",
       "updateFailed": "更新 {{name}} 失敗",
+      "updateNeedsReinstall": "這個外掛裝在舊版 Antigravity 使用的目錄裡，CC Switch 無法替它更新。解除安裝後在「探索」裡重新安裝，就能裝上最新版本。",
       "refreshed": "外掛市集已重新整理",
       "refreshFailed": "重新整理外掛市集失敗",
       "marketAdded": "已加入市集 {{source}}",
@@ -5159,6 +5196,7 @@
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
+      "codebuddyHelp": "CodeBuddy Code 的官方登入（國內版、國際版都在這裡）。要切換帳號，在供應商列表裡為帳號建立一張「CodeBuddy 官方登入」卡並點「新增」。「新增帳號」會開啟終端機執行 codebuddy，登入後這裡自動收錄；已登入時會先讓 CodeBuddy 暫時登出原來的帳號，放棄可恢復。權杖由 CodeBuddy 自己續期。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在帳號的「…」裡選「將 WorkBuddy 切換到這個帳號」，或在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
       "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
@@ -5219,6 +5257,32 @@
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
       "switched": "已切換，新開的 agy 會使用這個帳號。",
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
+    },
+    "codebuddy": {
+      "mainland": "國內版",
+      "global": "國際版",
+      "expiredNote": "登入已過期，需要重新登入",
+      "addedOn": "{{date}}收錄",
+      "imported": "已收錄 {{login}}。",
+      "uncollected": "CodeBuddy 目前登入的是 {{login}}，還沒收錄到這裡。",
+      "importCurrent": "收錄目前帳號",
+      "unrecognized": "無法辨識 CodeBuddy 的登入檔格式",
+      "unrecognizedNote": "可能由 WorkBuddy 加密託管。CC Switch 不會改動它，也無法切換帳號。",
+      "statusLoadFailed": "無法讀取 CodeBuddy 帳號，請重試。",
+      "empty": "還沒有 CodeBuddy 帳號。點「新增帳號」登入，或收錄 CodeBuddy 目前登入的帳號。",
+      "login": "登入新帳號",
+      "current": "CodeBuddy 使用中",
+      "pendingNote": "已在終端機開啟 codebuddy，依提示登入（沒有出現登入畫面就輸入 /login），完成後這裡會自動收錄。",
+      "reopenTerminal": "重新開啟終端機",
+      "removeNote": "只刪除 CC Switch 裡的副本，不會讓 CodeBuddy 登出。",
+      "quota": {
+        "credits": "積分",
+        "enterprise": "企業版",
+        "unlimited": "不限量",
+        "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
+        "usedDetail": "本週期已用 {{used}} 積分",
+        "refreshPending": "權杖待 CodeBuddy 續期，切到這個帳號用一次後再查"
+      }
     },
     "workbuddy": {
       "addedOn": "{{date}}收錄",
@@ -5366,6 +5430,47 @@
       "renameProvider": "Oh My Pi 供應商識別碼不能重新命名。",
       "providerMissing": "此 Oh My Pi 供應商已不在儲存的清單中。",
       "legacyModelsJson": "Oh My Pi 目錄裡仍是舊的 models.json，omp 會在下次啟動時將它遷移為 models.yml。請先執行一次 omp，再回來新增供應商。"
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "尚未新增自訂模型",
+      "description": "CodeBuddy 官方模型由 CodeBuddy Code 自行管理；要切換官方帳號，為帳號建立一張「CodeBuddy 官方登入」卡，在這裡點「新增」。~/.codebuddy/models.json 中已有的自訂模型會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增模型。"
+    },
+    "modelsHint": "模型 ID 寫入 models.json 的 id，也是 /model 中選擇的名稱，通常就是介面的模型名稱，新增後不可修改。顯示名稱與上方的「名稱」是同一個值。",
+    "modelIdDuplicate": "此模型 ID 已被使用，請更換",
+    "modelIdInvalid": "模型 ID 不能以空格開頭或結尾。",
+    "vendor": "廠商標籤",
+    "urlHint": "填寫完整路徑，通常以 /chat/completions 結尾；支援 ${VAR} 環境變數參照。",
+    "urlInvalid": "請輸入有效的 http(s) 位址。",
+    "apiKeyPlaceholder": "輸入 API Key，或寫成 ${MY_API_KEY} 參照環境變數",
+    "maxInputTokens": "最大輸入 Token",
+    "maxOutputTokens": "最大輸出 Token",
+    "jsonHint": "對應 models.json 中的一筆模型設定（id 由上方模型 ID 決定）。儲存後 CodeBuddy Code 會自動重新載入。",
+    "official": {
+      "presetName": "CodeBuddy 官方登入",
+      "account": "登入帳號",
+      "accountHint": "選擇這張卡要用的 CodeBuddy 帳號。CodeBuddy 同時只能登入一個帳號：在供應商列表裡點這張卡的「新增」，CodeBuddy 的登入就會換成它，正在執行的 CodeBuddy 也會自動換過去。",
+      "accountDeleted": "帳號已刪除，請重新選擇",
+      "accountDeletedChip": "帳號已刪除",
+      "unbound": "還沒有選擇帳號，請編輯卡片選擇一個",
+      "statusLoading": "正在讀取帳號…",
+      "expired": "這個帳號的登入已過期，請在授權中心重新登入後再新增",
+      "importCurrent": "收錄目前登入（{{login}}）",
+      "adding": "正在新增…",
+      "added": "已新增 {{name}}，CodeBuddy 已登入這個帳號。正在執行的 CodeBuddy 會自動換過去，新開的也會使用它。",
+      "addFailed": "新增失敗：{{error}}",
+      "removeHint": "CodeBuddy 同時只能登入一個帳號，新增另一張官方卡即可切換"
+    },
+    "login": {
+      "confirmTitle": "登入新的 CodeBuddy 帳號",
+      "confirmMessage": "CodeBuddy 目前登入的是 {{login}}，同一時間只能登入一個帳號。繼續後會先把它收錄到授權中心，再讓 CodeBuddy 暫時登出（不刪除登入資訊、不通知伺服器），然後開啟終端機登入新帳號。\n\n寫入後，正在執行的 CodeBuddy 工作階段會暫時變為未登入，直到你完成登入。中途放棄可以一鍵恢復原來的登入。",
+      "confirm": "繼續登入",
+      "signedInHint": "CodeBuddy 已登入時，登入新帳號會先讓它暫時登出原來的帳號：寫入後，正在執行的 CodeBuddy 工作階段會暫時變為未登入，直到你完成登入。",
+      "pendingReplacing": "已讓 CodeBuddy 暫時登出原來的帳號，並在終端機開啟了 codebuddy。依提示登入新帳號，完成後這裡會自動收錄。",
+      "restore": "恢復原來的登入",
+      "restored": "已恢復原來的 CodeBuddy 登入。",
+      "restoreFailed": "沒能恢復原來的登入（CodeBuddy 可能正在寫入登入檔）。可以在授權中心重新登入，或在終端機裡登入。"
     }
   },
   "dsh": {

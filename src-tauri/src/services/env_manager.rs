@@ -42,7 +42,7 @@ pub fn delete_env_vars(conflicts: Vec<EnvConflict>) -> Result<BackupInfo, String
 /// Create backup file before deletion
 fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
     // Get backup directory
-    let backup_dir = backup_dir()?;
+    let backup_dir = backup_dir();
     fs::create_dir_all(&backup_dir).map_err(|e| format!("创建备份目录失败: {e}"))?;
 
     // Generate backup file name with timestamp
@@ -66,9 +66,10 @@ fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
 }
 
 /// Get backup directory path
-pub(crate) fn backup_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    Ok(home.join(".cc-switch").join("backups"))
+pub(crate) fn backup_dir() -> PathBuf {
+    crate::config::get_home_dir()
+        .join(".cc-switch")
+        .join("backups")
 }
 
 /// Delete a single environment variable
@@ -161,18 +162,12 @@ fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
 
     #[cfg(not(target_os = "windows"))]
     use tempfile::tempdir;
-
-    #[test]
-    fn test_backup_dir_creation() {
-        let backup_dir = backup_dir();
-        assert!(backup_dir.is_ok());
-    }
 
     #[cfg(not(target_os = "windows"))]
     #[test]
