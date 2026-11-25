@@ -4532,6 +4532,7 @@
       "enable": "Etkinleştir",
       "disable": "Devre dışı bırak",
       "edit": "{{name}}'yi düzenleyin",
+      "visitWebsite": "Web sitesini ziyaret et · {{host}}",
       "more": "{{name}} için diğer işlemler",
       "moveUp": "{{name}}'yi yukarı taşı",
       "moveDown": "{{name}}'yi aşağı taşı",

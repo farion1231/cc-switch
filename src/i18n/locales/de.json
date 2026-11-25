@@ -4603,6 +4603,7 @@
       "enable": "Aktivieren",
       "disable": "Deaktivieren",
       "edit": "{{name}} bearbeiten",
+      "visitWebsite": "Website besuchen · {{host}}",
       "more": "Weitere Aktionen für {{name}}",
       "moveUp": "{{name}} nach oben",
       "moveDown": "{{name}} nach unten",
