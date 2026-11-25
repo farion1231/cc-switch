@@ -993,24 +993,32 @@ fn build_unix_launcher_script(
             shell_single_quote(&detail.to_string_lossy())
         ));
     }
-    script.push_str(&build_provider_command_line(
-        shell,
-        &unix_launch_command_in(launch, shell),
-        cwd,
-    ));
-    script.push('\n');
-    // exec 不会触发 EXIT trap，所以在换成交互 shell 之前自己删。
-    script.push_str(&remove_temp_files);
-    script.push('\n');
     let launch_vars: Vec<String> = (0..launch.env.len())
         .map(|index| format!("{LAUNCH_ENV_PREFIX}{index}"))
         .collect();
+    let mut handoff = format!("{remove_temp_files}\n");
     if !launch_vars.is_empty() {
-        script.push_str(&format!("unset {}\n", launch_vars.join(" ")));
+        handoff.push_str(&format!("unset {}\n", launch_vars.join(" ")));
     }
-    script.push_str(&build_final_shell_cd_command(shell, cwd));
-    script.push_str(&build_exec_line(shell, cwd));
+    handoff.push_str(&build_final_shell_cd_command(shell, cwd));
+    handoff.push_str(&build_exec_line(shell, cwd));
+
+    let is_bash = shell.rsplit('/').next() == Some("bash");
+    let mut command = unix_launch_command_in(launch, shell);
+    if is_bash {
+        // Keep the interactive Bash that ran the provider in charge of the
+        // terminal until it has reaped the foreground job. Returning first to
+        // the non-interactive sh can leave the dead job's process group in the
+        // foreground, making the next shell unable to read from the tty.
+        command.push('\n');
+        command.push_str(&handoff);
+    }
+    script.push_str(&build_provider_command_line(shell, &command, cwd));
     script.push('\n');
+    if !is_bash {
+        script.push_str(&handoff);
+        script.push('\n');
+    }
     script
 }
 
@@ -1516,7 +1524,33 @@ fn launch_linux_terminal(script_file: &std::path::Path) -> Result<(), String> {
         }
     }
 
+    // WSLg installations often have no Linux terminal emulator. Launch the same
+    // private script in this distribution, not the user's default distribution.
+    if let Some(distro) = std::env::var_os("WSL_DISTRO_NAME").filter(|s| !s.is_empty()) {
+        match wsl_terminal_command(&distro, script_file).spawn() {
+            Ok(_) => return Ok(()),
+            Err(e) => last_error = format!("{last_error}; 启动 Windows Terminal 失败: {e}"),
+        }
+    }
+
     Err(last_error)
+}
+
+#[cfg(target_os = "linux")]
+fn wsl_terminal_command(distro: &std::ffi::OsStr, script_file: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new("wt.exe");
+    command
+        .arg("new-tab")
+        .arg("wsl.exe")
+        .arg("--distribution")
+        .arg(distro)
+        .arg("--exec")
+        .arg("sh")
+        // wsl.exe starts with a Windows-derived PATH; load the distribution's
+        // login profile before the launcher invokes the user's interactive shell.
+        .arg("-l")
+        .arg(script_file);
+    command
 }
 
 /// Check if a command exists using `which`
@@ -1866,70 +1900,17 @@ read -r _
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::PermissionsExt;
-        use std::process::Command;
 
         std::fs::write(&script_file, &script_content)
             .map_err(|e| format!("写入启动脚本失败: {e}"))?;
         std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
-        let preferred = crate::settings::get_preferred_terminal();
-        let default_terminals = [
-            ("gnome-terminal", vec!["--"]),
-            ("konsole", vec!["-e"]),
-            ("xfce4-terminal", vec!["-e"]),
-            ("mate-terminal", vec!["--"]),
-            ("lxterminal", vec!["-e"]),
-            ("alacritty", vec!["-e"]),
-            ("kitty", vec!["-e"]),
-            ("ghostty", vec!["-e"]),
-        ];
-
-        let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
-            let pref_args = default_terminals
-                .iter()
-                .find(|(name, _)| *name == pref.as_str())
-                .map(|(_, args)| args.to_vec())
-                .unwrap_or_else(|| vec!["-e"]);
-            let mut list = vec![(pref.as_str(), pref_args)];
-            for (name, args) in &default_terminals {
-                if *name != pref.as_str() {
-                    list.push((*name, args.to_vec()));
-                }
-            }
-            list
-        } else {
-            default_terminals
-                .iter()
-                .map(|(name, args)| (*name, args.to_vec()))
-                .collect()
-        };
-
-        let mut last_error = String::from("未找到可用的终端");
-
-        for (terminal, args) in terminals_to_try {
-            let terminal_exists = which_command(terminal)
-                || ["/usr/bin", "/bin", "/usr/local/bin"]
-                    .iter()
-                    .any(|dir| std::path::Path::new(&format!("{}/{}", dir, terminal)).exists());
-
-            if terminal_exists {
-                let spawn_result = Command::new(terminal)
-                    .args(&args)
-                    .arg("sh")
-                    .arg(script_file.to_string_lossy().as_ref())
-                    .spawn();
-                match spawn_result {
-                    Ok(_) => return Ok(()),
-                    Err(e) => {
-                        last_error = format!("执行 {} 失败: {}", terminal, e);
-                    }
-                }
-            }
+        let result = launch_linux_terminal(&script_file);
+        if result.is_err() {
+            let _ = std::fs::remove_file(&script_file);
         }
-
-        let _ = std::fs::remove_file(&script_file);
-        Err(last_error)
+        result
     }
 
     #[cfg(target_os = "windows")]
@@ -1994,6 +1975,34 @@ mod tests {
     use super::*;
     #[cfg(target_os = "windows")]
     use crate::commands::misc::{decode_command_output, merge_path_segments_win};
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn wsl_terminal_uses_current_distribution_and_literal_script_path() {
+        use std::ffi::OsStr;
+
+        let command = super::wsl_terminal_command(
+            OsStr::new("Ubuntu test"),
+            Path::new("/tmp/launcher with spaces.sh"),
+        );
+        assert_eq!(command.get_program(), OsStr::new("wt.exe"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "new-tab",
+                "wsl.exe",
+                "--distribution",
+                "Ubuntu test",
+                "--exec",
+                "sh",
+                "-l",
+                "/tmp/launcher with spaces.sh"
+            ]
+            .iter()
+            .map(OsStr::new)
+            .collect::<Vec<_>>()
+        );
+    }
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -2387,9 +2396,15 @@ mod tests {
         let script = tmp.path().join("launcher.sh");
         let env_file = tmp.path().join("env.sh");
         std::fs::write(&env_file, unix_launch_env_file(&launch)).unwrap();
-        let content =
-            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file))
-                .replace("exec '/bin/bash'", "exit 0 #");
+        // Replace the final interactive shell with a no-op so the test returns.
+        let generated =
+            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file));
+        let final_shell = "exec '\"'\"'/bin/bash'\"'\"'";
+        assert!(
+            generated.contains(final_shell),
+            "final shell must be replaced"
+        );
+        let content = generated.replace(final_shell, "exit 0 #");
         std::fs::write(&script, content).unwrap();
         let status = std::process::Command::new("sh")
             .arg(&script)
@@ -2408,6 +2423,23 @@ mod tests {
             "env file is removed right after reading"
         );
         assert!(!script.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bash_launcher_hands_off_before_interactive_shell_exits() {
+        let launch = agy_key_launch();
+        let script_path = Path::new("/tmp/launcher.sh");
+        let env_path = Path::new("/tmp/env.sh");
+        let script =
+            build_unix_launcher_script(&launch, "/bin/bash", None, script_path, Some(env_path));
+        let command = format!(
+            "{}\nrm -f -- '/tmp/env.sh' '/tmp/launcher.sh'\nunset CC_SWITCH_LAUNCH_ENV_0 CC_SWITCH_LAUNCH_ENV_1\nexec '/bin/bash'",
+            unix_launch_command_in(&launch, "/bin/bash")
+        );
+        assert!(script.contains(&build_provider_command_line("/bin/bash", &command, None)));
+        assert!(script.ends_with('\n'));
+        assert!(!script.ends_with("\n\n"));
     }
 
     #[test]
