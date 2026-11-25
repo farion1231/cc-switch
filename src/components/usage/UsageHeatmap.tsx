@@ -234,14 +234,28 @@ function buildSpan(
     weeks.push(column);
   }
 
-  // 月份标签：某一列包含当月 1 号（或第一列）时标出月份
-  const monthLabels = weeks.map((column, w) => {
-    if (w === 0) return column[0].date.getMonth() + 1;
+  return { start, end, weeks, monthLabels: monthLabelsOf(weeks), totals };
+}
+
+/** 第一列的月份标签离下一个月份标签至少要隔这么多列，否则两个标签会叠在一起 */
+const FIRST_LABEL_MIN_COLUMNS = 3;
+
+/**
+ * 月份标签：某一列包含当月 1 号时标出月份。第一列也标它所在的月份，
+ * 但那个月在开头只剩一两列时不标，否则会和紧跟着的下个月标签重叠（#9917）。
+ */
+export function monthLabelsOf(weeks: { date: Date }[][]): (number | null)[] {
+  const labels = weeks.map((column) => {
     const first = column.find((cell) => cell.date.getDate() === 1);
     return first ? first.date.getMonth() + 1 : null;
   });
-
-  return { start, end, weeks, monthLabels, totals };
+  if (labels.length > 0 && labels[0] == null) {
+    const next = labels.findIndex((label) => label != null);
+    if (next === -1 || next >= FIRST_LABEL_MIN_COLUMNS) {
+      labels[0] = weeks[0][0].date.getMonth() + 1;
+    }
+  }
+  return labels;
 }
 
 export function UsageHeatmap({

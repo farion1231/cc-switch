@@ -122,20 +122,25 @@ fn is_bank_card(text: &str, start: usize, num: &str) -> bool {
 pub(super) fn detect(text: &str) -> Vec<Span> {
     let b = text.as_bytes();
     let mut spans = Vec::new();
-    for m in RE_EMAIL.find_iter(text) {
-        let (s, e) = (m.start(), m.end());
-        // SSH 风格 URL：user@host:path —— 紧接 ":" + 非空白字符 → 视作 git@ URL
-        if e + 1 < b.len() && b[e] == b':' && b[e + 1] != b' ' && b[e + 1] != b'\t' {
-            continue;
+    if b.contains(&b'@') {
+        for m in RE_EMAIL.find_iter(text) {
+            let (s, e) = (m.start(), m.end());
+            // SSH 风格 URL：user@host:path —— 紧接 ":" + 非空白字符 → 视作 git@ URL
+            if e + 1 < b.len() && b[e] == b':' && b[e + 1] != b' ' && b[e + 1] != b'\t' {
+                continue;
+            }
+            if is_in_ssh_command_context(text, s) {
+                continue;
+            }
+            spans.push(Span {
+                start: s,
+                end: e,
+                kind: Kind::Email,
+            });
         }
-        if is_in_ssh_command_context(text, s) {
-            continue;
-        }
-        spans.push(Span {
-            start: s,
-            end: e,
-            kind: Kind::Email,
-        });
+    }
+    if !b.iter().any(u8::is_ascii_digit) {
+        return spans;
     }
     for m in RE_PHONE_CN.find_iter(text) {
         if digit_bounded(b, m.start(), m.end()) {
@@ -155,13 +160,15 @@ pub(super) fn detect(text: &str) -> Vec<Span> {
             });
         }
     }
-    for m in RE_IPV4.find_iter(text) {
-        if ip_bounded(b, m.start(), m.end()) && !is_non_identifying_ip(m.as_str()) {
-            spans.push(Span {
-                start: m.start(),
-                end: m.end(),
-                kind: Kind::Ip,
-            });
+    if b.contains(&b'.') {
+        for m in RE_IPV4.find_iter(text) {
+            if ip_bounded(b, m.start(), m.end()) && !is_non_identifying_ip(m.as_str()) {
+                spans.push(Span {
+                    start: m.start(),
+                    end: m.end(),
+                    kind: Kind::Ip,
+                });
+            }
         }
     }
     for m in RE_BANK_CARD.find_iter(text) {

@@ -391,6 +391,7 @@ describe("UsageDashboard", () => {
         omp: false,
         copilot: false,
         workbuddy: false,
+        codebuddy: false,
         "qoder-cn-desktop": false,
       },
     });

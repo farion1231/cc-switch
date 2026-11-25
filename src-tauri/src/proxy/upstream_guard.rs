@@ -3,7 +3,7 @@
 use super::ProxyError;
 use std::net::{IpAddr, UdpSocket};
 
-pub(super) async fn reject_self_forwarding(
+pub(crate) async fn reject_self_forwarding(
     target: &str,
     listen_address: &str,
     listen_port: u16,

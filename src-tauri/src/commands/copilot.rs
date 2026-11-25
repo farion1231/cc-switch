@@ -3,7 +3,7 @@
 //! 提供 Copilot OAuth 认证相关的 Tauri 命令，支持多账号管理。
 
 use crate::proxy::providers::copilot_auth::{
-    CopilotAuthManager, CopilotModel, CopilotUsageResponse, GitHubAccount,
+    CopilotAuthManager, CopilotModelOptions, CopilotUsageResponse, GitHubAccount,
 };
 use std::sync::Arc;
 use tauri::State;
@@ -22,24 +22,27 @@ pub struct CopilotAuthState(pub Arc<RwLock<CopilotAuthManager>>);
 
 // ==================== 模型和使用量 ====================
 
-/// 获取 Copilot 可用模型列表（向后兼容：使用第一个账号）
+/// 获取当前默认账号可供用户选择的 Copilot 模型。
 #[tauri::command]
 pub async fn copilot_get_models(
     state: State<'_, CopilotAuthState>,
-) -> Result<Vec<CopilotModel>, String> {
+) -> Result<CopilotModelOptions, String> {
     let auth_manager = state.0.read().await;
-    auth_manager.fetch_models().await.map_err(|e| e.to_string())
+    auth_manager
+        .fetch_model_options()
+        .await
+        .map_err(|e| e.to_string())
 }
 
-/// 获取指定账号的 Copilot 可用模型列表
+/// 获取指定账号可供用户选择的 Copilot 模型。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn copilot_get_models_for_account(
     account_id: String,
     state: State<'_, CopilotAuthState>,
-) -> Result<Vec<CopilotModel>, String> {
+) -> Result<CopilotModelOptions, String> {
     let auth_manager = state.0.read().await;
     auth_manager
-        .fetch_models_for_account(&account_id)
+        .fetch_model_options_for_account(&account_id)
         .await
         .map_err(|e| e.to_string())
 }

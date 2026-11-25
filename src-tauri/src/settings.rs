@@ -65,6 +65,8 @@ pub struct VisibleApps {
     pub copilot: bool,
     #[serde(default = "default_true")]
     pub workbuddy: bool,
+    #[serde(default = "default_true")]
+    pub codebuddy: bool,
     #[serde(rename = "qoder-cn-desktop", default = "default_true")]
     pub qoder_cn_desktop: bool,
 }
@@ -88,6 +90,7 @@ impl Default for VisibleApps {
             omp: true,
             copilot: true,
             workbuddy: true,
+            codebuddy: true,
             qoder_cn_desktop: true,
         }
     }
@@ -113,6 +116,7 @@ impl VisibleApps {
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
             AppType::WorkBuddy => self.workbuddy,
+            AppType::Codebuddy => self.codebuddy,
             AppType::QoderCnDesktop => self.qoder_cn_desktop,
         }
     }
@@ -496,6 +500,9 @@ pub struct AppSettings {
     /// 是否启用 Claude 插件联动
     #[serde(default)]
     pub enable_claude_plugin_integration: bool,
+    /// Device-local destinations for the Copilot CLI to VS Code model projection.
+    #[serde(default)]
+    pub copilot_vscode: crate::copilot_vscode::SyncSettings,
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
@@ -718,6 +725,9 @@ pub struct AppSettings {
     /// Maximum number of backup files to retain (default 10)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup_retain_count: Option<u32>,
+    /// Total size limit for the backups directory in MB (default unset, 0 = unlimited)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_max_total_mb: Option<u32>,
 
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
@@ -755,6 +765,7 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
+            copilot_vscode: Default::default(),
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
@@ -819,6 +830,7 @@ impl Default for AppSettings {
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
+            backup_max_total_mb: None,
             preferred_terminal: None,
             local_migrations: None,
         }
@@ -1115,17 +1127,10 @@ pub(crate) fn resolve_override_path(raw: &str) -> PathBuf {
     };
 
     if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home;
-        }
-    } else if let Some(stripped) = raw.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return join_home(home, stripped);
-        }
-    } else if let Some(stripped) = raw.strip_prefix("~\\") {
-        if let Some(home) = dirs::home_dir() {
-            return join_home(home, stripped);
-        }
+        return crate::config::get_home_dir();
+    }
+    if let Some(stripped) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        return join_home(crate::config::get_home_dir(), stripped);
     }
 
     PathBuf::from(raw)
@@ -1332,6 +1337,7 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         | AppType::Kimi
         | AppType::Agy
         | AppType::Copilot
+        | AppType::Codebuddy
         | AppType::WorkBuddy
         | AppType::QoderCnDesktop => return None,
     };
@@ -1405,6 +1411,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::QoderCnDesktop => None,
     }
 }
@@ -1432,6 +1439,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::QoderCnDesktop => {}
     })
 }
@@ -1504,6 +1512,17 @@ pub fn effective_backup_retain_count() -> usize {
         .backup_retain_count
         .map(|n| (n as usize).max(1))
         .unwrap_or(10)
+}
+
+/// Get the total size limit for the backups directory in bytes.
+///
+/// `None` (unlimited) unless the user picked a limit: an upgrade alone must
+/// never start deleting existing restore points.
+pub fn effective_backup_max_total_bytes() -> Option<u64> {
+    read_settings()
+        .backup_max_total_mb
+        .filter(|mb| *mb > 0)
+        .map(|mb| u64::from(mb) * 1024 * 1024)
 }
 
 // ===== 终端设置管理函数 =====
@@ -1851,11 +1870,31 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn override_paths_expand_windows_style_tilde_separators() {
-        let home = dirs::home_dir().expect("home directory");
+        let home = crate::config::get_home_dir();
         assert_eq!(
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn override_paths_honor_test_home_override() {
+        use crate::test_support::EnvVars;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
+
+        assert_eq!(resolve_override_path("~"), temp.path());
+        assert_eq!(
+            resolve_override_path("~/pi/agent"),
+            temp.path().join("pi").join("agent")
+        );
+        assert_eq!(
+            resolve_override_path(r"~\pi\agent"),
+            temp.path().join("pi").join("agent")
         );
     }
 

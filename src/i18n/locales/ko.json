@@ -89,7 +89,9 @@
   "apiKeyInput": {
     "placeholder": "API 키를 입력하세요",
     "show": "API 키 표시",
-    "hide": "API 키 숨기기"
+    "hide": "API 키 숨기기",
+    "copied": "API 키가 복사되었습니다",
+    "copyFailed": "API 키 복사에 실패했습니다"
   },
   "jsonEditor": {
     "mustBeObject": "설정은 배열이나 다른 유형이 아닌 JSON 객체여야 합니다.",
@@ -260,7 +262,7 @@
         "account": "계정",
         "accountFollow": "agy의 현재 로그인 따르기",
         "accountMissing": "이 컴퓨터에 없는 계정",
-        "accountHelp": "계정을 선택하면 ‘터미널 열기’ 실행 전에 agy의 로그인을 해당 계정으로 전환합니다. 이는 전역적으로 적용되며 이후 시작한 agy 세션도 이 계정을 사용합니다. 계정은 인증 센터에서 추가하세요."
+        "accountHelp": "새 계정 연결을 저장하면 이후 시작하는 agy 세션에서 해당 계정을 사용합니다. 이 카드에서 터미널을 열 때도 연결된 계정으로 전환됩니다. 계정은 인증 센터에서 추가하세요."
       },
       "gemini": {
         "model": "모델",
@@ -268,17 +270,19 @@
         "oauthHint": "Google 공식은 OAuth 개인 인증을 사용하므로 API 키를 입력할 필요가 없습니다. 처음 사용할 때 로그인을 위해 브라우저가 자동으로 열립니다.",
         "apiKeyPlaceholder": "Gemini API 키를 입력하세요"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "로그인 방식",
+        "missing": "이 컴퓨터에 없는 계정",
+        "reauthBadge": "다시 로그인 필요"
+      },
+      "claudeAccount": {
         "default": "Claude Code에 로그인된 계정 사용",
         "defaultDescription": "Claude Code에 로그인된 계정이 바뀌면 사용하는 계정도 함께 바뀝니다",
-        "missing": "이 컴퓨터에 없는 계정",
         "manage": "Claude 계정 추가 또는 관리",
         "helpTerminal": "설정에서 Claude 설정 디렉터리를 별도로 지정했으므로 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. 선택한 계정을 사용하려면 카드의 ‘터미널 열기’를 이용하세요.",
         "helpWsl": "Claude 설정 디렉터리가 WSL에 있으면 아직 Claude 계정 기능을 사용할 수 없습니다. 이 카드로 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다.",
         "help": "이 카드로 전환하면 Claude Code의 로그인 계정이 즉시 선택한 계정으로 바뀝니다. 실행 중인 세션에도 적용됩니다. 여러 계정을 동시에 사용하려면 각 카드의 ‘터미널 열기’를 이용하세요.",
         "claudeAccount": "Claude 계정",
-        "reauthBadge": "다시 로그인 필요",
         "terminalHint": "카드의 ‘터미널 열기’로 사용",
         "wslHint": "WSL에서는 아직 지원되지 않음",
         "plan": {
@@ -290,6 +294,13 @@
           "teamPremium": "Team 프리미엄 시트",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok CLI 로그인 따르기",
+        "defaultDescription": "Grok CLI에 로그인된 계정을 사용합니다",
+        "manage": "xAI 계정 추가 또는 관리",
+        "help": "이 카드로 전환하면 Grok CLI의 로그인(~/.grok/auth.json)이 선택한 계정으로 바뀝니다. 이전에 로그인된 계정은 먼저 인증 센터에 저장되며, \"Grok CLI 로그인 따르기\" 카드로 다시 전환하면 복원됩니다.",
+        "xaiAccount": "xAI 계정"
       }
     },
     "duplicateLiveIdsLoadFailed": "설정에서 공급자 식별자를 읽지 못했습니다. 설정을 수정하고 다시 시도해 주세요.",
@@ -626,6 +637,9 @@
       "safetyBackupId": "안전 백업 ID",
       "intervalLabel": "자동 백업 간격",
       "retainLabel": "보존할 백업 수",
+      "maxTotalLabel": "백업 크기 제한",
+      "maxTotalUnlimited": "제한 없음",
+      "maxTotalHint": "기본값은 꺼짐입니다. 설정하면 백업 폴더가 이 크기를 넘을 때 가장 오래된 백업부터 삭제됩니다. 가장 최근 백업과 복원에 사용된 백업은 항상 보존되므로, 백업 하나가 더 크면 폴더가 제한을 넘은 상태로 남을 수 있습니다. 다음 백업 또는 일일 유지 관리 실행 시 적용됩니다.",
       "intervalDisabled": "비활성화됨",
       "intervalHours": "{{hours}}시간",
       "intervalDays": "{{days}}일",
@@ -932,6 +946,14 @@
     "minimizeToTrayDescription": "켜면 닫기 버튼을 눌러도 앱이 종료되지 않고 시스템 트레이로 숨겨집니다. 끄면 앱이 바로 종료됩니다.",
     "useAppWindowControls": "앱 수준 창 컨트롤 활성화",
     "useAppWindowControlsDescription": "앱 상단에 내장된 최소화, 최대화/복원 및 닫기 버튼을 사용합니다. 끄면 시스템 창 모드를 사용합니다.",
+    "copilotVscode": {
+      "enable": "VS Code Copilot 확장에 적용",
+      "description": "CLI에 추가한 모델과 API 키를 감지된 모든 VS Code 프로필에 자동으로 적용합니다. 공급자 변경 사항도 자동으로 동기화됩니다.",
+      "pending": "VS Code 모델 동기화 대기 중",
+      "pendingDescription": "VS Code에서 이전 설정을 사용하고 있을 수 있습니다. 다시 시도하여 최신 변경 사항을 동기화하세요.",
+      "noTargets": "VS Code 설정을 찾을 수 없습니다. VS Code를 한 번 실행한 후 다시 시도하세요.",
+      "failed": "VS Code Copilot 동기화에 실패했습니다"
+    },
     "enableClaudePluginIntegration": "Claude Code 확장에 적용",
     "enableClaudePluginIntegrationDescription": "켜면 VS Code의 Claude Code 확장도 이 앱에서 선택한 공급자로 함께 전환됩니다",
     "skipClaudeOnboarding": "Claude Code 첫 실행 확인 건너뛰기",
@@ -1115,6 +1137,7 @@
     "toolUpgradeUnanchoredHint": "명령줄에서 어떤 설치를 사용하는지 확인할 수 없어 기본 업그레이드 명령을 실행합니다. PATH에서 가장 먼저 찾은 npm을 통해 설치될 수 있습니다.",
     "toolUpgradeUnmanagedTitle": "이 도구 업그레이드를 건너뛰었습니다.",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) 항목은 npm이나 인식 가능한 설치 프로그램으로 설치되지 않아 CC Switch에서 업그레이드 방법을 판단할 수 없습니다. 처음 설치할 때 사용한 방식으로 업그레이드하세요(예: winget, Scoop 또는 공식 설치 스크립트 다시 실행).",
+    "toolUpgradeDesktopManagedDetail": "이 OpenCode CLI는 OpenCode Desktop에 포함되어 있으며 Desktop 앱과 함께 업데이트됩니다.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1290,6 +1313,8 @@
       "credits": "크레딧",
       "leftOf": "{{remaining}} / {{total}} 남음",
       "usedOf": "{{used}} / {{total}} 사용",
+      "unlimited": "무제한",
+      "unlimitedUsed": "무제한, {{used}} 사용",
       "usedUp": "모두 사용함 (총 {{total}})",
       "detail": "크레딧 {{total}} 중 {{remaining}} 남음, {{used}} 사용",
       "staleNotRunning": "WorkBuddy가 실행 중이 아니므로 이전에 조회한 결과를 표시합니다",
@@ -1551,6 +1576,7 @@
     "selectSessionLabel": "{{title}} 선택",
     "agyDeleteHint": "런타임 상태도 제거하려면 Antigravity에서 이 세션을 삭제하세요.",
     "mcodeDeleteHint": "MiniMax Code에서 삭제하세요.",
+    "codebuddyDeleteHint": "이 세션은 CodeBuddy에서 관리하세요. 백그라운드 작업, 팀원, 파일 기록이 해당 대화 기록을 참조합니다",
     "groupMeta": "세션 {{count}}개 · {{time}}",
     "bucketToday": "오늘",
     "bucketYesterday": "어제",
@@ -1845,6 +1871,7 @@
       "subrouter": "SubRouter는 API 키 하나로 여러 모델과 공급자를 이용할 수 있는 통합 AI 중계 플랫폼입니다.",
       "qiniu": "Qiniu Cloud는 다중 프로토콜 AI 릴레이입니다. API 키 하나로 네이티브 Claude, GPT 및 Gemini 모델을 사용할 수 있으며, Anthropic, OpenAI 및 Gemini API를 모두 지원합니다.",
       "haoai": "hao.ai는 개발자와 팀을 위한 빠르고 안정적인 통합 LLM API 게이트웨이입니다. API 키 하나로 OpenAI 및 Anthropic 호환 API를 통해 GPT, Claude, Grok 등 주요 모델을 사용할 수 있으며, 모델 라우팅, 장애 조치 및 전체 요청 로그를 지원합니다. 요금은 공식 기준 요금의 최저 15% 수준입니다. 이 링크로 가입한 CC Switch 사용자는 첫 주문 시 5% 보너스 크레딧을 받습니다!",
+      "stringai": "StringAI는 가성비 좋고 빠르며 안정적인 모델 API 플랫폼으로, AI 코딩, 이미지 생성, 음성 합성, 동영상 생성을 한곳에서 이용할 수 있습니다. CC Switch 사용자 전용 혜택: 이 링크로 가입하면 첫 충전 $3.74에 보너스 크레딧 $3.74를 추가로 드립니다!",
       "fenno": "Fenno.ai는 다양한 주류 모델에 대한 액세스를 제공하는 안정적이고 효율적인 API 릴레이입니다. CC Switch 사용자 전용 혜택: 이 링크를 통해 7일 동안 유효한 $50 크레딧 상당의 $1.99 평가판 플랜을 구독하세요!",
       "teamorouter": "TeamoRouter를 이용하면 Claude Code에서 API 키 하나로 Opus 5.5, Sonnet 5.5, Fable 5.1을 바로 사용할 수 있습니다. Opus 5.5 요금은 공식 가격의 약 28%이며, 사용한 만큼 요금이 부과되고 네이티브 Anthropic 프로토콜을 지원합니다. 이 링크로 가입한 CC Switch 사용자는 첫 충전 금액으로 $10, $20 또는 $50를 선택하면 충전 금액의 10%를 추가 크레딧으로 받습니다!",
       "ppio": "PPIO는 중국의 선도적인 독립 Agentic Cloud 공급자로, API 키 하나로 모든 대표 오픈 소스 모델을 호출할 수 있습니다. 이 링크로 가입하고 실명 인증을 완료하면 10위안 이용권을 받을 수 있습니다.",
@@ -2020,6 +2047,7 @@
     "directModeFormatSwitch": "이 형식은 직접 연결 모드에서 사용할 수 없습니다. 이 카드를 사용하려면 라우팅 또는 통합 모드로 전환하세요."
   },
   "copilot": {
+    "autoModelName": "GitHub Copilot Auto",
     "automaticFormat": "모델에 따라 자동 선택",
     "automaticFormatHint": "Copilot의 업스트림 형식은 라우팅에서 모델에 따라 자동으로 선택합니다. 수동으로 지정한 형식은 적용되지 않습니다.",
     "authSection": "GitHub Copilot 인증",
@@ -2136,6 +2164,7 @@
     "selectAccount": "계정 선택",
     "selectAccountPlaceholder": "xAI 계정을 선택하세요",
     "useDefaultAccount": "기본 계정 사용",
+    "account": "xAI 계정",
     "accounts": "xAI 계정",
     "defaultAccount": "기본값",
     "expired": "자격 증명이 만료되었습니다.",
@@ -2386,6 +2415,7 @@
     "loginWith": {
       "deepseek": "DeepSeek 계정으로 로그인",
       "workbuddy": "WorkBuddy 계정으로 로그인",
+      "codebuddy": "CodeBuddy 계정으로 로그인",
       "kimi": "Kimi 계정으로 로그인",
       "claude": "Claude 계정으로 로그인",
       "chatgpt": "ChatGPT 계정으로 로그인",
@@ -2737,14 +2767,14 @@
     "speedValue": "{{value}} tok/s",
     "speedEstimatedValue": "≈ {{value}} tok/s",
     "speedHelpTitle": "속도 계산 방법",
-    "speedHelp": "첫 토큰부터 출력이 끝날 때까지의 초당 출력 토큰 수입니다. 라우팅 서비스 또는 Antigravity 네이티브 측정을 거치고 출력 토큰이 100개 이상인 요청을 계산합니다. 추론 과정을 표시하지 않는 모델에서는 근사치입니다. ≈ 표시는 기타 세션 로그 타임스탬프로 추정한 값입니다. 첫 토큰 대기 시간도 포함되어 실제보다 낮게 나오며, 출력 토큰이 200개 이상인 요청만 추정합니다.",
+    "speedHelp": "첫 토큰부터 출력이 끝날 때까지의 초당 출력 토큰 수입니다. 라우팅 서비스를 거치고 출력 토큰이 100개 이상인 요청만 계산합니다. 추론 과정을 표시하지 않는 모델에서는 근사치입니다. ≈ 표시는 라우팅을 끈 상태에서 세션 로그 타임스탬프로 추정한 값입니다. 첫 토큰 대기 시간도 포함되어 실제보다 낮게 나오며, 출력 토큰이 200개 이상인 요청만 추정합니다.",
     "speedSumHelpTitle": "전체 속도 계산 방법",
-    "speedSumHelp": "총 출력 토큰 수를 총 생성 시간으로 나눈 값입니다. 요청별 속도의 평균을 사용하지 않으므로 짧은 요청에 의해 왜곡되지 않습니다. 라우팅 서비스 또는 Antigravity 네이티브 측정을 거치고 출력 토큰이 100개 이상인 요청을 계산합니다. ≈ 표시는 기타 세션 로그 기반 추정치로, 첫 토큰 대기 시간을 포함하며 출력 토큰이 200개 이상인 요청만 계산합니다. 해당 행에 정확한 측정 데이터가 없을 때만 표시합니다.",
+    "speedSumHelp": "총 출력 토큰 수를 총 생성 시간으로 나눈 값입니다. 요청별 속도의 평균을 사용하지 않으므로 짧은 요청에 의해 왜곡되지 않습니다. 라우팅 서비스를 거치고 출력 토큰이 100개 이상인 요청만 계산합니다. ≈ 표시는 세션 로그 기반 추정치로, 첫 토큰 대기 시간을 포함하며 출력 토큰이 200개 이상인 요청만 계산합니다. 해당 행에 라우팅 데이터가 없을 때만 표시합니다.",
     "firstToken": "첫 번째 토큰",
     "firstTokenHelpTitle": "첫 번째 토큰 시간",
-    "firstTokenHelp": "요청이 전송된 시점부터 업스트림이 출력을 시작할 때까지 걸린 시간으로, 라우팅 서비스 또는 Antigravity 네이티브 기록에서 측정됩니다. ≈ 표시는 기타 세션 로그 타임스탬프로 추정한 값입니다. 이전 로그가 기록된 시점부터 계산하므로 클라이언트의 요청 준비 시간까지 포함되어 실제보다 높게 나옵니다. Claude Code는 응답이 추론으로 시작할 때만, Codex는 최신 형식의 로그에서 응답이 도구 호출로 시작하지 않을 때만 추정할 수 있습니다.",
+    "firstTokenHelp": "라우팅 서비스가 요청을 받은 시점부터 업스트림이 출력을 시작할 때까지 걸린 시간입니다. ≈ 표시는 라우팅을 끈 상태에서 세션 로그 타임스탬프로 추정한 값입니다. 이전 로그가 기록된 시점부터 계산하므로 클라이언트의 요청 준비 시간까지 포함되어 실제보다 높게 나옵니다. Claude Code는 응답이 추론으로 시작할 때만, Codex는 최신 형식의 로그에서 응답이 도구 호출로 시작하지 않을 때만 추정할 수 있습니다.",
     "firstTokenSumHelpTitle": "첫 번째 토큰 시간 계산 방법",
-    "firstTokenSumHelp": "요청이 전송된 시점부터 업스트림이 출력을 시작할 때까지의 시간으로, 라우팅 서비스 또는 Antigravity 네이티브 기록에서 측정됩니다. 이 행에 속한 요청들의 중앙값을 표시하므로 대기열이나 콜드 스타트 때문에 일부 요청이 느려져도 크게 영향을 받지 않습니다. 성공한 정확 측정 요청만 계산하며, 30일이 지나 일별 집계에 포함된 요청은 제외합니다. ≈ 표시는 기타 세션 로그 기반 추정치로 실제보다 높게 나오며 일부 요청에서만 계산할 수 있습니다. 해당 행에 정확한 측정 데이터가 없을 때만 표시합니다.",
+    "firstTokenSumHelp": "라우팅 서비스가 요청을 받은 시점부터 업스트림이 출력을 시작할 때까지의 시간입니다. 이 행에 속한 요청들의 중앙값을 표시하므로 대기열이나 콜드 스타트 때문에 일부 요청이 느려져도 크게 영향을 받지 않습니다. 라우팅 서비스를 거친 성공한 스트리밍 요청만 계산하며, 30일이 지나 일별 집계에 포함된 요청은 제외합니다. ≈ 표시는 세션 로그 기반 추정치로 실제보다 높게 나오며 일부 요청에서만 계산할 수 있습니다. 해당 행에 라우팅 데이터가 없을 때만 표시합니다.",
     "timingTip": "소요 시간 {{duration}}초 · 첫 토큰 {{ttft}}초",
     "estimatedTimingTip": "약 {{duration}}초 (세션 로그 타임스탬프 기반 추정치, 첫 토큰 대기 포함)",
     "estimatedTimingTipWithFirstToken": "약 {{duration}}초 · 첫 토큰 약 {{ttft}}초 (세션 로그 타임스탬프 기반 추정치)",
@@ -3775,7 +3805,10 @@
       "command": "명령",
       "args": "인수",
       "env": "환경",
-      "url": "URL"
+      "url": "URL",
+      "type": "유형",
+      "cwd": "작업 디렉터리",
+      "headers": "헤더"
     },
     "prompt": {
       "title": "시스템 프롬프트 가져오기",
@@ -3809,7 +3842,8 @@
     "risk": {
       "envHijack": "이 설정에는 프로세스의 로드 동작을 변경할 수 있는 환경 변수(예: 동적 라이브러리 주입, CA 인증서 교체)가 포함되어 있습니다. 출처를 신뢰할 수 있는지 확인하세요.",
       "privateEndpoint": "이 주소는 localhost 또는 사설 네트워크를 가리킵니다. 직접 관리하는 로컬 서비스가 아니라면 가져오지 마세요.",
-      "shellCommand": "이 설정은 셸을 통해 전체 명령줄을 실행합니다. 실제로 실행되는 것은 인수에 있습니다. 각 줄을 검토하세요."
+      "shellCommand": "이 설정은 셸을 통해 전체 명령줄을 실행합니다. 실제로 실행되는 것은 인수에 있습니다. 각 줄을 검토하세요.",
+      "mcpDangerousField": "이 MCP 설정에는 호스트 환경 변수를 읽거나(bearer_token_env_var, env_http_headers, env_vars 등), 보조 명령을 실행하거나(http_headers_helper), 작업 디렉터리를 변경할 수 있는(cwd) 고위험 필드가 포함되어 있습니다. 완전히 신뢰할 수 있는 출처인 경우에만 가져오세요."
     }
   },
   "iconPicker": {
@@ -4054,7 +4088,29 @@
     "reachableSlow": "{{providerName}}에 연결할 수 있지만 응답이 느립니다({{responseTimeMs}}ms).",
     "unreachable": "{{providerName}}에 연결할 수 없음: {{message}}",
     "unreachableHint": "연결할 수 없습니다(DNS/연결/TLS/시간 초과). base_url과 네트워크를 확인하세요.",
+    "hint": {
+      "blocked": "시스템이 연결을 거부했습니다. 대개 방화벽이나 보안 소프트웨어가 CC Switch를 차단한 경우입니다. 방화벽에서 CC Switch의 네트워크 연결을 허용하세요. 로컬 네트워크 주소에 연결할 때도 필요합니다.",
+      "refused": "주소에는 도달했지만 이 포트에서 실행 중인 서비스가 없습니다. 서비스가 시작되었는지, 포트가 올바른지 확인하세요.",
+      "timeout": "연결 시간이 초과되었습니다. 네트워크와 주소를 확인하세요. 방화벽이나 보안 소프트웨어가 응답 없이 연결을 막고 있을 수도 있습니다.",
+      "dns": "도메인 이름을 확인할 수 없습니다. 주소의 도메인에 오타가 없는지, 네트워크와 DNS가 정상인지 확인하세요.",
+      "tls": "HTTPS 연결에 실패했습니다(인증서 또는 핸드셰이크 오류). 주소가 http와 https 중 무엇을 써야 하는지, 서버 인증서가 유효한지 확인하세요."
+    },
     "error": "{{providerName}} 검사 오류: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "CC Switch 업데이트를 확인하지 못했습니다",
+      "description": "CC Switch는 시작할 때 dl.ccswitch.io(예비로 github.com)에 새 버전이 있는지 확인하는데, 이번에는 실패했습니다: {{detail}}. 다른 기능에는 영향이 없습니다. 네트워크나 방화벽에서 막은 경우라면 무시해도 됩니다."
+    },
+    "modelsDevSyncFailed": {
+      "title": "모델 요금을 동기화하지 못했습니다",
+      "description": "CC Switch는 사용 비용을 계산하기 위해 주기적으로 models.dev에서 모델 요금을 가져오는데, 이번에는 실패했습니다: {{detail}}. 다른 기능에는 영향이 없습니다."
+    },
+    "networkError": "서버에 연결할 수 없습니다",
+    "mute": "다시 표시 안 함",
+    "disableModelsDevSync": "자동 동기화 끄기",
+    "modelsDevSyncDisabled": "모델 요금 자동 동기화를 껐습니다. '사용 통계 → 모델 요금'에서 다시 켤 수 있습니다.",
+    "disableFailed": "끄지 못했습니다: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "라우팅 마스터 스위치",
@@ -4802,6 +4858,7 @@
       "failedTitle": "일부 앱을 읽을 수 없습니다",
       "filesTitle": "읽은 파일",
       "claudeNote": " (최상위 mcpServers)",
+      "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json 중 처음 존재하는 파일)",
       "ok": "확인",
       "dshNote": " (초기화된 모든 프로필에 기록: web, desktop, headless, acp. 홈 수준의 ~/.dsh/cordis.patch.yml은 읽거나 쓰지 않으므로, 그 안의 MCP는 해당 파일에서 관리하세요)"
     },
@@ -5079,7 +5136,7 @@
   "pluginsPage": {
     "title": "플러그인",
     "helpTitle": "플러그인",
-    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
+    "help": "Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi, Antigravity CLI의 플러그인을 설치, 활성화, 제거합니다. CC Switch는 각 앱의 자체 CLI를 실행하므로 터미널에서 플러그인 명령을 사용하는 것과 결과가 같습니다. Pi의 경우 플러그인은 Pi 패키지이며 카탈로그는 npm에서 가져옵니다.",
     "appAria": "앱",
     "viewAria": "플러그인 보기",
     "viewInstalled": "설치됨",
@@ -5139,9 +5196,11 @@
     "confirmRemoveMarketBody": "{{app}}이(가) 이 마켓플레이스의 플러그인을 더 이상 표시하지 않으며, 여기에서 설치한 플러그인이 제거될 수 있습니다. 나중에 다시 추가할 수 있습니다.",
     "toast": {
       "installed": "{{name}}을(를) 설치했습니다",
+      "installedNeedsConfig": "비활성 상태로 설치되었습니다. {{app}}에서 /plugin을 실행해 MCP 서버를 설정한 뒤 활성화하세요.",
       "installFailed": "{{name}}을(를) 설치할 수 없습니다",
       "installNeedsTerminal": "이 플러그인은 설치 중 마켓플레이스에 선언된 명령을 사용자의 컴퓨터에서 실행하며, CC Switch는 이를 대신 승인하지 않습니다. 터미널에서 {{command}}을(를) 실행해 승인한 다음 돌아와서 새로 고치세요.",
       "authRequired": "{{app}}에 먼저 로그인해야 합니다. 터미널에서 {{command}}을(를) 실행한 다음 돌아와서 다시 시도하세요.",
+      "pluginInUse": "이 플러그인은 다른 {{app}} / {{cli}} 프로세스(실행 중인 세션, Hub 또는 백그라운드 서비스 등)에서 사용 중입니다. 실행 중인 세션이나 관련 프로세스를 닫고 다시 시도하세요.",
       "uninstalled": "{{name}}을(를) 제거했습니다",
       "uninstallFailed": "{{name}}을(를) 제거할 수 없습니다",
       "enabled": "{{name}}을(를) 활성화했습니다",
@@ -5150,6 +5209,7 @@
       "updated": "{{name}}을(를) 업데이트했습니다",
       "upToDate": "{{name}}은(는) 이미 최신 버전입니다",
       "updateFailed": "{{name}}을(를) 업데이트할 수 없습니다",
+      "updateNeedsReinstall": "이 플러그인은 이전 버전의 Antigravity가 사용하던 폴더에 있어 CC Switch가 업데이트할 수 없습니다. 제거한 뒤 탐색에서 다시 설치하면 최신 버전을 받을 수 있습니다.",
       "refreshed": "마켓플레이스를 새로 고쳤습니다",
       "refreshFailed": "마켓플레이스를 새로 고칠 수 없습니다",
       "marketAdded": "마켓플레이스 {{source}}을(를) 추가했습니다",
@@ -5186,6 +5246,7 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
+      "codebuddyHelp": "CodeBuddy의 공식 로그인입니다(중국 사이트와 국제 사이트 모두). 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘CodeBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 \"CodeBuddy 공식 로그인\" 카드의 추가를 클릭하세요. \"계정 추가\"는 터미널에서 codebuddy를 열고, 로그인을 마치면 계정을 여기에 추가합니다. CodeBuddy가 이미 로그인되어 있으면 잠시 로그아웃되며, 중단하면 원래 로그인을 복원할 수 있습니다. 토큰은 CodeBuddy가 직접 갱신합니다.",
       "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 사용자를 대신해 WorkBuddy에 로그인할 수 없으며, 현재 로그인된 계정의 로그인 파일 전체를 스냅샷으로 저장합니다. 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘WorkBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 ‘WorkBuddy 공식 로그인’ 카드의 ‘추가’를 클릭하세요. ‘추가됨’ 상태인 공식 카드는 동시에 하나만 유지됩니다. 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
@@ -5232,7 +5293,6 @@
       "reauthed": "{{login}}(으)로 다시 로그인했습니다."
     },
     "quota": {
-      "updating": "업데이트 중…",
       "loading": "할당량 확인 중…",
       "refresh": "할당량 새로 고침",
       "refreshAria": "{{login}}의 할당량 새로 고침",
@@ -5246,6 +5306,33 @@
       "removeNote": "agy의 로그인은 유지됩니다. 이 계정을 사용 중인 경우 여기서 제거해도 계속 작동합니다.",
       "switched": "전환했습니다. 새 agy 세션은 이 계정을 사용합니다.",
       "switchedWhileRunning": "전환했습니다. 실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. agy를 모두 종료한 뒤 다시 실행하세요."
+    },
+    "codebuddy": {
+      "mainland": "중국",
+      "global": "국제",
+      "expiredNote": "로그인이 만료되었습니다. 다시 로그인하세요",
+      "addedOn": "{{date}}에 추가됨",
+      "imported": "{{login}}을(를) 추가했습니다.",
+      "uncollected": "CodeBuddy가 {{login}}(으)로 로그인되어 있지만 이 계정은 아직 목록에 없습니다.",
+      "importCurrent": "현재 계정 추가",
+      "unrecognized": "CodeBuddy 로그인 파일의 형식을 인식할 수 없습니다",
+      "unrecognizedNote": "WorkBuddy가 암호화했을 수 있습니다. CC Switch는 파일을 건드리지 않으며 계정을 전환할 수 없습니다.",
+      "statusLoadFailed": "CodeBuddy 계정을 읽지 못했습니다. 다시 시도하세요.",
+      "empty": "아직 CodeBuddy 계정이 없습니다. 계정 추가를 클릭해 로그인하거나 CodeBuddy에 현재 로그인된 계정을 추가하세요.",
+      "login": "새 계정으로 로그인",
+      "current": "CodeBuddy에서 사용 중",
+      "pendingNote": "터미널에서 codebuddy를 열었습니다. 안내에 따라 로그인하세요(로그인 화면이 나타나지 않으면 /login 입력). 완료되면 계정이 여기에 추가됩니다.",
+      "reopenTerminal": "터미널 다시 열기",
+      "removeNote": "CC Switch의 사본만 삭제합니다. CodeBuddy는 로그인 상태로 유지됩니다.",
+      "localOnly": "계정 사본은 이 컴퓨터에만 저장되며 클라우드로 동기화되지 않습니다. 다른 컴퓨터에서는 계정을 다시 추가해야 합니다.",
+      "quota": {
+        "credits": "크레딧",
+        "enterprise": "엔터프라이즈",
+        "unlimited": "무제한",
+        "detail": "{{total}} 크레딧 중 {{remaining}} 남음, {{used}} 사용",
+        "usedDetail": "이번 주기에 {{used}} 크레딧 사용",
+        "refreshPending": "토큰이 CodeBuddy의 갱신을 기다리고 있습니다. 이 계정으로 전환해 한 번 사용한 뒤 다시 확인하세요."
+      }
     },
     "workbuddy": {
       "addedOn": "{{date}}에 추가됨",
@@ -5393,6 +5480,49 @@
       "renameProvider": "Oh My Pi 공급자 키는 변경할 수 없습니다.",
       "providerMissing": "이 Oh My Pi 공급자는 더 이상 저장된 목록에 없습니다.",
       "legacyModelsJson": "Oh My Pi 디렉터리에 이전 형식의 models.json이 남아 있습니다. omp를 다음에 실행하면 models.yml로 마이그레이션됩니다. omp를 한 번 실행한 후 공급자를 다시 추가하세요."
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "아직 사용자 지정 모델이 없습니다",
+      "description": "CodeBuddy의 공식 모델은 CodeBuddy가 직접 관리합니다. 공식 계정을 전환하려면 해당 계정용 \"CodeBuddy 공식 로그인\" 카드를 만들고 여기에서 추가를 클릭하세요. ~/.codebuddy/models.json에 이미 있는 사용자 지정 모델은 자동으로 여기에 표시됩니다. 오른쪽 위의 + 버튼으로 프리셋 또는 사용자 지정 모델을 추가하세요."
+    },
+    "modelsHint": "모델 ID는 models.json에 기록되는 id이자 /model에서 선택하는 이름으로, 보통 엔드포인트의 모델 이름입니다. 추가한 후에는 변경할 수 없습니다. 표시 이름은 위의 이름과 같은 값입니다.",
+    "modelIdDuplicate": "이 모델 ID는 이미 사용 중입니다",
+    "modelIdInvalid": "모델 ID는 공백으로 시작하거나 끝날 수 없습니다.",
+    "vendor": "공급업체 라벨",
+    "urlHint": "전체 경로를 사용하세요. 보통 /chat/completions로 끝납니다. ${VAR} 환경 변수 참조를 사용할 수 있습니다.",
+    "urlInvalid": "올바른 http(s) URL을 입력하세요.",
+    "apiKeyPlaceholder": "API 키를 입력하거나 ${MY_API_KEY} 형식으로 환경 변수를 참조하세요",
+    "maxInputTokens": "최대 입력 토큰",
+    "maxOutputTokens": "최대 출력 토큰",
+    "jsonHint": "models.json의 모델 항목 하나입니다(id는 위의 모델 ID에서 가져옵니다). 저장하면 CodeBuddy가 파일을 자동으로 다시 불러옵니다.",
+    "official": {
+      "presetName": "CodeBuddy 공식 로그인",
+      "account": "계정",
+      "accountHint": "이 카드가 사용할 CodeBuddy 계정을 선택하세요. CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 공급자 목록에서 이 카드의 추가를 클릭하면 CodeBuddy가 이 계정으로 로그인되며, 실행 중인 CodeBuddy도 자동으로 적용합니다.",
+      "accountDeleted": "계정이 삭제되었습니다. 다른 계정을 선택하세요.",
+      "accountDeletedChip": "계정 삭제됨",
+      "unbound": "아직 계정을 선택하지 않았습니다. 카드를 편집해 계정을 선택하세요.",
+      "statusLoading": "계정을 불러오는 중…",
+      "expired": "이 계정의 로그인이 만료되었습니다. 인증 센터에서 다시 로그인한 후 추가하세요.",
+      "importCurrent": "현재 로그인 추가({{login}})",
+      "adding": "추가하는 중…",
+      "added": "{{name}}을(를) 추가했습니다. 이제 CodeBuddy가 이 계정으로 로그인되어 있습니다. 실행 중인 CodeBuddy는 자동으로 전환되며 새 세션도 이 계정을 사용합니다.",
+      "addFailed": "추가하지 못했습니다: {{error}}",
+      "switched": "CodeBuddy를 {{name}}(으)로 전환했습니다. 실행 중인 CodeBuddy는 자동으로 전환되며 새 세션도 이 계정을 사용합니다.",
+      "switchFailed": "전환하지 못했습니다: {{error}}",
+      "removeHint": "CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요."
+    },
+    "login": {
+      "confirmTitle": "다른 CodeBuddy 계정으로 로그인",
+      "confirmMessage": "CodeBuddy가 {{login}}(으)로 로그인되어 있으며 한 번에 한 계정만 사용할 수 있습니다. 계속하면 먼저 이 계정을 인증 센터에 추가한 다음 CodeBuddy를 잠시 로그아웃하고(로그인 정보는 보존되며 서버에 연결하지 않음), 새 계정에 로그인할 터미널을 엽니다.\n\n이후 로그인을 마칠 때까지 실행 중인 CodeBuddy 세션은 로그아웃 상태로 표시됩니다. 중단하면 클릭 한 번으로 원래 로그인을 복원할 수 있습니다.",
+      "confirm": "계속",
+      "signedInHint": "CodeBuddy가 로그인되어 있는 동안 새 계정으로 로그인하면 먼저 현재 계정에서 로그아웃됩니다. 로그인을 마칠 때까지 실행 중인 CodeBuddy 세션은 로그아웃 상태로 표시됩니다.",
+      "pendingReplacing": "CodeBuddy를 현재 계정에서 잠시 로그아웃하고 터미널에서 codebuddy를 열었습니다. 안내에 따라 새 계정으로 로그인하세요. 완료되면 여기에 추가됩니다.",
+      "restore": "원래 로그인 복원",
+      "restored": "원래 CodeBuddy 로그인을 복원했습니다.",
+      "restoreFailed": "원래 로그인을 복원하지 못했습니다(CodeBuddy가 로그인 파일을 쓰는 중일 수 있습니다). 인증 센터나 터미널에서 다시 로그인하세요."
     }
   },
   "dsh": {

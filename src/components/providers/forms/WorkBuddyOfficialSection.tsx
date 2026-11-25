@@ -16,7 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { extractErrorMessage } from "@/utils/errorUtils";
-import { WORKBUDDY_ACCOUNT_AUTH_PROVIDER } from "@/config/workbuddyProviderPresets";
+import { WORKBUDDY_ACCOUNT_AUTH_PROVIDER } from "@/config/workbuddyOfficialMeta";
 import {
   WORKBUDDY_LIVE_KEY,
   WORKBUDDY_STATUS_KEY,

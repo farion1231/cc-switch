@@ -84,6 +84,31 @@ describe("findManagedAccountUsers", () => {
     ]);
   });
 
+  it("finds bound Grok cards without counting the CLI's own login", () => {
+    const grokbuild = byId(
+      provider("grok-bound", {
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "xai_oauth",
+            accountId: "x1",
+          },
+        },
+      }),
+      provider("grok-cli", { category: "official" }),
+    );
+    const users = findManagedAccountUsers("xai_oauth", ["x1"], "x1", {
+      grokbuild,
+    });
+    expect(users.map((u) => [u.appId, u.providerId, u.viaDefault])).toEqual([
+      ["grokbuild", "grok-bound", false],
+    ]);
+    expect(groupUsersByApp(users)).toEqual([
+      { appId: "grokbuild", names: ["grok-bound"] },
+    ]);
+  });
+
   it("does not count an unbound Codex official card (it uses Codex's own login)", () => {
     const codex = byId(
       provider(
@@ -152,6 +177,39 @@ describe("findManagedAccountUsers — WorkBuddy", () => {
     ]);
     expect(groupUsersByApp(users)).toEqual([
       { appId: "workbuddy", names: ["wb-a"] },
+    ]);
+  });
+});
+
+describe("findManagedAccountUsers — CodeBuddy", () => {
+  it("counts official sign-in cards bound to the account, never via default", () => {
+    const card = (id: string, accountId: string) =>
+      provider(id, {
+        category: "official",
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "codebuddy_oauth",
+            accountId,
+          },
+        },
+      });
+    const codebuddy = byId(
+      card("cb-a", "100@www.codebuddy.cn"),
+      card("cb-b", "200@www.codebuddy.ai"),
+      provider("custom"),
+    );
+    const users = findManagedAccountUsers(
+      "codebuddy_oauth",
+      ["100@www.codebuddy.cn"],
+      "100@www.codebuddy.cn",
+      { codebuddy },
+    );
+    expect(users.map((u) => [u.appId, u.providerId, u.viaDefault])).toEqual([
+      ["codebuddy", "cb-a", false],
+    ]);
+    expect(groupUsersByApp(users)).toEqual([
+      { appId: "codebuddy", names: ["cb-a"] },
     ]);
   });
 });

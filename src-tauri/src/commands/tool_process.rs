@@ -261,6 +261,19 @@ pub(crate) fn run_detected_tool_command_with_timeout(
     }
 }
 
+/// 只确认能找到工具的默认入口（规则同 [`run_detected_tool_command_with_timeout`]），不运行它。
+/// 配置在 WSL 里的工具这里不探测、直接放行，运行时由 WSL 里的 `command -v` 判断。
+pub(crate) fn locate_detected_tool(tool: &str, timeout: std::time::Duration) -> Result<(), String> {
+    if known_tool(tool).is_none() {
+        return Err(format!("Unsupported tool: {tool}"));
+    }
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return Ok(());
+    }
+    locate_default_tool(tool, CommandDeadline::from_timeout(Some(timeout))).map(|_| ())
+}
+
 /// 构造运行本机工具默认入口的命令（定位规则和 PATH 补全同 [`run_detected_tool_command_with_timeout`]），
 /// 不设 stdio、不等待：给要自己管子进程的调用方用（比如长时间运行、要往 stdin 写东西的登录）。
 /// `timeout` 只约束定位工具这一步。工具配置在 WSL 里时报错。
@@ -526,37 +539,51 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn wsl_env_allows_spaces_in_unc_config_path() {
+    fn wsl_env_translates_unc_config_paths_and_skips_host_paths() {
         let extra_env = [
             (
                 "OPENCODE_CONFIG_DIR",
                 r"\\wsl$\Ubuntu\home\Jane Doe\.config\opencode".to_string(),
             ),
+            ("CODEX_HOME", r"\\wsl$\Ubuntu\home\jane\.codex".to_string()),
+            (
+                "CLAUDE_CONFIG_DIR",
+                r"\\wsl.localhost\Ubuntu\home\jane\claude-alt".to_string(),
+            ),
+            ("GROK_HOME", r"\\wsl$\Ubuntu\home\jane\.grok".to_string()),
+            (
+                "OPENCLAW_STATE_DIR",
+                r"\\wsl$\Ubuntu\home\jane\.openclaw".to_string(),
+            ),
+            (
+                "OPENCLAW_CONFIG_PATH",
+                r"\\wsl$\Ubuntu\home\jane\.openclaw\openclaw.json".to_string(),
+            ),
             ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
         ];
-
         assert_eq!(
             build_wsl_env_argv(&extra_env).unwrap(),
             vec![
                 "OPENCODE_CONFIG_DIR=/home/Jane Doe/.config/opencode".to_string(),
+                "CODEX_HOME=/home/jane/.codex".to_string(),
+                "CLAUDE_CONFIG_DIR=/home/jane/claude-alt".to_string(),
+                "GROK_HOME=/home/jane/.grok".to_string(),
+                "OPENCLAW_STATE_DIR=/home/jane/.openclaw".to_string(),
+                "OPENCLAW_CONFIG_PATH=/home/jane/.openclaw/openclaw.json".to_string(),
                 "OPENCODE_DISABLE_PROJECT_CONFIG=true".to_string(),
             ]
         );
-    }
 
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn wsl_env_skips_host_config_path() {
-        let extra_env = [
+        let host_paths = [
             (
                 "OPENCODE_CONFIG_DIR",
                 r"C:\Users\Jane Doe\.config\opencode".to_string(),
             ),
+            ("CODEX_HOME", r"C:\Users\jane\.codex".to_string()),
             ("OPENCODE_DISABLE_PROJECT_CONFIG", "true".to_string()),
         ];
-
         assert_eq!(
-            build_wsl_env_argv(&extra_env).unwrap(),
+            build_wsl_env_argv(&host_paths).unwrap(),
             vec!["OPENCODE_DISABLE_PROJECT_CONFIG=true".to_string()]
         );
     }
@@ -598,48 +625,6 @@ mod tests {
             assert!(stdout.contains("helper-found"), "{stdout}");
             assert!(decode_command_output(&output.stderr).contains("captured-stderr"));
         }
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn wsl_env_translates_codex_and_claude_config_dirs() {
-        let extra_env = [
-            ("CODEX_HOME", r"\\wsl$\Ubuntu\home\jane\.codex".to_string()),
-            (
-                "CLAUDE_CONFIG_DIR",
-                r"\\wsl.localhost\Ubuntu\home\jane\claude-alt".to_string(),
-            ),
-        ];
-        assert_eq!(
-            build_wsl_env_argv(&extra_env).unwrap(),
-            vec![
-                "CODEX_HOME=/home/jane/.codex".to_string(),
-                "CLAUDE_CONFIG_DIR=/home/jane/claude-alt".to_string(),
-            ]
-        );
-
-        let host_only = [("CODEX_HOME", r"C:\Users\jane\.codex".to_string())];
-        assert!(build_wsl_env_argv(&host_only).unwrap().is_empty());
-
-        let plugin_dirs = [
-            ("GROK_HOME", r"\\wsl$\Ubuntu\home\jane\.grok".to_string()),
-            (
-                "OPENCLAW_STATE_DIR",
-                r"\\wsl$\Ubuntu\home\jane\.openclaw".to_string(),
-            ),
-            (
-                "OPENCLAW_CONFIG_PATH",
-                r"\\wsl$\Ubuntu\home\jane\.openclaw\openclaw.json".to_string(),
-            ),
-        ];
-        assert_eq!(
-            build_wsl_env_argv(&plugin_dirs).unwrap(),
-            vec![
-                "GROK_HOME=/home/jane/.grok".to_string(),
-                "OPENCLAW_STATE_DIR=/home/jane/.openclaw".to_string(),
-                "OPENCLAW_CONFIG_PATH=/home/jane/.openclaw/openclaw.json".to_string(),
-            ]
-        );
     }
 
     #[test]

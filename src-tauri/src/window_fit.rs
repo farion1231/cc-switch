@@ -344,29 +344,37 @@ mod tests {
     }
 
     #[test]
-    fn window_under_the_taskbar_moves_up() {
-        // #9206：窗口底部压在任务栏下 100px
-        assert_eq!(
-            fit_into(geometry(300, 482, 1000, 650), WORK, MINIMUM, DEFAULT),
-            Some(geometry(300, 382, 1000, 650))
-        );
-    }
-
-    #[test]
-    fn window_past_the_left_and_top_edges_moves_in() {
-        assert_eq!(
-            fit_into(geometry(-200, -40, 1000, 650), WORK, MINIMUM, DEFAULT),
-            Some(geometry(0, 0, 1000, 650))
-        );
-    }
-
-    #[test]
-    fn window_larger_than_the_work_area_shrinks_to_it() {
-        // 在更大的显示器上保存了尺寸，之后换成小屏
-        assert_eq!(
-            fit_into(geometry(50, 50, 2400, 1400), WORK, MINIMUM, DEFAULT),
-            Some(geometry(0, 0, 1920, 1032))
-        );
+    fn window_is_fitted_into_the_work_area() {
+        for (case, window, expected) in [
+            // #9206：窗口底部压在任务栏下 100px
+            (
+                "window_under_the_taskbar_moves_up",
+                geometry(300, 482, 1000, 650),
+                geometry(300, 382, 1000, 650),
+            ),
+            (
+                "window_past_the_left_and_top_edges_moves_in",
+                geometry(-200, -40, 1000, 650),
+                geometry(0, 0, 1000, 650),
+            ),
+            // 在更大的显示器上保存了尺寸，之后换成小屏
+            (
+                "window_larger_than_the_work_area_shrinks_to_it",
+                geometry(50, 50, 2400, 1400),
+                geometry(0, 0, 1920, 1032),
+            ),
+            (
+                "recovered_window_near_screen_edge_moves_back_into_work_area",
+                geometry(1700, 950, 180, 30),
+                geometry(820, 382, 1100, 650),
+            ),
+        ] {
+            assert_eq!(
+                fit_into(window, WORK, MINIMUM, DEFAULT),
+                Some(expected),
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -392,14 +400,6 @@ mod tests {
         assert_eq!(
             fit_into(geometry(100, 100, 30, 800), WORK, MINIMUM, DEFAULT),
             Some(geometry(100, 100, 1100, 800))
-        );
-    }
-
-    #[test]
-    fn recovered_window_near_screen_edge_moves_back_into_work_area() {
-        assert_eq!(
-            fit_into(geometry(1700, 950, 180, 30), WORK, MINIMUM, DEFAULT),
-            Some(geometry(820, 382, 1100, 650))
         );
     }
 

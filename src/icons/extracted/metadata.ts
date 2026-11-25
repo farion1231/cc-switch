@@ -372,6 +372,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["code0", "code0ai", "aggregator", "relay", "gateway", "gpt"],
     defaultColor: "#20C050",
   },
+  codebuddy: {
+    name: "codebuddy",
+    displayName: "CodeBuddy",
+    category: "ai-provider",
+    keywords: ["codebuddy", "tencent", "cbc"],
+    defaultColor: "currentColor",
+  },
   cohere: {
     name: "cohere",
     displayName: "Cohere",
@@ -959,6 +966,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "StreamLake",
     category: "ai-provider",
     keywords: ["streamlake", "vanchin", "wanqing", "万擎", "快手", "kwai"],
+  },
+  stringai: {
+    name: "stringai",
+    displayName: "StringAI",
+    category: "ai-provider",
+    shape: "tile",
+    keywords: ["stringai", "string ai", "string.ink", "弦界", "aggregator"],
   },
   ppio: {
     name: "ppio",

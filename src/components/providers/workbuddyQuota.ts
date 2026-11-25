@@ -1,8 +1,10 @@
 import { useRef } from "react";
 import type { TFunction } from "i18next";
 import { useQuery } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { authApi } from "@/lib/api";
-import type { WorkBuddyQuota } from "@/lib/api/auth";
+import { toast } from "@/lib/toast";
+import type { WorkBuddyCreditExpiry, WorkBuddyQuota } from "@/lib/api/auth";
 import {
   countdownStr,
   failedLines,
@@ -21,12 +23,14 @@ const REFETCH_INTERVAL = 5 * 60 * 1000;
 
 /**
  * WorkBuddy 账号的套餐与积分。卡片、表单和授权中心共用一份缓存；后端 5 分钟内走缓存，
- * `refresh()` 跳过缓存重查（↻ 用）。只有 WorkBuddy 正在运行时当前账号才查得到新的。
+ * `refresh()` 跳过缓存重查（↻ 用）。只有 WorkBuddy 正在运行时当前账号才查得到新的；
+ * 查不到新的（没运行、不是当前号…）时后端立刻回上次结果，界面看着像没反应，所以弹一句原因。
  */
 export function useWorkBuddyAccountQuota(
   accountId: string | null,
   options: { autoRefresh?: boolean } = {},
 ) {
+  const { t } = useTranslation();
   const force = useRef(false);
   const query = useQuery({
     queryKey: [...WORKBUDDY_QUOTA_KEY, accountId],
@@ -41,9 +45,13 @@ export function useWorkBuddyAccountQuota(
     refetchOnWindowFocus: false,
     retry: false,
   });
-  const refresh = () => {
+  const refresh = async () => {
     force.current = true;
-    return query.refetch();
+    const result = await query.refetch();
+    const quota = result.data;
+    const note = quota?.snapshot ? workbuddyStaleNote(t, quota) : undefined;
+    if (note) toast.info(note);
+    return result;
   };
   return { ...query, refresh };
 }
@@ -99,6 +107,26 @@ export function workbuddyCreditsLine(
   const remaining = formatCredits(snapshot.remaining, locale);
   const used = formatCredits(snapshot.used, locale);
   const total = formatCredits(snapshot.total, locale);
+  const planName = snapshot.planName?.trim() || undefined;
+  if (snapshot.unlimited) {
+    // 不限额的企业号：没有比例可画，只写已用
+    const unlimited = t("workbuddy.quota.unlimited");
+    const text = t("workbuddy.quota.unlimitedUsed", { used });
+    return {
+      planName,
+      line: {
+        key: "workbuddy_credits",
+        left: Infinity,
+        tone: toneForLeft(Infinity),
+        text,
+        value: unlimited,
+        caption: unlimited,
+        detail: [planName, text, workbuddyStaleNote(t, quota)]
+          .filter(Boolean)
+          .join(" · "),
+      },
+    };
+  }
   const leftPct =
     snapshot.total > 0
       ? Math.max(0, Math.min(100, (snapshot.remaining / snapshot.total) * 100))
@@ -111,7 +139,6 @@ export function workbuddyCreditsLine(
     : showUsed
       ? t("workbuddy.quota.usedOf", { used, total })
       : t("workbuddy.quota.leftOf", { remaining, total });
-  const planName = snapshot.planName?.trim() || undefined;
   const detail = [
     planName,
     t("workbuddy.quota.detail", { remaining, total, used }),
@@ -133,20 +160,37 @@ export function workbuddyCreditsLine(
   };
 }
 
-/**
- * 积分最早哪天到期：「496 积分 11月30日到期」，三天内到期时标橙。按日期合并，不止一个日期时
- * 可以点开逐条看。没有会到期的积分（或这次没查到套餐明细）时为 null。缓存的结果里已经过了
- * 到期时间的那几笔不再算。
- */
+/** WorkBuddy 账号最早到期的积分，见 {@link creditExpiryLine}。 */
 export function workbuddyExpiryLine(
   t: TFunction,
   quota: WorkBuddyQuota,
   locale: string,
   now = Date.now(),
 ): QuotaLine | null {
+  return creditExpiryLine(
+    t,
+    quota.snapshot?.expiries,
+    locale,
+    "workbuddy_expiry",
+    now,
+  );
+}
+
+/**
+ * 积分最早哪天到期：「496 积分 11月30日到期」，三天内到期时标橙。按日期合并，不止一个日期时
+ * 可以点开逐条看。没有会到期的积分（或这次没查到套餐明细）时为 null。缓存的结果里已经过了
+ * 到期时间的那几笔不再算。WorkBuddy 和 CodeBuddy 共用同一套计费后端，到期明细形状一样。
+ */
+export function creditExpiryLine(
+  t: TFunction,
+  expiries: readonly WorkBuddyCreditExpiry[] | null | undefined,
+  locale: string,
+  lineKey: string,
+  now = Date.now(),
+): QuotaLine | null {
   const groups: { key: string; at: number | null; credits: number }[] = [];
   // 后端已按到期先后排好，不会过期的在最后
-  for (const { credits, expiresAt } of quota.snapshot?.expiries ?? []) {
+  for (const { credits, expiresAt } of expiries ?? []) {
     if (expiresAt !== null && expiresAt <= now) continue;
     const key =
       expiresAt === null
@@ -177,7 +221,7 @@ export function workbuddyExpiryLine(
     };
   });
   return {
-    key: "workbuddy_expiry",
+    key: lineKey,
     left: Infinity,
     tone: soon(first.at) ? "warning" : "plain",
     emphasis: date,

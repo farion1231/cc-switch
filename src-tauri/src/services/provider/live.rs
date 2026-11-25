@@ -39,10 +39,51 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
+        AppType::Codebuddy => crate::codebuddy_config::provider_key_exists(provider_id),
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
-        _ => Ok(false),
+        // 切换式应用的 live 只有当前那一家，没有按标识存的条目。
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::QoderCnDesktop
+        | AppType::Agy => Ok(false),
+    }
+}
+
+/// 只从累加式应用的 live 配置里删掉这家供应商的条目，不动 DB。
+///
+/// Pi、Omp、Kimi、DSH、Copilot 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
+/// 这里之前就分流了；切换式应用没有按标识存的条目。这些应用都报错，不静默跳过。
+pub(crate) fn remove_provider_from_live(
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<(), AppError> {
+    match app_type {
+        AppType::OpenCode => remove_opencode_provider_from_live(provider_id),
+        AppType::OpenClaw => remove_openclaw_provider_from_live(provider_id),
+        AppType::Hermes => remove_hermes_provider_from_live(provider_id),
+        AppType::Mcode => crate::mcode_config::remove_provider(provider_id),
+        AppType::Codebuddy => crate::codebuddy_config::remove_provider(provider_id),
+        AppType::WorkBuddy => crate::workbuddy_config::remove_provider(provider_id),
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::QoderCnDesktop
+        | AppType::Pi
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Agy
+        | AppType::Omp
+        | AppType::Copilot => Err(AppError::Message(format!(
+            "App {} does not support remove from live config",
+            app_type.as_str()
+        ))),
     }
 }
 
@@ -317,6 +358,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::ClaudeDesktop
         | AppType::QoderCnDesktop => false,
     }
@@ -401,6 +443,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::QoderCnDesktop => Ok(settings.clone()),
     }
 }
@@ -437,7 +480,7 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
     if matches!(app_type, AppType::GrokBuild) {
-        super::grok_direct::reapply(db, Some(provider), provider)?;
+        super::grok_direct::reapply(state, Some(provider), provider)?;
         return Ok(());
     }
     if matches!(app_type, AppType::Agy | AppType::Copilot) {
@@ -742,6 +785,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             }
             crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
         }
+        AppType::Codebuddy => {
+            // 官方登录卡只绑定账号，不是 models.json 里的模型
+            if crate::codebuddy_config::is_official_provider(provider) {
+                return Err(AppError::InvalidInput(
+                    "CodeBuddy official sign-in cards are not written to models.json".into(),
+                ));
+            }
+            crate::codebuddy_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -863,7 +915,7 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
         super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
     } else if matches!(app_type, AppType::GrokBuild) {
         // 编辑前的行用来推断旧版写的表（还没有写入记录时），改了表名也能删掉旧表。
-        super::grok_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
+        super::grok_direct::reapply(state, prev.or(Some(provider)), provider)?;
     } else {
         write_live_for_state(state, app_type, provider)?;
     }
@@ -962,6 +1014,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Codebuddy
                 | AppType::Copilot
         ) {
             continue;
@@ -1122,6 +1175,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
+        AppType::Codebuddy => Ok(json!(crate::codebuddy_config::get_providers()?)),
         AppType::QoderCnDesktop => Ok(json!({})),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
@@ -1268,7 +1322,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
-        | AppType::WorkBuddy => {
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1366,7 +1421,7 @@ pub fn should_import_default_config_on_startup(
 ///
 /// This is specific to OpenCode's additive mode - removing a provider
 /// from the opencode.json file.
-pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::opencode_config;
 
     // Check if OpenCode config directory exists
@@ -1637,7 +1692,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
 ///
 /// This removes a specific provider from ~/.hermes/config.yaml
 /// without affecting other providers in the file.
-pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::hermes_config;
 
     // Check if Hermes config directory exists
@@ -1656,7 +1711,7 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
 ///
 /// This removes a specific provider from ~/.openclaw/openclaw.json
 /// without affecting other providers in the file.
-pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::openclaw_config;
 
     // Check if OpenClaw config directory exists

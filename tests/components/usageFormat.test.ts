@@ -22,7 +22,6 @@ import {
   getEstimatedTokensPerSecond,
   getOutputTokensPerSecond,
   getLocaleFromLanguage,
-  hasExactTimingSource,
   joinNames,
   joinClauses,
   sumSpeedTotals,
@@ -223,58 +222,6 @@ describe("usage format helpers", () => {
     expect(sumSpeedTotals([withFirstToken])).toEqual({
       outputTokens: 0,
       generationMs: 0,
-    });
-  });
-
-  it("treats agy_session native timing as exact speed without falling back to estimate", () => {
-    const timedAgy = {
-      outputTokens: 2_900,
-      latencyMs: 69_000,
-      firstTokenMs: 43_000,
-      dataSource: "agy_session",
-    };
-    expect(hasExactTimingSource(timedAgy)).toBe(true);
-    expect(hasExactTimingSource({ dataSource: "proxy" })).toBe(true);
-    expect(hasExactTimingSource({ dataSource: "codex_session" })).toBe(false);
-
-    // 2900 / (69 - 43) s ≈ 111.54 tok/s
-    expect(getOutputTokensPerSecond(timedAgy)).toBeCloseTo(2_900 / 26, 5);
-    expect(formatOutputTokensPerSecond(timedAgy)).toBe("112");
-    expect(getEstimatedTokensPerSecond(timedAgy)).toBeNull();
-
-    // 100–199 token 的原生计时也走精确门槛
-    const midAgy = {
-      outputTokens: 150,
-      latencyMs: 38_000,
-      firstTokenMs: 36_500,
-      dataSource: "agy_session",
-    };
-    expect(getOutputTokensPerSecond(midAgy)).toBe(100);
-    expect(getEstimatedTokensPerSecond(midAgy)).toBeNull();
-
-    // 不足门槛或未计时：不回退到 ≈ 估算
-    const shortAgy = { ...midAgy, outputTokens: 90 };
-    const burstAgy = {
-      outputTokens: 300,
-      latencyMs: 5_050,
-      firstTokenMs: 5_000,
-      dataSource: "agy_session",
-    };
-    const untimedAgy = {
-      outputTokens: 1_000,
-      latencyMs: 0,
-      dataSource: "agy_session",
-    };
-    for (const row of [shortAgy, burstAgy, untimedAgy]) {
-      expect(getOutputTokensPerSecond(row)).toBeNull();
-      expect(getEstimatedTokensPerSecond(row)).toBeNull();
-    }
-
-    expect(
-      sumSpeedTotals([timedAgy, midAgy, shortAgy, burstAgy, untimedAgy]),
-    ).toEqual({
-      outputTokens: 3_050,
-      generationMs: 27_500,
     });
   });
 

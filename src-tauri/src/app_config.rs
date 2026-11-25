@@ -26,6 +26,8 @@ macro_rules! app_flags {
             #[serde(default)]
             pub copilot: bool,
             #[serde(default)]
+            pub codebuddy: bool,
+            #[serde(default)]
             pub claude: bool,
             #[serde(default)]
             pub codex: bool,
@@ -45,7 +47,7 @@ macro_rules! app_flags {
 
         impl $name {
             /// [`Self::enabled_apps`] 的顺序：同步、移除都按它走，不要随意调整
-            const ORDER: [AppType; 14] = [
+            const ORDER: [AppType; 15] = [
                 AppType::Claude,
                 AppType::Codex,
                 AppType::Gemini,
@@ -56,6 +58,7 @@ macro_rules! app_flags {
                 AppType::Dsh,
                 AppType::Kimi,
                 AppType::WorkBuddy,
+                AppType::Codebuddy,
                 AppType::Mcode,
                 AppType::Hermes,
                 AppType::Pi,
@@ -78,13 +81,14 @@ macro_rules! app_flags {
                     AppType::Agy => Some(&mut self.agy),
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
+                    AppType::Codebuddy => Some(&mut self.codebuddy),
                     AppType::OpenClaw | AppType::ClaudeDesktop | AppType::QoderCnDesktop => None,
                 }
             }
 
             /// 检查指定应用是否启用
             pub fn is_enabled_for(&self, app: &AppType) -> bool {
-                // 只维护一张 `slot` 映射表；读取时复制 14 个 bool 换取不写第二张表
+                // 只维护一张 `slot` 映射表；读取时复制 15 个 bool 换取不写第二张表
                 self.clone().slot(app).is_some_and(|enabled| *enabled)
             }
 
@@ -327,6 +331,7 @@ pub enum AppType {
     Omp,
     Copilot,
     WorkBuddy,
+    Codebuddy,
 }
 
 /// 一个应用支持哪些功能。每个应用都在 [`AppType::spec`] 里写全每一项，新增应用时漏写
@@ -474,6 +479,13 @@ impl AppType {
                 route_mode: false,
                 stack: false,
             },
+            AppType::Codebuddy => AppSpec {
+                id: "codebuddy",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
         }
     }
 
@@ -481,8 +493,8 @@ impl AppType {
         self.spec().id
     }
 
-    /// 所有应用，按默认顺序。
-    pub const ALL: [AppType; 17] = [
+    /// 所有应用，按默认顺序
+    pub const ALL: [AppType; 18] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -498,8 +510,9 @@ impl AppType {
         AppType::Agy,
         AppType::Omp,
         AppType::Copilot,
-        AppType::WorkBuddy,
         AppType::QoderCnDesktop,
+        AppType::WorkBuddy,
+        AppType::Codebuddy,
     ];
 
     pub fn all() -> impl Iterator<Item = AppType> {
@@ -538,10 +551,11 @@ impl FromStr for AppType {
                 Ok(AppType::Copilot)
             }
             "workbuddy" | "work-buddy" | "work_buddy" => Ok(AppType::WorkBuddy),
+            "codebuddy" | "codebuddy-code" | "codebuddy_code" => Ok(AppType::Codebuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, codebuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, codebuddy."),
             )),
         }
     }
@@ -900,6 +914,7 @@ impl MultiAppConfig {
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy
+            | AppType::Codebuddy
             | AppType::QoderCnDesktop => return Ok(false),
         };
 
@@ -952,6 +967,7 @@ impl MultiAppConfig {
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
+                | AppType::Codebuddy
                 | AppType::QoderCnDesktop => continue,
             };
 

@@ -26,6 +26,25 @@ const copilotAuthState = vi.hoisted(() => ({
   isStatusError: false,
 }));
 const toastError = vi.hoisted(() => vi.fn());
+const copilotModelsState = vi.hoisted(() => ({
+  models: [] as Array<Record<string, unknown>>,
+  autoRoutingSupported: false,
+}));
+
+vi.mock("@/lib/api/copilot", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/api/copilot")>();
+  return {
+    ...actual,
+    copilotGetModels: vi.fn(async () => ({
+      models: copilotModelsState.models,
+      autoRoutingSupported: copilotModelsState.autoRoutingSupported,
+    })),
+    copilotGetModelsForAccount: vi.fn(async () => ({
+      models: copilotModelsState.models,
+      autoRoutingSupported: copilotModelsState.autoRoutingSupported,
+    })),
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: { error: toastError, success: vi.fn() },
@@ -186,6 +205,8 @@ describe("Codex Copilot provider form", () => {
     copilotAuthState.isStatusSuccess = true;
     copilotAuthState.isStatusError = false;
     toastError.mockReset();
+    copilotModelsState.models = [];
+    copilotModelsState.autoRoutingSupported = false;
   });
 
   const scrollIntoViewDescriptor = Object.getOwnPropertyDescriptor(
@@ -623,5 +644,162 @@ requires_openai_auth = true`;
     fireEvent.click(screen.getByRole("button", { name: /GitHub Copilot/ }));
     expect(formatControl()).toHaveTextContent(formatLabels.auto);
     expect(screen.getByText("模型列表")).toBeVisible();
+  });
+
+  it("setting the first catalog row to the virtual model makes it the default model and saves without strategy meta", async () => {
+    const onSubmit = renderForm();
+    fireEvent.change(screen.getByDisplayValue("gpt-6-astra"), {
+      target: { value: "copilot-fusion-auto" },
+    });
+
+    // 虚拟模型不在列表里：默认模型输入框出现，用户随时能从这里改回具体模型。
+    expect(screen.getByPlaceholderText("例如: gpt-5.6")).toHaveDisplayValue(
+      "copilot-fusion-auto",
+    );
+    // 「不在列表」提示不出现：能力标记会让发布目录带上虚拟项。
+    expect(screen.queryByText(/不在列表里/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+
+    const saved = onSubmit.mock.calls[0][0];
+    expect(
+      Object.keys((saved.meta ?? {}) as Record<string, unknown>),
+    ).not.toContain("copilotModelSelection");
+    const parsedConfig = JSON.parse(saved.settingsConfig);
+    expect(parsedConfig.config).toContain('model = "copilot-fusion-auto"');
+    expect(parsedConfig.modelCatalog.models[0].model).toBe(
+      "copilot-fusion-auto",
+    );
+  });
+
+  it("switching the default model from the virtual model to a concrete slug saves that slug", async () => {
+    const onSubmit = renderForm();
+    fireEvent.change(screen.getByDisplayValue("gpt-6-astra"), {
+      target: { value: "copilot-fusion-auto" },
+    });
+
+    const defaultModelInput = screen.getByPlaceholderText("例如: gpt-5.6");
+    fireEvent.change(defaultModelInput, { target: { value: "gpt-5.5" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const parsedConfig = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    expect(parsedConfig.config).toContain('model = "gpt-5.5"');
+    expect(parsedConfig.config).not.toContain('model = "copilot-fusion-auto"');
+  });
+
+  it("fetch-models does not rewrite a virtual default model", async () => {
+    copilotModelsState.models = [
+      {
+        id: "gpt-6-astra",
+        supported_endpoints: ["/responses", "/chat/completions"],
+      },
+    ];
+    renderForm();
+    fireEvent.change(screen.getByDisplayValue("gpt-6-astra"), {
+      target: { value: "copilot-fusion-auto" },
+    });
+
+    // FetchedModelPicker 的 t() 不带 defaultValue：按钮文本是原始 i18n key。
+    const names = [...document.querySelectorAll("button")].map(
+      (b) => b.textContent ?? "",
+    );
+    const target = names.find((n) => n.includes("providerForm.fetchModels"));
+    if (!target) {
+      throw new Error(`fetch button missing: ${JSON.stringify(names)}`);
+    }
+    fireEvent.click(screen.getByRole("button", { name: target }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: /providerForm.fetchModels|providerForm.modelPicker.title/,
+        }),
+      ).toBeEnabled(),
+    );
+
+    // 刷新列表不能把默认模型自动改写成具体 slug——那会静默换掉用户的选择。
+    expect(screen.getByPlaceholderText("例如: gpt-5.6")).toHaveDisplayValue(
+      "copilot-fusion-auto",
+    );
+  });
+
+  it("fetch-models does not rewrite a [1M]-marked virtual default model", async () => {
+    copilotModelsState.models = [
+      {
+        id: "gpt-6-astra",
+        supported_endpoints: ["/responses", "/chat/completions"],
+      },
+    ];
+    renderForm();
+    fireEvent.change(screen.getByDisplayValue("gpt-6-astra"), {
+      target: { value: "copilot-fusion-auto[1M]" },
+    });
+
+    // FetchedModelPicker 的 t() 不带 defaultValue：按钮文本是原始 i18n key。
+    const names = [...document.querySelectorAll("button")].map(
+      (b) => b.textContent ?? "",
+    );
+    const target = names.find((n) => n.includes("providerForm.fetchModels"));
+    if (!target) {
+      throw new Error(`fetch button missing: ${JSON.stringify(names)}`);
+    }
+    fireEvent.click(screen.getByRole("button", { name: target }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: /providerForm.fetchModels|providerForm.modelPicker.title/,
+        }),
+      ).toBeEnabled(),
+    );
+
+    // 带标记的写法与干净 id 算同一个虚拟模型，同样不能被改写。
+    expect(screen.getByPlaceholderText("例如: gpt-5.6")).toHaveDisplayValue(
+      "copilot-fusion-auto[1M]",
+    );
+  });
+
+  it("legacy fusion strategy meta is inert: the card opens with the saved virtual default model", async () => {
+    const config = [
+      'model = "copilot-fusion-auto"',
+      'model_provider = "copilot"',
+    ].join("\n");
+
+    const onSubmit = vi.fn();
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <ProviderForm
+          appId="codex"
+          providerId="copilot-test"
+          submitLabel="save"
+          onSubmit={onSubmit}
+          onCancel={vi.fn()}
+          initialData={{
+            name: "GitHub Copilot",
+            category: "third_party",
+            settingsConfig: {
+              auth: { GITHUB_TOKEN: "gh-token" },
+              config,
+            },
+            meta: {
+              providerType: "github_copilot",
+              copilotModelSelection: "fusion",
+              copilotSavedFixedModel: "claude-sonnet-4",
+            } as unknown as ProviderMeta,
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    // 旧版策略选择器已不存在；虚拟默认模型还原样显示，改回具体模型的入口保留。
+    expect(screen.queryByRole("combobox", { name: "模型选择策略" })).toBeNull();
+    expect(screen.getByPlaceholderText("例如: gpt-5.6")).toHaveDisplayValue(
+      "copilot-fusion-auto",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "save" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const parsedConfig = JSON.parse(onSubmit.mock.calls[0][0].settingsConfig);
+    expect(parsedConfig.config).toContain('model = "copilot-fusion-auto"');
   });
 });

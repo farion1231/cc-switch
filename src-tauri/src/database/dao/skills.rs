@@ -13,6 +13,45 @@ use crate::services::skill::SkillRepo;
 use indexmap::IndexMap;
 use rusqlite::params;
 
+const INSTALLED_SKILL_SELECT: &str = "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
+        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
+        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host, enabled_codebuddy
+ FROM skills";
+
+fn row_to_installed_skill(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledSkill> {
+    Ok(InstalledSkill {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        description: row.get(2)?,
+        directory: row.get(3)?,
+        repo_host: row.get(23)?,
+        repo_owner: row.get(4)?,
+        repo_name: row.get(5)?,
+        repo_branch: row.get(6)?,
+        readme_url: row.get(7)?,
+        apps: SkillApps {
+            claude: row.get(8)?,
+            codex: row.get(9)?,
+            gemini: row.get(10)?,
+            grokbuild: row.get(11)?,
+            opencode: row.get(12)?,
+            hermes: row.get(13)?,
+            pi: false,
+            omp: false,
+            mcode: row.get(17)?,
+            agy: row.get(18)?,
+            kimi: row.get(19)?,
+            dsh: row.get(20)?,
+            copilot: row.get(21)?,
+            workbuddy: row.get(22)?,
+            codebuddy: row.get(24)?,
+        },
+        installed_at: row.get(14)?,
+        content_hash: row.get(15)?,
+        updated_at: row.get::<_, i64>(16).unwrap_or(0),
+    })
+}
+
 impl Database {
     // ========== InstalledSkill CRUD ==========
 
@@ -20,47 +59,11 @@ impl Database {
     pub fn get_all_installed_skills(&self) -> Result<IndexMap<String, InstalledSkill>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
-            .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host
-                 FROM skills ORDER BY name ASC",
-            )
+            .prepare(&format!("{INSTALLED_SKILL_SELECT} ORDER BY name ASC"))
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let skill_iter = stmt
-            .query_map([], |row| {
-                Ok(InstalledSkill {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    description: row.get(2)?,
-                    directory: row.get(3)?,
-                    repo_host: row.get(23)?,
-                    repo_owner: row.get(4)?,
-                    repo_name: row.get(5)?,
-                    repo_branch: row.get(6)?,
-                    readme_url: row.get(7)?,
-                    apps: SkillApps {
-                        claude: row.get(8)?,
-                        codex: row.get(9)?,
-                        gemini: row.get(10)?,
-                        grokbuild: row.get(11)?,
-                        opencode: row.get(12)?,
-                        hermes: row.get(13)?,
-                        pi: false,
-                        omp: false,
-                        mcode: row.get(17)?,
-                        agy: row.get(18)?,
-                        kimi: row.get(19)?,
-                        dsh: row.get(20)?,
-                        copilot: row.get(21)?,
-                        workbuddy: row.get(22)?,
-                    },
-                    installed_at: row.get(14)?,
-                    content_hash: row.get(15)?,
-                    updated_at: row.get::<_, i64>(16).unwrap_or(0),
-                })
-            })
+            .query_map([], row_to_installed_skill)
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut skills = IndexMap::new();
@@ -75,46 +78,10 @@ impl Database {
     pub fn get_installed_skill(&self, id: &str) -> Result<Option<InstalledSkill>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
-            .prepare(
-                "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
-                        readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-                        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host
-                 FROM skills WHERE id = ?1",
-            )
+            .prepare(&format!("{INSTALLED_SKILL_SELECT} WHERE id = ?1"))
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let result = stmt.query_row([id], |row| {
-            Ok(InstalledSkill {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                description: row.get(2)?,
-                directory: row.get(3)?,
-                repo_host: row.get(23)?,
-                repo_owner: row.get(4)?,
-                repo_name: row.get(5)?,
-                repo_branch: row.get(6)?,
-                readme_url: row.get(7)?,
-                apps: SkillApps {
-                    claude: row.get(8)?,
-                    codex: row.get(9)?,
-                    gemini: row.get(10)?,
-                    grokbuild: row.get(11)?,
-                    opencode: row.get(12)?,
-                    hermes: row.get(13)?,
-                    pi: false,
-                    omp: false,
-                    mcode: row.get(17)?,
-                    agy: row.get(18)?,
-                    kimi: row.get(19)?,
-                    dsh: row.get(20)?,
-                    copilot: row.get(21)?,
-                    workbuddy: row.get(22)?,
-                },
-                installed_at: row.get(14)?,
-                content_hash: row.get(15)?,
-                updated_at: row.get::<_, i64>(16).unwrap_or(0),
-            })
-        });
+        let result = stmt.query_row([id], row_to_installed_skill);
 
         match result {
             Ok(skill) => Ok(Some(skill)),
@@ -130,8 +97,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+              installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host, enabled_codebuddy)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
             params![
                 skill.id,
                 skill.name,
@@ -157,6 +124,7 @@ impl Database {
                 skill.apps.copilot,
                 skill.apps.workbuddy,
                 skill.repo_host,
+                skill.apps.codebuddy,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -225,8 +193,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_agy = ?9, enabled_kimi = ?10, enabled_dsh = ?11, enabled_copilot = ?12, enabled_workbuddy = ?13 WHERE id = ?7",
-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.agy, apps.kimi, apps.dsh, apps.copilot, apps.workbuddy],
+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_agy = ?9, enabled_kimi = ?10, enabled_dsh = ?11, enabled_copilot = ?12, enabled_workbuddy = ?13, enabled_codebuddy = ?14 WHERE id = ?7",
+                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.agy, apps.kimi, apps.dsh, apps.copilot, apps.workbuddy, apps.codebuddy],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

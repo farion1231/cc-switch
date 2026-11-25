@@ -105,6 +105,13 @@
     "stack": false
   },
   {
+    "id": "qoder-cn-desktop",
+    "additive": false,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
+  },
+  {
     "id": "workbuddy",
     "additive": true,
     "localProxy": false,
@@ -112,8 +119,8 @@
     "stack": false
   },
   {
-    "id": "qoder-cn-desktop",
-    "additive": false,
+    "id": "codebuddy",
+    "additive": true,
     "localProxy": false,
     "routeMode": false,
     "stack": false

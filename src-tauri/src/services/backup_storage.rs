@@ -52,8 +52,7 @@ fn categories() -> Vec<Category> {
     let app_backups = app_dir.join("backups");
     // 写入引擎与旧版接管备份按设备目录落盘（不受 app_config_dir 覆盖影响）。
     let device_backups = get_home_dir().join(".cc-switch").join("backups");
-    let env_backups =
-        crate::services::env_manager::backup_dir().unwrap_or_else(|_| device_backups.clone());
+    let env_backups = crate::services::env_manager::backup_dir();
 
     let whole = |id, dir| Category {
         id,

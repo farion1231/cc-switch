@@ -80,6 +80,11 @@ Claude Code / Codex / Gemini 官方通道分別低至原價的 38% / 2% / 9%，�
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>感謝弦界 StringAI 贊助本專案！弦界 StringAI 是一個高性價比、高效穩定的模型 API 平台，一站式接入 AI 程式設計（Coding）、圖像生成（Image）、語音合成（TTS）和影片生成（Video）四大能力。匯聚全球多款知名模型，提供自部署、雲端服務商及官方 API 等多種資源選擇，滿足高校、企業、個人開發者和創業團隊的接入需求，並由專業團隊提供接入指導與技術支援。弦界為 CC Switch 使用者提供了專屬福利，透過<a href="https://www.string.ink/register?ref=661AE533A60AF110">此連結</a>註冊，首儲 3.74 美元送 3.74 美元，獲贈 3.74 美元額外獎勵額度！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>感謝 Fenno.ai 贊助本專案！Fenno.ai 是一家穩定、高效的 API 中轉服務商，目前專注於 Codex 中轉。它相容 OpenAI 與 Anthropic 協定，可靈活用於 Codex、Claude Code、OpenCode 等主流程式開發工具，穩定支撐每日數千億 Token 的企業級負載，並支援境內外主體的企業（B2B）結算與發票。Fenno.ai 為 CC Switch 用戶提供專屬福利：透過<a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">此連結</a>訂閱 $1.99 體驗方案，即可獲得價值 $50 的額度（有效期 7 天），並可賺取最高 20% 的推薦獎勵，邀請越多賺越多！</td>
 </tr>
@@ -362,6 +367,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy | 共存 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **切換**：同一時間只有一個供應商生效；**共存**：多個供應商會同時寫入該工具自己的設定，由你在工具內挑選其中一個。
 - **本地路由**：CC Switch 在你的電腦上轉發請求並轉換 API 格式；詳見下方的[本地路由與故障轉移](#本地路由與故障轉移)。Claude Desktop 的供應商可使用「直連」或「模型映射」；使用「模型映射」時，請求會經過本地路由。
@@ -400,7 +406,7 @@ paru -S cc-switch-bin
 
 ### MCP、提示詞與 Skills
 
-- **統一的 MCP 面板** — 在同一處管理所有 MCP 伺服器，選擇每個伺服器要同步到哪些工具（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi），從各工具匯入現有設定，並可透過 Deep Link 匯入
+- **統一的 MCP 面板** — 在同一處管理所有 MCP 伺服器，選擇每個伺服器要同步到哪些工具（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi、CodeBuddy），從各工具匯入現有設定，並可透過 Deep Link 匯入
 - **提示詞** — 依工具分別建立的提示詞庫，附 Markdown 編輯器；啟用提示詞時會將其寫入該工具的提示詞檔案（CLAUDE.md / AGENTS.md / GEMINI.md），並先把檔案現有的內容存回提示詞庫，確保不會遺失任何內容。Pi 還可編輯 SYSTEM.md、APPEND_SYSTEM.md 與提示詞範本
 - **Skills** — 搜尋 skills.sh，或從 GitHub 儲存庫或 ZIP 檔案一鍵安裝；可檢查更新並一鍵全部更新；可自動同步到各工具、僅用符號連結，或僅用複本；也可選擇存放在 `~/.agents/skills`
 - 三個面板都支援搜尋，MCP 與 Skills 還可依工具一次全部啟用或停用；供應商、MCP 伺服器與提示詞都在內容區以整頁方式編輯，離開時若有未儲存的變更會先提醒你

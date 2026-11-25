@@ -28,7 +28,7 @@ import {
   formatOutputTokensPerSecond,
   formatTokensCompact,
   getLocaleFromLanguage,
-  hasExactTimingSource,
+  isSessionLogRequest,
   parseFiniteNumber,
 } from "./format";
 import {
@@ -126,6 +126,7 @@ const APP_SHORT_NAME: Record<AppId, string> = {
   omp: "omp",
   copilot: "Copilot",
   workbuddy: "WorkBuddy",
+  codebuddy: "CodeBuddy",
   "qoder-cn-desktop": "Qoder CN",
 };
 
@@ -384,8 +385,8 @@ export function RequestLogTable({
     const latency = parseFiniteNumber(log.latencyMs);
     const firstToken = parseFiniteNumber(log.firstTokenMs);
     const firstTokenText = formatFirstTokenSeconds(firstToken);
-    // 其余会话日志的耗时和首字按时间戳估算，带 ≈；路由请求和 Antigravity 原生计时是精确值
-    const hasExactTiming = hasExactTimingSource(log);
+    // 会话日志的耗时和首字都是按时间戳估的，带 ≈
+    const isSession = isSessionLogRequest(log);
     const timing =
       latency != null && latency > 0
         ? {
@@ -396,7 +397,7 @@ export function RequestLogTable({
     const timingTip =
       timing == null
         ? undefined
-        : hasExactTiming
+        : !isSession
           ? timing.ttft != null
             ? t("usage.timingTip", timing)
             : undefined
@@ -584,7 +585,7 @@ export function RequestLogTable({
           )}
           title={timingTip}
         >
-          {!hasExactTiming && firstTokenText != null && "≈"}
+          {isSession && firstTokenText != null && "≈"}
           {firstTokenText ?? "—"}
         </td>
       ),
@@ -594,12 +595,10 @@ export function RequestLogTable({
           title={
             timing == null
               ? undefined
-              : `${!hasExactTiming ? "≈" : ""}${fmtInt(latency, locale)} ms`
+              : `${isSession ? "≈" : ""}${fmtInt(latency, locale)} ms`
           }
         >
-          {timing == null
-            ? "—"
-            : `${!hasExactTiming ? "≈" : ""}${timing.duration}s`}
+          {timing == null ? "—" : `${isSession ? "≈" : ""}${timing.duration}s`}
         </td>
       ),
       statusCode: (

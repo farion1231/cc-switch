@@ -42,6 +42,10 @@ impl ProviderRouter {
         }
     }
 
+    pub(crate) fn route_revision(&self, app_type: &AppType) -> u64 {
+        self.db.route_revision(app_type)
+    }
+
     /// 选择可用的供应商（支持故障转移）
     ///
     /// 返回按优先级排序的可用供应商列表：
@@ -49,7 +53,11 @@ impl ProviderRouter {
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &AppType) -> Result<Vec<Provider>, AppError> {
         // 代理模式下路由到代理路由那家，和直连指针无关。
-        let current_provider = crate::mode::current::provider_in_use(&self.db, app_type)
+        let app = app_type.clone();
+        let current_provider = self
+            .db
+            .run_blocking(move |db| crate::mode::current::provider_in_use(db, &app))
+            .await
             .ok()
             .flatten();
         let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
@@ -89,7 +97,12 @@ impl ProviderRouter {
         } else if auto_failover_enabled {
             // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
             // 使用 DAO 返回的排序结果，确保和前端展示一致
-            for provider in self.db.get_failover_providers(app_type)? {
+            let app = app_type.clone();
+            let providers = self
+                .db
+                .run_blocking(move |db| db.get_failover_providers(&app))
+                .await?;
+            for provider in providers {
                 if !provider_supports_failover(app_type, &provider) {
                     continue;
                 }
