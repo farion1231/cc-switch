@@ -341,22 +341,21 @@ impl AgyAccountManager {
         let login = Arc::clone(&self.login);
         run_blocking(move || login.write(&encoded)).await?;
 
-        // 写完读回来核对，钥匙串偶尔会静默失败
-        let written = match self.read_live(&store, false).await? {
-            LiveLogin::Known { credential, .. } => {
-                refresh_token_of(&credential).map(str::to_string)
+        // 核验失败时只重读，避免再次覆盖 agy 可能已经更新过的登录。
+        for _ in 0..2 {
+            if let Ok(LiveLogin::Known { credential, .. }) = self.read_live(&store, false).await {
+                let written = refresh_token_of(&credential);
+                if written.is_some() && written == expected.as_deref() {
+                    log::info!("[AgyAccount] 已切换 agy 登录");
+                    return Ok(());
+                }
             }
-            _ => None,
-        };
-        if written.is_none() || written != expected {
-            return Err(AppError::localized(
-                "agy.account.write_verify_failed",
-                "写入后核对不一致，agy 的登录可能没有切换成功",
-                "The written sign-in did not verify; agy may not have switched accounts.",
-            ));
         }
-        log::info!("[AgyAccount] 已切换 agy 登录");
-        Ok(())
+        Err(AppError::localized(
+            "agy.account.write_verify_failed",
+            "已写入钥匙串，但无法确认 agy 当前登录的账号。请先在授权中心检查当前登录，再重试。",
+            "The keychain write completed, but agy's current account could not be verified. Check the current sign-in in Auth Center before retrying.",
+        ))
     }
 
     /// 只删 CC Switch 里的副本。删的是 agy 正登着的号时记下来，免得查看状态时又被收回来。
