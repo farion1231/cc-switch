@@ -653,6 +653,9 @@ pub struct CopilotAuthManager {
     copilot_tokens: Arc<RwLock<HashMap<String, CopilotToken>>>,
     /// Copilot Models 进程内缓存，按账号 ID 和 API 版本区分。
     copilot_models: Arc<RwLock<CopilotModelCache>>,
+    /// 目录里看不出 Auto 时，实际调一次 /auto 的结论（key = GitHub user ID）。
+    /// 只存确定的答案，网络错误下次再探；和模型目录一起清。
+    auto_routing_probes: Arc<RwLock<HashMap<String, bool>>>,
     /// Copilot API 端点缓存（key = GitHub user ID，从 /copilot_internal/user 获取）
     api_endpoints: Arc<RwLock<HashMap<String, String>>>,
     /// 每个账号的端点拉取锁，避免并发拉取重复打 GitHub API
@@ -689,6 +692,7 @@ impl CopilotAuthManager {
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             copilot_tokens: Arc::new(RwLock::new(HashMap::new())),
             copilot_models: Arc::new(RwLock::new(HashMap::new())),
+            auto_routing_probes: Arc::new(RwLock::new(HashMap::new())),
             api_endpoints: Arc::new(RwLock::new(HashMap::new())),
             endpoint_locks: Arc::new(RwLock::new(HashMap::new())),
             storage_path,
@@ -799,6 +803,7 @@ impl CopilotAuthManager {
             let mut models = self.copilot_models.write().await;
             models.retain(|(id, _), _| id != account_id);
         }
+        self.auto_routing_probes.write().await.remove(account_id);
         {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.remove(account_id);
@@ -1150,7 +1155,8 @@ impl CopilotAuthManager {
             || self
                 .fetch_catalog_for_account(account_id)
                 .await
-                .is_ok_and(|models| models.iter().any(CopilotModel::supports_auto_routing));
+                .is_ok_and(|models| models.iter().any(CopilotModel::supports_auto_routing))
+            || self.probe_auto_routing(account_id).await;
         Ok(CopilotModelOptions {
             models: catalogue
                 .into_iter()
@@ -1158,6 +1164,49 @@ impl CopilotAuthManager {
                 .collect(),
             auto_routing_supported,
         })
+    }
+
+    /// Free 账号的目录不带 `auto_discount`（那是给付费档的计价字段），但 /auto 照样能选模型。
+    /// 目录看不出来时实际调一次 /auto（只选模型，不推理）：成功就算支持，上游明确拒绝算不支持。
+    async fn probe_auto_routing(&self, account_id: &str) -> bool {
+        if let Some(known) = self.auto_routing_probes.read().await.get(account_id) {
+            return *known;
+        }
+        let Ok(token) = self.get_valid_token_for_account(account_id).await else {
+            return false;
+        };
+        let api_base = self.get_api_endpoint(account_id).await;
+        let result = super::copilot_auto::CopilotAutoClient::resolve(
+            &crate::proxy::http_client::get_for_url(&api_base),
+            &api_base,
+            &token,
+            "hi",
+            false,
+            self.request_timeout,
+        )
+        .await;
+        let known = match result {
+            Ok(_) => Some(true),
+            Err(ProxyError::UpstreamError {
+                status: 400 | 403 | 404,
+                ..
+            }) => Some(false),
+            Err(ProxyError::UpstreamError { status: 401, .. }) => {
+                self.invalidate_token_if_matches(account_id, &token).await;
+                None
+            }
+            Err(err) => {
+                log::debug!("[CopilotAuth] 账号 {account_id} 的 /auto 探测失败，下次再试: {err}");
+                None
+            }
+        };
+        if let Some(known) = known {
+            self.auto_routing_probes
+                .write()
+                .await
+                .insert(account_id.to_string(), known);
+        }
+        known.unwrap_or(false)
     }
 
     /// Auto may need the newer billing metadata. Keep the established /models
@@ -1611,6 +1660,7 @@ impl CopilotAuthManager {
             let mut models = self.copilot_models.write().await;
             models.clear();
         }
+        self.auto_routing_probes.write().await.clear();
         {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.clear();
@@ -2719,6 +2769,139 @@ mod tests {
                 endpoint: "/chat/completions".to_string(),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn auto_support_falls_back_to_probing_auto_when_catalogue_is_silent() {
+        use axum::{http::StatusCode, response::IntoResponse, Json};
+        use std::sync::atomic::{AtomicU16, AtomicUsize};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let auto_status = Arc::new(AtomicU16::new(200));
+        let auto_hits = Arc::new(AtomicUsize::new(0));
+        let server = tokio::spawn({
+            let auto_status = auto_status.clone();
+            let auto_hits = auto_hits.clone();
+            async move {
+                let app = axum::Router::new()
+                    .route(
+                        "/copilot_internal/v2/token",
+                        axum::routing::get(|| async {
+                            Json(serde_json::json!({"token": "tid=copilot", "expires_at": 4102444800i64}))
+                        }),
+                    )
+                    .route(
+                        "/auto",
+                        axum::routing::post(move || {
+                            let auto_status = auto_status.clone();
+                            let auto_hits = auto_hits.clone();
+                            async move {
+                                auto_hits.fetch_add(1, Ordering::SeqCst);
+                                let status = auto_status.load(Ordering::SeqCst);
+                                if status != 200 {
+                                    return StatusCode::from_u16(status).unwrap().into_response();
+                                }
+                                Json(serde_json::json!({
+                                    "selected_model": {"id": "mai-code-2-flash"},
+                                    "session_token": "session",
+                                    "expires_at": 4102444800i64
+                                }))
+                                .into_response()
+                            }
+                        }),
+                    );
+                axum::serve(listener, app).await.unwrap();
+            }
+        });
+
+        // Free 账号的目录：两种 API 版本都没有 auto_discount。
+        let silent: Vec<CopilotModel> = serde_json::from_value(serde_json::json!([
+            {"id":"mai-code-2-flash","name":"MAI","vendor":"Microsoft","model_picker_enabled":true,
+             "supported_endpoints":["/chat/completions","/responses"]}
+        ]))
+        .unwrap();
+        let manager_with = |dir: &std::path::Path| {
+            let silent = silent.clone();
+            let base = base.clone();
+            let dir = dir.to_path_buf();
+            async move {
+                let manager = CopilotAuthManager::with_mock_server(dir, &base).await;
+                manager.copilot_models.write().await.extend([
+                    (("123".into(), COPILOT_API_VERSION), silent.clone()),
+                    (
+                        (
+                            "123".into(),
+                            super::super::copilot_auto::COPILOT_AUTO_API_VERSION,
+                        ),
+                        silent,
+                    ),
+                ]);
+                manager
+            }
+        };
+
+        // /auto 能选模型就算支持，结论缓存起来，不再重复探测。
+        let dir = tempdir().unwrap();
+        let manager = manager_with(dir.path()).await;
+        assert!(
+            manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert!(
+            manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert_eq!(auto_hits.load(Ordering::SeqCst), 1);
+
+        // 上游明确拒绝：不支持，同样只探一次。
+        auto_status.store(403, Ordering::SeqCst);
+        let dir = tempdir().unwrap();
+        let manager = manager_with(dir.path()).await;
+        assert!(
+            !manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert!(
+            !manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert_eq!(auto_hits.load(Ordering::SeqCst), 2);
+
+        // 临时故障不下结论，下次再探。
+        auto_status.store(503, Ordering::SeqCst);
+        let dir = tempdir().unwrap();
+        let manager = manager_with(dir.path()).await;
+        assert!(
+            !manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        auto_status.store(200, Ordering::SeqCst);
+        assert!(
+            manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert_eq!(auto_hits.load(Ordering::SeqCst), 4);
+
+        server.abort();
     }
 
     #[tokio::test]

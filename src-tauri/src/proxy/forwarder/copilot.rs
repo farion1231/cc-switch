@@ -3,7 +3,6 @@
 use super::*;
 use crate::proxy::copilot_auto_session::AutoSessionKey;
 use crate::proxy::providers::{
-    copilot_auth::CopilotModel,
     copilot_auto::{extract_prompt_summary_for_auto, RequestProtocol},
     copilot_model_map::advertised_transport,
 };
@@ -190,6 +189,23 @@ pub(super) fn copilot_api_format_for_model(
     }
 }
 
+/// Auto 选中的模型给 Claude 客户端用哪个端点。
+///
+/// 非 Anthropic 模型优先 `/responses`：Auto 发的 `Copilot-Session-Token` 在 Free 账号上只被
+/// `/responses` 接受，同一个模型走 `/chat/completions` 会报 `no_available_model_endpoints`。
+pub(super) fn copilot_auto_claude_transport(
+    vendor: &str,
+    supported_endpoints: &[String],
+) -> Option<CopilotTransport> {
+    use CopilotProtocol::{Chat, Messages, Responses};
+    let preferred = if vendor.eq_ignore_ascii_case("anthropic") {
+        [Messages, Chat, Responses]
+    } else {
+        [Responses, Chat, Messages]
+    };
+    advertised_transport(supported_endpoints, &preferred)
+}
+
 pub(super) struct CopilotAutoRoute {
     pub(super) key: AutoSessionKey,
     pub(super) model_id: String,
@@ -263,11 +279,8 @@ impl RequestForwarder {
         .await
         .map_err(|_| ProxyError::Timeout("Copilot Auto account lookup timed out".into()))??;
 
-        if !catalogue.iter().any(CopilotModel::supports_auto_routing) {
-            return Err(ProxyError::ConfigError(
-                "This Copilot account does not advertise Auto routing".into(),
-            ));
-        }
+        // 不按目录的 `auto_discount` 拦：Free 账号没有这个计价字段，/auto 却照样可用。
+        // 账号真不能用 Auto 时，/auto 自己会报错。
         let protocol = if is_copilot_auto_chat_endpoint(endpoint) {
             RequestProtocol::ChatCompletions
         } else if matches!(app_type, AppType::Codex) {
@@ -317,15 +330,7 @@ impl RequestForwarder {
                 CodexCopilotApiFormat::from_meta(provider.meta.as_ref()),
             ),
             RequestProtocol::AnthropicMessages => {
-                use CopilotProtocol::{Chat, Messages, Responses};
-                let preferred = if m.vendor.eq_ignore_ascii_case("anthropic") {
-                    [Messages, Chat, Responses]
-                } else if m.vendor.eq_ignore_ascii_case("openai") {
-                    [Responses, Chat, Messages]
-                } else {
-                    [Chat, Responses, Messages]
-                };
-                advertised_transport(&m.supported_endpoints, &preferred)
+                copilot_auto_claude_transport(&m.vendor, &m.supported_endpoints)
             }
         });
         let Some(transport) = transport else {

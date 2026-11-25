@@ -2071,6 +2071,33 @@ fn anthropic_rectifiers_cover_copilot_native_messages() {
 }
 
 #[test]
+fn copilot_auto_prefers_responses_for_non_anthropic_models() {
+    use crate::proxy::providers::copilot_model_map::CopilotProtocol;
+    let protocol = |vendor: &str, endpoints: &[&str]| {
+        let endpoints: Vec<String> = endpoints.iter().map(|e| e.to_string()).collect();
+        copilot_auto_claude_transport(vendor, &endpoints).map(|t| t.protocol)
+    };
+    // Free 账号的 Auto 会话只在 /responses 上有效，两个都支持时不能选 chat。
+    assert_eq!(
+        protocol("Microsoft", &["/chat/completions", "/responses"]),
+        Some(CopilotProtocol::Responses)
+    );
+    assert_eq!(
+        protocol("OpenAI", &["/responses", "ws:/responses"]),
+        Some(CopilotProtocol::Responses)
+    );
+    assert_eq!(
+        protocol("Moonshot", &["/chat/completions"]),
+        Some(CopilotProtocol::Chat)
+    );
+    assert_eq!(
+        protocol("Anthropic", &["/chat/completions", "/v1/messages"]),
+        Some(CopilotProtocol::Messages)
+    );
+    assert_eq!(protocol("Example", &["/embeddings"]), None);
+}
+
+#[test]
 fn copilot_transport_selects_protocol_by_vendor_and_endpoints() {
     let messages = vec!["/v1/messages".to_string(), "/chat/completions".to_string()];
     let chat_only = vec!["/chat/completions".to_string()];
