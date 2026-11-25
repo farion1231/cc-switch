@@ -8,9 +8,15 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
+import type {
+  ToolInstallationReport,
+  ToolUninstallCandidate,
+} from "@/lib/api/settings";
 import { APP_IDS } from "@/config/appSpecs";
+import { emitTauriEvent } from "../msw/tauriMocks";
 import {
   card,
+  candidate,
   createToolState,
   deferred,
   isReady,
@@ -19,8 +25,10 @@ import {
   renderApps,
   report,
   resetAppsPageMocks,
+  uninstallPlan,
   updateAllButton,
   updateButton,
+  type ToolVersions,
 } from "./appsPageTestHelpers";
 
 const mocks = vi.hoisted(() => ({
@@ -76,7 +84,7 @@ vi.mock("sonner", () => ({ toast: mocks }));
 vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
 
 const state = createToolState();
-const { outdated, missing } = state;
+const { upgraded, outdated, missing } = state;
 
 /** 某一组里各行的应用 ID，按显示顺序。 */
 function rowApps(region: string) {
@@ -89,6 +97,19 @@ function rowApps(region: string) {
 }
 
 registerScrollIntoViewStub();
+
+/** 行尾「⋯」菜单（卸载在里面）。 */
+function rowMenu(name: string) {
+  return card(name).getByRole("button", { name: "appPage.moreActions" });
+}
+
+async function openUninstall(name: string) {
+  const user = userEvent.setup();
+  await user.click(rowMenu(name));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "settings.toolUninstall" }),
+  );
+}
 
 beforeEach(() => {
   resetAppsPageMocks(mocks, state);
