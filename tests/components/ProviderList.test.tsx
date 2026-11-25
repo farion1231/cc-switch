@@ -1,4 +1,10 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useState, type ReactElement } from "react";
@@ -1153,6 +1159,107 @@ describe("ProviderList Component", () => {
     expect(providerCardRenderSpy).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("button", { name: "provider.addProvider" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders Pi login-only providers without a database provider or empty state", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: [],
+          defaultProviderId: null,
+          loginProviders: [{ id: "deepseek", name: "DeepSeek" }],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList {...baseProps} providers={{}} appId="pi" />,
+    );
+
+    const card = await screen.findByTestId("pi-login-provider-deepseek");
+    expect(
+      within(card).getByRole("heading", { name: "DeepSeek" }),
+    ).toBeVisible();
+    expect(within(card).getByText("pi.login.managedHint")).toBeVisible();
+    expect(within(card).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByText("pi.empty.title")).not.toBeInTheDocument();
+    expect(providerCardRenderSpy).not.toHaveBeenCalled();
+  });
+
+  it("keeps a same-id saved Pi provider independently actionable", async () => {
+    const provider = createProvider({
+      id: "deepseek",
+      name: "DeepSeek explicit override",
+    });
+    const onSwitch = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [provider],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: [],
+          defaultProviderId: null,
+          loginProviders: [{ id: "deepseek", name: "DeepSeek" }],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        providers={{ [provider.id]: provider }}
+        appId="pi"
+        onSwitch={onSwitch}
+      />,
+    );
+
+    const loginCard = await screen.findByTestId("pi-login-provider-deepseek");
+    expect(within(loginCard).queryByRole("button")).not.toBeInTheDocument();
+    const enable = await screen.findByTestId("add-deepseek");
+    await waitFor(() => expect(enable).toBeEnabled());
+    fireEvent.click(enable);
+    expect(onSwitch).toHaveBeenCalledWith(provider);
+    expect(screen.getByTestId("edit-deepseek")).toBeEnabled();
+    expect(screen.getByTestId("delete-deepseek")).toBeEnabled();
+  });
+
+  it("searches runtime-only Pi login cards by id and display name", async () => {
+    server.use(
+      http.post(`${TAURI_ENDPOINT}/get_pi_current_state`, () =>
+        HttpResponse.json({
+          enabledProviderIds: [],
+          defaultProviderId: null,
+          loginProviders: [
+            { id: "deepseek", name: "DeepSeek" },
+            { id: "kimi-coding", name: "Kimi For Coding" },
+          ],
+        }),
+      ),
+    );
+
+    renderWithQueryClient(
+      <ProviderList {...baseProps} providers={{}} appId="pi" searchOpen />,
+    );
+
+    const search = await screen.findByPlaceholderText(
+      "Search name, notes, or URL...",
+    );
+    fireEvent.change(search, { target: { value: "kimi for" } });
+    expect(
+      screen.getByTestId("pi-login-provider-kimi-coding"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("pi-login-provider-deepseek"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "not-a-provider" } });
+    expect(screen.getByText("No providers match your search.")).toBeVisible();
+    expect(
+      screen.queryByTestId("pi-login-provider-kimi-coding"),
     ).not.toBeInTheDocument();
   });
 

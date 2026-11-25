@@ -714,7 +714,7 @@ export interface AdditiveInput {
   codebuddyAccounts?: CodebuddyAccountsState;
   /** Copilot CLI：settings.json 的 `model`（`<卡片 id>/<模型>`）所属的自带模型卡。 */
   copilotDefaultId?: string | null;
-  /** 「已添加」里列表外另画的卡（DSH 的 DeepSeek 账号卡），计入标题数字 */
+  /** 「已添加」里列表外另画的卡（DSH 账号、Pi `/login` 投影），计入标题数字 */
   extraAdded?: number;
   actions: {
     add: (provider: Provider) => void;

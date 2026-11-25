@@ -1,4 +1,4 @@
-# Pi 显式供应商同步需求
+# Pi 显式供应商与登录渠道同步需求
 
 ## 背景
 
@@ -40,9 +40,9 @@ Pi 额外需要支持同名内置供应商的显式覆盖：只要供应商节�
 
 - `models.json.providers` 中的显式配置由 CC Switch 管理。
 - Pi `/login` 写入 `auth.json` 的凭证始终由 Pi 管理，无论其类型为 OAuth 还是 API Key。
-- CC Switch 不读取、复制、修改或删除 `auth.json` 中的凭证。
-- CC Switch 不刷新 OAuth Token。
-- 只有 `auth.json` 凭证、没有 `models.json.providers` 节点的供应商，不生成 CC Switch 卡片。
+- CC Switch 只读取 `auth.json` 顶层的非空 provider ID；空白 ID 和 `null` 占位条目被忽略。
+- CC Switch 不复制、持久化、修改或删除 `auth.json` 中的凭证内容，也不刷新 OAuth Token。
+- 只有 `auth.json` 登录状态、没有 `models.json.providers` 节点的供应商，生成由 Pi `/login` 管理的纯运行态只读卡片。
 - 环境变量中的凭证不导入 CC Switch。
 - 同一供应商同时存在显式配置和 Pi 登录时，CC Switch 只管理显式配置。
 - 移除显式配置不退出 Pi 登录，也不删除 `auth.json`。
@@ -94,17 +94,18 @@ Pi 额外需要支持同名内置供应商的显式覆盖：只要供应商节�
 主要修改范围：
 
 - Pi live provider 配置读取；
+- Pi `/login` provider ID 读取与运行态只读投影；
 - Pi 供应商列表同步；
 - 内置 provider ID 过滤规则；
 - 启用和移除操作；
 - 页面刷新后的状态更新。
 
-不增加数据库 Schema，也不建立新的 ownership 状态。
+不增加数据库 Schema，也不建立新的 ownership 状态。登录卡片只由 `PiCurrentState.loginProviders` 返回 `{ id, name }`，不写入 SQLite `providers` 表，不扩展 `ProviderMeta`，也不进入备份或云同步。显式供应商 CRUD 不增加 `/login` 拦截；同 ID 显式节点启用后，对应登录投影自动隐藏。读取 `auth.json` 失败时只隐藏登录投影，不影响显式供应商状态与操作。
 
 明确不做：
 
-- OAuth 或 `/login` 凭证管理；
-- `auth.json` 管理；
+- OAuth 或 `/login` 凭证内容管理；
+- `auth.json` 写入或凭证管理；
 - 环境变量导入；
 - 默认供应商或默认模型管理；
 - 路由与故障转移；
@@ -119,8 +120,17 @@ Pi 额外需要支持同名内置供应商的显式覆盖：只要供应商节�
 4. 在没有 `auth.json` 凭证和相关环境变量时重启 Pi，被显式配置激活的模型不再可用。
 5. 再次启用后完整配置恢复，Pi 可以继续使用。
 6. 在 CC Switch 外部新增、修改或删除 provider，刷新页面后自动同步。
-7. Pi `/login` 写入的 OAuth 或 API Key 凭证不被读取或修改。
+7. Pi `/login` 写入的 OAuth 或 API Key 只消费所属 provider ID，凭证内容不被复制、持久化或修改。
 8. 移除供应商前后 `auth.json` 内容与文件状态完全不变。
 9. 自定义 Header、模型能力字段和未知 JSON 字段在同步、编辑、保存、移除与重新启用后不丢失。
 10. 所有操作前后 Pi 当前默认供应商和默认模型保持不变。
 11. 模型 ID 大小写按原值保存，不进行任何模糊合并。
+12. `/login` 渠道可创建同 ID 显式配置；启用、移除、再启用、编辑和删除显式配置均不被登录状态锁死，登录卡片不占数据库 ID。
+13. 登录卡片不可拖拽、没有写操作，副标题明确说明由 Pi `/login` 管理，并参与名称和 ID 搜索；Oh My Pi 不显示这些卡片。
+
+## 当前架构边界
+
+- `PiStateService::current()` 每次从 `auth.json` 构造运行态投影，显式 `models.json` 节点优先；不在列表同步或 CRUD 中持久化登录状态。
+- 前端在 `ProviderList` 的“已添加”分区独立渲染只读卡片，参照 `DshAccountCard`，但不复用 `Provider` 或普通卡片操作。
+- `auth.json` 直接通过 `File::open` 读取，文件不存在返回空集合；解析值使用 `Option<IgnoredAny>` 跳过，解析错误不包含文件内容。
+- Pi 与 Oh My Pi 共用状态结构，但 Oh My Pi 的 `loginProviders` 始终为空。

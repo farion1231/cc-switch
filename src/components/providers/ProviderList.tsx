@@ -62,6 +62,7 @@ import {
   accountName as dshAccountName,
   useDshAccountStatus,
 } from "@/components/providers/DshAccount";
+import { PiLoginProviderCard } from "@/components/providers/PiLoginProviderCard";
 import {
   buildAdditiveSections,
   buildLaunchSections,
@@ -181,6 +182,13 @@ export function ProviderList({
     appId === "omp" ? "omp" : "pi",
   );
   const isPiStateReady = !appHas(appId, "piFamily") || isPiCurrentStateSuccess;
+  const piLoginProviders = useMemo(
+    () =>
+      appId === "pi" && isPiStateReady
+        ? (piCurrentState?.loginProviders ?? [])
+        : [],
+    [appId, isPiStateReady, piCurrentState?.loginProviders],
+  );
   // WorkBuddy 官方登录卡：有这种卡时才去读账号和运行状态
   const hasWorkBuddyOfficial =
     appId === "workbuddy" &&
@@ -365,6 +373,18 @@ export function ProviderList({
           .toLowerCase()
           .includes(searchKeyword)),
   );
+  const filteredPiLoginProviders = useMemo(() => {
+    if (!searchKeyword) return piLoginProviders;
+    const managedHint = t("pi.login.managedHint").toLowerCase();
+    return piLoginProviders.filter((provider) =>
+      [provider.id, provider.name, managedHint]
+        .join("\n")
+        .toLowerCase()
+        .includes(searchKeyword),
+    );
+  }, [piLoginProviders, searchKeyword, t]);
+  const showPiLoginProviderCards = filteredPiLoginProviders.length > 0;
+  const showExtraAddedCards = showDshAccountCard || showPiLoginProviderCards;
 
   // 关掉面板就不再过滤：搜索词留着，下次打开还在，但列表不会悄悄少几家
   const filteredProviders = useMemo(() => {
@@ -443,7 +463,8 @@ export function ProviderList({
       workbuddyOfficial,
       codebuddyAccounts,
       copilotDefaultId: appId === "copilot" ? currentProviderId : null,
-      extraAdded: showDshAccountCard ? 1 : 0,
+      extraAdded:
+        (showDshAccountCard ? 1 : 0) + filteredPiLoginProviders.length,
       actions: {
         add: onSwitch,
         remove: (provider) =>
@@ -483,6 +504,7 @@ export function ProviderList({
     codebuddyAccounts,
     switchCodebuddyAccount,
     showDshAccountCard,
+    filteredPiLoginProviders.length,
     onRemoveFromConfig,
     onDelete,
     onDisableOmo,
@@ -562,7 +584,11 @@ export function ProviderList({
     );
   }
 
-  if (sortedProviders.length === 0 && !dshAccountCard) {
+  if (
+    sortedProviders.length === 0 &&
+    !dshAccountCard &&
+    piLoginProviders.length === 0
+  ) {
     return (
       <div className="space-y-4">
         {piStateErrorNotice}
@@ -700,7 +726,7 @@ export function ProviderList({
   const liftLeadTitle =
     !hostedSearch &&
     Boolean(leadSection?.title) &&
-    (filteredProviders.length > 0 || showDshAccountCard);
+    (filteredProviders.length > 0 || showExtraAddedCards);
   const showListHeader =
     !hostedSearch && (Boolean(leadSection?.title) || isSearchOpen);
 
@@ -725,7 +751,7 @@ export function ProviderList({
         </div>
       )}
 
-      {filteredProviders.length === 0 && !showDshAccountCard ? (
+      {filteredProviders.length === 0 && !showExtraAddedCards ? (
         <div className="rounded-panel border border-dashed border-border px-6 py-8 text-center text-body text-fg-2">
           {t("provider.noSearchResults", {
             defaultValue: "No providers match your search.",
@@ -746,9 +772,16 @@ export function ProviderList({
               {section.key === "added" &&
                 showDshAccountCard &&
                 dshAccountCard && <DshAccountCard status={dshAccountCard} />}
+              {section.key === "added" &&
+                filteredPiLoginProviders.map((provider) => (
+                  <PiLoginProviderCard
+                    key={`pi-login-${provider.id}`}
+                    provider={provider}
+                  />
+                ))}
               {section.items.length === 0 &&
               section.emptyText &&
-              !(section.key === "added" && showDshAccountCard) ? (
+              !(section.key === "added" && showExtraAddedCards) ? (
                 <div className="rounded-panel border border-dashed border-border px-4 py-3 text-caption text-fg-3">
                   {section.emptyText}
                 </div>

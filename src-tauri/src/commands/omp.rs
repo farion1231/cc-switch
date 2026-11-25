@@ -17,6 +17,7 @@ fn current_state(state: &AppState) -> Result<PiCurrentState, AppError> {
     Ok(PiCurrentState {
         enabled_provider_ids,
         default_provider_id,
+        login_providers: Vec::new(),
     })
 }
 
@@ -58,6 +59,7 @@ mod tests {
         let current = current_state(&state).unwrap();
         assert_eq!(current.enabled_provider_ids, vec!["managed", "native"]);
         assert_eq!(current.default_provider_id.as_deref(), Some("managed"));
+        assert!(current.login_providers.is_empty());
 
         write("providers: {}\n", "modelRoles:\n  default: openai/gpt-4o\n");
         let builtin = current_state(&state).unwrap();
