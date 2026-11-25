@@ -5125,3 +5125,99 @@ fn test_latency_does_not_inherit_the_start_of_an_aborted_request() {
 
     assert_eq!(parsed_latencies(&lines), vec![Some(30_090), Some(10_100)]);
 }
+
+#[test]
+#[serial_test::serial]
+fn test_ephemeral_parent_subagent_with_self_owned_provenance_imports_immediately(
+) -> Result<(), AppError> {
+    clear_codex_replay_caches();
+    let db = Database::memory()?;
+    let temp = tempdir().unwrap();
+    let child = rollout_path(temp.path(), CHILD_A_ID);
+    let usage_rec = |ts: &str, resp_id: &str, input: u64, cached: u64, output: u64| {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "token_usage_record",
+            "payload": {
+                "response_id": resp_id,
+                "thread_id": CHILD_A_ID,
+                "usage": {
+                    "input_tokens": input,
+                    "cached_input_tokens": cached,
+                    "output_tokens": output
+                }
+            }
+        })
+    };
+    let tok = |ts: &str,
+               tot_in: u64,
+               tot_cache: u64,
+               tot_out: u64,
+               last_in: u64,
+               last_cache: u64,
+               last_out: u64| {
+        serde_json::json!({
+            "timestamp": ts,
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": tot_in,
+                        "cached_input_tokens": tot_cache,
+                        "output_tokens": tot_out,
+                        "total_tokens": tot_in + tot_out
+                    },
+                    "last_token_usage": {
+                        "input_tokens": last_in,
+                        "cached_input_tokens": last_cache,
+                        "output_tokens": last_out,
+                        "total_tokens": last_in + last_out
+                    }
+                }
+            }
+        })
+    };
+
+    // Parent PARENT_ID was ephemeral (no rollout file on disk), while every
+    // billable request in CHILD_A_ID has explicit token_usage_record ownership
+    // and starts from zero inherited baseline.
+    write_jsonl(
+        &child,
+        &[
+            session_meta_at(CHILD_A_ID, None, Some(PARENT_ID), "2026-07-10T03:00:05Z"),
+            turn_context(),
+            usage_rec("2026-07-10T03:00:06Z", "resp_child_1", 500, 100, 80),
+            tok("2026-07-10T03:00:06Z", 500, 100, 80, 500, 100, 80),
+            usage_rec("2026-07-10T03:00:08Z", "resp_child_2", 700, 200, 120),
+            tok("2026-07-10T03:00:08Z", 1200, 300, 200, 700, 200, 120),
+        ],
+    );
+
+    let result = sync_test_file(&db, &child, &[&child])?;
+    assert_eq!(
+        (result.imported, result.skipped, result.deferred),
+        (2, 0, false)
+    );
+
+    // Without self-owned provenance, a missing-parent child still stays deferred.
+    let child_no_prov = rollout_path(temp.path(), CHILD_B_ID);
+    write_jsonl(
+        &child_no_prov,
+        &[
+            session_meta_at(CHILD_B_ID, None, Some(PARENT_ID), "2026-07-10T03:00:05Z"),
+            turn_context(),
+            tok("2026-07-10T03:00:06Z", 500, 100, 80, 500, 100, 80),
+        ],
+    );
+    let deferred_res = sync_test_file(&db, &child_no_prov, &[&child, &child_no_prov])?;
+    assert_eq!(
+        (
+            deferred_res.imported,
+            deferred_res.skipped,
+            deferred_res.deferred
+        ),
+        (0, 0, true)
+    );
+    Ok(())
+}

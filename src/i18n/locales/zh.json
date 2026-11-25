@@ -2474,6 +2474,11 @@
       "label": "{{app}} · 会话日志",
       "hint": "没开路由时从客户端的会话日志读取，分不出具体是哪家供应商"
     },
+    "temporaryProvider": {
+      "short": "临时会话",
+      "label": "{{app}} · 临时会话",
+      "hint": "通过本地 OTLP 接收的非落盘临时调用（如 --ephemeral、侧边栏助手），未走本地路由，分不出具体供应商"
+    },
     "sessionAccountProvider": {
       "short": "DeepSeek 账号",
       "label": "{{app}} · DeepSeek 账号（OAuth）",

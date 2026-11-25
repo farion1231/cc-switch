@@ -433,6 +433,27 @@ impl ProxyServer {
             .route("/gemini/v1beta/*path", any(handlers::handle_gemini))
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
+            // 本地 OTLP/HTTP JSON 用量接收器（捕获 --ephemeral / --no-session-persistence 等非落盘 CLI 调用）
+            .route(
+                crate::services::otel_usage::OTEL_LOGS_PATH,
+                post(crate::services::otel_usage::receive_from_proxy),
+            )
+            .route(
+                crate::services::otel_usage::CODEX_LOGS_PATH,
+                post(crate::services::otel_usage::receive_from_proxy),
+            )
+            .route(
+                crate::services::otel_usage::STANDARD_LOGS_PATH,
+                post(crate::services::otel_usage::receive_from_proxy),
+            )
+            .route(
+                crate::services::otel_usage::OTEL_HEALTH_PATH,
+                get(crate::services::otel_usage::health_response),
+            )
+            .route(
+                crate::services::otel_usage::CODEX_HEALTH_PATH,
+                get(crate::services::otel_usage::health_response),
+            )
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
             .layer(DefaultBodyLimit::max(handlers::MAX_REQUEST_BODY_BYTES))
             // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard

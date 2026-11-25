@@ -152,6 +152,9 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
                 "Codex",
                 crate::services::session_usage_codex::sync_codex_usage_with_cursors,
             ),
+            ("Temporary CLI (OTel)", |db, _cursors| {
+                crate::services::otel_usage::sync_pending(db)
+            }),
             (
                 "Gemini",
                 crate::services::session_usage_gemini::sync_gemini_usage,

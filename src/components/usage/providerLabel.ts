@@ -32,6 +32,16 @@ const SESSION_ACCOUNT_PROVIDER_APPS: Record<string, AppId> = {
   "DeepSeek Harness (OAuth)": "dsh",
 };
 
+/**
+ * 通过本地 OTLP 接收的非落盘临时会话占位名（如 `codex exec --ephemeral`、
+ * Codex 侧边栏助手、`claude -p --no-session-persistence`）。
+ */
+const TEMPORARY_PROVIDER_APPS: Record<string, AppId> = {
+  "Claude (Temporary)": "claude",
+  "Codex (Temporary)": "codex",
+  "Gemini (Temporary)": "gemini",
+};
+
 export interface UsageProviderLabel {
   label: string;
   /** 旁边已经有「应用」列时用的短名：会话日志占位名省掉应用名，其余同 label */
@@ -57,6 +67,16 @@ export function getUsageProviderLabel(
       }),
       shortLabel: t("usage.sessionAccountProvider.short"),
       hint: t("usage.sessionAccountProvider.hint"),
+    };
+  }
+  const temporaryApp = TEMPORARY_PROVIDER_APPS[name];
+  if (temporaryApp) {
+    return {
+      label: t("usage.temporaryProvider.label", {
+        app: APP_DISPLAY_NAME[temporaryApp],
+      }),
+      shortLabel: t("usage.temporaryProvider.short"),
+      hint: t("usage.temporaryProvider.hint"),
     };
   }
   const app = SESSION_PROVIDER_APPS[name];

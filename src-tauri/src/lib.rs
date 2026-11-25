@@ -1458,6 +1458,14 @@ pub fn run() {
                     }
                 });
 
+                // OTLP/JSON 临时会话用量接收器：当 Codex/Claude 配置了独立回环 OTLP 端口
+                // （或设置 CC_SWITCH_OTEL_LISTEN_PORT）时启动，即使未开启本地代理也能捕获
+                // `codex exec --ephemeral`、`claude -p --no-session-persistence` 等非落盘调用
+                let db_for_otel = state.db.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::services::otel_usage::serve_if_configured(db_for_otel).await;
+                });
+
                 // Session log usage sync: 启动时同步一次，之后每 10 分钟兜底一次（防 CLI 清理旧会话
                 // 文件前漏导入）；用量页打开时由前端按所选间隔加扫
                 let db_for_session_sync = state.db.clone();

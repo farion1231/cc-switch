@@ -2474,6 +2474,11 @@
       "label": "{{app}} · Session logs",
       "hint": "Read from the client's session logs while routing is off, so the provider can't be told apart"
     },
+    "temporaryProvider": {
+      "short": "Temporary",
+      "label": "{{app}} · Temporary",
+      "hint": "Received via local OTLP for non-persisted runs (such as --ephemeral CLI calls or side chats) while routing is off, so the provider can't be told apart"
+    },
     "sessionAccountProvider": {
       "short": "DeepSeek account",
       "label": "{{app}} · DeepSeek account (OAuth)",
