@@ -154,11 +154,19 @@ type DragHandle = {
 /** 可拖动的行把拖动把手交给里面的 `AppRow`（ToolRow 自己渲染 AppRow，不必逐层传参）。 */
 const DragHandleContext = createContext<DragHandle | null>(null);
 
-/** 本机有这个命令行应用：探到了版本、装了但跑不起来，或安装清单里有安装位置（和「卸载」出现的条件一致）。 */
+/** 本机有这个命令行应用：确认已安装、装了但跑不起来，或安装清单里有安装位置（和「卸载」出现的条件一致）。 */
 function isToolPresent(
-  info: { version?: string | null; installed_but_broken?: boolean } | undefined,
+  info:
+    | {
+        version?: string | null;
+        installed?: boolean | null;
+        installed_but_broken?: boolean;
+      }
+    | undefined,
   report: ToolInstallationOverview | undefined,
 ): boolean {
+  if (info?.installed === true) return true;
+  if (info?.installed === false) return (report?.installs?.length ?? 0) > 0;
   return Boolean(
     info?.version ||
       info?.installed_but_broken ||
@@ -224,7 +232,9 @@ export function AppsPage() {
     }
     // 清单未回（或 WSL）：首次探测还没出结果时先不分组
     if (!info && tools.isLoadingTools) return null;
-    return isToolPresent(info, report);
+    if (isToolPresent(info, report)) return true;
+    if (info?.installed === false) return false;
+    return info?.installed ?? null;
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
   const appOrder = orderAppIds(settings?.appOrder);
@@ -786,11 +796,15 @@ function ToolRow({
   const canUninstall = isToolPresent(info, report);
   const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
-    (isVersionLoading || broken
+    (isVersionLoading || broken || !info
       ? null
-      : !info?.version
+      : info.installed === false
         ? "install"
-        : isOutdated && !nodeGap && !desktopManaged
+        : info.installed === true &&
+            info.version &&
+            isOutdated &&
+            !nodeGap &&
+            !desktopManaged
           ? "update"
           : null);
   const sourceLabel = defaultInstall
@@ -826,7 +840,15 @@ function ToolRow({
       {t("appsPage.notRunnable")}
     </span>
   ) : (
-    <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
+    <span className="text-caption text-fg-2">
+      {t(
+        info?.installed === false
+          ? "common.notInstalled"
+          : info?.installed === true
+            ? "appsPage.versionUnknown"
+            : "appsPage.probeFailed",
+      )}
+    </span>
   );
 
   const actionButton = action ? (
