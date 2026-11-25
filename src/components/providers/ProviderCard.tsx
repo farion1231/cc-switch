@@ -494,6 +494,28 @@ export function ProviderCard({
         <span className="min-w-0 truncate">{displayUrl}</span>
       </button>
     ) : null;
+  const xaiSubtitle = isXaiOauthProvider ? (
+    <XaiAccountSubtitle
+      providerName={provider.name}
+      accountId={xaiAccountId}
+      manualNote={manualNote}
+      planSuffix={planSuffix()}
+      fallback={defaultUrlSubtitle}
+    />
+  ) : (
+    defaultUrlSubtitle
+  );
+  const oauthSubtitle = isCopilot ? (
+    <CopilotAccountSubtitle
+      providerName={provider.name}
+      accountId={copilotAccountId}
+      manualNote={manualNote}
+      planSuffix={planSuffix()}
+      fallback={xaiSubtitle}
+    />
+  ) : (
+    xaiSubtitle
+  );
   return (
     <div
       className={cn(
@@ -609,7 +631,7 @@ export function ProviderCard({
               boundAccountId={agyBoundAccountId}
               agyModel={agyModel}
               planSuffix={planSuffix("-ms-0.5")}
-              fallback={defaultUrlSubtitle}
+              fallback={oauthSubtitle}
             />
           ) : agyModel ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
@@ -618,24 +640,8 @@ export function ProviderCard({
               </span>
               {planSuffix("-ms-0.5")}
             </div>
-          ) : isCopilot ? (
-            <CopilotAccountSubtitle
-              providerName={provider.name}
-              accountId={copilotAccountId}
-              manualNote={manualNote}
-              planSuffix={planSuffix()}
-              fallback={defaultUrlSubtitle}
-            />
-          ) : isXaiOauthProvider ? (
-            <XaiAccountSubtitle
-              providerName={provider.name}
-              accountId={xaiAccountId}
-              manualNote={manualNote}
-              planSuffix={planSuffix()}
-              fallback={defaultUrlSubtitle}
-            />
           ) : (
-            defaultUrlSubtitle
+            oauthSubtitle
           )}
         </div>
 

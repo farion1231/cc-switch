@@ -1,14 +1,18 @@
 import type { ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
-import { useManagedAuthStatus } from "@/lib/query/managedAuth";
+import {
+  managedAuthStatusQuery,
+  xaiAuthStatusQuery,
+} from "@/lib/query/managedAuth";
 import CodebuddyAccountQuotaFooter from "@/components/CodebuddyAccountQuotaFooter";
 import { codebuddyRegion } from "@/components/providers/forms/CodebuddyLogin";
 import type { CardChip } from "./presentation";
 
 function useResolvedAgyAccount(boundAccountId: string | null) {
-  const { data } = useManagedAuthStatus("agy_oauth");
+  const { data } = useQuery(managedAuthStatusQuery("agy_oauth"));
   const activeAccountId = data?.default_account_id;
   const targetAccountId = boundAccountId ?? activeAccountId;
   const account = targetAccountId
@@ -32,15 +36,11 @@ export function AgyInUseChip({
     return null;
   }
 
-  return (
-    <>
-      {renderChip({
-        key: "agy-login",
-        label: t("authCenter.inUseBy", { app: "agy" }),
-        tone: "success",
-      })}
-    </>
-  );
+  return renderChip({
+    key: "agy-login",
+    label: t("authCenter.inUseBy", { app: "agy" }),
+    tone: "success",
+  });
 }
 
 /** Antigravity 官方卡副标题（账号邮箱 + 当前模型 + 套餐），未查到账号且无模型时回落默认副标题。 */
@@ -58,7 +58,7 @@ export function AgyOfficialSubtitle({
   const { account } = useResolvedAgyAccount(boundAccountId);
 
   if (!account && !agyModel) {
-    return <>{fallback}</>;
+    return fallback;
   }
 
   return (
@@ -92,7 +92,9 @@ export function CodebuddyOfficialAccountLine({
   onEdit: (provider: Provider) => void;
 }) {
   const { t } = useTranslation();
-  const { data, isSuccess, isError } = useManagedAuthStatus("codebuddy_oauth");
+  const { data, isSuccess, isError } = useQuery(
+    managedAuthStatusQuery("codebuddy_oauth"),
+  );
   const account = accountId
     ? data?.accounts.find((item) => item.id === accountId)
     : undefined;
@@ -175,7 +177,7 @@ export function CodebuddyOfficialQuota({
 }: {
   accountId: string | null;
 }) {
-  const { data } = useManagedAuthStatus("codebuddy_oauth");
+  const { data } = useQuery(managedAuthStatusQuery("codebuddy_oauth"));
   const account = accountId
     ? data?.accounts.find((item) => item.id === accountId)
     : undefined;
@@ -202,7 +204,9 @@ export function CodexOauthAccountLine({
   onEdit: (provider: Provider) => void;
 }) {
   const { t } = useTranslation();
-  const { data, isSuccess, isError } = useManagedAuthStatus("codex_oauth");
+  const { data, isSuccess, isError } = useQuery(
+    managedAuthStatusQuery("codex_oauth"),
+  );
   const account = data?.accounts.find(
     (item) => item.id === (accountId ?? data?.default_account_id),
   );
@@ -290,7 +294,9 @@ export function CopilotAccountSubtitle({
   fallback: ReactNode;
 }) {
   const { t } = useTranslation();
-  const { data, isSuccess } = useManagedAuthStatus("github_copilot");
+  const { data, isSuccess } = useQuery(
+    managedAuthStatusQuery("github_copilot"),
+  );
   const account = data?.accounts.find(
     (item) => item.id === (accountId ?? data?.default_account_id),
   );
@@ -327,7 +333,7 @@ export function CopilotAccountSubtitle({
     );
   }
 
-  return <>{fallback}</>;
+  return fallback;
 }
 
 /** xAI OAuth (SuperGrok 反代) 卡副标题，挂载期间按 15 秒轮询同步过期/默认号切换状态。 */
@@ -345,11 +351,7 @@ export function XaiAccountSubtitle({
   fallback: ReactNode;
 }) {
   const { t } = useTranslation();
-  // The proxy can expire an account and replace the default without an Auth
-  // Center mutation. Keep the subtitle and reauth badge in sync while mounted.
-  const { data, isSuccess } = useManagedAuthStatus("xai_oauth", {
-    refetchInterval: 15_000,
-  });
+  const { data, isSuccess } = useQuery(xaiAuthStatusQuery);
   const account = data?.accounts.find(
     (item) => item.id === (accountId ?? data?.default_account_id),
   );
@@ -386,5 +388,5 @@ export function XaiAccountSubtitle({
     );
   }
 
-  return <>{fallback}</>;
+  return fallback;
 }
