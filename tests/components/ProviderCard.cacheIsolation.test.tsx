@@ -14,6 +14,13 @@ vi.mock("@/lib/query/failover", () => ({
   useProviderHealth: () => ({ data: undefined }),
 }));
 
+vi.mock("@/lib/platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/platform")>()),
+  isLinux: () => true,
+}));
+
+const relayUrl = "https://relay.example.test";
+
 const unrelatedAccounts = {
   agy_oauth: "agy@example.test",
   claude_official: "claude@example.test",
@@ -59,8 +66,14 @@ it.each(APP_IDS)("keeps cached logins off unrelated %s cards", (appId) => {
           id: "relay",
           name: "Relay",
           category: "third_party",
-          websiteUrl: "https://relay.example.test",
-          settingsConfig: {},
+          websiteUrl: relayUrl,
+          settingsConfig: {
+            env: {
+              ANTHROPIC_BASE_URL: relayUrl,
+              GOOGLE_GEMINI_BASE_URL: relayUrl,
+            },
+            auth: { OPENAI_API_KEY: "sk-test" },
+          },
         }}
         isCurrent={false}
         presentation={{ chips: [], buttons: [] }}
@@ -73,7 +86,7 @@ it.each(APP_IDS)("keeps cached logins off unrelated %s cards", (appId) => {
     </QueryClientProvider>,
   );
 
-  expect(screen.getByText("https://relay.example.test")).toBeInTheDocument();
+  expect(screen.getByText(relayUrl)).toBeInTheDocument();
   expect(screen.queryByText("authCenter.inUseBy")).not.toBeInTheDocument();
   for (const login of Object.values(unrelatedAccounts)) {
     expect(container).not.toHaveTextContent(login);
