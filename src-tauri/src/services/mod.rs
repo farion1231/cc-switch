@@ -62,6 +62,7 @@ pub use skill::SkillService;
 pub use speedtest::{EndpointLatency, SpeedtestService};
 pub use usage_cache::UsageCache;
 
+pub mod session_usage_cline;
 pub mod session_usage_codebuddy;
 pub mod session_usage_copilot;
 pub mod session_usage_kimi;

@@ -132,8 +132,9 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
-        | AppType::Dsh
         | AppType::Agy
+        | AppType::Cline
+        | AppType::Dsh
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy

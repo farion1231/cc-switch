@@ -106,6 +106,7 @@ const IMPORT_SOURCE_FILES: Record<
     noteKey: "mcpPage.import.dshNote",
   },
   kimi: { file: "~/.kimi-code/mcp.json" },
+  cline: { file: "~/.cline/data/settings/cline_mcp_settings.json" },
   copilot: { file: "~/.copilot/mcp-config.json" },
   workbuddy: { file: "~/.workbuddy/mcp.json" },
   codebuddy: {
@@ -121,6 +122,7 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<AppIdWith<"mcp">> = new Set([
   "mcode",
   "kimi",
   "codebuddy",
+  "cline",
   "dsh",
   "workbuddy",
   "pi",

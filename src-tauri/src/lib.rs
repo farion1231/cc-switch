@@ -8,6 +8,10 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+mod cline_config;
+mod cline_session;
+#[cfg(all(test, unix))]
+mod cline_smoke_tests;
 mod codebuddy_config;
 mod codex_config;
 mod codex_history_migration;
@@ -1887,6 +1891,7 @@ pub fn run() {
             // Hermes specific
             commands::import_hermes_providers_from_live,
             commands::get_hermes_live_provider_ids,
+            commands::get_cline_hub_status,
             commands::get_hermes_model_config,
             commands::open_hermes_web_ui,
             commands::launch_hermes_dashboard,

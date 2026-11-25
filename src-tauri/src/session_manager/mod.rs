@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 // 其余模型类型从 `session_manager::model` 引用
 pub use model::SessionMessage;
 use providers::{
-    agy, claude, codebuddy, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode, omp,
-    openclaw, opencode, pi, workbuddy,
+    agy, claude, cline, codebuddy, codex, copilot, dsh, gemini, grokbuild, hermes, kimi, mcode,
+    omp, openclaw, opencode, pi, workbuddy,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,7 +97,7 @@ pub(crate) struct SessionScan {
 pub(crate) fn scan_sessions_with_status() -> SessionScan {
     use providers::utils::ScanStatus;
     type Scanner = fn(&mut ScanStatus) -> Vec<SessionMeta>;
-    let scanners: [(&str, Scanner); 16] = [
+    let scanners: [(&str, Scanner); 17] = [
         ("codex", codex::scan_sessions_with_status),
         ("claude", claude::scan_sessions_with_status),
         ("opencode", opencode::scan_sessions_with_status),
@@ -115,6 +115,7 @@ pub(crate) fn scan_sessions_with_status() -> SessionScan {
         ("agy", |_| agy::scan_sessions()),
         ("workbuddy", |_| workbuddy::scan_sessions()),
         ("codebuddy", |_| codebuddy::scan_sessions()),
+        ("cline", |_| cline::scan_sessions()),
     ];
     let mut scan = SessionScan {
         sessions: Vec::new(),
@@ -176,6 +177,7 @@ pub fn load_messages(provider_id: &str, source_path: &str) -> Result<Vec<Session
         "hermes" => hermes::load_messages(path),
         "pi" => pi::load_messages(path),
         "kimi" => kimi::load_messages(path),
+        "cline" => cline::load_messages(path),
         "omp" => omp::load_messages(path),
         "copilot" => copilot::load_messages(path),
         "codebuddy" => codebuddy::load_messages(path),
@@ -233,6 +235,11 @@ fn delete_session_source(
         return Err(
             "Delete this session in DeepSeek Harness to keep its native history consistent".into(),
         );
+    }
+    if provider_id == "cline" {
+        return Err(format!(
+            "Delete this session in Cline (`cline history delete --session-id {session_id}`) to keep its session index and history consistent"
+        ));
     }
     if provider_id == "copilot" {
         return Err(
@@ -318,6 +325,7 @@ fn provider_roots(provider_id: &str) -> Result<Vec<PathBuf>, String> {
         "pi" => pi::session_roots(),
         "kimi" => kimi::session_roots(),
         "codebuddy" => codebuddy::session_roots(),
+        "cline" => cline::session_roots(),
         "dsh" => dsh::session_roots(),
         "workbuddy" => workbuddy::session_roots(),
         "agy" => agy::session_roots(),

@@ -101,6 +101,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cline BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
@@ -139,6 +140,7 @@ impl Database {
             enabled_mcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_agy BOOLEAN NOT NULL DEFAULT 0,
             enabled_kimi BOOLEAN NOT NULL DEFAULT 0,
+            enabled_cline BOOLEAN NOT NULL DEFAULT 0,
             enabled_dsh BOOLEAN NOT NULL DEFAULT 0,
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
@@ -742,6 +744,11 @@ impl Database {
                         Self::migrate_v27_to_v28(conn)?;
                         Self::set_user_version(conn, 28)?;
                     }
+                    28 => {
+                        log::info!("迁移数据库从 v28 到 v29（MCP/Skills 添加 Cline 支持）");
+                        Self::migrate_v28_to_v29(conn)?;
+                        Self::set_user_version(conn, 29)?;
+                    }
                     _ => {
                         return Err(AppError::Database(format!(
                             "未知的数据库版本 {version}，无法迁移到 {SCHEMA_VERSION}"
@@ -796,6 +803,28 @@ impl Database {
             }
         }
         Self::add_skill_repo_host_columns(conn)?;
+        Ok(())
+    }
+
+    /// v28 -> v29 迁移：Cline CLI 的 MCP 与 Skills 开关。
+    ///
+    /// Cline 早期开发版曾把 `enabled_cline` 记在 v26、v27 或 v28（当时占用的是
+    /// v27→v28 这一步），这些库会跳过上游 v25→v26（WorkBuddy）、v26→v27（GitLab
+    /// 技能仓库）或 v27→v28（CodeBuddy）的迁移；这里先重跑幂等的 v27→v28（它会补齐
+    /// `enabled_codebuddy` 及更早的各列和 GitLab 仓库主机列），再按“缺失才加”补上
+    /// `enabled_cline`，上游与任一开发版来源的库都能升到 v29，且不会改动已有开关。
+    fn migrate_v28_to_v29(conn: &Connection) -> Result<(), AppError> {
+        Self::migrate_v27_to_v28(conn)?;
+        for table in ["mcp_servers", "skills"] {
+            if Self::table_exists(conn, table)? {
+                Self::add_column_if_missing(
+                    conn,
+                    table,
+                    "enabled_cline",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -4481,7 +4510,7 @@ mod tests {
         Database::create_tables_on_conn(&conn)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 28);
+        assert_eq!(SCHEMA_VERSION, 29);
         assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
         for table in ["mcp_servers", "skills"] {
             assert!(Database::has_column(&conn, table, "enabled_dsh")?);
@@ -5069,6 +5098,130 @@ mod tests {
         let saved = db.get_installed_skill("s")?.unwrap();
         assert!(saved.apps.kimi && saved.apps.claude);
         assert!(db.get_all_installed_skills()?["s"].apps.kimi);
+        Ok(())
+    }
+
+    #[test]
+    fn cline_migration_preserves_existing_flags_and_defaults_to_disabled() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_kimi BOOLEAN); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_claude BOOLEAN); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 22)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, flag) in [
+            ("mcp_servers", "enabled_kimi"),
+            ("skills", "enabled_claude"),
+        ] {
+            let flags = conn.query_row(
+                &format!("SELECT {flag}, enabled_cline FROM {table}"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0));
+        }
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cline_branch_v23_database_gains_the_omp_flag() -> Result<(), AppError> {
+        // Development builds of the Cline branch stored enabled_cline at v23,
+        // without the enabled_omp (upstream v23) or enabled_dsh (upstream v24) columns.
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_cline BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_cline BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 23)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let flags = conn.query_row(
+            "SELECT enabled_cline, enabled_omp FROM mcp_servers",
+            [],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        assert_eq!(flags, (1, 0));
+        let skill_flags =
+            conn.query_row("SELECT enabled_cline, enabled_dsh FROM skills", [], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })?;
+        assert_eq!(skill_flags, (1, 0));
+        let dsh: i64 =
+            conn.query_row("SELECT enabled_dsh FROM mcp_servers", [], |row| row.get(0))?;
+        assert_eq!(dsh, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn cline_branch_v24_database_gains_the_dsh_flags() -> Result<(), AppError> {
+        // Development builds of the Cline branch stored enabled_cline + enabled_omp
+        // at v24, without the enabled_dsh columns that upstream v24 adds.
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_cline BOOLEAN NOT NULL DEFAULT 0, enabled_omp BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_cline BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1,1); INSERT INTO skills VALUES ('s',1);")?;
+        Database::set_user_version(&conn, 24)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        let flags = conn.query_row(
+            "SELECT enabled_cline, enabled_omp, enabled_dsh FROM mcp_servers",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )?;
+        assert_eq!(flags, (1, 1, 0));
+        let skill_flags =
+            conn.query_row("SELECT enabled_cline, enabled_dsh FROM skills", [], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })?;
+        assert_eq!(skill_flags, (1, 0));
+        Ok(())
+    }
+
+    #[test]
+    fn cline_branch_v25_database_gains_the_copilot_flags() -> Result<(), AppError> {
+        // Development builds of the Cline branch stored enabled_cline + enabled_dsh
+        // at v25, without the enabled_copilot columns that upstream v25 adds.
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch("CREATE TABLE mcp_servers(id TEXT PRIMARY KEY, enabled_cline BOOLEAN NOT NULL DEFAULT 0, enabled_omp BOOLEAN NOT NULL DEFAULT 0, enabled_dsh BOOLEAN NOT NULL DEFAULT 0); CREATE TABLE skills(id TEXT PRIMARY KEY, enabled_cline BOOLEAN NOT NULL DEFAULT 0, enabled_dsh BOOLEAN NOT NULL DEFAULT 0); INSERT INTO mcp_servers VALUES ('m',1,1,1); INSERT INTO skills VALUES ('s',1,1);")?;
+        Database::set_user_version(&conn, 25)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for table in ["mcp_servers", "skills"] {
+            let flags = conn.query_row(
+                &format!("SELECT enabled_cline, enabled_dsh, enabled_copilot FROM {table}"),
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )?;
+            assert_eq!(flags, (1, 1, 0), "{table}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cline_clean_database_persists_mcp_and_skill_flags_independently() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let server = serde_json::from_value(serde_json::json!({"id":"m", "name":"m", "server":{"command":"echo"}, "apps":{"cline":true,"kimi":true}})).unwrap();
+        db.save_mcp_server(&server)?;
+        db.update_mcp_server_app_enabled("m", &crate::app_config::AppType::Cline, false)?;
+        let saved = db.get_all_mcp_servers()?;
+        assert!(!saved["m"].apps.cline);
+        assert!(saved["m"].apps.kimi);
+        let skill = serde_json::from_value(serde_json::json!({"id":"s", "name":"s", "description":"", "directory":"s", "apps":{"cline":true,"claude":true}, "installedAt":0})).unwrap();
+        db.save_skill(&skill)?;
+        let saved = db.get_installed_skill("s")?.unwrap();
+        assert!(saved.apps.cline && saved.apps.claude);
+        let mut apps = saved.apps.clone();
+        apps.cline = false;
+        db.update_skill_apps("s", &apps)?;
+        let saved = db.get_all_installed_skills()?;
+        assert!(!saved["s"].apps.cline && saved["s"].apps.claude);
         Ok(())
     }
 

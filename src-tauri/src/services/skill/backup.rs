@@ -155,6 +155,7 @@ impl SkillService {
                 AppType::Mcode
                     | AppType::Agy
                     | AppType::Kimi
+                    | AppType::Cline
                     | AppType::Dsh
                     | AppType::Copilot
                     | AppType::WorkBuddy

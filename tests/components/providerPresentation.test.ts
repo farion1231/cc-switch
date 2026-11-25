@@ -816,7 +816,7 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [...accounts, relay],
       isInConfig: () => true,
-      kimiCurrentId: accounts[0].id,
+      nativeCurrentId: accounts[0].id,
       actions: additiveActions(),
     });
     for (const account of accounts) {
@@ -850,7 +850,7 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [account],
       isInConfig: () => false,
-      kimiCurrentId: account.id,
+      nativeCurrentId: account.id,
       actions: additiveActions(),
     });
     const presentation = item(sections, account.id);
@@ -870,7 +870,7 @@ describe("buildAdditiveSections", () => {
       t,
       providers: [current, other, saved],
       isInConfig: (p) => p.id !== "saved",
-      kimiCurrentId: "current",
+      nativeCurrentId: "current",
       actions,
     });
 

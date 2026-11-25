@@ -841,6 +841,7 @@ export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
   codebuddy?: boolean;
+  cline?: boolean;
   dsh?: boolean;
   workbuddy?: boolean;
   agy?: boolean;

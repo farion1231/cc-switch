@@ -265,7 +265,7 @@ impl ToolSpec {
 static UNKNOWN_TOOL: ToolSpec = ToolSpec::not_on_npm("", "Unknown");
 
 /// 顺序即「应用」页与批量安装 / 升级的顺序。
-static TOOLS: [ToolSpec; 15] = [
+static TOOLS: [ToolSpec; 16] = [
     ToolSpec::npm("claude", "Claude Code", "@anthropic-ai/claude-code")
         .npm_install_args(
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
@@ -291,6 +291,10 @@ static TOOLS: [ToolSpec; 15] = [
     ToolSpec::npm("kimi", "Kimi Code", "@moonshot-ai/kimi-code").official_update("upgrade --yes"),
     ToolSpec::npm("dsh", "DeepSeek Harness", "@deepseek-ai/dsh").npm_install_args(" --engine-strict"),
     ToolSpec::not_on_npm("agy", "Antigravity CLI").official_update("update"),
+    // postinstall 会在升级时把正在运行的 cline-hub 的发现记录挪开，npm 12 默认拦它。
+    // `cline update` 是交互式的，升级照样走 npm 重装。
+    ToolSpec::npm("cline", "Cline CLI", "cline")
+        .npm_install_args(" --ignore-scripts=false --allow-scripts=cline"),
     ToolSpec::npm("omp", "Oh My Pi", "@oh-my-pi/pi-coding-agent")
         .not_npm_installable()
         .official_update("update"),

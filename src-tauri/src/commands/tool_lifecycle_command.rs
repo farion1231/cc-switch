@@ -1833,6 +1833,22 @@ mod tests {
     }
 
     #[test]
+    fn cline_lifecycle_uses_npm_with_its_postinstall_allowed() {
+        let requested = vec!["cline".to_string()];
+        assert_eq!(normalize_requested_tools(&requested), vec!["cline"]);
+        let spec = tool_spec("cline");
+        assert_eq!(spec.display_name, "Cline CLI");
+        assert_eq!(spec.npm_package, Some("cline"));
+        let install = spec.npm_install_command().unwrap();
+        assert_eq!(
+            install,
+            "npm i -g cline@latest --ignore-scripts=false --allow-scripts=cline"
+        );
+        // `cline update` is interactive; upgrades reinstall through npm instead.
+        assert_eq!(spec.official_update_args, None);
+    }
+
+    #[test]
     fn codebuddy_lifecycle_metadata_uses_self_update_with_npm_fallback() {
         let requested = vec!["unsupported".to_string(), "codebuddy".to_string()];
         assert_eq!(normalize_requested_tools(&requested), vec!["codebuddy"]);

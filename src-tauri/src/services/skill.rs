@@ -763,6 +763,7 @@ impl SkillService {
             AppType::ClaudeDesktop
             | AppType::Mcode
             | AppType::Kimi
+            | AppType::Cline
             | AppType::Dsh
             | AppType::Copilot
             | AppType::WorkBuddy
@@ -790,6 +791,7 @@ impl SkillService {
             AppType::Mcode => crate::mcode_config::data_dir().join("skills"),
             AppType::Dsh => crate::dsh_config::data_dir().join("skills"),
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
+            AppType::Cline => crate::cline_config::skills_dir(),
             AppType::Copilot => crate::copilot_config::skills_dir(),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
             AppType::Codebuddy => crate::codebuddy_config::data_dir().join("skills"),
@@ -1155,6 +1157,7 @@ impl SkillService {
                         AppType::Mcode,
                         AppType::Agy,
                         AppType::Kimi,
+                        AppType::Cline,
                         AppType::Dsh,
                         AppType::Copilot,
                         AppType::WorkBuddy,
@@ -1250,6 +1253,7 @@ impl SkillService {
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
+                                | AppType::Cline
                                 | AppType::Dsh
                                 | AppType::Omp
                                 | AppType::Copilot
@@ -1384,6 +1388,7 @@ impl SkillService {
                 AppType::Mcode,
                 AppType::Agy,
                 AppType::Kimi,
+                AppType::Cline,
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
@@ -1502,6 +1507,7 @@ impl SkillService {
                 | AppType::Copilot
                 | AppType::WorkBuddy
                 | AppType::Codebuddy
+                | AppType::Cline
         ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
@@ -1719,6 +1725,7 @@ impl SkillService {
                 AppType::Mcode,
                 AppType::Agy,
                 AppType::Kimi,
+                AppType::Cline,
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
@@ -1771,6 +1778,7 @@ impl SkillService {
                         | AppType::Mcode
                         | AppType::Agy
                         | AppType::Kimi
+                        | AppType::Cline
                         | AppType::Dsh
                         | AppType::Codebuddy
                         | AppType::Omp

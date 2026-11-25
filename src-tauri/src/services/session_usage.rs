@@ -184,6 +184,10 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
                 crate::services::session_usage_kimi::sync_kimi_usage,
             ),
             (
+                "Cline",
+                crate::services::session_usage_cline::sync_cline_usage,
+            ),
+            (
                 "GitHub Copilot CLI",
                 crate::services::session_usage_copilot::sync_copilot_usage,
             ),

@@ -36,6 +36,7 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Kimi => {
             crate::kimi_config::get_providers().map(|providers| providers.contains_key(provider_id))
         }
+        AppType::Cline => crate::cline_config::provider_key_exists(provider_id),
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
@@ -55,7 +56,7 @@ pub(crate) fn provider_exists_in_live_config(
 
 /// 只从累加式应用的 live 配置里删掉这家供应商的条目，不动 DB。
 ///
-/// Pi、Omp、Kimi、DSH、Copilot 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
+/// Pi、Omp、Kimi、Cline、DSH、Copilot 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
 /// 这里之前就分流了；切换式应用没有按标识存的条目。这些应用都报错，不静默跳过。
 pub(crate) fn remove_provider_from_live(
     app_type: &AppType,
@@ -75,6 +76,7 @@ pub(crate) fn remove_provider_from_live(
         | AppType::GrokBuild
         | AppType::Pi
         | AppType::Kimi
+        | AppType::Cline
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
@@ -351,6 +353,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Cline
         | AppType::Dsh
         | AppType::Agy
         | AppType::Omp
@@ -434,6 +437,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Cline
         | AppType::Dsh
         | AppType::ClaudeDesktop
         | AppType::Agy
@@ -771,6 +775,9 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Kimi => {
             crate::kimi_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::Cline => {
+            crate::cline_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
@@ -1007,6 +1014,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
             AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi
+                | AppType::Cline
                 | AppType::Dsh
                 | AppType::Omp
                 | AppType::Codebuddy
@@ -1168,6 +1176,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
+        AppType::Cline => Ok(json!(crate::cline_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
         AppType::Codebuddy => Ok(json!(crate::codebuddy_config::get_providers()?)),
@@ -1313,6 +1322,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
+        | AppType::Cline
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy

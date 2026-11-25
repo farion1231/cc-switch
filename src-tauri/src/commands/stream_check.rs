@@ -94,6 +94,7 @@ mod tests {
             AppType::Copilot,
             AppType::WorkBuddy,
             AppType::Codebuddy,
+            AppType::Cline,
         ] {
             let mut provider = Provider::with_id(
                 format!("official-{app}"),
@@ -144,6 +145,7 @@ mod tests {
             ("github-copilot", "official-copilot"),
             ("work_buddy", "official-workbuddy"),
             ("codebuddy-code", "official-codebuddy"),
+            ("cline-cli", "official-cline"),
         ] {
             assert_eq!(check(app_type, provider_id), official, "{app_type}");
         }

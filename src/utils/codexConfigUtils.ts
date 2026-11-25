@@ -934,6 +934,7 @@ export const extractProviderBaseUrl = (
     (isPlainObject(object.provider)
       ? object.provider.base_url || object.provider.baseUrl
       : undefined) ||
+    (isPlainObject(object.settings) ? object.settings.baseUrl : undefined) ||
     object.baseUrl ||
     object.base_url ||
     object.options?.baseURL ||

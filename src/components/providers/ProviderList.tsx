@@ -208,6 +208,7 @@ export function ProviderList({
     (provider: Provider): boolean => {
       switch (appId) {
         case "kimi":
+        case "cline":
         case "dsh":
         case "mcode":
         case "codebuddy":
@@ -439,7 +440,7 @@ export function ProviderList({
           !!hermesLiveIdsError ||
           hermesLiveIds.includes(provider.id)),
       piStateUnavailable: appHas(appId, "piFamily") && !isPiStateReady,
-      kimiCurrentId: currentProviderId,
+      nativeCurrentId: currentProviderId,
       workbuddyOfficial,
       codebuddyAccounts,
       copilotDefaultId: appId === "copilot" ? currentProviderId : null,
@@ -575,6 +576,7 @@ export function ProviderList({
             appHas(appId, "piFamily") ||
             appId === "mcode" ||
             appId === "kimi" ||
+            appId === "cline" ||
             appId === "dsh" ||
             appId === "workbuddy" ||
             appId === "codebuddy"

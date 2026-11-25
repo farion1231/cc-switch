@@ -28,6 +28,8 @@ macro_rules! app_flags {
             #[serde(default)]
             pub codebuddy: bool,
             #[serde(default)]
+            pub cline: bool,
+            #[serde(default)]
             pub claude: bool,
             #[serde(default)]
             pub codex: bool,
@@ -47,7 +49,7 @@ macro_rules! app_flags {
 
         impl $name {
             /// [`Self::enabled_apps`] 的顺序：同步、移除都按它走，不要随意调整
-            const ORDER: [AppType; 15] = [
+            const ORDER: [AppType; 16] = [
                 AppType::Claude,
                 AppType::Codex,
                 AppType::Gemini,
@@ -57,6 +59,7 @@ macro_rules! app_flags {
                 AppType::Copilot,
                 AppType::Dsh,
                 AppType::Kimi,
+                AppType::Cline,
                 AppType::WorkBuddy,
                 AppType::Codebuddy,
                 AppType::Mcode,
@@ -82,6 +85,7 @@ macro_rules! app_flags {
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
                     AppType::Codebuddy => Some(&mut self.codebuddy),
+                    AppType::Cline => Some(&mut self.cline),
                     AppType::OpenClaw | AppType::ClaudeDesktop => None,
                 }
             }
@@ -327,6 +331,7 @@ pub enum AppType {
     Kimi,
     Dsh,
     Agy,
+    Cline,
     Omp,
     Copilot,
     WorkBuddy,
@@ -436,6 +441,13 @@ impl AppType {
                 route_mode: false,
                 stack: false,
             },
+            AppType::Cline => AppSpec {
+                id: "cline",
+                additive: true,
+                local_proxy: false,
+                route_mode: false,
+                stack: false,
+            },
             AppType::Dsh => AppSpec {
                 id: "dsh",
                 additive: true,
@@ -486,7 +498,7 @@ impl AppType {
     }
 
     /// 所有应用，按默认顺序
-    pub const ALL: [AppType; 17] = [
+    pub const ALL: [AppType; 18] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -498,6 +510,7 @@ impl AppType {
         AppType::Pi,
         AppType::Mcode,
         AppType::Kimi,
+        AppType::Cline,
         AppType::Dsh,
         AppType::Agy,
         AppType::Omp,
@@ -536,6 +549,7 @@ impl FromStr for AppType {
             "kimi" | "kimi-code" => Ok(AppType::Kimi),
             "dsh" | "deepseek-harness" => Ok(AppType::Dsh),
             "agy" | "antigravity" | "antigravity-cli" => Ok(AppType::Agy),
+            "cline" | "cline-cli" => Ok(AppType::Cline),
             "omp" | "oh-my-pi" | "oh_my_pi" | "ohmypi" => Ok(AppType::Omp),
             "copilot" | "copilot-cli" | "github-copilot" | "github-copilot-cli" => {
                 Ok(AppType::Copilot)
@@ -544,8 +558,8 @@ impl FromStr for AppType {
             "codebuddy" | "codebuddy-code" | "codebuddy_code" => Ok(AppType::Codebuddy),
             other => Err(AppError::localized(
                 "unsupported_app",
-                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, codebuddy。"),
-                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, omp, copilot, workbuddy, codebuddy."),
+                format!("不支持的应用标识: '{other}'。可选值: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp, copilot, workbuddy, codebuddy。"),
+                format!("Unsupported app id: '{other}'. Allowed: claude, claude-desktop, codex, gemini, grokbuild, opencode, openclaw, hermes, pi, mcode, kimi, dsh, agy, cline, omp, copilot, workbuddy, codebuddy."),
             )),
         }
     }
@@ -899,8 +913,9 @@ impl MultiAppConfig {
             AppType::Pi
             | AppType::Mcode
             | AppType::Kimi
-            | AppType::Dsh
             | AppType::Agy
+            | AppType::Cline
+            | AppType::Dsh
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy
@@ -951,8 +966,9 @@ impl MultiAppConfig {
                 AppType::Pi
                 | AppType::Mcode
                 | AppType::Kimi
-                | AppType::Dsh
                 | AppType::Agy
+                | AppType::Cline
+                | AppType::Dsh
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy

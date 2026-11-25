@@ -148,6 +148,13 @@ export const APP_ICON_MAP: Record<AppId, AppConfig> = {
     badgeClass:
       "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-0 gap-1.5",
   },
+  cline: {
+    label: "Cline",
+    icon: <ProviderIcon icon="cline" name="Cline" size={14} />,
+    activeClass: "bg-slate-500/10 text-slate-700 dark:text-slate-300",
+    badgeClass:
+      "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-0 gap-1.5",
+  },
   mcode: {
     label: "MiniMax Code",
     icon: <ProviderIcon icon="minimax" name="MiniMax Code" size={14} />,

@@ -17,6 +17,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Kimi Code (Session)": "kimi",
   "WorkBuddy (Session)": "workbuddy",
   "CodeBuddy Code (Session)": "codebuddy",
+  "Cline (Session)": "cline",
   "Pi (Session)": "pi",
   "Oh My Pi (Session)": "omp",
   "Antigravity (Session)": "agy",

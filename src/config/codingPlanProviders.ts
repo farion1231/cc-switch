@@ -178,6 +178,10 @@ export function extractBaseUrlForUsageDetection(
     case "kimi":
       raw = settingsConfig.provider?.base_url;
       break;
+    case "cline":
+      raw =
+        settingsConfig.provider?.baseUrl ?? settingsConfig.settings?.baseUrl;
+      break;
     case "hermes":
       raw = settingsConfig.base_url;
       break;
