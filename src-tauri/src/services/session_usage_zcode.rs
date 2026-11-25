@@ -23,11 +23,14 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     load_sync_cursors, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
+use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::{find_model_pricing, proxy_request_id_exists};
 use crate::zcode_config::get_zcode_usage_db_path;
 use rust_decimal::Decimal;
+use std::collections::HashSet;
 use std::fs;
-use std::time::SystemTime;
+use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 /// 从 ZCode model_usage 表中提取的单条使用记录
 struct ZCodeUsageRow {
@@ -44,12 +47,21 @@ struct ZCodeUsageRow {
     status: String,
     started_at: Option<i64>,
     session_id: Option<String>,
+    error_type: Option<String>,
+    error_code: Option<String>,
+    error_message: Option<String>,
 }
 
 /// 同步 ZCode 使用数据
 pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let db_path = get_zcode_usage_db_path();
+    sync_zcode_usage_from_path(db, &db_path)
+}
 
+fn sync_zcode_usage_from_path(
+    db: &Database,
+    db_path: &Path,
+) -> Result<SessionSyncResult, AppError> {
     if !db_path.exists() {
         return Ok(SessionSyncResult {
             imported: 0,
@@ -64,7 +76,7 @@ pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     let db_path_str = db_path.to_string_lossy().to_string();
 
     // 检查文件修改时间（含 -wal 侧车文件，原因见模块文档）
-    let metadata = fs::metadata(&db_path)
+    let metadata = fs::metadata(db_path)
         .map_err(|e| AppError::Config(format!("无法读取 ZCode db.sqlite 元数据: {e}")))?;
     let mut file_modified = metadata_modified_nanos(&metadata);
 
@@ -89,10 +101,13 @@ pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         });
     }
 
-    // 打开 ZCode 的 SQLite 数据库（只读）
+    // 打开 ZCode 的 SQLite 数据库（只读，并设置 busy_timeout 以配合活跃 WAL 写入）
     let zcode_conn =
-        rusqlite::Connection::open_with_flags(&db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 ZCode db.sqlite: {e}")))?;
+    zcode_conn
+        .busy_timeout(Duration::from_millis(5_000))
+        .map_err(|e| AppError::Database(format!("设置 ZCode SQLite busy_timeout 失败: {e}")))?;
 
     let mut result = SessionSyncResult {
         imported: 0,
@@ -110,6 +125,10 @@ pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
 
     // 表存在后的任何查询/解码错误都必须上抛；SQLITE_BUSY、损坏库或 schema
     // 漂移不能伪装成“旧版 ZCode 没有用量”。
+    let has_running = has_running_model_usage(&zcode_conn)?;
+    if has_running {
+        result.deferred_files = 1;
+    }
     let rows = query_model_usage(&zcode_conn)?;
 
     let mut has_error = false;
@@ -127,8 +146,9 @@ pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
         }
     }
 
-    // 仅在本轮没有错误时推进文件级状态；否则保留下次重试入口。
-    if !has_error {
+    // 仅在本轮无错误且没有处于 running 状态的请求时推进游标；
+    // 否则保留下次扫描入口，避免进行中的请求在完成后因 mtime 边界被跳过。
+    if !has_error && !has_running {
         update_sync_state(db, &db_path_str, file_modified, 0)?;
     }
 
@@ -154,20 +174,63 @@ fn model_usage_table_exists(conn: &rusqlite::Connection) -> Result<bool, AppErro
     .map_err(|error| AppError::Database(format!("检查 model_usage 表失败: {error}")))
 }
 
+fn has_running_model_usage(conn: &rusqlite::Connection) -> Result<bool, AppError> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM model_usage WHERE status = 'running')",
+        [],
+        |row| row.get(0),
+    )
+    .map_err(|error| AppError::Database(format!("检查 ZCode 进行中请求失败: {error}")))
+}
+
+fn model_usage_columns(conn: &rusqlite::Connection) -> Result<HashSet<String>, AppError> {
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(model_usage)")
+        .map_err(|e| AppError::Database(format!("读取 model_usage 列信息失败: {e}")))?;
+    let cols = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|e| AppError::Database(format!("遍历 model_usage 列信息失败: {e}")))?;
+    let mut names = HashSet::new();
+    for col in cols {
+        names.insert(
+            col.map_err(|e| AppError::Database(format!("解码 model_usage 列名失败: {e}")))?,
+        );
+    }
+    Ok(names)
+}
+
 /// 查询所有已完成的 model_usage 记录（status != 'running'）
 fn query_model_usage(conn: &rusqlite::Connection) -> Result<Vec<ZCodeUsageRow>, AppError> {
+    let cols = model_usage_columns(conn)?;
+    let error_type_expr = if cols.contains("error_type") {
+        "error_type"
+    } else {
+        "NULL"
+    };
+    let error_code_expr = if cols.contains("error_code") {
+        "error_code"
+    } else {
+        "NULL"
+    };
+    let error_message_expr = if cols.contains("error_message") {
+        "error_message"
+    } else {
+        "NULL"
+    };
+    let sql = format!(
+        "SELECT id, provider_id, model_id,
+                COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
+                COALESCE(reasoning_tokens, 0),
+                COALESCE(cache_read_input_tokens, 0),
+                COALESCE(cache_creation_input_tokens, 0),
+                duration_ms, time_to_first_token_ms,
+                COALESCE(status, 'completed'), started_at, session_id,
+                {error_type_expr}, {error_code_expr}, {error_message_expr}
+         FROM model_usage
+         WHERE status IS NULL OR status != 'running'"
+    );
     let mut stmt = conn
-        .prepare(
-            "SELECT id, provider_id, model_id,
-                    COALESCE(input_tokens, 0), COALESCE(output_tokens, 0),
-                    COALESCE(reasoning_tokens, 0),
-                    COALESCE(cache_read_input_tokens, 0),
-                    COALESCE(cache_creation_input_tokens, 0),
-                    duration_ms, time_to_first_token_ms,
-                    COALESCE(status, 'completed'), started_at, session_id
-             FROM model_usage
-             WHERE status IS NULL OR status != 'running'",
-        )
+        .prepare(&sql)
         .map_err(|e| AppError::Database(format!("准备 model_usage 查询失败: {e}")))?;
 
     let rows = stmt
@@ -186,6 +249,9 @@ fn query_model_usage(conn: &rusqlite::Connection) -> Result<Vec<ZCodeUsageRow>, 
                 status: row.get(10)?,
                 started_at: row.get(11)?,
                 session_id: row.get(12)?,
+                error_type: row.get(13)?,
+                error_code: row.get(14)?,
+                error_message: row.get(15)?,
             })
         })
         .map_err(|e| AppError::Database(format!("查询 model_usage 失败: {e}")))?;
@@ -209,12 +275,49 @@ fn status_to_code(status: &str) -> i64 {
     }
 }
 
+fn clamp_u32(val: i64) -> u32 {
+    val.clamp(0, u32::MAX as i64) as u32
+}
+
+fn format_error_message(row: &ZCodeUsageRow) -> Option<String> {
+    // ZCode 会在最终成功（重试恢复）的记录上保留瞬时限流等 error_type/error_message，
+    // 已完成的请求不应被标记为错误消息。
+    if row.status == "completed" {
+        return None;
+    }
+    if let Some(msg) = row
+        .error_message
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        return Some(msg.to_string());
+    }
+    let err_type = row
+        .error_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let err_code = row
+        .error_code
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    match (err_type, err_code) {
+        (Some(t), Some(c)) => Some(format!("{t} ({c})")),
+        (Some(t), None) => Some(t.to_string()),
+        (None, Some(c)) => Some(c.to_string()),
+        (None, None) => None,
+    }
+}
+
 /// 插入单条 ZCode 用量记录到 proxy_request_logs
 fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppError> {
     let conn = lock_conn!(db.conn);
 
-    // 跳过全零 token 的记录（无意义的空用量）
-    if row.input_tokens == 0
+    // 跳过非错误类的全零 token 空记录；失败请求（status = 'error'）即使 token 为 0 也应保留错误信息
+    if row.status != "error"
+        && row.input_tokens == 0
         && row.output_tokens == 0
         && row.reasoning_tokens == 0
         && row.cache_read_tokens == 0
@@ -284,14 +387,14 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
 
     // ZCode 不提供费用，使用 cc-switch 自带的模型定价计算
     let usage = TokenUsage {
-        input_tokens: fresh_input_tokens as u32,
+        input_tokens: clamp_u32(fresh_input_tokens),
         // reasoning_tokens 是 output 的子集（ZCode 归一化里
         // outputTokenDetails.reasoningTokens），已含在 output_tokens 内：
         // 真实库中 provider_total = input + output 恒成立，叠加会把 output
         // 和按输出计价的费用虚高约四成
-        output_tokens: row.output_tokens as u32,
-        cache_read_tokens: row.cache_read_tokens as u32,
-        cache_creation_tokens: row.cache_creation_tokens as u32,
+        output_tokens: clamp_u32(row.output_tokens),
+        cache_read_tokens: clamp_u32(row.cache_read_tokens),
+        cache_creation_tokens: clamp_u32(row.cache_creation_tokens),
         cache_creation_1h_tokens: 0,
         model: Some(model_id.clone()),
         message_id: None,
@@ -325,15 +428,17 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
         .unwrap_or_else(|| "_zcode_session".to_string());
 
     let status_code = status_to_code(&row.status);
+    let error_message = format_error_message(row);
 
     let inserted_rows = tx.execute(
         "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model,
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+            input_token_semantics,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-            latency_ms, first_token_ms, status_code, error_message, session_id,
+            latency_ms, first_token_ms, duration_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
         rusqlite::params![
             request_id,
             provider_id,
@@ -344,6 +449,7 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
             row.output_tokens,
             row.cache_read_tokens,
             row.cache_creation_tokens,
+            INPUT_TOKEN_SEMANTICS_FRESH,
             input_cost,
             output_cost,
             cache_read_cost,
@@ -351,8 +457,9 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
             total_cost,
             row.duration_ms.unwrap_or(0),
             row.time_to_first_token_ms,
+            row.duration_ms,
             status_code,
-            Option::<String>::None,
+            error_message,
             row.session_id,
             Some("zcode_session"),// provider_type
             1i64,                 // is_streaming
@@ -397,6 +504,9 @@ mod tests {
             status: "completed".to_string(),
             started_at: Some(1_700_000_000_000),
             session_id: Some("s1".to_string()),
+            error_type: None,
+            error_code: None,
+            error_message: None,
         }
     }
 
@@ -555,6 +665,180 @@ mod tests {
             )?
         };
         assert_eq!(rolled, 1100, "日汇总不应被重复累计");
+        Ok(())
+    }
+
+    #[test]
+    fn insert_persists_fresh_semantics_and_duration_ms() -> Result<(), AppError> {
+        use crate::services::sql_helpers::{fresh_input_sql, real_total_tokens_sql};
+
+        let db = crate::database::Database::memory()?;
+        let mut row = sample_row("fresh-sem");
+        row.input_tokens = 1_000;
+        row.output_tokens = 200;
+        row.cache_read_tokens = 300;
+        row.duration_ms = Some(1_200);
+        assert!(insert_zcode_usage(&db, &row)?);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let fresh_sql = fresh_input_sql("");
+        let total_sql = real_total_tokens_sql("");
+        let query = format!(
+            "SELECT input_tokens, cache_read_tokens, input_token_semantics, duration_ms, {fresh_sql}, {total_sql}
+             FROM proxy_request_logs WHERE request_id = 'zcode_session:fresh-sem'"
+        );
+        let (inp, cr, sem, dur, fresh, total): (i64, i64, i64, Option<i64>, i64, i64) = conn
+            .query_row(&query, [], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
+            })?;
+        assert_eq!(inp, 700);
+        assert_eq!(cr, 300);
+        assert_eq!(sem, INPUT_TOKEN_SEMANTICS_FRESH);
+        assert_eq!(dur, Some(1_200));
+        assert_eq!(fresh, 700);
+        assert_eq!(total, 1_200);
+        Ok(())
+    }
+
+    #[test]
+    fn error_row_with_zero_tokens_is_imported_with_error_message() -> Result<(), AppError> {
+        let db = crate::database::Database::memory()?;
+        let mut row = sample_row("err-zero");
+        row.input_tokens = 0;
+        row.output_tokens = 0;
+        row.status = "error".to_string();
+        row.error_type = Some("server_error".to_string());
+        row.error_message = Some("[500][操作失败]".to_string());
+
+        assert!(insert_zcode_usage(&db, &row)?);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (status_code, err_msg): (i64, Option<String>) = conn.query_row(
+            "SELECT status_code, error_message FROM proxy_request_logs
+             WHERE request_id = 'zcode_session:err-zero'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!(status_code, 500);
+        assert_eq!(err_msg.as_deref(), Some("[500][操作失败]"));
+        Ok(())
+    }
+
+    #[test]
+    fn completed_row_with_retry_error_clears_error_message() -> Result<(), AppError> {
+        let db = crate::database::Database::memory()?;
+        let mut row = sample_row("completed-retry");
+        row.status = "completed".to_string();
+        row.error_type = Some("rate_limited".to_string());
+        row.error_message = Some("[1302][您的账户已达到速率限制]".to_string());
+
+        assert!(insert_zcode_usage(&db, &row)?);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (status_code, err_msg): (i64, Option<String>) = conn.query_row(
+            "SELECT status_code, error_message FROM proxy_request_logs
+             WHERE request_id = 'zcode_session:completed-retry'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!(status_code, 200);
+        assert!(err_msg.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn running_rows_defer_sync_cursor_and_import_on_completion() -> Result<(), AppError> {
+        let dir = tempfile::tempdir().map_err(|e| AppError::Config(e.to_string()))?;
+        let db_path = dir.path().join("db.sqlite");
+        {
+            let source = rusqlite::Connection::open(&db_path)?;
+            source.execute_batch(
+                "CREATE TABLE model_usage (
+                    id TEXT, provider_id TEXT, model_id TEXT,
+                    input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER,
+                    cache_read_input_tokens INTEGER, cache_creation_input_tokens INTEGER,
+                    duration_ms INTEGER, time_to_first_token_ms INTEGER,
+                    status TEXT, started_at INTEGER, session_id TEXT,
+                    error_type TEXT, error_code TEXT, error_message TEXT
+                 );
+                 INSERT INTO model_usage VALUES
+                    ('r1', 'bigmodel', 'GLM-5.3', 1000, 100, 0, 200, 0, 1500, 400, 'running', 1700000000000, 's1', NULL, NULL, NULL);",
+            )?;
+        }
+        let initial_mtime = fs::metadata(&db_path)
+            .map_err(|e| AppError::Config(e.to_string()))?
+            .modified()
+            .map_err(|e| AppError::Config(e.to_string()))?;
+
+        let db = crate::database::Database::memory()?;
+        let first = sync_zcode_usage_from_path(&db, &db_path)?;
+        assert_eq!(first.imported, 0);
+        assert_eq!(first.deferred_files, 1);
+
+        let path_key = db_path.to_string_lossy().to_string();
+        assert!(!load_sync_cursors(&db)?.contains_key(&path_key));
+
+        {
+            let source = rusqlite::Connection::open(&db_path)?;
+            source.execute(
+                "UPDATE model_usage SET status = 'completed' WHERE id = 'r1'",
+                [],
+            )?;
+        }
+        // Even if the file mtime stays identical to the first pass, the deferred
+        // file must still be re-scanned and imported once running finishes.
+        let file_handle = fs::OpenOptions::new()
+            .write(true)
+            .open(&db_path)
+            .map_err(|e| AppError::Config(e.to_string()))?;
+        file_handle
+            .set_modified(initial_mtime)
+            .map_err(|e| AppError::Config(e.to_string()))?;
+
+        let second = sync_zcode_usage_from_path(&db, &db_path)?;
+        assert_eq!(second.imported, 1);
+        assert_eq!(second.deferred_files, 0);
+        assert!(load_sync_cursors(&db)?.contains_key(&path_key));
+        Ok(())
+    }
+
+    #[test]
+    fn uppercase_glm_model_matches_pricing_and_computes_cost() -> Result<(), AppError> {
+        let db = crate::database::Database::memory()?;
+        let mut row = sample_row("glm53-cost");
+        row.model_id = Some("GLM-5.3".to_string());
+        row.input_tokens = 1_500_000;
+        row.cache_read_tokens = 500_000;
+        row.output_tokens = 100_000;
+
+        assert!(insert_zcode_usage(&db, &row)?);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let (input_cost, cache_read_cost, output_cost, total_cost): (
+            String,
+            String,
+            String,
+            String,
+        ) = conn.query_row(
+            "SELECT input_cost_usd, cache_read_cost_usd, output_cost_usd, total_cost_usd
+                 FROM proxy_request_logs WHERE request_id = 'zcode_session:glm53-cost'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )?;
+        assert_eq!(input_cost.parse::<Decimal>().unwrap(), Decimal::new(14, 1));
+        assert_eq!(
+            cache_read_cost.parse::<Decimal>().unwrap(),
+            Decimal::new(13, 2)
+        );
+        assert_eq!(output_cost.parse::<Decimal>().unwrap(), Decimal::new(44, 2));
+        assert_eq!(total_cost.parse::<Decimal>().unwrap(), Decimal::new(197, 2));
         Ok(())
     }
 }
