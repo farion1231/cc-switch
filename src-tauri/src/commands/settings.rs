@@ -96,7 +96,17 @@ pub async fn save_settings(
         merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
     let preserve_login_changed = merged.preserve_codex_official_auth_on_switch
         != existing.preserve_codex_official_auth_on_switch;
-    crate::settings::update_settings(merged)?;
+    let next_copilot_vscode = merged.copilot_vscode.clone();
+    let previous_copilot_vscode = existing.copilot_vscode.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::copilot_config::save_vscode_settings(
+            &previous_copilot_vscode,
+            &next_copilot_vscode,
+            || crate::settings::update_settings(merged),
+        )
+    })
+    .await
+    .map_err(|error| format!("Settings save task failed: {error}"))??;
 
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
