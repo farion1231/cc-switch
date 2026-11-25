@@ -2643,6 +2643,7 @@
     "heatmap": {
       "title": "Kullanım ısı haritası",
       "subtitle": "Son 53 haftadaki günlük kullanım; Daha önceki kullanım 53 haftalık aralıklarla devam ediyor ve gölgeleme aralıklar arasında karşılaştırılabilir",
+      "runtimeColors": "Renk tonu çalışma ortamını belirtir; bölünmüş hücreler birden fazla ortamı gösterir. Renk yoğunluğu seçilen metriği gösterir.",
       "spanSummary": "{{tokens}} tokenleri · {{requests}} istekleri · {{cost}}",
       "showMore": "Daha fazlasını göster",
       "showLess": "Daha az göster",

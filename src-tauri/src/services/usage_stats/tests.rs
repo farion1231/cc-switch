@@ -3234,6 +3234,7 @@ fn test_get_daily_trends_respects_shorter_than_24_hours() -> Result<(), AppError
     let stats = db.get_daily_trends(Some(0), Some(15 * 60 * 60), Some("claude"), None, None)?;
     assert_eq!(stats.len(), 15);
     assert_eq!(stats[3].request_count, 1);
+    assert!(stats[3].app_types.is_empty());
 
     Ok(())
 }
@@ -3241,7 +3242,7 @@ fn test_get_daily_trends_respects_shorter_than_24_hours() -> Result<(), AppError
 #[test]
 fn test_get_daily_trends_groups_ranges_longer_than_24_hours_by_local_day() -> Result<(), AppError> {
     let db = Database::memory()?;
-    let start = local_ts(2024, 3, 1, 12, 0, 0);
+    let start = local_ts(2024, 3, 1, 0, 0, 0);
     let end = local_ts(2024, 3, 3, 12, 0, 0);
 
     {
@@ -3305,16 +3306,35 @@ fn test_get_daily_trends_groups_ranges_longer_than_24_hours_by_local_day() -> Re
                 120
             ],
         )?;
+        // Same day as the first detail row, but from archived usage and two runtimes.
+        for app in ["claude-desktop", "codex"] {
+            conn.execute(
+                "INSERT INTO usage_daily_rollups (
+                    date, app_type, provider_id, model,
+                    request_count, success_count, input_tokens, output_tokens,
+                    cache_read_tokens, cache_creation_tokens, total_cost_usd, avg_latency_ms
+                ) VALUES ('2024-03-01', ?, 'p1', 'claude-3', 1, 1, 20, 10, 0, 0, '0.02', 100)",
+                [app],
+            )?;
+        }
     }
 
     let stats = db.get_daily_trends(Some(start), Some(end), Some("claude"), None, None)?;
     assert_eq!(stats.len(), 3);
-    assert_eq!(stats[0].request_count, 1);
-    assert_eq!(stats[0].total_tokens, 150);
+    assert_eq!(stats[0].request_count, 2);
+    assert_eq!(stats[0].total_tokens, 180);
+    assert_eq!(stats[0].app_types, ["claude"]);
     assert_eq!(stats[1].request_count, 4);
+    assert_eq!(stats[1].app_types, ["claude"]);
     assert_eq!(stats[1].total_tokens, 600);
     assert_eq!(stats[2].request_count, 1);
     assert_eq!(stats[2].total_tokens, 275);
+
+    let all = db.get_daily_trends(Some(start), Some(end + 24 * 60 * 60), None, None, None)?;
+    assert_eq!(all[0].app_types, ["claude", "codex"]);
+    assert_eq!(all[0].request_count, 3);
+    assert_eq!(all[1].app_types, ["claude"]);
+    assert!(all[3].app_types.is_empty());
 
     Ok(())
 }

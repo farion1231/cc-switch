@@ -91,6 +91,7 @@ export interface UsageSummaryByApp {
 
 export interface DailyStats {
   date: string;
+  appTypes?: string[];
   requestCount: number;
   totalCost: string;
   totalTokens: number;

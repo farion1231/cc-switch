@@ -4,6 +4,7 @@ import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
 interface UsageTooltipCardProps {
   heading: string;
+  detail?: string;
   tokens: number;
   requests: number;
   /** 美元；null 表示没有可计价的数据 */
@@ -15,6 +16,7 @@ interface UsageTooltipCardProps {
 /** 热力图格子、趋势柱的悬停卡片：同一时间段的 Token、请求数和费用一起看。 */
 export function UsageTooltipCard({
   heading,
+  detail,
   tokens,
   requests,
   cost,
@@ -51,6 +53,9 @@ export function UsageTooltipCard({
       <p className="m-0 mb-2 whitespace-nowrap text-body font-semibold text-fg-1">
         {heading}
       </p>
+      {detail && (
+        <p className="m-0 mb-2 max-w-64 text-caption text-fg-2">{detail}</p>
+      )}
       <div className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-body">
         {rows.map((row) => (
           <div key={row.label} className="contents">

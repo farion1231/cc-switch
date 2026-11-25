@@ -112,6 +112,14 @@ pub struct DailyStats {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+    /// Runtimes with usage in this daily bucket; omitted for hourly and empty buckets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub app_types: Vec<String>,
+}
+
+fn parse_trend_app_types(apps: &str) -> Result<Vec<String>, AppError> {
+    serde_json::from_str(apps)
+        .map_err(|err| AppError::Database(format!("Invalid trend app types: {err}")))
 }
 
 /// Provider 统计
@@ -1535,6 +1543,7 @@ impl Database {
                         total_output_tokens: row.get::<_, i64>(5)? as u64,
                         total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
                         total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                        app_types: Vec::new(),
                     },
                 ))
             };
@@ -1580,6 +1589,7 @@ impl Database {
                         total_output_tokens: 0,
                         total_cache_creation_tokens: 0,
                         total_cache_read_tokens: 0,
+                        app_types: Vec::new(),
                     });
                 }
             }
@@ -1599,6 +1609,7 @@ impl Database {
         let effective_filter =
             effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
         let fresh_input = fresh_input_sql("l");
+        let detail_app = folded_app_type_sql("l.app_type");
         let detail_sql = format!(
             "SELECT
                 date(l.created_at, 'unixepoch', 'localtime') as bucket_date,
@@ -1608,7 +1619,8 @@ impl Database {
                 COALESCE(SUM({fresh_input}), 0) as total_input_tokens,
                 COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
                 COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
-                COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
+                COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens,
+                json_group_array(DISTINCT {detail_app})
             FROM proxy_request_logs l {detail_join}
             WHERE l.created_at >= ?1 AND l.created_at <= ?2
               AND {effective_filter} {extra_filter}
@@ -1620,6 +1632,7 @@ impl Database {
         let detail_row_mapper = |row: &rusqlite::Row| {
             Ok((
                 row.get::<_, String>(0)?,
+                row.get::<_, String>(8)?,
                 DailyStats {
                     date: String::new(),
                     request_count: row.get::<_, i64>(1)? as u64,
@@ -1629,6 +1642,7 @@ impl Database {
                     total_output_tokens: row.get::<_, i64>(5)? as u64,
                     total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
                     total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
+                    app_types: Vec::new(),
                 },
             ))
         };
@@ -1642,7 +1656,8 @@ impl Database {
         let detail_rows = detail_stmt.query_map(detail_param_refs.as_slice(), detail_row_mapper)?;
 
         for row in detail_rows {
-            let (bucket_date, stat) = row?;
+            let (bucket_date, apps, mut stat) = row?;
+            stat.app_types = parse_trend_app_types(&apps)?;
             let date = NaiveDate::parse_from_str(&bucket_date, "%Y-%m-%d")
                 .map_err(|err| AppError::Database(format!("解析趋势日期失败: {err}")))?;
             map.insert(date, stat);
@@ -1654,6 +1669,7 @@ impl Database {
         let rollup_join = filter.join("r", "p2");
 
         let fresh_input_rollup = fresh_input_sql("r");
+        let rollup_app = folded_app_type_sql("r.app_type");
         let rollup_sql = format!(
             "SELECT
                 r.date,
@@ -1663,7 +1679,8 @@ impl Database {
                 COALESCE(SUM({fresh_input_rollup}), 0),
                 COALESCE(SUM(r.output_tokens), 0),
                 COALESCE(SUM(r.cache_creation_tokens), 0),
-                COALESCE(SUM(r.cache_read_tokens), 0)
+                COALESCE(SUM(r.cache_read_tokens), 0),
+                json_group_array(DISTINCT {rollup_app})
             FROM usage_daily_rollups r {rollup_join}
             {rollup_where}
             GROUP BY r.date
@@ -1674,6 +1691,7 @@ impl Database {
         let rollup_row_mapper = |row: &rusqlite::Row| {
             Ok((
                 row.get::<_, String>(0)?,
+                row.get::<_, String>(8)?,
                 (
                     row.get::<_, i64>(1)? as u64,
                     row.get::<_, f64>(2)?,
@@ -1690,7 +1708,7 @@ impl Database {
         let rollup_rows = rollup_stmt.query_map(rollup_param_refs.as_slice(), rollup_row_mapper)?;
 
         for row in rollup_rows {
-            let (bucket_date, (req, cost, tok, inp, out, cc, cr)) = row?;
+            let (bucket_date, apps, (req, cost, tok, inp, out, cc, cr)) = row?;
             let date = NaiveDate::parse_from_str(&bucket_date, "%Y-%m-%d")
                 .map_err(|err| AppError::Database(format!("解析 rollup 趋势日期失败: {err}")))?;
             let entry = map.entry(date).or_insert_with(|| DailyStats {
@@ -1702,7 +1720,9 @@ impl Database {
                 total_output_tokens: 0,
                 total_cache_creation_tokens: 0,
                 total_cache_read_tokens: 0,
+                app_types: Vec::new(),
             });
+            entry.app_types.extend(parse_trend_app_types(&apps)?);
             entry.request_count += req;
             let existing_cost: f64 = entry.total_cost.parse().unwrap_or(0.0);
             entry.total_cost = format!("{:.6}", existing_cost + cost);
@@ -1720,6 +1740,8 @@ impl Database {
 
             if let Some(mut stat) = map.remove(&current_day) {
                 stat.date = date;
+                stat.app_types.sort_unstable();
+                stat.app_types.dedup();
                 stats.push(stat);
             } else {
                 stats.push(DailyStats {
@@ -1731,6 +1753,7 @@ impl Database {
                     total_output_tokens: 0,
                     total_cache_creation_tokens: 0,
                     total_cache_read_tokens: 0,
+                    app_types: Vec::new(),
                 });
             }
 
