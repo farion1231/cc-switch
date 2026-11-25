@@ -496,9 +496,10 @@ fn json_value_non_empty(value: Option<&Value>) -> bool {
 /// - OpenAI Responses：跳过 `response.created`/`in_progress`/`content_part.added`/`completed`/`failed`
 ///   及 `output_item.added(message)`；在内容/推理/工具参数 delta 非空，或 `output_item.added`
 ///   为 `function_call`/`custom_tool_call`/`reasoning` 时触发。
-/// - OpenAI Chat Completions：跳过 role-only 首块（`delta: {"role":"assistant","content":""}`）与空 `choices: []`；
-///   仅在 `choices[*].delta` 的 `content`/`refusal`/`reasoning_content`/`reasoning`/`tool_calls`/`function_call`
-///   非空时触发。
+/// - OpenAI Chat Completions：跳过空 `choices: []` 与不含 `delta` 的 usage 尾块；
+///   保留 `delta.role`（与 `content`/`refusal`/`reasoning_content`/`reasoning`/`tool_calls`/`function_call`
+///   并列触发），避免隐藏推理模型在推理前先发 role 首块时把思考耗时扣除、却在 `completion_tokens`
+///   中仍计入推理 token 而导致速度虚高（见 #9858）。
 /// - Gemini：仅在 `candidates[*].content.parts[*]` 含非空 `text` 或 `functionCall` 时触发。
 fn sse_data_starts_output(event_name: Option<&str>, data: &str) -> bool {
     let data = data.trim();
@@ -558,7 +559,8 @@ fn sse_data_starts_output(event_name: Option<&str>, data: &str) -> bool {
                     let Some(delta) = choice.get("delta") else {
                         return false;
                     };
-                    json_value_non_empty(delta.get("content"))
+                    json_value_non_empty(delta.get("role"))
+                        || json_value_non_empty(delta.get("content"))
                         || json_value_non_empty(delta.get("refusal"))
                         || json_value_non_empty(delta.get("reasoning_content"))
                         || json_value_non_empty(delta.get("reasoning"))
@@ -1244,18 +1246,19 @@ mod tests {
             r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1"}}"#
         ));
 
-        // OpenAI Chat Completions API: skip role-only / empty choices / usage-only chunks
-        assert!(!sse_data_starts_output(
-            None,
-            r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}"#
-        ));
-        assert!(!sse_data_starts_output(
-            None,
-            r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":null}}]}"#
-        ));
+        // OpenAI Chat Completions API: skip empty choices / usage-only / empty delta chunks,
+        // while keeping `delta.role` so hidden-reasoning models don't drop reasoning time (#9858).
         assert!(!sse_data_starts_output(
             None,
             r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            None,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#
+        ));
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}"#
         ));
         assert!(sse_data_starts_output(
             None,

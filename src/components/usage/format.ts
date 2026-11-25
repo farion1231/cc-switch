@@ -263,12 +263,6 @@ export const SPEED_MIN_OUTPUT_TOKENS = 100;
 /** 速度上限（tok/s）：超过该值属于整包突发或异常计时，不计入速度。 */
 export const SPEED_MAX_TPS = 10_000;
 
-/** 缓冲突发判定窗口（毫秒）：生成窗口短于此值且首字等待超过其 SPEED_HELD_SHARE 倍时，视为上游缓冲后一次性吐出。 */
-export const SPEED_HELD_WINDOW_MS = 1_000;
-
-/** 缓冲突发判定的等待/生成倍数阈值。 */
-export const SPEED_HELD_SHARE = 4;
-
 interface OutputTokensPerSecondInput {
   outputTokens: unknown;
   latencyMs: unknown;
@@ -326,19 +320,12 @@ export function isSpeedBurstExcluded(log: OutputTokensPerSecondInput): boolean {
   if (generationMs == null || generationMs < SPEED_MIN_GENERATION_MS) {
     return true;
   }
-  if (outputTokens * 1000 > SPEED_MAX_TPS * generationMs) {
-    return true;
-  }
-  return (
-    generationMs < SPEED_HELD_WINDOW_MS &&
-    firstTokenMs > SPEED_HELD_SHARE * generationMs
-  );
+  return outputTokens * 1000 > SPEED_MAX_TPS * generationMs;
 }
 
 /**
  * 这条请求能不能算速度（与后端 `speed_eligible_sql` 同口径）：
- * 成功的路由请求、输出 ≥ 100 token、生成时间 ≥ 100ms、速度 ≤ 10,000 tok/s，
- * 且不是“长等待后 < 1s 突发吐出”。
+ * 成功的路由请求、输出 ≥ 100 token、生成时间 ≥ 100ms、速度 ≤ 10,000 tok/s。
  */
 export function isSpeedEligible(log: OutputTokensPerSecondInput): boolean {
   if (!isSuccessStatusOrUnset(log.statusCode)) return false;
@@ -352,11 +339,7 @@ export function isSpeedEligible(log: OutputTokensPerSecondInput): boolean {
     firstTokenMs >= 0 &&
     generationMs != null &&
     generationMs >= SPEED_MIN_GENERATION_MS &&
-    outputTokens * 1000 <= SPEED_MAX_TPS * generationMs &&
-    !(
-      generationMs < SPEED_HELD_WINDOW_MS &&
-      firstTokenMs > SPEED_HELD_SHARE * generationMs
-    )
+    outputTokens * 1000 <= SPEED_MAX_TPS * generationMs
   );
 }
 

@@ -165,13 +165,6 @@ pub const SPEED_MIN_GENERATION_MS: i64 = 100;
 /// 不应计入速度或拉高汇总。
 pub const SPEED_MAX_TPS: i64 = 10_000;
 
-/// 缓冲突发判定窗口（毫秒）：当生成窗口短于此值且首字等待超过生成窗口的
-/// [`SPEED_HELD_SHARE`] 倍时，视为上游先攒住再一次性吐出，不计入速度。
-pub const SPEED_HELD_WINDOW_MS: i64 = 1_000;
-
-/// 缓冲突发判定的等待/生成倍数阈值（见 [`SPEED_HELD_WINDOW_MS`]）。
-pub const SPEED_HELD_SHARE: i64 = 4;
-
 /// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。会话日志导入的行
 /// 也可能有首字（按时间戳推出来的），所以先按来源分开，不能只看有没有首字。
 fn speed_eligible_sql(alias: &str) -> String {
@@ -183,9 +176,7 @@ fn speed_eligible_sql(alias: &str) -> String {
          AND {alias}.first_token_ms >= 0 \
          AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
          AND ({alias}.latency_ms - {alias}.first_token_ms) >= {SPEED_MIN_GENERATION_MS} \
-         AND {alias}.output_tokens * 1000 <= {SPEED_MAX_TPS} * ({alias}.latency_ms - {alias}.first_token_ms) \
-         AND NOT (({alias}.latency_ms - {alias}.first_token_ms) < {SPEED_HELD_WINDOW_MS} \
-                  AND {alias}.first_token_ms > {SPEED_HELD_SHARE} * ({alias}.latency_ms - {alias}.first_token_ms))"
+         AND {alias}.output_tokens * 1000 <= {SPEED_MAX_TPS} * ({alias}.latency_ms - {alias}.first_token_ms)"
     )
 }
 

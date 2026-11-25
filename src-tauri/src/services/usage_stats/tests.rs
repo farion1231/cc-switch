@@ -3015,20 +3015,18 @@ fn test_speed_median_resists_stalls_and_filters_bursts_and_errors() -> Result<()
             200,
             "proxy",
         )?;
-        // Excluded: held-short-window burst (gen_ms = 250ms < 1000ms, ttft = 8200ms > 4*250ms)
+        // Included: genuine fast short reply (e.g. Haiku tool call: ttft = 2500ms, gen = 600ms, 200 tok = 333 tok/s)
+        // Sorted samples: [2, 100, 100, 100, 333.33] -> median = 100!
         insert(
-            "held-burst",
+            "fast-short-ok",
             "p1",
             "m1",
-            392,
-            8_450,
-            Some(8_200),
+            200,
+            3_100,
+            Some(2_500),
             200,
             "proxy",
         )?;
-        // Included: genuine short fast reply (gen_ms = 250ms, ttft = 500ms <= 4*250ms, 100 tok/s)
-        // Wait: 100 tokens / 0.25s = 400 tok/s, let's check median of [2, 100, 100, 100, 400] = 100!
-        insert("short-ok", "p1", "m1", 100, 750, Some(500), 200, "proxy")?;
 
         // Session logs for p2 / m2:
         // 2 normal (80, 120 tok/s) + 1 stalled (2 tok/s) -> median = 80 tok/s
@@ -3087,8 +3085,8 @@ fn test_speed_median_resists_stalls_and_filters_bursts_and_errors() -> Result<()
 
     let providers = db.get_provider_stats(None, None, None, None, None)?;
     let p1 = providers.iter().find(|s| s.provider_id == "p1").unwrap();
-    assert_eq!(p1.speed_output_tokens, 940);
-    assert_eq!(p1.speed_generation_ms, 126_250);
+    assert_eq!(p1.speed_output_tokens, 1_040);
+    assert_eq!(p1.speed_generation_ms, 126_600);
     let p1_med = p1.speed_median_tps.expect("p1 median");
     assert!((p1_med - 100.0).abs() < 1e-6, "p1_med={p1_med}");
 

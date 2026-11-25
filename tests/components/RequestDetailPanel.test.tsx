@@ -89,9 +89,7 @@ describe("RequestDetailPanel", () => {
   });
 
   it("explains why buffered burst outputs have no speed", () => {
-    renderWith(
-      log({ outputTokens: 392, latencyMs: 8_450, firstTokenMs: 8_200 }),
-    );
+    renderWith(log({ outputTokens: 2_000, latencyMs: 350, firstTokenMs: 200 }));
 
     expect(screen.getByText("usage.detail.speedBurst")).toBeInTheDocument();
   });

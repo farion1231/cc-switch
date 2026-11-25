@@ -172,22 +172,6 @@ describe("usage format helpers", () => {
         firstTokenMs: 3_425,
       }),
     ).toBeNull();
-    // 缓冲突发：等待 1000ms 后 100ms 内倾倒 150 token（gen < 1s 且 ttft > 4 * gen）
-    expect(
-      getOutputTokensPerSecond({
-        outputTokens: 150,
-        latencyMs: 1_100,
-        firstTokenMs: 1_000,
-      }),
-    ).toBeNull();
-    // 长等待 8.2s 后 250ms 内吐出 392 token：被缓冲突发守卫拦下
-    expect(
-      getOutputTokensPerSecond({
-        outputTokens: 392,
-        latencyMs: 8_450,
-        firstTokenMs: 8_200,
-      }),
-    ).toBeNull();
     // 超过 10,000 tok/s 上限：1001 token / 100ms = 10,010 tok/s
     expect(
       getOutputTokensPerSecond({
@@ -196,12 +180,20 @@ describe("usage format helpers", () => {
         firstTokenMs: 100,
       }),
     ).toBeNull();
-    // 正常短快回复：等待 200ms (<= 4 * 100ms)，100ms 生成 150 token -> 1500 tok/s
+    // 正常短快回复（如 Haiku 工具调用：首字 2.5s，600ms 输出 200 token -> 333.3 tok/s）不应误杀
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 200,
+        latencyMs: 3_100,
+        firstTokenMs: 2_500,
+      }),
+    ).toBeCloseTo(333.333, 2);
+    // 100ms 生成 150 token -> 1500 tok/s（未超过 10,000 tok/s 上限）
     expect(
       getOutputTokensPerSecond({
         outputTokens: 150,
-        latencyMs: 300,
-        firstTokenMs: 200,
+        latencyMs: 1_100,
+        firstTokenMs: 1_000,
       }),
     ).toBe(1500);
   });

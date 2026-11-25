@@ -341,12 +341,7 @@ async fn copilot_success_bookkeeping_preserves_actual_upstream_format() {
                 &provider,
                 &AppType::Codex,
                 false,
-                ForwardedAttempt {
-                    response,
-                    claude_api_format: None,
-                    outbound_model: Some("resolved-model".to_string()),
-                    attempt_start: std::time::Instant::now(),
-                },
+                (response, None, Some("resolved-model".to_string())),
                 format,
             )
             .await;
@@ -5498,47 +5493,6 @@ mod bookkeeping {
         assert!(!requests[1].to_string().contains("\"signature\""));
         assert_eq!(books(&fwd).await, untouched());
         assert!(breaker_untouched(&fwd, "kimi").await);
-    }
-
-    #[tokio::test]
-    async fn failover_records_winning_attempt_start_without_failed_provider_wait() {
-        let slow_app = axum::Router::new().fallback(|| async {
-            tokio::time::sleep(Duration::from_millis(120)).await;
-            (
-                http::StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(json!({"error": {"message": "upstream 500"}})),
-            )
-        });
-        let slow_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let slow_addr = slow_listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let _ = axum::serve(slow_listener, slow_app).await;
-        });
-        let fast_up = upstream(vec![ok()]).await;
-
-        let mut slow_provider = provider("slow", &fast_up);
-        slow_provider.settings_config["env"]["ANTHROPIC_BASE_URL"] =
-            json!(format!("http://{slow_addr}"));
-        let fast_provider = provider("fast", &fast_up);
-
-        let fwd = forwarder(2, "slow");
-        let request_start = std::time::Instant::now();
-        let result = send(&fwd, vec![slow_provider, fast_provider], plain_body())
-            .await
-            .map_err(|e| e.error)
-            .expect("failover to fast provider");
-
-        assert_eq!(result.provider.id, "fast");
-        let skipped = result.attempt_start.duration_since(request_start);
-        assert!(
-            skipped >= Duration::from_millis(100),
-            "attempt_start should exclude slow failed provider wait, skipped={skipped:?}"
-        );
-        let winning_elapsed = result.attempt_start.elapsed();
-        assert!(
-            winning_elapsed < skipped,
-            "winning attempt elapsed ({winning_elapsed:?}) should be smaller than skipped failed-provider wait ({skipped:?})"
-        );
     }
 }
 
