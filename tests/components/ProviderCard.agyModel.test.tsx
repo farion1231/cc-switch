@@ -1,7 +1,9 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
+import type { AppId, ManagedAuthStatus } from "@/lib/api";
+import { agyAuthStatusQuery } from "@/lib/query/subscription";
 import type { Provider } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -37,9 +39,18 @@ vi.mock("@/lib/query/queries", () => ({
   useUsageQuery: () => ({ data: undefined }),
 }));
 
-function renderCard(provider: Provider, appId: "agy" | "gemini" = "agy") {
+function renderCard(
+  provider: Provider,
+  appId: AppId = "agy",
+  cachedAgyAuthStatus?: ManagedAuthStatus,
+) {
+  const queryClient = createTestQueryClient();
+  if (cachedAgyAuthStatus) {
+    // A disabled React Query observer still receives existing cache entries.
+    queryClient.setQueryData(agyAuthStatusQuery.queryKey, cachedAgyAuthStatus);
+  }
   return render(
-    <QueryClientProvider client={createTestQueryClient()}>
+    <QueryClientProvider client={queryClient}>
       <ProviderCard
         provider={provider}
         appId={appId}
@@ -54,6 +65,11 @@ function renderCard(provider: Provider, appId: "agy" | "gemini" = "agy") {
     </QueryClientProvider>,
   );
 }
+
+afterEach(() => {
+  platform.mac = false;
+  platform.linux = false;
+});
 
 const relay: Provider = {
   id: "relay",
@@ -154,5 +170,124 @@ describe("ProviderCard Antigravity official quota", () => {
     renderCard(bound);
     expect(screen.getByTestId("subscription-quota")).toHaveTextContent("agy");
     expect(screen.queryByTestId("agy-account-quota")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProviderCard cached Antigravity auth status isolation", () => {
+  const cachedAgyAuthStatus: ManagedAuthStatus = {
+    provider: "agy_oauth",
+    authenticated: true,
+    default_account_id: "agy-active",
+    accounts: [
+      {
+        id: "agy-active",
+        provider: "agy_oauth",
+        login: "alice@example.com",
+        avatar_url: null,
+        authenticated_at: 1,
+        is_default: true,
+        github_domain: "",
+        requires_reauth: false,
+      },
+      {
+        id: "agy-other",
+        provider: "agy_oauth",
+        login: "bob@example.com",
+        avatar_url: null,
+        authenticated_at: 2,
+        is_default: false,
+        github_domain: "",
+        requires_reauth: false,
+      },
+    ],
+  };
+
+  const agyOfficial: Provider = {
+    id: "agy-official",
+    name: "Antigravity",
+    category: "official",
+    settingsConfig: { config: {} },
+  };
+
+  it("does not leak cached agy badge or email onto non-agy third-party cards", () => {
+    platform.mac = true;
+    const codexThirdParty: Provider = {
+      id: "deepseek",
+      name: "DeepSeek",
+      websiteUrl: "https://api.deepseek.com",
+      settingsConfig: {
+        auth: { OPENAI_API_KEY: "sk-test" },
+        config: 'base_url = "https://api.deepseek.com"',
+      },
+    };
+
+    renderCard(codexThirdParty, "codex", cachedAgyAuthStatus);
+
+    expect(screen.getByText("https://api.deepseek.com")).toBeInTheDocument();
+    expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("authCenter.inUseBy")).not.toBeInTheDocument();
+  });
+
+  it("does not leak cached agy badge onto non-agy official cards", () => {
+    platform.mac = true;
+    const codexOfficial: Provider = {
+      id: "codex-official",
+      name: "OpenAI Official",
+      category: "official",
+      settingsConfig: { auth: {}, config: "" },
+    };
+
+    renderCard(codexOfficial, "codex", cachedAgyAuthStatus);
+
+    expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("authCenter.inUseBy")).not.toBeInTheDocument();
+  });
+
+  it("does not leak cached agy badge or email onto non-official agy cards", () => {
+    platform.mac = true;
+    renderCard(relay, "agy", cachedAgyAuthStatus);
+
+    expect(screen.getByText("Gemini 3.1 Pro (High)")).toBeInTheDocument();
+    expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("authCenter.inUseBy")).not.toBeInTheDocument();
+  });
+
+  it("does not show cached agy badge or email where account switching is unsupported", () => {
+    platform.mac = false;
+    platform.linux = false;
+    renderCard(agyOfficial, "agy", cachedAgyAuthStatus);
+
+    expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("authCenter.inUseBy")).not.toBeInTheDocument();
+  });
+
+  it("shows active agy email and in-use badge on supported Antigravity official cards", () => {
+    platform.mac = true;
+    renderCard(agyOfficial, "agy", cachedAgyAuthStatus);
+
+    expect(screen.getByText("alice@example.com")).toBeInTheDocument();
+    expect(screen.getByText("authCenter.inUseBy")).toBeInTheDocument();
+  });
+
+  it("shows bound account email without in-use badge when another agy account is active", () => {
+    platform.mac = true;
+    renderCard(
+      {
+        ...agyOfficial,
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "agy_oauth",
+            accountId: "agy-other",
+          },
+        },
+      },
+      "agy",
+      cachedAgyAuthStatus,
+    );
+
+    expect(screen.getByText("bob@example.com")).toBeInTheDocument();
+    expect(screen.queryByText("alice@example.com")).not.toBeInTheDocument();
+    expect(screen.queryByText("authCenter.inUseBy")).not.toBeInTheDocument();
   });
 });
