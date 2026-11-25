@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { TFunction } from "i18next";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -264,6 +264,173 @@ describe("Auth Center account groups", () => {
     const xaiTip = await screen.findByRole("tooltip");
     expect(xaiTip).toHaveAttribute("data-side", "bottom");
     expect(xaiTip).toHaveTextContent(/Grok Build/);
+  });
+
+  it("retries AccountAvatar up to twice with backoff and resets when avatarUrl changes", () => {
+    vi.useFakeTimers();
+    try {
+      const renderWithAvatar = (avatarUrl: string | null) => ({
+        ...baseAuth(),
+        hasAnyAccount: true,
+        accounts: [
+          account("octocat", "octocat", {
+            avatar_url: avatarUrl,
+          }),
+        ],
+        defaultAccountId: "octocat",
+      });
+
+      mocks.useCopilotAuth.mockReturnValue(
+        renderWithAvatar("https://avatars.example.com/u/1?v=1"),
+      );
+      const { container, rerender, unmount } = render(<CopilotAuthSection />);
+      const avatarImg = () => container.querySelector(".auth-account-row img");
+
+      const firstImg = avatarImg();
+      expect(firstImg?.getAttribute("src")).toBe(
+        "https://avatars.example.com/u/1?v=1",
+      );
+
+      // 第 1 次加载失败：先回退首字母，1000ms 后静默发起第 1 次重试
+      fireEvent.error(firstImg!);
+      expect(avatarImg()).toBeNull();
+      expect(screen.getByText("O")).toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(999));
+      expect(avatarImg()).toBeNull();
+      act(() => vi.advanceTimersByTime(1));
+      const secondImg = avatarImg();
+      expect(secondImg).not.toBeNull();
+      expect(secondImg).not.toBe(firstImg);
+
+      // 第 2 次失败：3000ms 后发起第 2 次重试
+      fireEvent.error(secondImg!);
+      expect(avatarImg()).toBeNull();
+      act(() => vi.advanceTimersByTime(2999));
+      expect(avatarImg()).toBeNull();
+      act(() => vi.advanceTimersByTime(1));
+      const thirdImg = avatarImg();
+      expect(thirdImg).not.toBeNull();
+      expect(thirdImg).not.toBe(secondImg);
+
+      // 第 3 次失败（2 次重试已耗尽）：保持首字母回退，不再继续安排定时器
+      fireEvent.error(thirdImg!);
+      expect(avatarImg()).toBeNull();
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(avatarImg()).toBeNull();
+
+      // avatarUrl 变更后立刻重置失败状态并加载新地址
+      mocks.useCopilotAuth.mockReturnValue(
+        renderWithAvatar("https://avatars.example.com/u/1?v=2"),
+      );
+      rerender(<CopilotAuthSection />);
+      expect(avatarImg()?.getAttribute("src")).toBe(
+        "https://avatars.example.com/u/1?v=2",
+      );
+
+      // 退避等待中途切换回旧地址（A -> B(waiting) -> A）：立刻取消旧定时器并重新尝试 A
+      fireEvent.error(avatarImg()!);
+      expect(avatarImg()).toBeNull();
+      mocks.useCopilotAuth.mockReturnValue(
+        renderWithAvatar("https://avatars.example.com/u/1?v=1"),
+      );
+      rerender(<CopilotAuthSection />);
+      const reloaded = avatarImg();
+      expect(reloaded?.getAttribute("src")).toBe(
+        "https://avatars.example.com/u/1?v=1",
+      );
+      act(() => vi.advanceTimersByTime(5000));
+      expect(avatarImg()).toBe(reloaded);
+
+      // 退避等待期间卸载不残留定时器
+      fireEvent.error(reloaded!);
+      unmount();
+      act(() => vi.advanceTimersByTime(10_000));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries CopilotAccountAvatar with backoff and resets on avatarUrl change", () => {
+    vi.useFakeTimers();
+    try {
+      const renderSelect = (avatarUrl: string | null) => ({
+        ...baseAuth(),
+        hasAnyAccount: true,
+        accounts: [
+          account("octocat", "octocat", {
+            avatar_url: avatarUrl,
+          }),
+        ],
+        defaultAccountId: "octocat",
+      });
+
+      mocks.useCopilotAuth.mockReturnValue(
+        renderSelect("https://avatars.example.com/u/2?v=1"),
+      );
+      const { rerender } = render(
+        <CopilotAuthSection
+          mode="select"
+          selectedAccountId="octocat"
+          onAccountSelect={vi.fn()}
+        />,
+      );
+
+      const initialImg = screen.getByAltText("octocat");
+      expect(initialImg.getAttribute("src")).toBe(
+        "https://avatars.example.com/u/2?v=1",
+      );
+
+      // 2 次退避重试均失败后停留在回退图标，直到 avatarUrl 变化再重置
+      fireEvent.error(initialImg);
+      expect(screen.queryByAltText("octocat")).not.toBeInTheDocument();
+
+      act(() => vi.advanceTimersByTime(1000));
+      const retry1 = screen.getByAltText("octocat");
+      fireEvent.error(retry1);
+      act(() => vi.advanceTimersByTime(3000));
+      const retry2 = screen.getByAltText("octocat");
+      fireEvent.error(retry2);
+      act(() => vi.advanceTimersByTime(10_000));
+      expect(screen.queryByAltText("octocat")).not.toBeInTheDocument();
+
+      mocks.useCopilotAuth.mockReturnValue(
+        renderSelect("https://avatars.example.com/u/2?v=2"),
+      );
+      rerender(
+        <CopilotAuthSection
+          mode="select"
+          selectedAccountId="octocat"
+          onAccountSelect={vi.fn()}
+        />,
+      );
+      const nextImg = screen.getByAltText("octocat");
+      expect(nextImg.getAttribute("src")).toBe(
+        "https://avatars.example.com/u/2?v=2",
+      );
+
+      // 退避等待期间切换 URL 会立刻取消退避并加载新地址
+      fireEvent.error(nextImg);
+      expect(screen.queryByAltText("octocat")).not.toBeInTheDocument();
+      mocks.useCopilotAuth.mockReturnValue(
+        renderSelect("https://avatars.example.com/u/2?v=3"),
+      );
+      rerender(
+        <CopilotAuthSection
+          mode="select"
+          selectedAccountId="octocat"
+          onAccountSelect={vi.fn()}
+        />,
+      );
+      const switchedImg = screen.getByAltText("octocat");
+      expect(switchedImg.getAttribute("src")).toBe(
+        "https://avatars.example.com/u/2?v=3",
+      );
+      act(() => vi.advanceTimersByTime(5000));
+      expect(screen.getByAltText("octocat")).toBe(switchedImg);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

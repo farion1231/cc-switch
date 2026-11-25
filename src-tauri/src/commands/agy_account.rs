@@ -2,12 +2,24 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
+
 use crate::services::agy_account::{AccountQuotaError, AgyAccountManager};
 use crate::services::subscription::{CredentialStatus, SubscriptionQuota};
 
 const TOOL: &str = "agy";
 
 pub struct AgyAccountState(pub Arc<AgyAccountManager>);
+
+/// 账号额度响应：带上该账号当前的头像地址（查额度顺手补齐或续期刷新后，前端据此决定是否重拉账号列表）。
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgyAccountQuota {
+    #[serde(flatten)]
+    pub quota: SubscriptionQuota,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub avatar_url: Option<String>,
+}
 
 /// 切号后提醒用：在跑的 agy 还用旧账号，续期时可能把旧登录写回钥匙串。
 #[tauri::command]
@@ -24,10 +36,11 @@ pub async fn agy_account_quota(
     app_state: tauri::State<'_, crate::store::AppState>,
     account_id: String,
     state: tauri::State<'_, AgyAccountState>,
-) -> Result<SubscriptionQuota, String> {
+) -> Result<AgyAccountQuota, String> {
     let quota = agy_quota(&state.0, Some(&account_id)).await?;
+    let avatar_url = state.0.account_picture(&account_id).await;
     remember_account_quota(&app, &app_state, account_id, &quota);
-    Ok(quota)
+    Ok(AgyAccountQuota { quota, avatar_url })
 }
 
 /// 按账号查到的额度写进托盘的缓存（托盘逐个账号显示）。不能切号的平台查的是 agy 自己的
@@ -88,4 +101,31 @@ pub(crate) async fn agy_quota(
             SubscriptionQuota::error(TOOL, CredentialStatus::Valid, message)
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agy_account_quota_flattens_quota_and_skips_missing_avatar() {
+        let with_avatar = serde_json::to_value(AgyAccountQuota {
+            quota: SubscriptionQuota::not_found(TOOL),
+            avatar_url: Some("https://lh3.googleusercontent.com/a-/custom=s96-c".into()),
+        })
+        .unwrap();
+        assert_eq!(with_avatar["tool"], TOOL);
+        assert_eq!(
+            with_avatar["avatarUrl"],
+            "https://lh3.googleusercontent.com/a-/custom=s96-c"
+        );
+
+        let without_avatar = serde_json::to_value(AgyAccountQuota {
+            quota: SubscriptionQuota::not_found(TOOL),
+            avatar_url: None,
+        })
+        .unwrap();
+        assert_eq!(without_avatar["tool"], TOOL);
+        assert!(without_avatar.get("avatarUrl").is_none());
+    }
 }

@@ -31,6 +31,37 @@ interface AgyOAuthSectionProps {
 }
 
 /**
+ * 给 Antigravity 账号的 Google 头像 URL 附带登录版本参数，避免过期或重新登录后
+ * 继续命中 24h 的旧头像 / person_off 缓存。
+ */
+function versionedAgyAvatarUrl(
+  avatarUrl: string | null | undefined,
+  authenticatedAt: number,
+  requiresReauth: boolean,
+): string | null {
+  const trimmed = avatarUrl?.trim();
+  if (!trimmed) return null;
+  const version = Number.isFinite(authenticatedAt)
+    ? requiresReauth
+      ? `${authenticatedAt}-reauth`
+      : String(authenticatedAt)
+    : requiresReauth
+      ? "reauth"
+      : null;
+  if (!version) return trimmed;
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return trimmed;
+    }
+    url.searchParams.set("v", version);
+    return url.toString();
+  } catch {
+    return trimmed;
+  }
+}
+
+/**
  * 授权中心的 Antigravity 账号组。agy 只有一份全局登录（系统钥匙串），「默认」就是 agy 现在
  * 登着的那个号；「切换」把选中的号写进去。在这里删账号只删 CC Switch 的副本，不让 agy 登出。
  */
@@ -77,7 +108,11 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
     return {
       id: account.id,
       login: account.login,
-      avatarUrl: account.avatar_url,
+      avatarUrl: versionedAgyAvatarUrl(
+        account.avatar_url,
+        account.authenticated_at,
+        account.requires_reauth,
+      ),
       details: account.requires_reauth
         ? [
             t("authCenter.agy.reauthNote", {

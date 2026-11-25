@@ -283,10 +283,15 @@ impl AgyAccountManager {
                 "Google did not return a long-lived credential. Add the account again and accept all permissions.",
             )
         })?;
-        let claims = credential["id_token"]
+        let mut claims = credential["id_token"]
             .as_str()
             .and_then(oauth::identity)
             .ok_or_else(|| AppError::Message("Google 返回的身份信息不完整".into()))?;
+        if is_blank(claims.picture.as_deref()) {
+            if let Some(fetched) = oauth::fetch_identity(&tokens.access_token).await {
+                claims = merge_identity(claims, fetched);
+            }
+        }
         let mut store = self.store.lock().await;
         let account = upsert(&mut store, credential, &claims);
         self.persist(&store)?;
@@ -419,6 +424,15 @@ impl AgyAccountManager {
         sorted_accounts(&*self.store.lock().await)
     }
 
+    pub async fn account_picture(&self, account_id: &str) -> Option<String> {
+        self.store
+            .lock()
+            .await
+            .accounts
+            .get(account_id)
+            .and_then(|account| account.picture.clone())
+    }
+
     // ---------- 额度 ----------
 
     /// 用这个账号自己的令牌查剩余额度（不用先切号）。令牌被拒时强制续期再试一次。
@@ -433,20 +447,43 @@ impl AgyAccountManager {
     async fn quota_with<F, Fut>(
         &self,
         account_id: &str,
-        mut fetch: F,
+        fetch: F,
     ) -> Result<quota::AccountQuota, AccountQuotaError>
     where
         F: FnMut(String) -> Fut,
         Fut: std::future::Future<Output = Result<quota::AccountQuota, quota::QuotaError>>,
+    {
+        self.quota_with_backfill(account_id, fetch, |id, token| async move {
+            self.backfill_missing_picture(&id, &token).await;
+        })
+        .await
+    }
+
+    async fn quota_with_backfill<F, Fut, B, BFut>(
+        &self,
+        account_id: &str,
+        mut fetch: F,
+        backfill: B,
+    ) -> Result<quota::AccountQuota, AccountQuotaError>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = Result<quota::AccountQuota, quota::QuotaError>>,
+        B: FnOnce(String, String) -> BFut,
+        BFut: std::future::Future<Output = ()>,
     {
         let _permit = self
             .quota_permits
             .acquire()
             .await
             .map_err(|_| AccountQuotaError::Failed("quota semaphore closed".into()))?;
-        let token = self.access_token(account_id).await?;
-        match fetch(token).await {
-            Ok(result) => Ok(result),
+        let (token, refreshed) = self.resolve_access_token(account_id).await?;
+        match fetch(token.clone()).await {
+            Ok(result) => {
+                if !refreshed {
+                    backfill(account_id.to_string(), token).await;
+                }
+                Ok(result)
+            }
             Err(quota::QuotaError::Unauthorized) => {
                 let token = self.refresh_account(account_id).await?;
                 fetch(token)
@@ -488,9 +525,12 @@ impl AgyAccountManager {
         id
     }
 
-    /// 这个账号还能用的 access token。副本里的令牌还有效且未失效时直接用；需要续期或账号已标为
-    /// 失效时再去读钥匙串，把 agy 续过的令牌或重新登录的结果收回来。
-    async fn access_token(&self, account_id: &str) -> Result<String, AccountQuotaError> {
+    /// 这个账号还能用的 access token，以及本次是否刚做过续期。副本里的令牌还有效且未失效时直接用；
+    /// 需要续期或账号已标为失效时再去读钥匙串，把 agy 续过的令牌或重新登录的结果收回来。
+    async fn resolve_access_token(
+        &self,
+        account_id: &str,
+    ) -> Result<(String, bool), AccountQuotaError> {
         {
             let mut store = self.store.lock().await;
             if let Some(account) = store.accounts.get(account_id) {
@@ -498,7 +538,7 @@ impl AgyAccountManager {
                     if let Some(token) =
                         oauth::usable_access_token(&account.credential, TOKEN_MARGIN)
                     {
-                        return Ok(token.to_string());
+                        return Ok((token.to_string(), false));
                     }
                 }
             }
@@ -519,25 +559,86 @@ impl AgyAccountManager {
                 return Err(AccountQuotaError::NeedsReauth);
             }
             if let Some(token) = oauth::usable_access_token(&account.credential, TOKEN_MARGIN) {
-                return Ok(token.to_string());
+                return Ok((token.to_string(), false));
             }
         }
-        self.refresh_account(account_id).await
+        self.refresh_account(account_id)
+            .await
+            .map(|token| (token, true))
+    }
+
+    #[cfg(test)]
+    async fn access_token(&self, account_id: &str) -> Result<String, AccountQuotaError> {
+        self.resolve_access_token(account_id)
+            .await
+            .map(|(token, _)| token)
+    }
+
+    /// 若存量账号还没有头像（如旧版仅解析 id_token 导致私有 /a-/ 头像缺失），在锁外补查一次 userinfo。
+    async fn backfill_missing_picture(&self, account_id: &str, access_token: &str) {
+        self.backfill_missing_picture_with(account_id, || oauth::fetch_identity(access_token))
+            .await;
+    }
+
+    async fn backfill_missing_picture_with<F, Fut>(&self, account_id: &str, fetch: F)
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Option<oauth::IdentityClaims>>,
+    {
+        let needs_backfill = {
+            let store = self.store.lock().await;
+            store
+                .accounts
+                .get(account_id)
+                .is_some_and(|account| is_blank(account.picture.as_deref()))
+        };
+        if !needs_backfill {
+            return;
+        }
+        let Some(fetched) = fetch().await else {
+            return;
+        };
+        let mut store = self.store.lock().await;
+        let changed = store
+            .accounts
+            .get_mut(account_id)
+            // 锁外请求期间若账号已被重新登录等路径填好头像，不再用旧响应覆盖
+            .filter(|account| is_blank(account.picture.as_deref()))
+            .is_some_and(|account| apply_refreshed_identity(account, Some(fetched)));
+        if changed {
+            if let Err(error) = self.persist(&store) {
+                log::warn!("[AgyAccount] 保存账号文件失败: {error}");
+            }
+        }
     }
 
     /// 续期并存回 CC Switch 的副本（不写钥匙串）。续期时不持锁，存回前确认副本没被换掉。
     async fn refresh_account(&self, account_id: &str) -> Result<String, AccountQuotaError> {
-        let refresh_token = {
+        let (refresh_token, needs_userinfo) = {
             let store = self.store.lock().await;
             let account = store
                 .accounts
                 .get(account_id)
                 .ok_or(AccountQuotaError::NotFound)?;
-            refresh_token_of(&account.credential)
+            let refresh_token = refresh_token_of(&account.credential)
                 .ok_or(AccountQuotaError::NeedsReauth)?
-                .to_string()
+                .to_string();
+            let needs_userinfo = needs_avatar_refresh(account.picture.as_deref());
+            (refresh_token, needs_userinfo)
         };
         let outcome = oauth::refresh(&refresh_token).await;
+        let refreshed_claims = match &outcome {
+            Ok(tokens) => {
+                let base = tokens.id_token.as_deref().and_then(oauth::identity);
+                let should_fetch = needs_userinfo
+                    && needs_avatar_refresh(base.as_ref().and_then(|c| c.picture.as_deref()));
+                enrich_identity(base, should_fetch, || {
+                    oauth::fetch_identity(&tokens.access_token)
+                })
+                .await
+            }
+            Err(_) => None,
+        };
         let mut store = self.store.lock().await;
         let account = store.accounts.get_mut(account_id).filter(|account| {
             refresh_token_of(&account.credential) == Some(refresh_token.as_str())
@@ -546,6 +647,7 @@ impl AgyAccountManager {
             Ok(tokens) => {
                 if let Some(account) = account {
                     oauth::apply_refresh(&mut account.credential, &tokens);
+                    apply_refreshed_identity(account, refreshed_claims);
                 }
                 Ok(tokens.access_token)
             }
@@ -592,7 +694,16 @@ impl AgyAccountManager {
         else {
             return Ok(LiveLogin::Unrecognized(raw));
         };
-        if let Some(claims) = credential["id_token"].as_str().and_then(oauth::identity) {
+        if let Some(mut claims) = credential["id_token"].as_str().and_then(oauth::identity) {
+            if will_import_account(store, claims.sub.as_deref(), allow_unlock)
+                && is_blank(claims.picture.as_deref())
+            {
+                if let Some(token) = oauth::usable_access_token(&credential, Duration::ZERO) {
+                    if let Some(fetched) = oauth::fetch_identity(token).await {
+                        claims = merge_identity(claims, fetched);
+                    }
+                }
+            }
             return Ok(LiveLogin::Known { credential, claims });
         }
         if let Some(claims) = match_stored(store, &credential) {
@@ -610,11 +721,19 @@ impl AgyAccountManager {
         if let Some(refresh_token) = refresh_token_of(&credential).map(str::to_string) {
             if let Ok(tokens) = oauth::refresh(&refresh_token).await {
                 oauth::apply_refresh(&mut credential, &tokens);
-                let claims = match credential["id_token"].as_str().and_then(oauth::identity) {
-                    Some(claims) => Some(claims),
-                    None => oauth::fetch_identity(&tokens.access_token).await,
+                let base = credential["id_token"].as_str().and_then(oauth::identity);
+                let should_fetch = match &base {
+                    None => true,
+                    Some(claims) => {
+                        will_import_account(store, claims.sub.as_deref(), allow_unlock)
+                            && is_blank(claims.picture.as_deref())
+                    }
                 };
-                if let Some(mut claims) = claims {
+                if let Some(mut claims) = enrich_identity(base, should_fetch, || {
+                    oauth::fetch_identity(&tokens.access_token)
+                })
+                .await
+                {
                     if claims.email.is_none() {
                         claims.email = live_email(&credential);
                     }
@@ -672,7 +791,10 @@ fn absorb(
             );
         if !stored_is_newer && existing.credential != credential {
             existing.credential = credential;
-            existing.requires_reauth = false;
+            if existing.requires_reauth {
+                existing.requires_reauth = false;
+                existing.authenticated_at = chrono::Utc::now().timestamp();
+            }
             changed = true;
         }
         // 续期后的 id_token 不带名字和头像，有新值才更新
@@ -705,8 +827,99 @@ fn absorb(
     (Some(sub), true)
 }
 
+fn will_import_account(store: &StoreFile, sub: Option<&str>, allow_unlock: bool) -> bool {
+    sub.is_some_and(|sub| {
+        !store.accounts.contains_key(sub)
+            && (allow_unlock || !store.dismissed.iter().any(|id| id == sub))
+    })
+}
+
+fn is_blank(value: Option<&str>) -> bool {
+    value.is_none_or(|v| v.trim().is_empty())
+}
+
+/// Google 私有自定义头像（`/a-/`）不会出现在 OIDC `id_token` 里，且 URL 可能轮换，
+/// 续期时需要经 userinfo 同步。
+fn is_private_avatar_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    matches!(parsed.scheme(), "http" | "https")
+        && parsed.host_str().is_some_and(|host| {
+            host == "googleusercontent.com" || host.ends_with(".googleusercontent.com")
+        })
+        && parsed.path().starts_with("/a-/")
+}
+
+fn needs_avatar_refresh(picture: Option<&str>) -> bool {
+    is_blank(picture) || picture.is_some_and(is_private_avatar_url)
+}
+
+fn merge_identity(
+    mut base: oauth::IdentityClaims,
+    fetched: oauth::IdentityClaims,
+) -> oauth::IdentityClaims {
+    if !is_blank(base.sub.as_deref())
+        && !is_blank(fetched.sub.as_deref())
+        && base.sub != fetched.sub
+    {
+        return base;
+    }
+    if is_blank(base.sub.as_deref()) && !is_blank(fetched.sub.as_deref()) {
+        base.sub = fetched.sub;
+    }
+    if is_blank(base.email.as_deref()) && !is_blank(fetched.email.as_deref()) {
+        base.email = fetched.email;
+    }
+    if is_blank(base.name.as_deref()) && !is_blank(fetched.name.as_deref()) {
+        base.name = fetched.name;
+    }
+    if !is_blank(fetched.picture.as_deref()) && needs_avatar_refresh(base.picture.as_deref()) {
+        base.picture = fetched.picture;
+    }
+    base
+}
+
+async fn enrich_identity<F, Fut>(
+    base: Option<oauth::IdentityClaims>,
+    should_fetch: bool,
+    fetch: F,
+) -> Option<oauth::IdentityClaims>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Option<oauth::IdentityClaims>>,
+{
+    if !should_fetch {
+        return base;
+    }
+    let Some(fetched) = fetch().await else {
+        return base;
+    };
+    Some(match base {
+        Some(base) => merge_identity(base, fetched),
+        None => fetched,
+    })
+}
+
+fn apply_refreshed_identity(
+    account: &mut AccountData,
+    claims: Option<oauth::IdentityClaims>,
+) -> bool {
+    let Some(claims) = claims else {
+        return false;
+    };
+    if claims.sub.as_deref() != Some(account.sub.as_str()) {
+        return false;
+    }
+    let mut changed = false;
+    changed |= fill(&mut account.email, claims.email);
+    changed |= fill(&mut account.name, claims.name);
+    changed |= fill(&mut account.picture, claims.picture);
+    changed
+}
+
 fn fill(slot: &mut Option<String>, value: Option<String>) -> bool {
-    match value.filter(|v| !v.is_empty()) {
+    match value.filter(|v| !v.trim().is_empty()) {
         Some(value) if slot.as_deref() != Some(value.as_str()) => {
             *slot = Some(value);
             true

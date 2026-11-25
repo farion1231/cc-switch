@@ -11,6 +11,7 @@ import { authApi } from "@/lib/api";
 import type { AppId } from "@/lib/api/types";
 import type { ProviderMeta } from "@/types";
 import type {
+  AgyAccountQuota,
   ClaudeAccountPlan,
   SubscriptionQuota,
 } from "@/types/subscription";
@@ -280,9 +281,14 @@ export function useAgyAccountQuota(
   } = options;
   const policy = useQuotaPolicy();
   const autoAllowed = policy.autoAllowed;
+  const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: ["agy_oauth", "quota", accountId],
-    queryFn: () => subscriptionApi.getAgyAccountQuota(accountId),
+    queryFn: async () => {
+      const quota = await subscriptionApi.getAgyAccountQuota(accountId);
+      refreshAgyAccountsAfterQuota(queryClient, accountId, quota);
+      return quota;
+    },
     enabled: autoAllowed && enabled,
     ...autoRefetch(autoAllowed && autoQuery, autoQueryIntervalMinutes),
     staleTime: REFETCH_INTERVAL,
@@ -290,6 +296,33 @@ export function useAgyAccountQuota(
   });
 
   return useQuotaKeepLastGood(query, accountId, policy);
+}
+
+/**
+ * 查 Antigravity 额度时，后端可能在续期过程中把账号标成 requires_reauth（或从钥匙串恢复登录），
+ * 也可能顺手补齐 / 刷新头像地址；与本地账号列表不一致时再重新拉一次列表，避免无变化时重复读钥匙串。
+ */
+function refreshAgyAccountsAfterQuota(
+  queryClient: QueryClient,
+  accountId: string,
+  quota: AgyAccountQuota,
+) {
+  const account = queryClient
+    .getQueryData<ManagedAuthStatus>(agyAuthStatusQuery.queryKey)
+    ?.accounts.find((item) => item.id === accountId);
+  if (!account) return;
+  const reauthChanged =
+    (quota.credentialStatus === "expired" && !account.requires_reauth) ||
+    (quota.credentialStatus === "valid" && account.requires_reauth);
+  const nextAvatarUrl = quota.avatarUrl?.trim() || null;
+  const prevAvatarUrl = account.avatar_url?.trim() || null;
+  const avatarChanged =
+    nextAvatarUrl !== null && nextAvatarUrl !== prevAvatarUrl;
+  if (reauthChanged || avatarChanged) {
+    void queryClient.invalidateQueries({
+      queryKey: agyAuthStatusQuery.queryKey,
+    });
+  }
 }
 
 /**

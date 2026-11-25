@@ -55,3 +55,8 @@ export interface ClaudeAccountPlan {
 export interface ClaudeAccountQuota extends SubscriptionQuota {
   plan?: ClaudeAccountPlan | null;
 }
+
+/** Antigravity 账号的额度，带上当前头像地址（缺省表示无头像） */
+export interface AgyAccountQuota extends SubscriptionQuota {
+  avatarUrl?: string | null;
+}

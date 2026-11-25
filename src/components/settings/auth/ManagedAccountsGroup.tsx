@@ -553,6 +553,64 @@ export function ManagedAccountsGroup({
   );
 }
 
+const AVATAR_RETRY_DELAYS_MS = [1000, 3000] as const;
+
+type AvatarLoadState = {
+  url: string;
+  attempt: number;
+  status: "loading" | "waiting" | "failed";
+};
+
+/**
+ * 头像加载状态：URL 变化时自动重置失败标记；加载出错后静默退避重试最多 2 次，
+ * 期间和耗尽后回退到占位内容。
+ */
+export function useAvatarImage(avatarUrl?: string | null) {
+  const url = avatarUrl?.trim() || null;
+  const [state, setState] = useState<AvatarLoadState | null>(null);
+
+  // URL 变化时立刻丢弃旧地址的失败/重试状态（避免 A -> B -> A 残留旧状态）
+  if (state && state.url !== url) {
+    setState(null);
+  }
+  const active = url && state?.url === url ? state : null;
+  const attempt = active?.attempt ?? 0;
+  const status = active?.status ?? "loading";
+
+  useEffect(() => {
+    if (!url || status !== "waiting") return;
+    const delay = AVATAR_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) return;
+    const timer = window.setTimeout(() => {
+      setState((prev) =>
+        prev?.url === url &&
+        prev.status === "waiting" &&
+        prev.attempt === attempt
+          ? { url, attempt: attempt + 1, status: "loading" }
+          : prev,
+      );
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [attempt, status, url]);
+
+  const onError = () => {
+    if (!url) return;
+    setState((prev) => {
+      const currentAttempt = prev?.url === url ? prev.attempt : 0;
+      if (currentAttempt < AVATAR_RETRY_DELAYS_MS.length) {
+        return { url, attempt: currentAttempt, status: "waiting" };
+      }
+      return { url, attempt: currentAttempt, status: "failed" };
+    });
+  };
+
+  return {
+    src: status === "loading" ? url : null,
+    imageKey: `${url ?? ""}#${attempt}`,
+    onError,
+  };
+}
+
 function AccountAvatar({
   login,
   avatarUrl,
@@ -560,20 +618,21 @@ function AccountAvatar({
   login: string;
   avatarUrl?: string | null;
 }) {
-  const [failed, setFailed] = useState(false);
+  const { src, imageKey, onError } = useAvatarImage(avatarUrl);
   return (
     <span
       aria-hidden="true"
       className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-subtle text-caption font-semibold text-fg-2"
     >
-      {avatarUrl && !failed ? (
+      {src ? (
         <img
-          src={avatarUrl}
+          key={imageKey}
+          src={src}
           alt=""
           className="h-full w-full object-cover"
           loading="lazy"
           referrerPolicy="no-referrer"
-          onError={() => setFailed(true)}
+          onError={onError}
         />
       ) : (
         login.charAt(0).toUpperCase()
