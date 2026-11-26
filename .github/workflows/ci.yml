@@ -31,8 +31,8 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend || 'true' }}
       backend: ${{ steps.filter.outputs.backend || 'true' }}
       wsl: ${{ steps.filter.outputs.wsl || 'true' }}
-      macos_full: ${{ steps.filter.outputs.macos_full || 'true' }}
-      windows_clippy: ${{ steps.filter.outputs.windows_clippy || 'true' }}
+      macos_full: ${{ (steps.filter.outputs.macos_full || 'true') == 'true' || steps.pr_meta.outputs.patch_touches_macos == 'true' }}
+      pr_labels: ${{ steps.pr_meta.outputs.labels || '' }}
       readme: ${{ steps.filter.outputs.readme || 'false' }}
       frontend_contracts: ${{ steps.filter.outputs.frontend_contracts || 'false' }}
     steps:
@@ -87,49 +87,61 @@ jobs:
               - "src-tauri/build.rs"
               - "rust-toolchain.toml"
               - ".github/workflows/ci.yml"
-            # 命中 macOS 专属实现或构建/依赖变更时，PR 自动升级为 macOS 全量 Clippy + nextest；
-            # 否则普通 PR 在 macOS 上仅跑 cargo check --all-targets 守住编译，main/定时/手动或打 full-ci/test:macos 标签时跑全量。
+            # 命中 macOS 专属实现、集成测试或构建/依赖变更时，PR 自动升级为 macOS 全量 Clippy + nextest；
+            # 同时下面还会扫描 PR diff 中新增/修改的 target_os = "macos" / objc2，兜底新文件。
+            # 未命中时，普通 PR 在 macOS 上仅跑 cargo check --all-targets 守住编译，main/定时/手动或打 full-ci/test:macos 标签时跑全量。
             macos_full:
-              - "src-tauri/src/macos_tray_window.rs"
-              - "src-tauri/src/tray*.rs"
-              - "src-tauri/src/tray/**"
-              - "src-tauri/src/lightweight.rs"
               - "src-tauri/src/auto_launch.rs"
+              - "src-tauri/src/claude_desktop_config.rs"
+              - "src-tauri/src/commands/misc.rs"
+              - "src-tauri/src/commands/terminal_launch.rs"
+              - "src-tauri/src/commands/tool_*.rs"
+              - "src-tauri/src/commands/tool_discovery/**"
+              - "src-tauri/src/commands/workbuddy_account.rs"
+              - "src-tauri/src/lib.rs"
+              - "src-tauri/src/lightweight.rs"
+              - "src-tauri/src/macos_tray_window.rs"
+              - "src-tauri/src/mode/operation.rs"
+              - "src-tauri/src/omp_config.rs"
               - "src-tauri/src/services/*_account/**"
               - "src-tauri/src/services/*_account.rs"
+              - "src-tauri/src/services/provider/mod.rs"
               - "src-tauri/src/services/skill_repo_tokens.rs"
-              - "src-tauri/src/commands/terminal_launch.rs"
-              - "src-tauri/src/commands/tool_*.rs"
-              - "src-tauri/src/commands/tool_discovery/**"
+              - "src-tauri/src/services/subscription.rs"
               - "src-tauri/src/session_manager/terminal/**"
-              - "src-tauri/Cargo.toml"
-              - "src-tauri/Cargo.lock"
-              - "src-tauri/build.rs"
-              - "rust-toolchain.toml"
-              - ".github/workflows/ci.yml"
-            # 命中 Windows 专属实现或构建/依赖变更时，PR 自动在 Windows 上补跑 Clippy；
-            # 否则普通 PR 仅在 Linux 跑 Clippy，Windows 直接跑全量 nextest。
-            windows_clippy:
-              - "src-tauri/src/config.rs"
-              - "src-tauri/src/error.rs"
-              - "src-tauri/src/hermes_config.rs"
-              - "src-tauri/src/sync_utils.rs"
-              - "src-tauri/src/session_manager/**"
-              - "src-tauri/src/lib.rs"
               - "src-tauri/src/tray*.rs"
               - "src-tauri/src/tray/**"
-              - "src-tauri/src/lightweight.rs"
-              - "src-tauri/src/commands/tool_*.rs"
-              - "src-tauri/src/commands/tool_discovery/**"
-              - "src-tauri/src/commands/terminal_launch.rs"
-              - "src-tauri/src/services/env_*.rs"
-              - "src-tauri/src/services/*_account/**"
-              - "src-tauri/src/services/skill_repo_tokens.rs"
+              - "src-tauri/tests/**"
               - "src-tauri/Cargo.toml"
               - "src-tauri/Cargo.lock"
               - "src-tauri/build.rs"
               - "rust-toolchain.toml"
               - ".github/workflows/ci.yml"
+
+      # 实时拉取 PR 标签与 diff 中的 macOS 条件编译痕迹：
+      # 1. Re-run all jobs 时 github.event.pull_request.labels 是冻结快照，必须走 API 才能读到新打的 full-ci / test:macos 标签；
+      # 2. 不把 labeled 加进 on.pull_request.types，避免 labeler.yml 自动打标时误取消正在运行的 CI；
+      # 3. 兜底扫描 diff 中的 target_os = "macos" / objc2，即使新文件不在静态列表里也会升级为 macOS 全量。
+      - name: Fetch live PR labels and macOS diff guard
+        id: pr_meta
+        if: github.event_name == 'pull_request' && steps.filter.outputs.backend == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MACOS_FULL_FILTER: ${{ steps.filter.outputs.macos_full }}
+        run: |
+          labels=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '[.labels[].name] | join(",")')
+          echo "labels=${labels}" >> "$GITHUB_OUTPUT"
+
+          patch_touches_macos=false
+          if [ "$MACOS_FULL_FILTER" != "true" ]; then
+            if gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[].patch // empty' \
+                | grep -qE 'target_os[[:space:]]*=[[:space:]]*"macos"|objc2'; then
+              patch_touches_macos=true
+            fi
+          fi
+          echo "patch_touches_macos=${patch_touches_macos}" >> "$GITHUB_OUTPUT"
 
   frontend:
     name: Frontend Checks
@@ -312,8 +324,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           RUNNER_OS: ${{ runner.os }}
           MACOS_FULL: ${{ needs.changes.outputs.macos_full }}
-          WINDOWS_CLIPPY: ${{ needs.changes.outputs.windows_clippy }}
-          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          PR_LABELS: ${{ needs.changes.outputs.pr_labels }}
         run: |
           run_clippy=false
           run_tests=false
@@ -329,14 +340,9 @@ jobs:
           if [ "$EVENT_NAME" != "pull_request" ] || has_label "full-ci"; then
             run_clippy=true
             run_tests=true
-          elif [ "$RUNNER_OS" = "Linux" ]; then
+          elif [ "$RUNNER_OS" = "Linux" ] || [ "$RUNNER_OS" = "Windows" ]; then
             run_clippy=true
             run_tests=true
-          elif [ "$RUNNER_OS" = "Windows" ]; then
-            run_tests=true
-            if [ "$WINDOWS_CLIPPY" = "true" ] || has_label "test:windows"; then
-              run_clippy=true
-            fi
           elif [ "$RUNNER_OS" = "macOS" ]; then
             if [ "$MACOS_FULL" = "true" ] || has_label "test:macos"; then
               run_clippy=true
