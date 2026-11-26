@@ -292,18 +292,6 @@ function App() {
     storeView(currentView);
   }, [currentView]);
 
-  // 从授权中心 / 设置等页面切回应用供应商页时，重拉当前应用的供应商列表（同步新登录/移除的官方账号卡片）
-  const prevViewForProvidersRef = useRef(currentView);
-  useEffect(() => {
-    const prev = prevViewForProvidersRef.current;
-    prevViewForProvidersRef.current = currentView;
-    if (prev !== "providers" && currentView === "providers") {
-      void queryClient.invalidateQueries({
-        queryKey: ["providers", activeApp],
-      });
-    }
-  }, [currentView, activeApp, queryClient]);
-
   const { data: settingsData } = useSettingsQuery();
   useCopilotVscodeSyncNotifications(settingsData?.copilotVscode);
   // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
