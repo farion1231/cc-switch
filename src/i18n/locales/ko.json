@@ -233,7 +233,7 @@
         "account": "계정",
         "accountFollow": "agy의 현재 로그인 따르기",
         "accountMissing": "이 컴퓨터에 없는 계정",
-        "accountHelp": "계정을 선택하면 ‘터미널 열기’ 실행 전에 agy의 로그인을 해당 계정으로 전환합니다. 이는 전역적으로 적용되며 이후 시작한 agy 세션도 이 계정을 사용합니다. 계정은 인증 센터에서 추가하세요."
+        "accountHelp": "새 계정 연결을 저장하면 이후 시작하는 agy 세션에서 해당 계정을 사용합니다. 이 카드에서 터미널을 열 때도 연결된 계정으로 전환됩니다. 계정은 인증 센터에서 추가하세요."
       },
       "gemini": {
         "model": "모델",
@@ -917,6 +917,14 @@
     "minimizeToTrayDescription": "켜면 닫기 버튼을 눌러도 앱이 종료되지 않고 시스템 트레이로 숨겨집니다. 끄면 앱이 바로 종료됩니다.",
     "useAppWindowControls": "앱 수준 창 컨트롤 활성화",
     "useAppWindowControlsDescription": "앱 상단에 내장된 최소화, 최대화/복원 및 닫기 버튼을 사용합니다. 끄면 시스템 창 모드를 사용합니다.",
+    "copilotVscode": {
+      "enable": "VS Code Copilot 확장에 적용",
+      "description": "CLI에 추가한 모델과 API 키를 감지된 모든 VS Code 프로필에 자동으로 적용합니다. 공급자 변경 사항도 자동으로 동기화됩니다.",
+      "pending": "VS Code 모델 동기화 대기 중",
+      "pendingDescription": "VS Code에서 이전 설정을 사용하고 있을 수 있습니다. 다시 시도하여 최신 변경 사항을 동기화하세요.",
+      "noTargets": "VS Code 설정을 찾을 수 없습니다. VS Code를 한 번 실행한 후 다시 시도하세요.",
+      "failed": "VS Code Copilot 동기화에 실패했습니다"
+    },
     "enableClaudePluginIntegration": "Claude Code 확장에 적용",
     "enableClaudePluginIntegrationDescription": "켜면 VS Code의 Claude Code 확장도 이 앱에서 선택한 공급자로 함께 전환됩니다",
     "skipClaudeOnboarding": "Claude Code 첫 실행 확인 건너뛰기",
@@ -1539,6 +1547,7 @@
     "selectSessionLabel": "{{title}} 선택",
     "agyDeleteHint": "런타임 상태도 제거하려면 Antigravity에서 이 세션을 삭제하세요.",
     "mcodeDeleteHint": "MiniMax Code에서 삭제하세요.",
+    "codebuddyDeleteHint": "이 세션은 CodeBuddy에서 관리하세요. 백그라운드 작업, 팀원, 파일 기록이 해당 대화 기록을 참조합니다",
     "groupMeta": "세션 {{count}}개 · {{time}}",
     "bucketToday": "오늘",
     "bucketYesterday": "어제",
@@ -2009,6 +2018,7 @@
     "directModeFormatSwitch": "이 형식은 직접 연결 모드에서 사용할 수 없습니다. 이 카드를 사용하려면 라우팅 또는 통합 모드로 전환하세요."
   },
   "copilot": {
+    "autoModelName": "GitHub Copilot Auto",
     "automaticFormat": "모델에 따라 자동 선택",
     "automaticFormatHint": "Copilot의 업스트림 형식은 라우팅에서 모델에 따라 자동으로 선택합니다. 수동으로 지정한 형식은 적용되지 않습니다.",
     "authSection": "GitHub Copilot 인증",
@@ -2376,6 +2386,7 @@
     "loginWith": {
       "deepseek": "DeepSeek 계정으로 로그인",
       "workbuddy": "WorkBuddy 계정으로 로그인",
+      "codebuddy": "CodeBuddy 계정으로 로그인",
       "kimi": "Kimi 계정으로 로그인",
       "claude": "Claude 계정으로 로그인",
       "chatgpt": "ChatGPT 계정으로 로그인",
@@ -2764,6 +2775,7 @@
       "duration": "소요 시간",
       "durationEstimated": "소요 시간 (추정)",
       "speedTooFew": "출력이 100토큰 미만이므로 속도를 계산하지 않습니다.",
+      "speedBurst": "버퍼링 후 한 번에 전송된 것으로 보여 속도를 계산하지 않습니다.",
       "speedEstimateTooFew": "출력이 200토큰 미만이므로 속도를 추정하지 않습니다.",
       "noTimingSession": "세션 로그에는 타이밍 데이터가 없습니다.",
       "noFirstToken": "첫 토큰 시간 데이터가 없어 속도를 계산하지 않습니다.",
@@ -4050,7 +4062,29 @@
     "reachableSlow": "{{providerName}}에 연결할 수 있지만 응답이 느립니다({{responseTimeMs}}ms).",
     "unreachable": "{{providerName}}에 연결할 수 없음: {{message}}",
     "unreachableHint": "연결할 수 없습니다(DNS/연결/TLS/시간 초과). base_url과 네트워크를 확인하세요.",
+    "hint": {
+      "blocked": "시스템이 연결을 거부했습니다. 대개 방화벽이나 보안 소프트웨어가 CC Switch를 차단한 경우입니다. 방화벽에서 CC Switch의 네트워크 연결을 허용하세요. 로컬 네트워크 주소에 연결할 때도 필요합니다.",
+      "refused": "주소에는 도달했지만 이 포트에서 실행 중인 서비스가 없습니다. 서비스가 시작되었는지, 포트가 올바른지 확인하세요.",
+      "timeout": "연결 시간이 초과되었습니다. 네트워크와 주소를 확인하세요. 방화벽이나 보안 소프트웨어가 응답 없이 연결을 막고 있을 수도 있습니다.",
+      "dns": "도메인 이름을 확인할 수 없습니다. 주소의 도메인에 오타가 없는지, 네트워크와 DNS가 정상인지 확인하세요.",
+      "tls": "HTTPS 연결에 실패했습니다(인증서 또는 핸드셰이크 오류). 주소가 http와 https 중 무엇을 써야 하는지, 서버 인증서가 유효한지 확인하세요."
+    },
     "error": "{{providerName}} 검사 오류: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "CC Switch 업데이트를 확인하지 못했습니다",
+      "description": "CC Switch는 시작할 때 dl.ccswitch.io(예비로 github.com)에 새 버전이 있는지 확인하는데, 이번에는 실패했습니다: {{detail}}. 다른 기능에는 영향이 없습니다. 네트워크나 방화벽에서 막은 경우라면 무시해도 됩니다."
+    },
+    "modelsDevSyncFailed": {
+      "title": "모델 요금을 동기화하지 못했습니다",
+      "description": "CC Switch는 사용 비용을 계산하기 위해 주기적으로 models.dev에서 모델 요금을 가져오는데, 이번에는 실패했습니다: {{detail}}. 다른 기능에는 영향이 없습니다."
+    },
+    "networkError": "서버에 연결할 수 없습니다",
+    "mute": "다시 표시 안 함",
+    "disableModelsDevSync": "자동 동기화 끄기",
+    "modelsDevSyncDisabled": "모델 요금 자동 동기화를 껐습니다. '사용 통계 → 모델 요금'에서 다시 켤 수 있습니다.",
+    "disableFailed": "끄지 못했습니다: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "라우팅 마스터 스위치",
@@ -4672,6 +4706,7 @@
     },
     "updatedAt": "{{time}} 업데이트됨",
     "clickToRefresh": "다시 확인하려면 클릭하세요",
+    "manualIdle": "할당량을 조회하려면 새로고침을 클릭하세요",
     "resetCredits": {
       "label": "초기화",
       "left": "남은 초기화 횟수: {{count}}회",
@@ -4799,6 +4834,7 @@
       "failedTitle": "일부 앱을 읽을 수 없습니다",
       "filesTitle": "읽은 파일",
       "claudeNote": " (최상위 mcpServers)",
+      "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json 중 처음 존재하는 파일)",
       "ok": "확인",
       "dshNote": " (초기화된 모든 프로필에 기록: web, desktop, headless, acp. 홈 수준의 ~/.dsh/cordis.patch.yml은 읽거나 쓰지 않으므로, 그 안의 MCP는 해당 파일에서 관리하세요)"
     },
@@ -4950,9 +4986,9 @@
       "disableAria": "선택한 스킬 {{count}}개를 비활성화할 앱",
       "uninstall": "제거"
     },
-    "piColumnTitle": "Pi는 ~/.pi/agent/skills에 폴더가 있으면 해당 스킬이 활성화된 것으로 간주합니다",
+    "piColumnTitle": "Pi는 ~/.agents/skills도 읽으므로 선택되지 않았더라도 해당 경로에 있는 스킬은 바로 사용할 수 있습니다",
     "piHelpTitle": "Pi의 활성화 판단 기준",
-    "piHelp": "~/.pi/agent/skills에 폴더가 있는지 여부입니다.",
+    "piHelp": "Pi는 ~/.agents/skills도 읽으므로 선택되지 않았더라도 해당 경로에 있는 스킬은 바로 사용할 수 있습니다.",
     "pop": {
       "onlyApp": "{{app}}에서 활성화된 항목만 표시",
       "showAll": "모든 스킬 표시"
@@ -5186,6 +5222,7 @@
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
+      "codebuddyHelp": "CodeBuddy의 공식 로그인입니다(중국 사이트와 국제 사이트 모두). 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘CodeBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 \"CodeBuddy 공식 로그인\" 카드의 추가를 클릭하세요. \"계정 추가\"는 터미널에서 codebuddy를 열고, 로그인을 마치면 계정을 여기에 추가합니다. CodeBuddy가 이미 로그인되어 있으면 잠시 로그아웃되며, 중단하면 원래 로그인을 복원할 수 있습니다. 토큰은 CodeBuddy가 직접 갱신합니다.",
       "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 사용자를 대신해 WorkBuddy에 로그인할 수 없으며, 현재 로그인된 계정의 로그인 파일 전체를 스냅샷으로 저장합니다. 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘WorkBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 ‘WorkBuddy 공식 로그인’ 카드의 ‘추가’를 클릭하세요. ‘추가됨’ 상태인 공식 카드는 동시에 하나만 유지됩니다. 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다.",
       "claudeHelpTerminal": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. 설정에서 Claude 설정 디렉터리를 별도로 지정한 경우, 카드를 전환해도 Claude Code의 로그인 계정은 바뀌지 않습니다. Claude 공식 공급자 카드에서 계정을 선택한 다음, 해당 카드의 ‘터미널 열기’를 이용하세요.",
       "claudeHelpWsl": "Claude Code 공식 구독 계정(Pro / Max / Team)입니다. Claude 설정 디렉터리가 WSL에 있는 경우는 아직 지원하지 않습니다. 추후 지원할 예정입니다.",
@@ -5232,7 +5269,6 @@
       "reauthed": "{{login}}(으)로 다시 로그인했습니다."
     },
     "quota": {
-      "updating": "업데이트 중…",
       "loading": "할당량 확인 중…",
       "refresh": "할당량 새로 고침",
       "refreshAria": "{{login}}의 할당량 새로 고침",
@@ -5246,6 +5282,33 @@
       "removeNote": "agy의 로그인은 유지됩니다. 이 계정을 사용 중인 경우 여기서 제거해도 계속 작동합니다.",
       "switched": "전환했습니다. 새 agy 세션은 이 계정을 사용합니다.",
       "switchedWhileRunning": "전환했습니다. 실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. agy를 모두 종료한 뒤 다시 실행하세요."
+    },
+    "codebuddy": {
+      "mainland": "중국",
+      "global": "국제",
+      "expiredNote": "로그인이 만료되었습니다. 다시 로그인하세요",
+      "addedOn": "{{date}}에 추가됨",
+      "imported": "{{login}}을(를) 추가했습니다.",
+      "uncollected": "CodeBuddy가 {{login}}(으)로 로그인되어 있지만 이 계정은 아직 목록에 없습니다.",
+      "importCurrent": "현재 계정 추가",
+      "unrecognized": "CodeBuddy 로그인 파일의 형식을 인식할 수 없습니다",
+      "unrecognizedNote": "WorkBuddy가 암호화했을 수 있습니다. CC Switch는 파일을 건드리지 않으며 계정을 전환할 수 없습니다.",
+      "statusLoadFailed": "CodeBuddy 계정을 읽지 못했습니다. 다시 시도하세요.",
+      "empty": "아직 CodeBuddy 계정이 없습니다. 계정 추가를 클릭해 로그인하거나 CodeBuddy에 현재 로그인된 계정을 추가하세요.",
+      "login": "새 계정으로 로그인",
+      "current": "CodeBuddy에서 사용 중",
+      "pendingNote": "터미널에서 codebuddy를 열었습니다. 안내에 따라 로그인하세요(로그인 화면이 나타나지 않으면 /login 입력). 완료되면 계정이 여기에 추가됩니다.",
+      "reopenTerminal": "터미널 다시 열기",
+      "removeNote": "CC Switch의 사본만 삭제합니다. CodeBuddy는 로그인 상태로 유지됩니다.",
+      "localOnly": "계정 사본은 이 컴퓨터에만 저장되며 클라우드로 동기화되지 않습니다. 다른 컴퓨터에서는 계정을 다시 추가해야 합니다.",
+      "quota": {
+        "credits": "크레딧",
+        "enterprise": "엔터프라이즈",
+        "unlimited": "무제한",
+        "detail": "{{total}} 크레딧 중 {{remaining}} 남음, {{used}} 사용",
+        "usedDetail": "이번 주기에 {{used}} 크레딧 사용",
+        "refreshPending": "토큰이 CodeBuddy의 갱신을 기다리고 있습니다. 이 계정으로 전환해 한 번 사용한 뒤 다시 확인하세요."
+      }
     },
     "workbuddy": {
       "addedOn": "{{date}}에 추가됨",
@@ -5299,6 +5362,10 @@
     "openBrowser": {
       "title": "로그인 시 브라우저 자동 열기",
       "description": "이 옵션을 끄면 로그인 링크만 복사되며, 원하는 브라우저에서 직접 열 수 있습니다. 별도의 브라우저 프로필로 여러 계정을 관리할 때 유용합니다."
+    },
+    "autoQuota": {
+      "title": "할당량 자동 조회",
+      "description": "끄면 새로고침을 클릭할 때만 공식 계정 할당량을 조회합니다. 인증 센터 열기, 카드 예약 새로고침 및 트레이 아이콘 마우스오버 시에는 조회하지 않습니다. DeepSeek 계정 잔액은 로그인 상태와 함께 표시되므로 이 스위치의 영향을 받지 않습니다."
     }
   },
   "kimi": {
@@ -5393,6 +5460,49 @@
       "renameProvider": "Oh My Pi 공급자 키는 변경할 수 없습니다.",
       "providerMissing": "이 Oh My Pi 공급자는 더 이상 저장된 목록에 없습니다.",
       "legacyModelsJson": "Oh My Pi 디렉터리에 이전 형식의 models.json이 남아 있습니다. omp를 다음에 실행하면 models.yml로 마이그레이션됩니다. omp를 한 번 실행한 후 공급자를 다시 추가하세요."
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "아직 사용자 지정 모델이 없습니다",
+      "description": "CodeBuddy의 공식 모델은 CodeBuddy가 직접 관리합니다. 공식 계정을 전환하려면 해당 계정용 \"CodeBuddy 공식 로그인\" 카드를 만들고 여기에서 추가를 클릭하세요. ~/.codebuddy/models.json에 이미 있는 사용자 지정 모델은 자동으로 여기에 표시됩니다. 오른쪽 위의 + 버튼으로 프리셋 또는 사용자 지정 모델을 추가하세요."
+    },
+    "modelsHint": "모델 ID는 models.json에 기록되는 id이자 /model에서 선택하는 이름으로, 보통 엔드포인트의 모델 이름입니다. 추가한 후에는 변경할 수 없습니다. 표시 이름은 위의 이름과 같은 값입니다.",
+    "modelIdDuplicate": "이 모델 ID는 이미 사용 중입니다",
+    "modelIdInvalid": "모델 ID는 공백으로 시작하거나 끝날 수 없습니다.",
+    "vendor": "공급업체 라벨",
+    "urlHint": "전체 경로를 사용하세요. 보통 /chat/completions로 끝납니다. ${VAR} 환경 변수 참조를 사용할 수 있습니다.",
+    "urlInvalid": "올바른 http(s) URL을 입력하세요.",
+    "apiKeyPlaceholder": "API 키를 입력하거나 ${MY_API_KEY} 형식으로 환경 변수를 참조하세요",
+    "maxInputTokens": "최대 입력 토큰",
+    "maxOutputTokens": "최대 출력 토큰",
+    "jsonHint": "models.json의 모델 항목 하나입니다(id는 위의 모델 ID에서 가져옵니다). 저장하면 CodeBuddy가 파일을 자동으로 다시 불러옵니다.",
+    "official": {
+      "presetName": "CodeBuddy 공식 로그인",
+      "account": "계정",
+      "accountHint": "이 카드가 사용할 CodeBuddy 계정을 선택하세요. CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 공급자 목록에서 이 카드의 추가를 클릭하면 CodeBuddy가 이 계정으로 로그인되며, 실행 중인 CodeBuddy도 자동으로 적용합니다.",
+      "accountDeleted": "계정이 삭제되었습니다. 다른 계정을 선택하세요.",
+      "accountDeletedChip": "계정 삭제됨",
+      "unbound": "아직 계정을 선택하지 않았습니다. 카드를 편집해 계정을 선택하세요.",
+      "statusLoading": "계정을 불러오는 중…",
+      "expired": "이 계정의 로그인이 만료되었습니다. 인증 센터에서 다시 로그인한 후 추가하세요.",
+      "importCurrent": "현재 로그인 추가({{login}})",
+      "adding": "추가하는 중…",
+      "added": "{{name}}을(를) 추가했습니다. 이제 CodeBuddy가 이 계정으로 로그인되어 있습니다. 실행 중인 CodeBuddy는 자동으로 전환되며 새 세션도 이 계정을 사용합니다.",
+      "addFailed": "추가하지 못했습니다: {{error}}",
+      "switched": "CodeBuddy를 {{name}}(으)로 전환했습니다. 실행 중인 CodeBuddy는 자동으로 전환되며 새 세션도 이 계정을 사용합니다.",
+      "switchFailed": "전환하지 못했습니다: {{error}}",
+      "removeHint": "CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요."
+    },
+    "login": {
+      "confirmTitle": "다른 CodeBuddy 계정으로 로그인",
+      "confirmMessage": "CodeBuddy가 {{login}}(으)로 로그인되어 있으며 한 번에 한 계정만 사용할 수 있습니다. 계속하면 먼저 이 계정을 인증 센터에 추가한 다음 CodeBuddy를 잠시 로그아웃하고(로그인 정보는 보존되며 서버에 연결하지 않음), 새 계정에 로그인할 터미널을 엽니다.\n\n이후 로그인을 마칠 때까지 실행 중인 CodeBuddy 세션은 로그아웃 상태로 표시됩니다. 중단하면 클릭 한 번으로 원래 로그인을 복원할 수 있습니다.",
+      "confirm": "계속",
+      "signedInHint": "CodeBuddy가 로그인되어 있는 동안 새 계정으로 로그인하면 먼저 현재 계정에서 로그아웃됩니다. 로그인을 마칠 때까지 실행 중인 CodeBuddy 세션은 로그아웃 상태로 표시됩니다.",
+      "pendingReplacing": "CodeBuddy를 현재 계정에서 잠시 로그아웃하고 터미널에서 codebuddy를 열었습니다. 안내에 따라 새 계정으로 로그인하세요. 완료되면 여기에 추가됩니다.",
+      "restore": "원래 로그인 복원",
+      "restored": "원래 CodeBuddy 로그인을 복원했습니다.",
+      "restoreFailed": "원래 로그인을 복원하지 못했습니다(CodeBuddy가 로그인 파일을 쓰는 중일 수 있습니다). 인증 센터나 터미널에서 다시 로그인하세요."
     }
   },
   "dsh": {

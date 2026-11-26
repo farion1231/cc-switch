@@ -235,7 +235,7 @@
         "account": "账号",
         "accountFollow": "跟随 agy 当前登录",
         "accountMissing": "不在这台电脑上的账号",
-        "accountHelp": "选了账号的话，「打开终端」前会先把 agy 的登录切到它（全局生效，之后新开的 agy 都用它）。账号在授权中心添加。"
+        "accountHelp": "保存新的绑定账号后，新开的 agy 会使用它。用这张卡打开终端时也会切回绑定账号。账号在授权中心添加。"
       },
       "gemini": {
         "model": "模型",
@@ -917,6 +917,14 @@
     "minimizeToTrayDescription": "勾选后点击关闭按钮会隐藏到系统托盘，取消则直接退出应用。",
     "useAppWindowControls": "启用应用级窗口按钮",
     "useAppWindowControlsDescription": "开启后使用应用自建的最小化、最大化/还原、关闭按钮；关闭后沿用系统窗口模式。",
+    "copilotVscode": {
+      "enable": "应用到 VS Code Copilot 插件",
+      "description": "开启后自动将 CLI 中已添加的模型和密钥应用到检测到的全部 VS Code 配置，后续供应商改动自动同步。",
+      "pending": "VS Code 联动待同步",
+      "pendingDescription": "VS Code 可能仍使用上次配置，可重试同步最新改动。",
+      "noTargets": "未找到 VS Code 配置，请先启动一次 VS Code 后重试。",
+      "failed": "同步到 VS Code Copilot 失败"
+    },
     "enableClaudePluginIntegration": "应用到 Claude Code 插件",
     "enableClaudePluginIntegrationDescription": "开启后 VS Code Claude Code 插件的供应商将随本软件切换",
     "skipClaudeOnboarding": "跳过 Claude Code 初次安装确认",
@@ -1540,6 +1548,7 @@
     "selectSessionLabel": "选择 {{title}}",
     "agyDeleteHint": "请在 Antigravity 中删除会话，以同步清理运行状态",
     "mcodeDeleteHint": "请在 MiniMax Code 中删除",
+    "codebuddyDeleteHint": "请在 CodeBuddy 中管理此会话：后台任务、团队成员和文件历史都引用它的记录",
     "groupMeta": "{{count}} 个会话 · {{time}}",
     "bucketToday": "今天",
     "bucketYesterday": "昨天",
@@ -2048,6 +2057,7 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "例如：company.ghe.com",
+    "autoModelName": "GitHub Copilot 自动选择",
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登录",
       "officialHint": "「打开终端」以这张卡的模型启动 copilot；绑定授权中心的账号后改用该账号启动。",
@@ -2376,6 +2386,7 @@
     "loginWith": {
       "deepseek": "用 DeepSeek 账号登录",
       "workbuddy": "用 WorkBuddy 账号登录",
+      "codebuddy": "用 CodeBuddy 账号登录",
       "kimi": "使用 Kimi 账号登录",
       "claude": "用 Claude 账号登录",
       "chatgpt": "用 ChatGPT 账号登录",
@@ -2769,6 +2780,7 @@
       "duration": "耗时",
       "durationEstimated": "耗时（估算）",
       "speedTooFew": "输出不到 100 token，不算速度",
+      "speedBurst": "疑似缓冲后突发吐出，不算速度",
       "speedEstimateTooFew": "输出不到 200 token，不估速度",
       "noTimingSession": "会话日志没有计时数据",
       "noFirstToken": "没有首字计时，不算速度",
@@ -4050,7 +4062,29 @@
     "reachableSlow": "{{providerName}} 连通但较慢 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} 无法连通: {{message}}",
     "unreachableHint": "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
+    "hint": {
+      "blocked": "系统拒绝了这次连接，通常是防火墙或安全软件拦截了 CC Switch。请在防火墙里允许 CC Switch 联网，连接局域网地址也需要放行。",
+      "refused": "地址可以到达，但这个端口上没有服务在运行。请确认服务已经启动、端口填写正确。",
+      "timeout": "连接超时。请检查网络和地址是否正确；也可能是防火墙或安全软件拦截了连接但没有回应。",
+      "dns": "域名解析失败。请检查地址里的域名有没有写错，或者网络、DNS 是否正常。",
+      "tls": "HTTPS 连接失败（证书或握手出错）。请检查地址该用 http 还是 https，以及服务端证书是否有效。"
+    },
     "error": "{{providerName}} 检查出错: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "检查 CC Switch 更新失败",
+      "description": "CC Switch 启动时会访问 dl.ccswitch.io（备用 github.com）查询有没有新版本，这次没有成功：{{detail}}。不影响其他功能；如果是网络或防火墙拦截了，可以忽略。"
+    },
+    "modelsDevSyncFailed": {
+      "title": "同步模型定价失败",
+      "description": "CC Switch 会定期从 models.dev 拉取模型价格，用来计算用量费用，这次没有成功：{{detail}}。不影响其他功能。"
+    },
+    "networkError": "连不上服务器",
+    "mute": "不再提示",
+    "disableModelsDevSync": "关闭自动同步",
+    "modelsDevSyncDisabled": "已关闭模型定价自动同步，可以在「使用统计 → 模型定价」里重新开启。",
+    "disableFailed": "关闭失败：{{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "路由总开关",
@@ -4672,6 +4706,7 @@
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "点击重新查询",
+    "manualIdle": "点刷新查询额度",
     "resetCredits": {
       "label": "重置",
       "left": "重置剩余 {{count}} 次",
@@ -4799,6 +4834,7 @@
       "failedTitle": "有应用没有读到",
       "filesTitle": "读取了哪些文件",
       "claudeNote": "（顶层 mcpServers）",
+      "codebuddyNote": "（按 .mcp.json → mcp.json → ~/.codebuddy.json 读取最先存在的一个）",
       "dshNote": "（写入所有已初始化的 profile：web、desktop、headless、acp。home 级的 ~/.dsh/cordis.patch.yml 不读取也不改写，其中的 MCP 请在该文件里管理）",
       "ok": "知道了"
     },
@@ -4950,9 +4986,9 @@
       "disableAria": "在这个应用里停用选中的 {{count}} 个 Skill",
       "uninstall": "卸载"
     },
-    "piColumnTitle": "Pi 按 ~/.pi/agent/skills 里有没有这个目录来判断",
+    "piColumnTitle": "Pi 会读取 ~/.agents/skills，因此未勾选但存在该路径的 skills 仍直接可用",
     "piHelpTitle": "Pi 怎么算启用",
-    "piHelp": "看 ~/.pi/agent/skills 里有没有这个目录。",
+    "piHelp": "Pi 会读取 ~/.agents/skills，因此未勾选但存在该路径的 skills 仍直接可用。",
     "pop": {
       "onlyApp": "只看在 {{app}} 启用的",
       "showAll": "显示全部 Skill"
@@ -5186,6 +5222,7 @@
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
       "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
+      "codebuddyHelp": "CodeBuddy 的官方登录（国内版、国际版都在这里）。要切换账号，在账号的「…」里选「切换 CodeBuddy 到这个账号」，或在供应商列表里添加绑定了它的「CodeBuddy 官方登录」卡。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
       "claudeHelpWsl": "Claude Code 的官方订阅账号（Pro / Max / Team）。Claude 配置目录在 WSL 里时暂不支持，后续会跟进。",
@@ -5232,7 +5269,6 @@
       "reauthed": "{{login}} 已重新登录。"
     },
     "quota": {
-      "updating": "更新中…",
       "loading": "正在查询额度…",
       "refresh": "刷新额度",
       "refreshAria": "刷新 {{login}} 的额度",
@@ -5246,6 +5282,33 @@
       "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
       "switched": "已切换，新开的 agy 会使用这个账号。",
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
+    },
+    "codebuddy": {
+      "mainland": "国内版",
+      "global": "国际版",
+      "expiredNote": "登录已过期，需要重新登录",
+      "addedOn": "{{date}}收录",
+      "imported": "已收录 {{login}}。",
+      "uncollected": "CodeBuddy 现在登着 {{login}}，还没收录到这里。",
+      "importCurrent": "收录当前账号",
+      "unrecognized": "CodeBuddy 的登录文件格式认不出",
+      "unrecognizedNote": "可能由 WorkBuddy 加密托管。CC Switch 不会改动它，也不能切换账号。",
+      "statusLoadFailed": "无法读取 CodeBuddy 账号，请重试。",
+      "empty": "还没有 CodeBuddy 账号。点「添加账号」登录，或收录 CodeBuddy 当前登录的号。",
+      "login": "登录新账号",
+      "current": "CodeBuddy 在用",
+      "pendingNote": "已在终端打开 codebuddy，按提示登录（没有出现登录界面就输入 /login），完成后这里会自动收录。",
+      "reopenTerminal": "重新打开终端",
+      "removeNote": "只删除 CC Switch 里的副本，不会让 CodeBuddy 退出登录。",
+      "localOnly": "账号副本只保存在这台电脑上，不会随云同步，换电脑后需要重新收录。",
+      "quota": {
+        "credits": "积分",
+        "enterprise": "企业版",
+        "unlimited": "不限量",
+        "detail": "积分剩余 {{remaining}} / 共 {{total}}，已用 {{used}}",
+        "usedDetail": "本周期已用 {{used}} 积分",
+        "refreshPending": "令牌待 CodeBuddy 续期，切到这个号用一次后再查"
+      }
     },
     "workbuddy": {
       "addedOn": "{{date}}收录",
@@ -5299,6 +5362,10 @@
     "openBrowser": {
       "title": "登录时自动打开浏览器",
       "description": "关掉后只复制登录链接，由你自己选浏览器打开，适合用独立的浏览器环境管理多个账号。"
+    },
+    "autoQuota": {
+      "title": "自动查询额度",
+      "description": "关掉后，官方账号的额度只在你点刷新时查询，打开授权中心、卡片定时刷新和悬停托盘都不会自动去查。DeepSeek 账号的余额和登录状态一起显示，不受这个开关影响。"
     }
   },
   "kimi": {
@@ -5393,6 +5460,49 @@
       "renameProvider": "Oh My Pi 供应商标识不能重命名。",
       "providerMissing": "此 Oh My Pi 供应商已不在保存的列表中。",
       "legacyModelsJson": "Oh My Pi 目录里还是旧的 models.json，omp 会在下次启动时把它迁移成 models.yml。请先运行一次 omp，再回来添加供应商。"
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "还没有添加自定义模型",
+      "description": "CodeBuddy 官方模型由 CodeBuddy 自行管理；要切换官方账号，给账号建一张「CodeBuddy 官方登录」卡，在这里点「添加」。~/.codebuddy/models.json 里已有的自定义模型会自动显示在这里。点击右上角 +，从预设或自定义配置添加模型。"
+    },
+    "modelsHint": "模型 ID 写入 models.json 的 id，也是 /model 里选择的名称，通常就是接口的模型名，添加后不可修改。显示名称与上方的「名称」是同一个值。",
+    "modelIdDuplicate": "此模型 ID 已被使用，请更换",
+    "modelIdInvalid": "模型 ID 不能以空格开头或结尾。",
+    "vendor": "厂商标签",
+    "urlHint": "填写完整路径，通常以 /chat/completions 结尾；支持 ${VAR} 环境变量引用。",
+    "urlInvalid": "请输入有效的 http(s) 地址。",
+    "apiKeyPlaceholder": "输入 API Key，或写成 ${MY_API_KEY} 引用环境变量",
+    "maxInputTokens": "最大输入 Token",
+    "maxOutputTokens": "最大输出 Token",
+    "jsonHint": "对应 models.json 中的一条模型配置（id 由上方模型 ID 决定）。保存后 CodeBuddy 会自动重新加载。",
+    "official": {
+      "presetName": "CodeBuddy 官方登录",
+      "account": "登录账号",
+      "accountHint": "选择这张卡要用的 CodeBuddy 账号。CodeBuddy 同时只能登录一个账号：在供应商列表里点这张卡的「添加」，CodeBuddy 的登录就会换成它，正在运行的 CodeBuddy 也会自动换过去。",
+      "accountDeleted": "账号已删除，请重新选择",
+      "accountDeletedChip": "账号已删除",
+      "unbound": "还没有选择账号，请编辑卡片选择一个",
+      "statusLoading": "正在读取账号…",
+      "expired": "这个账号的登录已过期，请在授权中心重新登录后再添加",
+      "importCurrent": "收录当前登录（{{login}}）",
+      "adding": "正在添加…",
+      "added": "已添加 {{name}}，CodeBuddy 已登录这个账号。正在运行的 CodeBuddy 会自动换过去，新开的也会用它。",
+      "addFailed": "添加失败：{{error}}",
+      "switched": "CodeBuddy 已切换到 {{name}}。正在运行的 CodeBuddy 会自动换过去，新开的也会用它。",
+      "switchFailed": "切换失败：{{error}}",
+      "removeHint": "CodeBuddy 同时只能登录一个账号，添加另一张官方卡即可切换"
+    },
+    "login": {
+      "confirmTitle": "登录新的 CodeBuddy 账号",
+      "confirmMessage": "CodeBuddy 现在登着 {{login}}，同一时间只能登录一个账号。继续后会先把它收录到授权中心，再让 CodeBuddy 暂时退出登录（不删除登录信息、不通知服务器），然后打开终端登录新账号。\n\n写入后，正在运行的 CodeBuddy 会话会暂时变为未登录，直到你登录完成。中途放弃可以一键恢复原来的登录。",
+      "confirm": "继续登录",
+      "signedInHint": "CodeBuddy 已登录时，登录新账号会先让它暂时退出原来的登录：写入后，正在运行的 CodeBuddy 会话会暂时变为未登录，直到你登录完成。",
+      "pendingReplacing": "已让 CodeBuddy 暂时退出原来的登录，并在终端打开了 codebuddy。按提示登录新账号，完成后这里会自动收录。",
+      "restore": "恢复原来的登录",
+      "restored": "已恢复原来的 CodeBuddy 登录。",
+      "restoreFailed": "没能恢复原来的登录（CodeBuddy 可能正在写登录文件）。可以在授权中心重新登录，或在终端里登录。"
     }
   },
   "dsh": {

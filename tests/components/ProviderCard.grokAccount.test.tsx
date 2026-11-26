@@ -1,5 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
@@ -227,6 +227,32 @@ describe("ProviderCard Grok Build quota and subscription tier", () => {
     expect(screen.queryByText("· SuperGrok")).not.toBeInTheDocument();
     expect(screen.queryByText("xai-oauth-quota")).not.toBeInTheDocument();
     expect(xaiQuotaFooterProps).not.toHaveBeenCalled();
+  });
+
+  it("refreshes bound Grok login status while quota is disabled", async () => {
+    const account = xaiAccount("xai-1", "grok@x.ai");
+    authGetStatus.mockResolvedValue(xaiStatus([account]));
+    const provider = boundGrokOfficial();
+    provider.meta!.usage_script = {
+      enabled: false,
+      language: "javascript",
+      code: "",
+    };
+    vi.useFakeTimers();
+    const view = renderGrokCard(provider);
+    try {
+      await act(() => vi.advanceTimersByTimeAsync(1));
+      expect(screen.getByText("grok@x.ai")).toBeInTheDocument();
+
+      authGetStatus.mockResolvedValue(
+        xaiStatus([{ ...account, requires_reauth: true }]),
+      );
+      await act(() => vi.advanceTimersByTimeAsync(15_000));
+      expect(screen.getByText("需要重新登录")).toBeInTheDocument();
+    } finally {
+      view.unmount();
+      vi.useRealTimers();
+    }
   });
 
   it("keeps manual notes alongside the subscription tier on bound cards", async () => {

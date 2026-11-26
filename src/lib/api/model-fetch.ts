@@ -11,6 +11,9 @@ const GENESIS_CHAT_MODELS_URL = `${GENESIS_ORIGIN}/v1/models?type=chat`;
 export interface FetchedModel {
   id: string;
   ownedBy: string | null;
+  billing?: { auto_discount?: number };
+  /** Marker for the Copilot virtual Auto entry; it is not an upstream model. */
+  isCopilotAuto?: boolean;
 }
 
 export interface ModelFetchOptions {

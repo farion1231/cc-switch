@@ -59,6 +59,7 @@ import {
   copilotGetModels,
   copilotGetModelsForAccount,
 } from "@/lib/api/copilot";
+import { copilotFetchedModels } from "@/lib/copilot-model-options";
 import {
   providersApi,
   type ClaudeDesktopDefaultRoute,
@@ -325,6 +326,7 @@ export function ClaudeDesktopProviderForm({
     initialMode === "proxy" &&
       Object.keys(initialData?.meta?.claudeDesktopModelRoutes ?? {}).length > 0,
   );
+
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const { data: defaultRoutes = [] } = useQuery({
@@ -401,6 +403,11 @@ export function ClaudeDesktopProviderForm({
     (activeProviderType !== "codex_oauth" &&
       activeProviderType !== "xai_oauth" &&
       baseUrl.includes("githubcopilot.com"));
+  // Copilot 卡的模型下拉统一把虚拟模型作为普通选项带上（上游目录不含它）；
+  // 某一档或全部档选它都按该请求的有效模型走 /auto，其余档照常走具体模型。
+  const dropdownModels: FetchedModel[] = usesAutomaticCopilotFormat
+    ? fetchedModels
+    : fetchedModels.filter((model) => !model.isCopilotAuto);
   const { isAuthenticated: isCopilotAuthenticated, accounts: copilotAccounts } =
     useCopilotAuth();
   const {
@@ -619,8 +626,11 @@ export function ClaudeDesktopProviderForm({
         selectedGitHubAccountId
           ? copilotGetModelsForAccount(selectedGitHubAccountId)
           : copilotGetModels()
-      ).then((models) =>
-        models.map((m) => ({ id: m.id, ownedBy: m.vendor || null })),
+      ).then((options) =>
+        copilotFetchedModels(
+          options,
+          t("copilot.autoModelName", { defaultValue: "GitHub Copilot Auto" }),
+        ),
       );
     } else if (activeProviderType === "codex_oauth") {
       if (!isCodexOauthAuthenticated) {
@@ -851,7 +861,7 @@ export function ClaudeDesktopProviderForm({
       return;
     }
 
-    const routeEntries = routes
+    let routeEntries = routes
       .map((route) => ({
         ...route,
         route: route.route.trim(),
@@ -864,6 +874,7 @@ export function ClaudeDesktopProviderForm({
       // 固定四档（Sonnet / Opus / Fable / Haiku），route_id 由 UI 生成、恒合法，
       // 因此只要求至少填一个实际请求模型；留空档继承第一个已填档（Sonnet 优先），
       // 对齐 Claude Code 的兜底，保证落库四档齐全、子 agent 不会找不到模型。
+      // 某档可单独填 copilot-fusion-auto 走 /auto，其余档照常填具体模型。
       const primary = routeEntries.find((route) => route.model);
       if (!primary) {
         toast.error(
@@ -1363,9 +1374,9 @@ export function ClaudeDesktopProviderForm({
                               placeholder={modelPlaceholder}
                               className="flex-1"
                             />
-                            {fetchedModels.length > 0 && (
+                            {dropdownModels.length > 0 && (
                               <ModelDropdown
-                                models={fetchedModels}
+                                models={dropdownModels}
                                 onSelect={(id) =>
                                   updateRouteModel(index, id, true)
                                 }
@@ -1442,9 +1453,9 @@ export function ClaudeDesktopProviderForm({
                               placeholder="claude-sonnet-4-6"
                               className="flex-1"
                             />
-                            {fetchedModels.length > 0 && (
+                            {dropdownModels.length > 0 && (
                               <ModelDropdown
-                                models={fetchedModels}
+                                models={dropdownModels}
                                 onSelect={(id) =>
                                   updateRoute(index, { route: id })
                                 }

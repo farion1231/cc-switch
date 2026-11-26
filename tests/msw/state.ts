@@ -84,6 +84,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   omp: {},
   copilot: {},
   workbuddy: {},
+  codebuddy: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -103,6 +104,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   omp: "",
   copilot: "",
   workbuddy: "",
+  codebuddy: "",
 });
 
 let providers = createDefaultProviders();

@@ -23,6 +23,7 @@ pub mod codex_oauth_auth;
 pub(crate) mod codex_responses_arguments;
 pub(crate) mod codex_responses_sse;
 pub mod copilot_auth;
+pub mod copilot_auto;
 pub mod copilot_model_map;
 pub(crate) mod copilot_responses;
 mod gemini;
@@ -136,7 +137,8 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => return None,
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => return None,
     })
 }
 

@@ -10,11 +10,12 @@ mod classifier_guard;
 mod codex_models_passthrough;
 pub(crate) mod codex_quota_protection;
 pub(crate) mod content_encoding;
+pub mod copilot_auto_session;
 pub mod copilot_optimizer;
 pub mod error;
 pub mod error_mapper;
 pub(crate) mod failover_switch;
-mod forwarder;
+pub(crate) mod forwarder;
 pub mod gemini_url;
 pub mod handler_config;
 pub mod handler_context;
@@ -41,6 +42,7 @@ pub mod thinking_rectifier;
 pub(crate) mod tool_media;
 pub(crate) mod types;
 pub(crate) mod upstream_guard;
+pub(crate) mod upstream_pool;
 pub mod usage;
 
 #[cfg(test)]

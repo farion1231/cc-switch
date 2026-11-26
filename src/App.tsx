@@ -31,21 +31,16 @@ import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import type { SubscriptionQuota } from "@/types/subscription";
 import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
-import {
-  providersQueryOptions,
-  proxyKeys,
-  useProvidersQuery,
-  useSettingsQuery,
-} from "@/lib/query";
-import {
-  piApi,
-  providersApi,
-  settingsApi,
-  type AppId,
-  type ProviderSwitchEvent,
-} from "@/lib/api";
+import { providersQueryOptions, useProvidersQuery } from "@/lib/query/queries";
+import { useSettingsQuery } from "@/lib/query/settings";
+import { proxyKeys } from "@/lib/query/proxy";
+import { piApi } from "@/lib/api/pi";
+import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
+import type { AppId, ProviderSwitchEvent } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
+import { useCopilotVscodeSyncNotifications } from "@/hooks/useCopilotVscodeSyncStatus";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
@@ -295,6 +290,7 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  useCopilotVscodeSyncNotifications(settingsData?.copilotVscode);
   // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
     isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));
@@ -902,7 +898,8 @@ function App() {
           activeApp === "kimi" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
-          activeApp === "workbuddy"
+          activeApp === "workbuddy" ||
+          activeApp === "codebuddy"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -1153,7 +1150,8 @@ function App() {
       app === "dsh" ||
       app === "kimi" ||
       app === "copilot" ||
-      app === "workbuddy"
+      app === "workbuddy" ||
+      app === "codebuddy"
     ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
@@ -1223,6 +1221,10 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    // CodeBuddy's provider key is the model id sent upstream and is locked in
+    // the editor, so a "-copy" key would be an unusable model. Cards hide the
+    // action; this guards any other caller.
+    if (activeApp === "codebuddy") return;
     if (
       activeApp === "opencode" &&
       provider.category !== "omo" &&
@@ -1354,6 +1356,9 @@ function App() {
         provider.id,
         Object.keys(providers),
       );
+      duplicatedProvider.addToLive = false;
+    } else if (activeApp === "agy") {
+      // Copy the launch profile without switching the global agy login.
       duplicatedProvider.addToLive = false;
     } else if (activeApp === "copilot") {
       // 自带模型卡的 id 就是 providers.json 里的供应商名，副本另起一个；官方卡仍用随机 id。

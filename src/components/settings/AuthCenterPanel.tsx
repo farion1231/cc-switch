@@ -1,17 +1,19 @@
-import { useEffect, useId, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
 import { XaiOAuthSection } from "@/components/providers/forms/XaiOAuthSection";
 import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 import { ClaudeOfficialSection } from "@/components/providers/forms/ClaudeOfficialSection";
+import { CodebuddyAccountSection } from "@/components/providers/forms/CodebuddyAccountSection";
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { DshAccountLogin } from "@/components/providers/DshAccount";
 import { WorkBuddyAccountSection } from "@/components/settings/auth/WorkBuddyAccountSection";
 import { canSwitchAgyAccount } from "@/lib/authBinding";
-import { Switch } from "@/components/ui/switch";
 import { useAuthOpenBrowser, writeAuthOpenBrowser } from "@/lib/authLoginLink";
 import type { AuthCenterTarget } from "@/lib/api";
+import { ToggleCard } from "@/components/settings/auth/ToggleCard";
+import { AutoQuotaToggle } from "@/components/settings/auth/AutoQuotaToggle";
 import type { AppId } from "@/lib/api/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettingsQuery } from "@/lib/query";
@@ -32,30 +34,18 @@ interface AuthCenterPanelProps {
 function OpenBrowserToggle() {
   const { t } = useTranslation();
   const openBrowser = useAuthOpenBrowser();
-  const titleId = useId();
-  const descriptionId = useId();
   return (
-    <div className="flex shrink-0 items-center gap-4 rounded-panel border border-border bg-surface py-3 pe-4 ps-4">
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <p id={titleId} className="m-0 text-body font-medium text-fg-1">
-          {t("authCenter.openBrowser.title", {
-            defaultValue: "登录时自动打开浏览器",
-          })}
-        </p>
-        <p id={descriptionId} className="m-0 text-caption text-fg-2">
-          {t("authCenter.openBrowser.description", {
-            defaultValue:
-              "关掉后只复制登录链接，由你自己选浏览器打开，适合用独立的浏览器环境管理多个账号。",
-          })}
-        </p>
-      </div>
-      <Switch
-        checked={openBrowser}
-        onCheckedChange={writeAuthOpenBrowser}
-        aria-labelledby={titleId}
-        aria-describedby={descriptionId}
-      />
-    </div>
+    <ToggleCard
+      title={t("authCenter.openBrowser.title", {
+        defaultValue: "登录时自动打开浏览器",
+      })}
+      description={t("authCenter.openBrowser.description", {
+        defaultValue:
+          "关掉后只复制登录链接，由你自己选浏览器打开，适合用独立的浏览器环境管理多个账号。",
+      })}
+      checked={openBrowser}
+      onCheckedChange={writeAuthOpenBrowser}
+    />
   );
 }
 
@@ -119,6 +109,11 @@ const AUTH_CARDS: readonly AuthCard[] = [
     render: () => <DshAccountLogin helpSide="bottom" />,
   },
   {
+    target: "codebuddy_oauth",
+    apps: ["codebuddy"],
+    render: () => <CodebuddyAccountSection helpSide="bottom" />,
+  },
+  {
     target: "agy_oauth",
     apps: ["agy"],
     render: () => <AgyOAuthSection helpSide="bottom" />,
@@ -163,7 +158,7 @@ function useOrderedAuthCards(
 }
 
 /**
- * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、WorkBuddy，一组一张卡片；
+ * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、CodeBuddy、WorkBuddy，一组一张卡片；
  * macOS、Windows 上另有 Antigravity 一组（切 agy 的官方登录：macOS 钥匙串、Windows 凭据管理器）。
  * WorkBuddy 收录桌面端登录的快照再切换（macOS 已确认路径，Windows / Linux 按推断路径）。
  * 卡片的顺序和显示跟侧栏的应用设置走（见 `useOrderedAuthCards`）。
@@ -262,6 +257,7 @@ export function AuthCenterPanel({
         </p>
       )}
       <OpenBrowserToggle />
+      <AutoQuotaToggle />
       {cards.map((card) => (
         <div
           key={card.target}
