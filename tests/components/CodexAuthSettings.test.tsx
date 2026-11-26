@@ -195,7 +195,6 @@ describe("CodexAuthSettings session compression toggle", () => {
   });
 });
 
-
 describe("Codex managed history migration consent", () => {
   beforeEach(() => {
     hasBackupMock.mockReset().mockResolvedValue(false);
@@ -632,7 +631,6 @@ describe("Codex legacy official history repair consent", () => {
   });
 });
 
-
 describe("CodexAuthSettings unified session history toggle", () => {
   const UNIFY = "settings.unifyCodexSessionHistory";
 
@@ -714,4 +712,3 @@ describe("CodexAuthSettings unified session history toggle", () => {
     ).not.toBeInTheDocument();
   });
 });
-

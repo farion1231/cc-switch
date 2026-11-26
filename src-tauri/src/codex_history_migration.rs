@@ -3,6 +3,7 @@
 //! 只迁移本机 `~/.codex` 历史数据；完成标记写入设备级 `settings.json`，
 //! 失败时不写标记，下一次启动自动重试。
 
+use crate::app_config::AppType;
 use crate::codex_config::{
     get_codex_config_dir, read_codex_config_text, CC_SWITCH_CODEX_MODEL_PROVIDER_ID,
     CC_SWITCH_CODEX_OFFICIAL_PROXY_PROVIDER_ID,
@@ -16,6 +17,7 @@ use crate::settings::{
     CodexLegacyOfficialHistoryBucketMigration, CodexOfficialHistoryUnifyMigration,
     CodexProviderTemplateMigration, CodexThirdPartyHistoryProviderBucketMigration,
 };
+use crate::sync_utils::MutexExt;
 use chrono::{Local, Utc};
 use rusqlite::{backup::Backup, params_from_iter, Connection};
 use serde_json::Value;
@@ -39,9 +41,7 @@ pub(crate) const OFFICIAL_UNIFY_RESTORE_BACKUP_NAME: &str =
 static CODEX_OFFICIAL_HISTORY_OP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn lock_codex_official_history_op() -> std::sync::MutexGuard<'static, ()> {
-    CODEX_OFFICIAL_HISTORY_OP_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
+    CODEX_OFFICIAL_HISTORY_OP_LOCK.lock_recover()
 }
 
 /// 用户在「备份与恢复」里删除迁移备份目录时拿同一把锁，避免抽掉正在写的备份。
@@ -1009,15 +1009,86 @@ fn rewrite_codex_provider_line_for_restore(
     replace_metadata_provider(line, &value, OFFICIAL_OPENAI_CODEX_MODEL_PROVIDER_ID).map(Some)
 }
 
+const LEGACY_ROUTE_EVIDENCE_KEY: &str = "ccSwitchLegacyRoutes";
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct LegacyCodexRoute {
+    pub id: String,
+    pub base_url: String,
+}
+
+/// Preserve the original route identity before template normalization removes it.
+/// This belongs to the saved card and is never projected into live config.toml.
+pub(crate) fn legacy_codex_route_evidence(
+    settings: &Value,
+) -> Result<Vec<LegacyCodexRoute>, AppError> {
+    let mut routes: Vec<LegacyCodexRoute> = match settings.get(LEGACY_ROUTE_EVIDENCE_KEY) {
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|e| AppError::Message(format!("Invalid legacy Codex route evidence: {e}")))?,
+        None => Vec::new(),
+    };
+    if let Some(doc) = settings
+        .get("config")
+        .and_then(Value::as_str)
+        .and_then(|text| text.parse::<DocumentMut>().ok())
+    {
+        for id in trusted_legacy_codex_model_provider_ids_from_doc(&doc) {
+            if let Some(base_url) = doc
+                .get("model_providers")
+                .and_then(|p| p.as_table_like())
+                .and_then(|p| p.get(&id))
+                .and_then(|p| p.as_table_like())
+                .and_then(|p| p.get("base_url"))
+                .and_then(|p| p.as_str())
+                .map(str::trim)
+                .filter(|url| !url.is_empty())
+            {
+                let route = LegacyCodexRoute {
+                    id,
+                    base_url: base_url.into(),
+                };
+                if !routes.contains(&route) {
+                    routes.push(route);
+                }
+            }
+        }
+    }
+    Ok(routes)
+}
+
+/// Old already-normalized cards can identify a managed id without proving its
+/// historical endpoint. These ids are only used to refuse unsafe writes.
+pub(crate) fn unverified_legacy_codex_route_ids(
+    provider: &crate::provider::Provider,
+) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    insert_known_cc_switch_legacy_source_id(&mut ids, &provider.id);
+    if let Some(text) = provider
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)
+    {
+        ids.extend(trusted_legacy_codex_model_provider_ids_from_config(text));
+        if let Some(id) = legacy_codex_model_provider_id_from_normalized_config(text) {
+            ids.insert(id);
+        }
+    }
+    ids
+}
+
+pub(crate) fn remembered_legacy_codex_route_ids() -> Vec<String> {
+    remembered_source_provider_ids(&BTreeSet::new(), &get_codex_config_dir())
+}
+
 fn migrate_codex_provider_templates_to_custom(
     db: &Database,
     backup_root: &Path,
 ) -> Result<CodexProviderTemplateBucketMigrationOutcome, AppError> {
-    let providers = db.get_all_providers("codex")?;
+    let providers = db.get_all_providers(&AppType::Codex)?;
     let mut migrated_provider_ids = Vec::new();
 
     for (_, provider) in providers {
-        if provider.category.as_deref() == Some("official")
+        if provider.has_official_category()
             || is_official_seed_id(&provider.id)
             || provider.is_codex_oauth()
         {
@@ -1046,8 +1117,17 @@ fn migrate_codex_provider_templates_to_custom(
             continue;
         };
         backup_provider_settings_config(&provider.id, &provider.settings_config, backup_root)?;
+        let evidence = legacy_codex_route_evidence(&provider.settings_config)?;
+        if !evidence.is_empty() {
+            obj.insert(
+                LEGACY_ROUTE_EVIDENCE_KEY.into(),
+                serde_json::to_value(evidence).map_err(|e| {
+                    AppError::Message(format!("Cannot serialize legacy Codex route evidence: {e}"))
+                })?,
+            );
+        }
         obj.insert("config".to_string(), Value::String(migrated_config_text));
-        db.update_provider_settings_config("codex", &provider.id, &settings)?;
+        db.update_provider_settings_config(&AppType::Codex, &provider.id, &settings)?;
         migrated_provider_ids.push(provider.id);
     }
 
@@ -1067,14 +1147,14 @@ fn collect_source_model_provider_ids_for_unify(
     include_managed_custom: bool,
     codex_dir: &Path,
 ) -> Result<BTreeSet<String>, AppError> {
-    let providers = db.get_all_providers("codex")?;
+    let providers = db.get_all_providers(&AppType::Codex)?;
     let mut ids = BTreeSet::new();
     if include_managed_custom {
         ids.extend(remembered_source_provider_ids(&BTreeSet::new(), codex_dir));
     }
 
     for provider in providers.values() {
-        if provider.category.as_deref() == Some("official")
+        if provider.has_official_category()
             || is_official_seed_id(&provider.id)
             || provider.is_codex_oauth()
         {
@@ -2215,9 +2295,142 @@ fn relative_backup_path(path: &Path, root: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[serial]
+    fn normalized_template_keeps_legacy_route_isolated_when_switching_official() {
+        use crate::services::provider::codex_direct::{plan, run, Owner, Prepared, Target};
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
+        fs::create_dir_all(codex.join("sessions")).unwrap();
+        let legacy = "model_provider = \"aihubmix\"\n[model_providers.aihubmix]\nname = \"Private alias\"\nbase_url = \"https://relay.example/v1\"\nrequires_openai_auth = true\n";
+        let db = Database::memory().unwrap();
+        let card = Provider::with_id(
+            "synthetic-card".into(),
+            "Legacy relay".into(),
+            serde_json::json!({"config": legacy}),
+            None,
+        );
+        db.save_provider(&AppType::Codex, &card).unwrap();
+        let migrated = maybe_migrate_codex_provider_template_bucket(&db).unwrap();
+        assert_eq!(migrated.migrated_provider_ids, vec!["synthetic-card"]);
+        let saved = db
+            .get_provider_by_id("synthetic-card", &AppType::Codex)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            legacy_codex_route_evidence(&saved.settings_config).unwrap(),
+            vec![LegacyCodexRoute {
+                id: "aihubmix".into(),
+                base_url: "https://relay.example/v1".into()
+            }]
+        );
+        assert!(!saved.settings_config["config"]
+            .as_str()
+            .unwrap()
+            .contains("model_providers.aihubmix"));
+        let mut official = Provider::with_id(
+            "official-card".into(),
+            "Official".into(),
+            serde_json::json!({"config": "", "auth": {"OPENAI_API_KEY": "synthetic-official"}}),
+            None,
+        );
+        official.category = Some("official".into());
+        // Both existing and late-imported history must retain a resolvable id.
+        let old = session_meta_line("old", "aihubmix");
+        let late = session_meta_line("late", "aihubmix");
+        fs::write(codex.join("sessions/old.jsonl"), &old).unwrap();
+        fs::write(codex.join("sessions/late.jsonl"), &late).unwrap();
+        for profile in [false, true] {
+            let config = if profile {
+                format!("{legacy}\n[profiles.inactive]\nmodel_provider = \"aihubmix\"\n")
+            } else {
+                legacy.into()
+            };
+            fs::write(codex.join("config.toml"), &config).unwrap();
+            let auth = "{\"OPENAI_API_KEY\":\"synthetic-before\"}";
+            fs::write(codex.join("auth.json"), auth).unwrap();
+            let prepared = Prepared::default();
+            let planned = plan(
+                &db,
+                &Owner::None,
+                &Target::Direct(Some(&official)),
+                &prepared,
+            )
+            .unwrap();
+            let result = run(
+                &db,
+                crate::mode::state::op::SWITCH,
+                planned,
+                &prepared,
+                crate::mode::state::PendingTarget::default(),
+            );
+            if profile {
+                assert!(
+                    result.is_err(),
+                    "inactive keyless profile must refuse the switch"
+                );
+                assert_eq!(
+                    fs::read_to_string(codex.join("config.toml")).unwrap(),
+                    config
+                );
+                assert_eq!(fs::read_to_string(codex.join("auth.json")).unwrap(), auth);
+            } else {
+                result.unwrap();
+                let written: DocumentMut = fs::read_to_string(codex.join("config.toml"))
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                assert_eq!(
+                    written["model_providers"]["aihubmix"]["requires_openai_auth"].as_bool(),
+                    Some(false)
+                );
+                assert_eq!(
+                    written["model_providers"]["aihubmix"]["base_url"].as_str(),
+                    Some("https://relay.example/v1")
+                );
+                assert!(!fs::read_to_string(codex.join("config.toml"))
+                    .unwrap()
+                    .contains(LEGACY_ROUTE_EVIDENCE_KEY));
+            }
+            assert_eq!(
+                fs::read_to_string(codex.join("sessions/old.jsonl")).unwrap(),
+                old
+            );
+            assert_eq!(
+                fs::read_to_string(codex.join("sessions/late.jsonl")).unwrap(),
+                late
+            );
+        }
+        // A changed endpoint cannot reuse the historical ownership evidence.
+        let changed = legacy.replace("relay.example", "changed.example");
+        fs::write(codex.join("config.toml"), &changed).unwrap();
+        let auth = fs::read(codex.join("auth.json")).unwrap();
+        let prepared = Prepared::default();
+        let planned = plan(
+            &db,
+            &Owner::None,
+            &Target::Direct(Some(&official)),
+            &prepared,
+        )
+        .unwrap();
+        assert!(run(
+            &db,
+            crate::mode::state::op::SWITCH,
+            planned,
+            &prepared,
+            crate::mode::state::PendingTarget::default()
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_to_string(codex.join("config.toml")).unwrap(),
+            changed
+        );
+        assert_eq!(fs::read(codex.join("auth.json")).unwrap(), auth);
+    }
     use super::*;
     use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
     use crate::provider::Provider;
+    use crate::test_support::TestHome;
     use serial_test::serial;
     use std::ffi::OsString;
     use tempfile::tempdir;
@@ -2378,7 +2591,8 @@ base_url = "https://proxy.example/v1"
             ),
         ];
         for provider in providers {
-            db.save_provider("codex", &provider).expect("save provider");
+            db.save_provider(&AppType::Codex, &provider)
+                .expect("save provider");
         }
 
         let mut official = Provider::with_id(
@@ -2388,7 +2602,8 @@ base_url = "https://proxy.example/v1"
             None,
         );
         official.category = Some("official".to_string());
-        db.save_provider("codex", &official).expect("save official");
+        db.save_provider(&AppType::Codex, &official)
+            .expect("save official");
 
         let source_provider_ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert_eq!(
@@ -2492,7 +2707,7 @@ base_url = "https://proxy.example/v1"
         );
 
         let config_provider_id = |provider_id: &str| -> String {
-            db.get_provider_by_id(provider_id, "codex")
+            db.get_provider_by_id(provider_id, &AppType::Codex)
                 .expect("get provider")
                 .expect("provider exists")
                 .settings_config
@@ -3182,9 +3397,10 @@ base_url = "https://proxy.example/v1"
         );
         official.category = Some("official".to_string());
 
-        db.save_provider("codex", &third_party)
+        db.save_provider(&AppType::Codex, &third_party)
             .expect("save third-party");
-        db.save_provider("codex", &official).expect("save official");
+        db.save_provider(&AppType::Codex, &official)
+            .expect("save official");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(ids.contains("rightcode"));
@@ -3207,7 +3423,8 @@ base_url = "https://proxy.example/v1"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-private-relay"));
@@ -3227,7 +3444,8 @@ base_url = "https://proxy.example/v1"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-private-relay"));
@@ -3255,7 +3473,8 @@ model_provider = "my-private-relay"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-private-relay"));
@@ -3275,7 +3494,8 @@ model_provider = "my-private-relay"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(ids.contains("aihubmix"));
@@ -3296,7 +3516,8 @@ model_provider = "my-private-relay"
         );
         provider.category = Some("aggregator".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(ids.contains("ccswitch"));
@@ -3328,13 +3549,14 @@ model = "gpt-5.4"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let (outcome, backup_dir) = migrate_provider_templates_for_test(&db);
         assert_eq!(outcome.migrated_provider_ids, vec!["legacy".to_string()]);
 
         let saved = db
-            .get_provider_by_id("legacy", "codex")
+            .get_provider_by_id("legacy", &AppType::Codex)
             .expect("get provider")
             .expect("provider exists");
         let config_text = saved
@@ -3401,7 +3623,8 @@ base_url = "https://aihubmix.example/v1"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
         assert_eq!(
@@ -3410,7 +3633,7 @@ base_url = "https://aihubmix.example/v1"
         );
 
         let saved = db
-            .get_provider_by_id("legacy-ccswitch", "codex")
+            .get_provider_by_id("legacy-ccswitch", &AppType::Codex)
             .expect("get provider")
             .expect("provider exists");
         let config_text = saved
@@ -3457,13 +3680,14 @@ base_url = "http://localhost:8080/v1"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
         assert!(outcome.migrated_provider_ids.is_empty());
 
         let saved = db
-            .get_provider_by_id("manual", "codex")
+            .get_provider_by_id("manual", &AppType::Codex)
             .expect("get provider")
             .expect("provider exists");
         let config_text = saved
@@ -3506,13 +3730,14 @@ base_url = "https://proxy.example/v1"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
         assert!(outcome.migrated_provider_ids.is_empty());
 
         let saved = db
-            .get_provider_by_id("custom-openai", "codex")
+            .get_provider_by_id("custom-openai", &AppType::Codex)
             .expect("get provider")
             .expect("provider exists");
         let config_text = saved
@@ -3563,13 +3788,14 @@ model_provider = "aihubmix"
             }),
             None,
         );
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let (outcome, _backup_dir) = migrate_provider_templates_for_test(&db);
         assert_eq!(outcome.migrated_provider_ids, vec!["profiled".to_string()]);
 
         let saved = db
-            .get_provider_by_id("profiled", "codex")
+            .get_provider_by_id("profiled", &AppType::Codex)
             .expect("get provider")
             .expect("provider exists");
         let config_text = saved
@@ -3612,7 +3838,8 @@ model_provider = "aihubmix"
         provider.category = Some("custom".to_string());
         provider.created_at = Some(1);
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-private-relay"));
@@ -3633,43 +3860,11 @@ model_provider = "aihubmix"
         );
         provider.category = Some("custom".to_string());
 
-        db.save_provider("codex", &provider).expect("save provider");
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
 
         let ids = collect_source_model_provider_ids(&db).expect("collect ids");
         assert!(!ids.contains("my-local-relay"));
-    }
-
-    /// 端到端测试用的隔离 HOME：CC Switch 设置与 `~/.codex` 都落在临时目录。
-    struct IsolatedHome {
-        dir: tempfile::TempDir,
-        original_test_home: Option<OsString>,
-    }
-
-    impl IsolatedHome {
-        fn new() -> Self {
-            let dir = tempdir().expect("tempdir");
-            let original_test_home = std::env::var_os("CC_SWITCH_TEST_HOME");
-            std::env::set_var("CC_SWITCH_TEST_HOME", dir.path());
-            crate::settings::reload_settings().expect("reload settings for isolated home");
-            Self {
-                dir,
-                original_test_home,
-            }
-        }
-
-        fn codex_dir(&self) -> PathBuf {
-            self.dir.path().join(".codex")
-        }
-    }
-
-    impl Drop for IsolatedHome {
-        fn drop(&mut self) {
-            match &self.original_test_home {
-                Some(value) => std::env::set_var("CC_SWITCH_TEST_HOME", value),
-                None => std::env::remove_var("CC_SWITCH_TEST_HOME"),
-            }
-            let _ = crate::settings::reload_settings();
-        }
     }
 
     fn session_meta_line(id: &str, provider: &str) -> String {
@@ -3930,9 +4125,9 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn related_history_default_sqlite_directory_migrates_and_restores() {
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
-        let codex = home.codex_dir();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::create_dir_all(codex.join("sqlite")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
@@ -3957,7 +4152,7 @@ model_provider = "aihubmix"
         let result = restore_codex_official_history_inner(
             &codex,
             &official_history_unify_backup_parent(),
-            &home.dir.path().join("restore"),
+            &home.path().join("restore"),
             "",
         )
         .unwrap();
@@ -3968,9 +4163,9 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn related_history_bad_nested_index_is_rejected_before_manual_file_writes() {
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
-        let codex = home.codex_dir();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::create_dir_all(codex.join("sqlite")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
@@ -3982,7 +4177,7 @@ model_provider = "aihubmix"
             .execute_batch("CREATE TABLE threads (id TEXT);")
             .unwrap();
         let db = Database::memory().unwrap();
-        db.save_provider("codex", &Provider::with_id(
+        db.save_provider(&AppType::Codex, &Provider::with_id(
             "synthetic-card".into(), "Synthetic relay".into(),
             serde_json::json!({"config":"model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None
         )).unwrap();
@@ -4113,14 +4308,14 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn related_history_completed_scan_waits_for_manual_settings_repair() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
         let path = codex.join("sessions/history.jsonl");
         fs::write(&path, session_meta_line("target", "legacy-relay")).unwrap();
         let db = Database::memory().unwrap();
-        db.save_provider("codex", &Provider::with_id(
+        db.save_provider(&AppType::Codex, &Provider::with_id(
             "synthetic-card".into(), "Synthetic relay".into(),
             serde_json::json!({"config":"model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None
         )).unwrap();
@@ -4129,7 +4324,7 @@ model_provider = "aihubmix"
         crate::settings::update_settings(settings).unwrap();
         migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
         db.update_provider_settings_config(
-            "codex",
+            &AppType::Codex,
             "synthetic-card",
             &serde_json::json!({"config":"model_provider = \"custom\"\n"}),
         )
@@ -4203,15 +4398,15 @@ model_provider = "aihubmix"
             ),
             ("missing threads", "CREATE TABLE unrelated (id TEXT);"),
         ] {
-            let home = IsolatedHome::new();
-            let codex = home.codex_dir();
+            let home = TestHome::new();
+            let codex = home.path().join(".codex");
             fs::create_dir_all(codex.join("sessions")).unwrap();
             fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
             let mut settings = crate::settings::get_settings();
             settings.unify_codex_session_history = true;
             crate::settings::update_settings(settings).unwrap();
             let db = Database::memory().unwrap();
-            db.save_provider("codex", &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
+            db.save_provider(&AppType::Codex, &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
             let path = codex.join("sessions/history.jsonl");
             let before = session_meta_line("history", "legacy-relay");
             fs::write(&path, &before).unwrap();
@@ -4234,8 +4429,8 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn history_safety_failed_official_migration_keeps_backups_scoped_to_the_original_directory() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
         let mut settings = crate::settings::get_settings();
@@ -4253,7 +4448,7 @@ model_provider = "aihubmix"
             session_meta_line("cloned", "custom")
         );
 
-        let other = home.dir.path().join("other-codex");
+        let other = home.path().join("other-codex");
         fs::create_dir_all(other.join("sessions")).unwrap();
         let other_path = other.join("sessions/cloned.jsonl");
         let before = session_meta_line("cloned", "custom");
@@ -4261,7 +4456,7 @@ model_provider = "aihubmix"
         let outcome = restore_codex_official_history_inner(
             &other,
             &official_history_unify_backup_parent(),
-            &home.dir.path().join("restore-backup"),
+            &home.path().join("restore-backup"),
             "",
         )
         .unwrap();
@@ -4379,12 +4574,12 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn missing_rollout_index_verification_keeps_the_startup_retry_open() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         let db = Database::memory().unwrap();
         db.save_provider(
-            "codex",
+            &AppType::Codex,
             &Provider::with_id(
                 "rightcode".into(),
                 "Synthetic relay".into(),
@@ -4412,13 +4607,13 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn incomplete_directory_inventory_never_marks_startup_complete() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(&codex).unwrap();
         fs::write(codex.join("sessions"), "not a directory").unwrap();
         let db = Database::memory().unwrap();
         db.save_provider(
-            "codex",
+            &AppType::Codex,
             &Provider::with_id(
                 "rightcode".into(),
                 "Synthetic relay".into(),
@@ -4447,10 +4642,10 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn third_party_markers_do_not_hide_another_codex_directory() {
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         let db = Database::memory().unwrap();
         db.save_provider(
-            "codex",
+            &AppType::Codex,
             &Provider::with_id(
                 "rightcode".into(),
                 "Synthetic relay".into(),
@@ -4460,7 +4655,7 @@ model_provider = "aihubmix"
         )
         .unwrap();
         assert!(maybe_migrate_codex_third_party_history_provider_bucket(&db).is_ok());
-        let other = home.dir.path().join("other-codex");
+        let other = home.path().join("other-codex");
         fs::create_dir_all(other.join("sessions")).unwrap();
         fs::write(
             other.join("sessions/imported.jsonl"),
@@ -4477,8 +4672,8 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn queued_official_migration_rechecks_cancellation_after_acquiring_the_lock() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
         let path = codex.join("sessions/official.jsonl");
@@ -4511,23 +4706,23 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn custom_source_ledgers_are_isolated_and_survive_directory_round_trips() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
         let db = Database::memory().unwrap();
-        db.save_provider("codex", &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
+        db.save_provider(&AppType::Codex, &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
         let mut settings = crate::settings::get_settings();
         settings.unify_codex_session_history = true;
         crate::settings::update_settings(settings).unwrap();
         migrate_managed_codex_history_to_unified_bucket(&db).unwrap();
         db.update_provider_settings_config(
-            "codex",
+            &AppType::Codex,
             "synthetic-card",
             &serde_json::json!({"config": "model_provider = \"custom\"\n"}),
         )
         .unwrap();
-        let other = home.dir.path().join("other-codex");
+        let other = home.path().join("other-codex");
         fs::create_dir_all(other.join("sessions")).unwrap();
         fs::write(other.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
         let other_path = other.join("sessions/unknown.jsonl");
@@ -4562,8 +4757,8 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn unscoped_legacy_marker_does_not_prove_a_completed_current_directory() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         let mut settings = crate::settings::get_settings();
         settings.local_migrations = Some(crate::settings::LocalMigrations {
@@ -4599,8 +4794,8 @@ model_provider = "aihubmix"
     #[serial]
     fn transient_metadata_skips_retry_on_each_startup_migration_path() {
         for kind in ["third-party", "official", "legacy-official"] {
-            let home = IsolatedHome::new();
-            let codex = home.codex_dir();
+            let home = TestHome::new();
+            let codex = home.path().join(".codex");
             fs::create_dir_all(codex.join("sessions")).unwrap();
             fs::write(
                 codex.join("config.toml"),
@@ -4613,7 +4808,7 @@ model_provider = "aihubmix"
             crate::settings::update_settings(settings).unwrap();
             let db = Database::memory().unwrap();
             db.save_provider(
-                "codex",
+                &AppType::Codex,
                 &Provider::with_id(
                     "rightcode".into(),
                     "Synthetic relay".into(),
@@ -4721,9 +4916,9 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn unavailable_state_db_is_deferred_without_aborting_other_indexes() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
-        let other = home.dir.path().join("sqlite");
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
+        let other = home.path().join("sqlite");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::create_dir_all(&other).unwrap();
         fs::write(
@@ -4746,7 +4941,7 @@ model_provider = "aihubmix"
             &codex,
             &source_ids(&["legacy-relay"]),
             "custom",
-            &home.dir.path().join("backup"),
+            &home.path().join("backup"),
             &HashSet::new(),
             &read_history_config(&codex).unwrap(),
             |path| path != blocked,
@@ -4761,15 +4956,15 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn pending_custom_sources_survive_startup_without_automatic_expansion() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
         let mut settings = crate::settings::get_settings();
         settings.unify_codex_session_history = true;
         crate::settings::update_settings(settings).unwrap();
         let db = Database::memory().unwrap();
-        db.save_provider("codex", &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
+        db.save_provider(&AppType::Codex, &Provider::with_id("synthetic-card".into(), "Synthetic relay".into(), serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}), None)).unwrap();
         let path = codex.join("sessions/active.jsonl");
         fs::write(&path, "{\"type\":\"session_meta\",\"model_provider\":").unwrap();
         assert!(
@@ -4778,7 +4973,7 @@ model_provider = "aihubmix"
                 .retry_pending
         );
         db.update_provider_settings_config(
-            "codex",
+            &AppType::Codex,
             "synthetic-card",
             &serde_json::json!({"config": "model_provider = \"custom\"\n"}),
         )
@@ -4847,9 +5042,9 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn legacy_official_repair_retries_completed_metadata_and_nested_indexes() {
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
-        let codex = home.codex_dir();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::create_dir_all(codex.join("sqlite")).unwrap();
         let config = "model_provider = \"custom\"\n[model_providers.custom]\nbase_url = \"https://api.example/v1\"\n";
@@ -4977,9 +5172,9 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn legacy_official_repair_preflights_all_indexes_before_changing_files() {
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
-        let codex = home.codex_dir();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::create_dir_all(codex.join("sqlite")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
@@ -5007,9 +5202,9 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn legacy_official_repair_skips_bad_files_and_retries_missing_rollouts() {
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
-        let codex = home.codex_dir();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
         let good = codex.join("sessions/good.jsonl");
@@ -5066,9 +5261,9 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn legacy_official_repair_defers_busy_index_and_preserves_backups() {
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
-        let codex = home.codex_dir();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"openai\"\n").unwrap();
         let path = codex.join("sessions/official.jsonl");
@@ -5120,9 +5315,9 @@ model_provider = "aihubmix"
             "[profiles.legacy]\nmodel_provider = \"cc-switch-official\"\n",
             "model_provider = [invalid",
         ] {
-            let home = IsolatedHome::new();
+            let home = TestHome::new();
             let _env = EnvVarGuard::set("CODEX_SQLITE_HOME", Path::new(""));
-            let codex = home.codex_dir();
+            let codex = home.path().join(".codex");
             fs::create_dir_all(codex.join("sessions")).unwrap();
             fs::write(codex.join("config.toml"), config).unwrap();
             let path = codex.join("sessions/official.jsonl");
@@ -5156,8 +5351,8 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
-        let codex_dir = home.codex_dir();
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         let session_dir = codex_dir.join("sessions/2026/09/01");
         fs::create_dir_all(&session_dir).expect("create session dir");
         // 休眠 custom 表保持原样：迁移不碰 config.toml。
@@ -5240,8 +5435,8 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
-        let codex_dir = home.codex_dir();
+        let home = TestHome::new();
+        let codex_dir = home.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(
             codex_dir.join("config.toml"),
@@ -5284,12 +5479,11 @@ model_provider = "aihubmix"
         assert!(!codex_config_selects_provider("not = [valid", id));
     }
 
-
     #[test]
     #[serial]
     fn unified_history_retries_imports_after_a_completed_legacy_migration() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n[model_providers.custom]\nname = \"OpenAI\"\nrequires_openai_auth = true\n").unwrap();
         let db = Database::memory().unwrap();
@@ -5315,7 +5509,7 @@ model_provider = "aihubmix"
             serde_json::json!({"config": "model_provider = \"legacy-relay\"\n[model_providers.legacy-relay]\nbase_url = \"https://api.example/v1\"\n"}),
             None,
         );
-        db.save_provider("codex", &card).unwrap();
+        db.save_provider(&AppType::Codex, &card).unwrap();
         assert!(
             !collect_source_model_provider_ids_for_unify(&db, false, &get_codex_config_dir())
                 .unwrap()
@@ -5358,7 +5552,7 @@ model_provider = "aihubmix"
             (0, 0)
         );
         // The card can be normalized or renamed without losing proven old ids.
-        db.update_provider_settings_config("codex", "card-id", &serde_json::json!({"config":"model_provider = \"custom\"\n[model_providers.custom]\nname = \"Renamed\"\n"})).unwrap();
+        db.update_provider_settings_config(&AppType::Codex, "card-id", &serde_json::json!({"config":"model_provider = \"custom\"\n[model_providers.custom]\nname = \"Renamed\"\n"})).unwrap();
         let imported = codex.join("sessions/imported.jsonl");
         fs::write(&imported, session_meta_line("imported", "legacy-relay")).unwrap();
         let state = Connection::open(codex.join(CODEX_STATE_DB_FILENAME)).unwrap();
@@ -5409,7 +5603,7 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn review_builtin_bedrock_routes_are_not_custom_migration_sources() {
-        let _home = IsolatedHome::new();
+        let _home = TestHome::new();
         let db = Database::memory().unwrap();
         for id in [
             "amazon-bedrock",
@@ -5424,7 +5618,7 @@ model_provider = "aihubmix"
                 serde_json::json!({"config": format!("model_provider = \"{id}\"\n[model_providers.{id}]\nregion = \"example-region\"\n")}),
                 None,
             );
-            db.save_provider("codex", &card).unwrap();
+            db.save_provider(&AppType::Codex, &card).unwrap();
         }
         let ids = collect_source_model_provider_ids_for_unify(&db, true, &get_codex_config_dir())
             .unwrap();
@@ -5439,8 +5633,8 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn review_short_and_ambiguous_files_do_not_block_healthy_migration() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(
             codex.join("config.toml"),
@@ -5458,7 +5652,7 @@ model_provider = "aihubmix"
                 serde_json::json!({"config": format!("model_provider = \"{route}\"\n[model_providers.{route}]\nbase_url = \"https://api.example/v1\"\n")}),
                 None,
             );
-            db.save_provider("codex", &card).unwrap();
+            db.save_provider(&AppType::Codex, &card).unwrap();
         }
         let short = session_meta_line("short", "kimi");
         let ambiguous = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"ambiguous\",\"model_provider\":\"legacy-relay\",\"model_provider\":\"legacy-relay\"}}\n";
@@ -5512,8 +5706,8 @@ model_provider = "aihubmix"
     #[test]
     #[serial]
     fn review_startup_records_a_completed_scan_with_short_ids_skipped() {
-        let home = IsolatedHome::new();
-        let codex = home.codex_dir();
+        let home = TestHome::new();
+        let codex = home.path().join(".codex");
         fs::create_dir_all(codex.join("sessions")).unwrap();
         fs::write(
             codex.join("sessions/a-short.jsonl"),
@@ -5533,7 +5727,7 @@ model_provider = "aihubmix"
                 serde_json::json!({"config": format!("model_provider = \"{route}\"\n[model_providers.{route}]\nbase_url = \"https://api.example/v1\"\n")}),
                 None,
             );
-            db.save_provider("codex", &card).unwrap();
+            db.save_provider(&AppType::Codex, &card).unwrap();
         }
         let state_path = codex.join(CODEX_STATE_DB_FILENAME);
         let conn = Connection::open(&state_path).unwrap();
@@ -5575,9 +5769,9 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         enable_unify_toggle(true);
-        let codex_dir = home.codex_dir();
+        let codex_dir = home.path().join(".codex");
         let session_dir = codex_dir.join("sessions/2026/11/08");
         fs::create_dir_all(&session_dir).expect("create session dir");
         fs::write(codex_dir.join("config.toml"), UNIFIED_CONFIG).expect("write config");
@@ -5633,9 +5827,9 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         enable_unify_toggle(true);
-        let codex_dir = home.codex_dir();
+        let codex_dir = home.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(codex_dir.join("config.toml"), "model = \"gpt-5.5\"\n").expect("write config");
         let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);
@@ -5652,9 +5846,9 @@ model_provider = "aihubmix"
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
         }
-        let home = IsolatedHome::new();
+        let home = TestHome::new();
         enable_unify_toggle(false);
-        let codex_dir = home.codex_dir();
+        let codex_dir = home.path().join(".codex");
         fs::create_dir_all(&codex_dir).expect("create codex dir");
         fs::write(codex_dir.join("config.toml"), UNIFIED_CONFIG).expect("write config");
         let state_db = codex_dir.join(CODEX_STATE_DB_FILENAME);

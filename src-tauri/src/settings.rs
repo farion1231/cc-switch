@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Duration;
 
 use crate::app_config::AppType;
@@ -63,6 +63,10 @@ pub struct VisibleApps {
     pub agy: bool,
     #[serde(default = "default_true")]
     pub copilot: bool,
+    #[serde(default = "default_true")]
+    pub workbuddy: bool,
+    #[serde(default = "default_true")]
+    pub codebuddy: bool,
 }
 
 impl Default for VisibleApps {
@@ -83,6 +87,8 @@ impl Default for VisibleApps {
             agy: true,
             omp: true,
             copilot: true,
+            workbuddy: true,
+            codebuddy: true,
         }
     }
 }
@@ -106,6 +112,8 @@ impl VisibleApps {
             AppType::Agy => self.agy,
             AppType::Omp => self.omp,
             AppType::Copilot => self.copilot,
+            AppType::WorkBuddy => self.workbuddy,
+            AppType::Codebuddy => self.codebuddy,
         }
     }
 }
@@ -232,6 +240,11 @@ pub struct S3SyncSettings {
     pub remote_root: String,
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// Selected S3 provider preset shown in the settings UI. Purely presentational,
+    /// but persisted so an explicit choice (e.g. MinIO, whose endpoint cannot be
+    /// inferred) survives reopening the page (#6663).
+    #[serde(default)]
+    pub preset: String,
     #[serde(default)]
     pub status: WebDavSyncStatus,
 }
@@ -248,6 +261,7 @@ impl Default for S3SyncSettings {
             endpoint: String::new(),
             remote_root: default_remote_root(),
             profile: default_profile(),
+            preset: String::new(),
             status: WebDavSyncStatus::default(),
         }
     }
@@ -293,6 +307,7 @@ impl S3SyncSettings {
         self.endpoint = self.endpoint.trim().to_string();
         self.remote_root = self.remote_root.trim().to_string();
         self.profile = self.profile.trim().to_string();
+        self.preset = self.preset.trim().to_string();
         if self.remote_root.is_empty() {
             self.remote_root = default_remote_root();
         }
@@ -466,6 +481,10 @@ pub struct UsageDisplaySettings {
     pub rate_provider: Option<String>,
 }
 
+/// 界面支持的语言，顺序同设置页下拉。前端 `src/i18n/languages.ts` 的 `LANGUAGES`
+/// 由 `tray::tests::languages_match_shared_fixture` 生成的 `tests/config/languages.json` 比对。
+pub(crate) const LANGUAGES: &[&str] = &["zh", "zh-TW", "en", "de", "ja", "ko", "ru", "tr"];
+
 /// 应用设置结构
 ///
 /// 存储设备级别设置，保存在本地 `~/.cc-switch/settings.json`，不随数据库同步。
@@ -483,6 +502,9 @@ pub struct AppSettings {
     /// 是否启用 Claude 插件联动
     #[serde(default)]
     pub enable_claude_plugin_integration: bool,
+    /// Device-local destinations for the Copilot CLI to VS Code model projection.
+    #[serde(default)]
+    pub copilot_vscode: crate::copilot_vscode::SyncSettings,
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
@@ -536,6 +558,9 @@ pub struct AppSettings {
     /// many users do not want to chase every release).
     #[serde(default)]
     pub check_tool_updates_on_startup: bool,
+    /// 自动下载 CC Switch 新版本，下好后问用户要不要安装（默认关）。设备级，不随云同步。
+    #[serde(default)]
+    pub auto_update_enabled: bool,
     /// 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 只能出原生菜单，不看这一项）。
     /// 默认关：用托盘面板，想要原生菜单在设置里换回。
     #[serde(default)]
@@ -605,6 +630,10 @@ pub struct AppSettings {
     /// 授权中心和托盘一起变；余额、Credits、重置次数不受影响（#8024）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_display: Option<String>,
+    /// 官方账号额度只在手动刷新时查询（授权中心开关，#8990）：开着时界面不自动查，托盘
+    /// 悬停也不刷新官方账号额度；第三方余额脚本不受影响
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub official_quota_manual_only: bool,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -702,6 +731,9 @@ pub struct AppSettings {
     /// Maximum number of backup files to retain (default 10)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup_retain_count: Option<u32>,
+    /// Total size limit for the backups directory in MB (default unset, 0 = unlimited)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_max_total_mb: Option<u32>,
 
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
@@ -739,6 +771,7 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
+            copilot_vscode: Default::default(),
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
@@ -755,6 +788,7 @@ impl Default for AppSettings {
             show_profile_switcher: false,
             show_provider_search: true,
             check_tool_updates_on_startup: false,
+            auto_update_enabled: false,
             native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
             codex_quota_protection: CodexQuotaProtection::default(),
@@ -772,6 +806,7 @@ impl Default for AppSettings {
             common_config_confirmed: None,
             language: None,
             quota_display: None,
+            official_quota_manual_only: false,
             visible_apps: None,
             app_order: None,
             claude_config_dir: None,
@@ -802,6 +837,7 @@ impl Default for AppSettings {
             webdav_backup: None,
             backup_interval_hours: None,
             backup_retain_count: None,
+            backup_max_total_mb: None,
             preferred_terminal: None,
             local_migrations: None,
         }
@@ -824,81 +860,30 @@ impl AppSettings {
     }
 
     fn normalize_paths(&mut self) {
-        self.claude_config_dir = self
-            .claude_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.codex_config_dir = self
-            .codex_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.gemini_config_dir = self
-            .gemini_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.grok_config_dir = self
-            .grok_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.opencode_config_dir = self
-            .opencode_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.openclaw_config_dir = self
-            .openclaw_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.hermes_config_dir = self
-            .hermes_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.pi_config_dir = self
-            .pi_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.omp_config_dir = self
-            .omp_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
-
-        self.dsh_config_dir = self
-            .dsh_config_dir
-            .as_ref()
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string());
+        for dir in [
+            &mut self.claude_config_dir,
+            &mut self.codex_config_dir,
+            &mut self.gemini_config_dir,
+            &mut self.grok_config_dir,
+            &mut self.opencode_config_dir,
+            &mut self.openclaw_config_dir,
+            &mut self.hermes_config_dir,
+            &mut self.pi_config_dir,
+            &mut self.omp_config_dir,
+            &mut self.dsh_config_dir,
+        ] {
+            *dir = dir
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string);
+        }
 
         self.language = self
             .language
             .as_ref()
             .map(|s| s.trim())
-            .filter(|s| matches!(*s, "en" | "zh" | "zh-TW" | "ja" | "tr" | "ko" | "ru"))
+            .filter(|s| LANGUAGES.contains(s))
             .map(|s| s.to_string());
 
         self.quota_display = self
@@ -1119,6 +1104,27 @@ fn settings_store() -> &'static RwLock<AppSettings> {
     SETTINGS_STORE.get_or_init(|| RwLock::new(AppSettings::load_from_file()))
 }
 
+// Writers hold the write lock while writing settings.json, build a new value
+// separately and replace the cached snapshot only after it is ready. A panic cannot expose a partially mutated AppSettings, so
+// every reader can recover the same committed value instead of using defaults.
+fn read_settings() -> RwLockReadGuard<'static, AppSettings> {
+    settings_store().read().unwrap_or_else(|poisoned| {
+        let guard = poisoned.into_inner();
+        settings_store().clear_poison();
+        log::warn!("设置锁已毒化，使用恢复值");
+        guard
+    })
+}
+
+fn write_settings() -> RwLockWriteGuard<'static, AppSettings> {
+    settings_store().write().unwrap_or_else(|poisoned| {
+        let guard = poisoned.into_inner();
+        settings_store().clear_poison();
+        log::warn!("设置锁已毒化，使用恢复值");
+        guard
+    })
+}
+
 pub(crate) fn resolve_override_path(raw: &str) -> PathBuf {
     let join_home = |home: PathBuf, suffix: &str| {
         suffix
@@ -1128,30 +1134,17 @@ pub(crate) fn resolve_override_path(raw: &str) -> PathBuf {
     };
 
     if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home;
-        }
-    } else if let Some(stripped) = raw.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return join_home(home, stripped);
-        }
-    } else if let Some(stripped) = raw.strip_prefix("~\\") {
-        if let Some(home) = dirs::home_dir() {
-            return join_home(home, stripped);
-        }
+        return crate::config::get_home_dir();
+    }
+    if let Some(stripped) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        return join_home(crate::config::get_home_dir(), stripped);
     }
 
     PathBuf::from(raw)
 }
 
 pub fn get_settings() -> AppSettings {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .clone()
+    read_settings().clone()
 }
 
 pub fn get_settings_for_frontend() -> AppSettings {
@@ -1169,12 +1162,9 @@ pub fn get_settings_for_frontend() -> AppSettings {
 pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.codex_quota_protection.validate()?;
     new_settings.normalize_paths();
+    // 写文件也在写锁内，并发保存时文件和内存的先后顺序一致。
+    let mut guard = write_settings();
     save_settings_file(&new_settings)?;
-
-    let mut guard = settings_store().write().unwrap_or_else(|e| {
-        log::warn!("设置锁已毒化，使用恢复值: {e}");
-        e.into_inner()
-    });
     *guard = new_settings;
     Ok(())
 }
@@ -1183,10 +1173,7 @@ fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
 where
     F: FnOnce(&mut AppSettings),
 {
-    let mut guard = settings_store().write().unwrap_or_else(|e| {
-        log::warn!("设置锁已毒化，使用恢复值: {e}");
-        e.into_inner()
-    });
+    let mut guard = write_settings();
     let mut next = guard.clone();
     mutator(&mut next);
     next.normalize_paths();
@@ -1354,140 +1341,56 @@ pub fn set_proxy_client_host(host: &str) -> Result<(), AppError> {
 /// 从文件重新加载设置到内存缓存
 /// 用于导入配置等场景，确保内存缓存与文件同步
 pub fn reload_settings() -> Result<(), AppError> {
-    let fresh_settings = AppSettings::load_from_file();
-    let mut guard = settings_store().write().unwrap_or_else(|e| {
-        log::warn!("设置锁已毒化，使用恢复值: {e}");
-        e.into_inner()
-    });
-    *guard = fresh_settings;
+    // 在写锁内读文件，避免读到旧文件后覆盖并发写入的新值。
+    let mut guard = write_settings();
+    *guard = AppSettings::load_from_file();
     Ok(())
 }
 
-pub fn get_claude_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .claude_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_codex_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .codex_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_gemini_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .gemini_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_grok_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .grok_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_opencode_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .opencode_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_openclaw_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .openclaw_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_hermes_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .hermes_config_dir
-        .as_ref()
-        .map(|p| resolve_override_path(p))
-}
-
-pub fn get_pi_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .pi_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
-}
-pub fn get_omp_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .omp_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
-}
-
-pub fn get_dsh_override_dir() -> Option<PathBuf> {
-    let settings = settings_store().read().ok()?;
-    settings
-        .dsh_config_dir
-        .as_ref()
-        .map(|path| resolve_override_path(path))
+/// 用户在设置里为该应用指定的配置目录。没有目录覆盖项的应用返回 `None`。
+pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
+    let settings = read_settings();
+    let dir = match app {
+        AppType::Claude => &settings.claude_config_dir,
+        AppType::Codex => &settings.codex_config_dir,
+        AppType::Gemini => &settings.gemini_config_dir,
+        AppType::GrokBuild => &settings.grok_config_dir,
+        AppType::OpenCode => &settings.opencode_config_dir,
+        AppType::OpenClaw => &settings.openclaw_config_dir,
+        AppType::Hermes => &settings.hermes_config_dir,
+        AppType::Pi => &settings.pi_config_dir,
+        AppType::Omp => &settings.omp_config_dir,
+        AppType::Dsh => &settings.dsh_config_dir,
+        AppType::ClaudeDesktop
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Agy
+        | AppType::Copilot
+        | AppType::Codebuddy
+        | AppType::WorkBuddy => return None,
+    };
+    dir.as_deref().map(resolve_override_path)
 }
 
 pub fn preserve_codex_official_auth_on_switch() -> bool {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .preserve_codex_official_auth_on_switch
+    read_settings().preserve_codex_official_auth_on_switch
 }
 
 pub fn codex_proxy_without_official_login() -> bool {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .codex_proxy_without_official_login
+    read_settings().codex_proxy_without_official_login
 }
 
 pub fn unify_codex_session_history() -> bool {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .unify_codex_session_history
+    read_settings().unify_codex_session_history
 }
 
 pub fn codex_stack_classic_tools() -> bool {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .codex_stack_classic_tools
+    read_settings().codex_stack_classic_tools
 }
 
 /// Codex 聚合模式下的子 agent 设置：(模型 slug, 推理强度)，空串当作没设。
 pub fn codex_stack_subagent() -> (Option<String>, Option<String>) {
-    let settings = settings_store().read().unwrap_or_else(|e| {
-        log::warn!("设置锁已毒化，使用恢复值: {e}");
-        e.into_inner()
-    });
+    let settings = read_settings();
     let non_empty = |value: &Option<String>| {
         value
             .as_deref()
@@ -1503,12 +1406,7 @@ pub fn codex_stack_subagent() -> (Option<String>, Option<String>) {
 
 /// Codex 聚合模式下的自动审批模型 slug，空串当作没设。
 pub fn codex_stack_auto_review_model() -> Option<String> {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
+    read_settings()
         .codex_stack_auto_review_model
         .as_deref()
         .map(str::trim)
@@ -1523,7 +1421,7 @@ pub fn codex_stack_auto_review_model() -> Option<String> {
 /// 这是设备级别的设置，不随数据库同步。
 /// 如果本地没有设置，调用者应该 fallback 到数据库的 `is_current` 字段。
 pub fn get_current_provider(app_type: &AppType) -> Option<String> {
-    let settings = settings_store().read().ok()?;
+    let settings = read_settings();
     match app_type {
         AppType::Claude => settings.current_provider_claude.clone(),
         AppType::ClaudeDesktop => settings.current_provider_claude_desktop.clone(),
@@ -1535,7 +1433,13 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
         AppType::Copilot => settings.current_provider_copilot.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => None,
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Omp
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => None,
     }
 }
 
@@ -1556,7 +1460,13 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
         AppType::Copilot => settings.current_provider_copilot = id_owned.clone(),
-        AppType::Pi | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp => {}
+        AppType::Pi
+        | AppType::Mcode
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Omp
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => {}
     })
 }
 
@@ -1576,10 +1486,7 @@ pub fn get_effective_current_provider(
     // 1. 从本地 settings 读取
     if let Some(local_id) = get_current_provider(app_type) {
         // 2. 验证该 ID 在数据库中存在
-        if db
-            .get_provider_by_id(&local_id, app_type.as_str())?
-            .is_some()
-        {
+        if db.provider_exists(&local_id, app_type)? {
             // 存在，直接返回
             return Ok(Some(local_id));
         }
@@ -1594,33 +1501,21 @@ pub fn get_effective_current_provider(
     }
 
     // Fallback 到数据库的 is_current
-    db.get_current_provider(app_type.as_str())
+    db.get_current_provider(app_type)
 }
 
 // ===== Skill 同步方式管理函数 =====
 
 /// 获取 Skill 同步方式配置
 pub fn get_skill_sync_method() -> SyncMethod {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .skill_sync_method
+    read_settings().skill_sync_method
 }
 
 // ===== Skill 存储位置管理函数 =====
 
 /// 获取 Skill 存储位置配置
 pub fn get_skill_storage_location() -> SkillStorageLocation {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .skill_storage_location
+    read_settings().skill_storage_location
 }
 
 /// 设置 Skill 存储位置
@@ -1634,48 +1529,40 @@ pub fn set_skill_storage_location(location: SkillStorageLocation) -> Result<(), 
 
 /// Get the effective auto-backup interval in hours (default 24)
 pub fn effective_backup_interval_hours() -> u32 {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .backup_interval_hours
-        .unwrap_or(24)
+    read_settings().backup_interval_hours.unwrap_or(24)
 }
 
 /// Get the effective backup retain count (default 10, minimum 1)
 pub fn effective_backup_retain_count() -> usize {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
+    read_settings()
         .backup_retain_count
         .map(|n| (n as usize).max(1))
         .unwrap_or(10)
+}
+
+/// Get the total size limit for the backups directory in bytes.
+///
+/// `None` (unlimited) unless the user picked a limit: an upgrade alone must
+/// never start deleting existing restore points.
+pub fn effective_backup_max_total_bytes() -> Option<u64> {
+    read_settings()
+        .backup_max_total_mb
+        .filter(|mb| *mb > 0)
+        .map(|mb| u64::from(mb) * 1024 * 1024)
 }
 
 // ===== 终端设置管理函数 =====
 
 /// 获取首选终端应用
 pub fn get_preferred_terminal() -> Option<String> {
-    settings_store()
-        .read()
-        .unwrap_or_else(|e| {
-            log::warn!("设置锁已毒化，使用恢复值: {e}");
-            e.into_inner()
-        })
-        .preferred_terminal
-        .clone()
+    read_settings().preferred_terminal.clone()
 }
 
 // ===== WebDAV 同步设置管理函数 =====
 
 /// 获取 WebDAV 同步设置
 pub fn get_webdav_sync_settings() -> Option<WebDavSyncSettings> {
-    settings_store().read().ok()?.webdav_sync.clone()
+    read_settings().webdav_sync.clone()
 }
 
 /// 保存 WebDAV 同步设置
@@ -1697,7 +1584,7 @@ pub fn update_webdav_sync_status(status: WebDavSyncStatus) -> Result<(), AppErro
 // ===== S3 同步设置管理函数 =====
 
 pub fn get_s3_sync_settings() -> Option<S3SyncSettings> {
-    settings_store().read().ok()?.s3_sync.clone()
+    read_settings().s3_sync.clone()
 }
 
 pub fn set_s3_sync_settings(settings: Option<S3SyncSettings>) -> Result<(), AppError> {
@@ -1720,19 +1607,157 @@ mod tests {
     use crate::app_config::AppType;
 
     #[test]
+    #[serial_test::serial]
+    fn settings_readers_recover_after_poison_without_losing_local_values() {
+        if !crate::sync_utils::in_isolated_process(
+            "settings::tests::settings_readers_recover_after_poison_without_losing_local_values",
+        ) {
+            return;
+        }
+        let configured = AppSettings {
+            claude_config_dir: Some("/custom/claude".into()),
+            codex_config_dir: Some("/custom/codex".into()),
+            gemini_config_dir: Some("/custom/gemini".into()),
+            grok_config_dir: Some("/custom/grok".into()),
+            opencode_config_dir: Some("/custom/opencode".into()),
+            openclaw_config_dir: Some("/custom/openclaw".into()),
+            hermes_config_dir: Some("/custom/hermes".into()),
+            pi_config_dir: Some("/custom/pi".into()),
+            omp_config_dir: Some("/custom/omp".into()),
+            dsh_config_dir: Some("/custom/dsh".into()),
+            current_provider_claude: Some("local-provider".into()),
+            webdav_sync: Some(WebDavSyncSettings::default()),
+            s3_sync: Some(S3SyncSettings::default()),
+            ..Default::default()
+        };
+        *settings_store().write().unwrap() = configured;
+        let poison = || {
+            assert!(std::panic::catch_unwind(|| {
+                let _ = mutate_settings(|next| {
+                    next.current_provider_claude = None;
+                    panic!("settings edit interrupted before commit");
+                });
+            })
+            .is_err());
+            assert!(settings_store().is_poisoned());
+        };
+        for (app, name) in [
+            (AppType::Claude, "claude"),
+            (AppType::Codex, "codex"),
+            (AppType::Gemini, "gemini"),
+            (AppType::GrokBuild, "grok"),
+            (AppType::OpenCode, "opencode"),
+            (AppType::OpenClaw, "openclaw"),
+            (AppType::Hermes, "hermes"),
+            (AppType::Pi, "pi"),
+            (AppType::Omp, "omp"),
+            (AppType::Dsh, "dsh"),
+        ] {
+            poison();
+            assert_eq!(
+                get_override_dir(&app),
+                Some(PathBuf::from(format!("/custom/{name}")))
+            );
+        }
+        poison();
+        assert_eq!(
+            get_current_provider(&AppType::Claude).as_deref(),
+            Some("local-provider")
+        );
+        poison();
+        assert!(get_webdav_sync_settings().is_some());
+        poison();
+        assert!(get_s3_sync_settings().is_some());
+        poison();
+        assert_eq!(
+            get_settings().current_provider_claude.as_deref(),
+            Some("local-provider")
+        );
+        assert!(!settings_store().is_poisoned());
+
+        poison();
+        set_current_provider(&AppType::Claude, Some("updated-provider")).unwrap();
+        assert_eq!(
+            get_current_provider(&AppType::Claude).as_deref(),
+            Some("updated-provider")
+        );
+        assert_eq!(
+            AppSettings::load_from_file()
+                .current_provider_claude
+                .as_deref(),
+            Some("updated-provider")
+        );
+        assert!(!settings_store().is_poisoned());
+    }
+
+    #[test]
     fn russian_language_survives_normalization() {
-        let mut settings = AppSettings::default();
-        settings.language = Some("ru".into());
+        let mut settings = AppSettings {
+            language: Some("ru".into()),
+            ..Default::default()
+        };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ru"));
     }
 
     #[test]
     fn korean_language_survives_normalization() {
-        let mut settings = AppSettings::default();
-        settings.language = Some("ko".into());
+        let mut settings = AppSettings {
+            language: Some("ko".into()),
+            ..Default::default()
+        };
         settings.normalize_paths();
         assert_eq!(settings.language.as_deref(), Some("ko"));
+    }
+
+    #[test]
+    fn every_directory_override_is_trimmed_and_a_blank_one_is_cleared() {
+        let keys = [
+            "claudeConfigDir",
+            "codexConfigDir",
+            "geminiConfigDir",
+            "grokConfigDir",
+            "opencodeConfigDir",
+            "openclawConfigDir",
+            "hermesConfigDir",
+            "piConfigDir",
+            "ompConfigDir",
+            "dshConfigDir",
+        ];
+        for key in keys {
+            let mut padded: AppSettings =
+                serde_json::from_value(serde_json::json!({ key: "  /custom/dir \n" }))
+                    .expect("settings");
+            padded.normalize_paths();
+            let saved = serde_json::to_value(&padded).expect("serialize");
+            assert_eq!(saved[key], "/custom/dir", "{key}");
+
+            let mut blank: AppSettings =
+                serde_json::from_value(serde_json::json!({ key: "   " })).expect("settings");
+            blank.normalize_paths();
+            let saved = serde_json::to_value(&blank).expect("serialize");
+            assert!(saved.get(key).is_none(), "{key}");
+        }
+    }
+
+    #[test]
+    fn s3_preset_round_trips_and_stays_absent_from_old_files() {
+        // Files written before the preset was persisted must still load; the
+        // frontend then derives the preset from the endpoint.
+        let old: S3SyncSettings =
+            serde_json::from_value(serde_json::json!({ "endpoint": "https://minio.local:9000" }))
+                .expect("old s3 settings");
+        assert!(old.preset.is_empty());
+
+        let mut settings = S3SyncSettings {
+            preset: "  s3-minio  ".to_string(),
+            ..S3SyncSettings::default()
+        };
+        settings.normalize();
+        assert_eq!(settings.preset, "s3-minio");
+
+        let saved = serde_json::to_value(&settings).expect("serialize");
+        assert_eq!(saved["preset"], "s3-minio");
     }
 
     #[test]
@@ -1871,11 +1896,31 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn override_paths_expand_windows_style_tilde_separators() {
-        let home = dirs::home_dir().expect("home directory");
+        let home = crate::config::get_home_dir();
         assert_eq!(
             resolve_override_path(r"~\pi\agent"),
             home.join("pi").join("agent")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn override_paths_honor_test_home_override() {
+        use crate::test_support::EnvVars;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
+
+        assert_eq!(resolve_override_path("~"), temp.path());
+        assert_eq!(
+            resolve_override_path("~/pi/agent"),
+            temp.path().join("pi").join("agent")
+        );
+        assert_eq!(
+            resolve_override_path(r"~\pi\agent"),
+            temp.path().join("pi").join("agent")
         );
     }
 

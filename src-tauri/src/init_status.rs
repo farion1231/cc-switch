@@ -25,7 +25,6 @@ fn cell() -> &'static RwLock<Option<InitErrorPayload>> {
 }
 
 pub fn set_init_error(payload: InitErrorPayload) {
-    #[allow(clippy::unwrap_used)]
     if let Ok(mut guard) = cell().write() {
         *guard = Some(payload);
     }
@@ -108,9 +107,13 @@ pub fn take_skills_migration_result() -> Option<SkillsMigrationPayload> {
 static CODEX_HISTORY_MIGRATION_FAILED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+pub(crate) fn retain_codex_history_migration_error() {
+    CODEX_HISTORY_MIGRATION_FAILED.store(true, std::sync::atomic::Ordering::Release);
+}
+
 pub fn report_codex_history_migration_error(app: &tauri::AppHandle) {
     use tauri::Emitter;
-    CODEX_HISTORY_MIGRATION_FAILED.store(true, std::sync::atomic::Ordering::Release);
+    retain_codex_history_migration_error();
     let _ = app.emit("codex-history-migration-failed", ());
 }
 

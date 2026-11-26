@@ -86,6 +86,11 @@ import {
   type CopilotModel,
 } from "@/lib/api/copilot";
 import {
+  copilotAutoCatalogModel,
+  copilotFetchedModels,
+  COPILOT_AUTO_MODEL_ID,
+} from "@/lib/copilot-model-options";
+import {
   fetchModelsForConfig,
   fetchXaiOauthModels,
   modelFetchRequestHeaders,
@@ -98,6 +103,7 @@ import {
   type FetchedModelSelection,
 } from "./FetchedModelPicker";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
+import { BillingMultiplierField } from "./BillingMultiplierField";
 import { cn } from "@/lib/utils";
 import { useCommittableRef } from "@/hooks/useLatestRef";
 import { useModelMetadataFill } from "@/hooks/useModelMetadataFill";
@@ -107,6 +113,7 @@ import {
   metadataFilledAnything,
 } from "./modelMetadataFill";
 import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
+import { stripClaudeOneMMarker } from "./hooks/useModelState";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
@@ -252,6 +259,9 @@ interface CodexFormFieldsProps {
   // Local proxy User-Agent override
   customUserAgent: string;
   onCustomUserAgentChange: (value: string) => void;
+  /** 供应商费用倍率；不传 onBillingMultiplierChange 时不显示（官方卡等）。 */
+  billingMultiplier?: string;
+  onBillingMultiplierChange?: (value: string) => void;
   localProxyHeadersOverride: string;
   onLocalProxyHeadersOverrideChange: (value: string) => void;
   localProxyBodyOverride: string;
@@ -707,6 +717,8 @@ export function CodexFormFields({
   speedTestEndpoints,
   customUserAgent,
   onCustomUserAgentChange,
+  billingMultiplier = "",
+  onBillingMultiplierChange,
   localProxyHeadersOverride,
   onLocalProxyHeadersOverrideChange,
   localProxyBodyOverride,
@@ -771,6 +783,7 @@ export function CodexFormFields({
   const hasAnyAdvancedValue =
     isCopilotPreset ||
     !!customUserAgent ||
+    !!billingMultiplier ||
     hasRequestOverrides ||
     isAnthropicFormat ||
     supportsThinking ||
@@ -796,7 +809,10 @@ export function CodexFormFields({
   // Stack 布局的高级区（思考能力、Anthropic 专有项、User-Agent、请求覆盖）：填了 UA 或请求
   // 覆盖才展开，其余多是预设自带的。
   const [stackAdvancedExpanded, setStackAdvancedExpanded] = useState(
-    isFullUrl || !!customUserAgent || hasRequestOverrides,
+    isFullUrl ||
+      !!customUserAgent ||
+      !!billingMultiplier ||
+      hasRequestOverrides,
   );
 
   // 显示用的顺序。挪动默认那一行不算修改：没动过列表时保存仍是原来的顺序。
@@ -889,6 +905,7 @@ export function CodexFormFields({
       fetchModels: () => Promise<T>,
       receiveModels: (models: T) => number,
       errorLogMessage: string,
+      getEmptyMessage?: (models: T) => string,
     ) => {
       const seq = ++fetchModelsSeqRef.current;
       setIsFetchingModels(true);
@@ -897,7 +914,9 @@ export function CodexFormFields({
           if (seq !== fetchModelsSeqRef.current) return;
           const count = receiveModels(models);
           if (count === 0) {
-            toast.info(t("providerForm.fetchModelsEmpty"));
+            toast.info(
+              getEmptyMessage?.(models) ?? t("providerForm.fetchModelsEmpty"),
+            );
           } else if (!canEditCatalog) {
             // 有模型列表时拉取成功会直接打开选择弹窗，不再提示成功。
             toast.success(t("providerForm.fetchModelsSuccess", { count }));
@@ -928,22 +947,50 @@ export function CodexFormFields({
           selectedGitHubAccountId
             ? copilotGetModelsForAccount(selectedGitHubAccountId)
             : copilotGetModels(),
-        (models) => {
-          const usableModels = models.filter((model) =>
+        (options) => {
+          const usableModels = options.models.filter((model) =>
             isCopilotModelSupportedByCodex(model, copilotApiFormat),
           );
-          const fetched = usableModels.map((model) => ({
-            id: model.id,
-            ownedBy: model.vendor || null,
-          }));
+          const hasAuto = options.autoRoutingSupported;
+          const autoName = t("copilot.autoModelName", {
+            defaultValue: "GitHub Copilot Auto",
+          });
+          const autoCatalogModel = copilotAutoCatalogModel(autoName);
+          const existingAuto = catalogModels.find(
+            (model) =>
+              model.model === autoCatalogModel.model ||
+              stripClaudeOneMMarker(model.model) ===
+                stripClaudeOneMMarker(autoCatalogModel.model),
+          );
+          const mergedAutoCatalogModel = {
+            ...(existingAuto ?? {}),
+            ...autoCatalogModel,
+            displayName: existingAuto?.displayName?.trim()
+              ? existingAuto.displayName
+              : autoName,
+            contextWindow:
+              existingAuto?.contextWindow ?? autoCatalogModel.contextWindow,
+            baseInstructions:
+              existingAuto?.baseInstructions ??
+              autoCatalogModel.baseInstructions,
+            reasoningLevels:
+              existingAuto?.reasoningLevels ?? autoCatalogModel.reasoningLevels,
+            inputModalities:
+              existingAuto?.inputModalities ?? autoCatalogModel.inputModalities,
+          };
+          const fetched = copilotFetchedModels(
+            { models: usableModels, autoRoutingSupported: hasAuto },
+            autoName,
+          );
           setFetchedModels(fetched);
 
           if (onCatalogModelsChange) {
             const existing = new Map(
               catalogModels.map((model) => [model.model, model]),
             );
-            onCatalogModelsChange(
-              usableModels.map((model) => ({
+            onCatalogModelsChange([
+              ...(hasAuto ? [mergedAutoCatalogModel] : []),
+              ...usableModels.map((model) => ({
                 ...(existing.get(model.id) ?? {}),
                 model: model.id,
                 displayName: model.name || model.id,
@@ -955,18 +1002,28 @@ export function CodexFormFields({
                   model.supports_parallel_tool_calls ??
                   existing.get(model.id)?.supportsParallelToolCalls ??
                   false,
-                inputModalities: existing.get(model.id)?.inputModalities ?? [
-                  "text",
-                ],
+                ...(model.supports_vision !== undefined
+                  ? {
+                      inputModalities: model.supports_vision
+                        ? ["text", "image"]
+                        : ["text"],
+                    }
+                  : {}),
                 ...(model.reasoning_effort !== undefined
                   ? { reasoningLevels: model.reasoning_effort }
                   : {}),
               })),
-            );
+            ]);
           }
+          // 默认模型是用户的显式选择（虚拟模型本就不在上游列表里）：刷新列表
+          // 不能自动改写默认模型，那会静默换掉用户选中的项。[1M] 标记的写法
+          // 与干净 id 算同一个虚拟模型。
+          const defaultPinned =
+            stripClaudeOneMMarker(codexModel) === COPILOT_AUTO_MODEL_ID;
           if (
             usableModels.length > 0 &&
             onModelChange &&
+            !defaultPinned &&
             !usableModels.some((model) => model.id === codexModel)
           ) {
             const defaultModel =
@@ -975,9 +1032,15 @@ export function CodexFormFields({
               ) ?? usableModels[0];
             onModelChange(defaultModel.id);
           }
-          return usableModels.length;
+          return usableModels.length + Number(hasAuto);
         },
         "[Copilot] Failed to fetch models:",
+        // 后端返回 0 个＝账号本身无可选模型（Copilot Free 通常如此）；
+        // 否则是有模型但都不支持当前上游格式
+        (models) =>
+          models.models.length === 0 && !models.autoRoutingSupported
+            ? t("copilot.noPickerModels")
+            : t("copilot.noModelsForApiFormat"),
       );
       return;
     }
@@ -1251,10 +1314,20 @@ export function CodexFormFields({
     ],
   );
 
-  // 默认模型下拉建议 = 模型映射的"实际请求模型"列 ∪ 拉取到的 /models 列表
+  // 默认模型下拉建议 = 模型映射的"实际请求模型"列 ∪ 拉取到的 /models 列表；
+  // Copilot 卡再补上代理发布的虚拟项（上游目录不含它），让用户随时能选回。
   const defaultModelSuggestions = useMemo<FetchedModel[]>(() => {
     const seen = new Set<string>();
     const suggestions: FetchedModel[] = [];
+    if (isCopilotPreset && fetchedModels.some((model) => model.isCopilotAuto)) {
+      suggestions.push({
+        id: COPILOT_AUTO_MODEL_ID,
+        ownedBy: t("copilot.autoModelName", {
+          defaultValue: "GitHub Copilot Auto",
+        }),
+      });
+      seen.add(COPILOT_AUTO_MODEL_ID);
+    }
     for (const row of catalogRows) {
       const id = row.model.trim();
       if (!id || seen.has(id)) continue;
@@ -1272,10 +1345,13 @@ export function CodexFormFields({
       suggestions.push(model);
     }
     return suggestions;
-  }, [catalogRows, fetchedModels, t]);
+  }, [catalogRows, fetchedModels, isCopilotPreset, t]);
 
-  // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）
+  // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）。
+  // 虚拟模型不提示：能力标记会让发布目录带上虚拟项（直连与聚合都覆盖），
+  // 「/model 里没有这一项」的前提不成立。
   const isDefaultModelOutsideCatalog =
+    stripClaudeOneMMarker(trimmedDefaultModel) !== COPILOT_AUTO_MODEL_ID &&
     catalogRows.length > 0 &&
     !!trimmedDefaultModel &&
     !catalogRows.some((row) => row.model.trim() === trimmedDefaultModel);
@@ -1572,11 +1648,11 @@ export function CodexFormFields({
         isGrokBuild
           ? t("grokBuild.maxOutputTokensHint", {
               defaultValue:
-                "默认上限 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+                "默认上限 32000，思考也算在内。网关的输出上限更低时会报 400，在这里填它支持的值。这里的值会作为 Anthropic 的 max_tokens 发出。",
             })
           : t("codexConfig.maxOutputTokensHint", {
               defaultValue:
-                "Codex 不带输出上限，默认 8192，长回答或深度思考容易被截断。这里的值会作为 Anthropic 的 max_tokens 发出。",
+                "Codex 不带输出上限，默认按 32000 发出，思考也算在内。网关的输出上限更低时会报 400，在这里填它支持的值。这里的值会作为 Anthropic 的 max_tokens 发出。",
             }),
         "codex-anthropic-max-output-tokens",
       )}
@@ -1590,7 +1666,7 @@ export function CodexFormFields({
           onMaxOutputTokensChange(event.target.value.replace(/[^\d]/g, ""))
         }
         placeholder={t("codexConfig.maxOutputTokensPlaceholder", {
-          defaultValue: "留空则使用默认 8192",
+          defaultValue: "留空则使用默认 32000",
         })}
       />
       <p className="text-xs leading-relaxed text-fg-2">
@@ -1693,19 +1769,26 @@ export function CodexFormFields({
     </>
   );
 
-  // 两项都只在路由模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
+  // 这一组都只在路由模式下生效：在分组开头说一次，各自的作用收进字段名后的「?」。
   // Copilot 的请求由转发层按 Copilot 客户端的样子发，UA 和请求覆盖都会被跳过，不显示。
   const userAgentAndOverrides = isCopilotPreset ? null : (
     <>
       <p className="text-xs leading-relaxed text-fg-2">
         {isGrokBuild
           ? t("grokBuild.routeOnlySettingsHint", {
-              defaultValue: "以下两项只在路由模式下生效。",
+              defaultValue: "以下设置只在路由模式下生效。",
             })
           : t("codexConfig.routeOnlySettingsHint", {
-              defaultValue: "以下两项只在路由、聚合模式下生效。",
+              defaultValue: "以下设置只在路由、聚合模式下生效。",
             })}
       </p>
+      {onBillingMultiplierChange && (
+        <BillingMultiplierField
+          id="codex-billing-multiplier"
+          value={billingMultiplier}
+          onChange={onBillingMultiplierChange}
+        />
+      )}
       <CustomUserAgentField
         id="codex-custom-user-agent"
         value={customUserAgent}
@@ -2056,10 +2139,13 @@ export function CodexFormFields({
 
   // 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。实时写回 TOML；留空则删行。
   // 有模型列表时第一行就是它，不显示这个框（Grok Build 没有列表，一直显示）；列表为空时
-  // 两种布局都显示，聚合模式下发布的就是它。
+  // 两种布局都显示，聚合模式下发布的就是它。默认模型是虚拟项、不在列表里时也要显示，
+  // 否则用户没有把默认模型切回具体模型的入口。
   const defaultModelField = category !== "official" &&
     onModelChange &&
-    (!firstRowIsDefault || catalogRows.length === 0) && (
+    (!firstRowIsDefault ||
+      catalogRows.length === 0 ||
+      stripClaudeOneMMarker(trimmedDefaultModel) === COPILOT_AUTO_MODEL_ID) && (
       <div className="space-y-1.5">
         {labelWithHelp(
           t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" }),

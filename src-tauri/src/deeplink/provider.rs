@@ -46,14 +46,17 @@ pub fn import_provider_from_deeplink(
         .clone()
         .ok_or_else(|| AppError::InvalidInput("Missing 'app' field for provider".to_string()))?;
 
-    let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
-        AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
-    })?;
+    // Copilot also accepts a native bearerToken, checked in build_copilot_settings.
+    if app_str != "copilot" {
+        let api_key = merged_request.api_key.as_ref().ok_or_else(|| {
+            AppError::InvalidInput("API key is required (either in URL or config file)".to_string())
+        })?;
 
-    if api_key.is_empty() {
-        return Err(AppError::InvalidInput(
-            "API key cannot be empty".to_string(),
-        ));
+        if api_key.is_empty() {
+            return Err(AppError::InvalidInput(
+                "API key cannot be empty".to_string(),
+            ));
+        }
     }
 
     // Get endpoint: supports comma-separated multiple URLs (first is primary)
@@ -103,7 +106,9 @@ pub fn import_provider_from_deeplink(
     // Build provider configuration based on app type
     let mut provider = build_provider_from_request(&app_type, &merged_request)?;
 
-    provider.id = if matches!(
+    provider.id = if matches!(app_type, AppType::Copilot) {
+        copilot_link_provider_id(state, &name)?
+    } else if matches!(
         app_type,
         AppType::OpenCode | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
     ) {
@@ -137,7 +142,7 @@ pub fn import_provider_from_deeplink(
     // 初始值）。累加式应用（OpenCode、OpenClaw、Hermes、Pi）没有「切换」：开关决定这家要不要
     // 写进应用的配置文件；旧链接没写时照旧写进去。切换式应用开关关闭时只存进列表：`add` 在
     // 还没有当前供应商时会让这家直接生效，所以走不写客户端配置的路径。
-    let additive = app_type.is_additive_mode();
+    let additive = app_type.spec().additive;
     let activate = if additive {
         merged_request.enabled.unwrap_or(true)
     } else {
@@ -168,13 +173,46 @@ pub fn import_provider_from_deeplink(
         }
     }
 
-    // If enabled=true, set as current provider. Antigravity、Copilot CLI 没有「启用」，只导入。
-    if !additive && activate && !matches!(app_type, AppType::Agy | AppType::Copilot) {
+    // If enabled=true, set as current provider. Antigravity 没有「启用」，只导入。
+    if !additive && activate && !matches!(app_type, AppType::Agy) {
         ProviderService::switch(state, app_type.clone(), &provider_id)?;
         log::info!("Provider '{provider_id}' set as current for {app_type:?}");
     }
 
     Ok(provider_id)
+}
+
+/// Copilot CLI 的卡片 id 就是 `/model` 里 `<id>/<模型>` 的前缀，用户看得见：取名字的
+/// ASCII slug（`deepseek`），和库里或 providers.json 里已有的撞了就加 `-2`、`-3`…
+fn copilot_link_provider_id(state: &AppState, name: &str) -> Result<String, AppError> {
+    let slug = name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+        .to_ascii_lowercase();
+    let mut slug = if slug.is_empty() {
+        "provider".to_string()
+    } else {
+        slug
+    };
+    // 给 `-NN` 后缀留位置，整体不超过卡片 id 的 64 字符上限。
+    slug.truncate(56);
+    let slug = slug.trim_end_matches('-').to_string();
+    let taken = |id: &str| -> Result<bool, AppError> {
+        Ok(state.db.provider_exists(id, &AppType::Copilot)?
+            || crate::copilot_config::provider_key_exists(id)?)
+    };
+    if !taken(&slug)? {
+        return Ok(slug);
+    }
+    for n in 2..1000 {
+        let id = format!("{slug}-{n}");
+        if !taken(&id)? {
+            return Ok(id);
+        }
+    }
+    Ok(format!("{slug}-{}", uuid::Uuid::new_v4().simple()))
 }
 
 /// 链接声明的接口格式（`apiFormat`）。站长只学这一套词，各应用换算成自己的字段。
@@ -206,7 +244,8 @@ impl ApiFormat {
     ///
     /// Claude Code、Codex、Grok Build 写进 `meta.apiFormat`（非原生格式由本地路由转换）；
     /// 其余应用写进各自配置里选择协议的字段：OpenCode 的 `npm`、OpenClaw / Pi 的 `api`、
-    /// Hermes 的 `api_mode`。Gemini CLI 只有原生接口。
+    /// Hermes 的 `api_mode`。Gemini CLI 只有原生接口。WorkBuddy 的自定义模型只走
+    /// Chat Completions，卡片不写协议字段，这里只用来放行这一种格式。
     fn native_value(self, app_type: &AppType) -> Option<&'static str> {
         use ApiFormat::*;
         match (app_type, self) {
@@ -251,6 +290,7 @@ impl ApiFormat {
             (AppType::Copilot, Anthropic) => Some("anthropic"),
             (AppType::Copilot, OpenAiChat) => Some("completions"),
             (AppType::Copilot, OpenAiResponses) => Some("responses"),
+            (AppType::WorkBuddy, OpenAiChat) => Some("openai-completions"),
             _ => None,
         }
     }
@@ -316,7 +356,7 @@ pub(super) fn check_link_values(
     app_type: &AppType,
     request: &DeepLinkImportRequest,
 ) -> Result<(), AppError> {
-    if !app_type.is_additive_mode() {
+    if !app_type.spec().additive {
         return Ok(());
     }
     let is_pi = matches!(app_type, AppType::Pi);
@@ -395,7 +435,13 @@ pub(crate) fn build_provider_from_request(
             build_custom_provider_settings(app_type, request, api_format)?
         }
         AppType::Kimi => build_kimi_settings(request, api_format)?,
-        AppType::Copilot => build_copilot_settings(request, api_format),
+        AppType::Copilot => build_copilot_settings(request, api_format)?,
+        AppType::WorkBuddy => build_workbuddy_settings(request)?,
+        AppType::Codebuddy => {
+            return Err(AppError::InvalidInput(
+                "Add CodeBuddy models from the CodeBuddy page".into(),
+            ))
+        }
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]
@@ -850,37 +896,61 @@ requires_openai_auth = true
     }))
 }
 
-/// Build Gemini settings configuration
-/// Copilot CLI 自带模型的环境变量：接口格式换算成 `COPILOT_PROVIDER_TYPE` 和
-/// `COPILOT_PROVIDER_WIRE_API`。
+/// Copilot CLI 自带模型卡：链接指定首选模型，保留内嵌配置中的其他模型。
+/// Copilot 不调上游 `/models`，链接必须带模型。
 fn build_copilot_settings(
     request: &DeepLinkImportRequest,
     api_format: Option<ApiFormat>,
-) -> serde_json::Value {
-    let mut env = serde_json::Map::new();
-    env.insert(
-        "COPILOT_PROVIDER_BASE_URL".into(),
-        json!(get_primary_endpoint(request)),
-    );
-    if let Some(key) = request.api_key.as_deref() {
-        env.insert(
-            "COPILOT_PROVIDER_API_KEY".into(),
-            json!(normalize_deeplink_api_key(key)),
-        );
-    }
+) -> Result<serde_json::Value, AppError> {
+    let model = required_link_model(&AppType::Copilot, request)?;
+    let mut provider = serde_json::Map::new();
     match native_protocol(&AppType::Copilot, api_format) {
         "anthropic" => {
-            env.insert("COPILOT_PROVIDER_TYPE".into(), json!("anthropic"));
+            provider.insert("type".into(), json!("anthropic"));
         }
         wire => {
-            env.insert("COPILOT_PROVIDER_TYPE".into(), json!("openai"));
-            env.insert("COPILOT_PROVIDER_WIRE_API".into(), json!(wire));
+            provider.insert("type".into(), json!("openai"));
+            provider.insert("wireApi".into(), json!(wire));
         }
     }
-    if let Some(model) = request.model.as_deref().filter(|m| !m.trim().is_empty()) {
-        env.insert("COPILOT_MODEL".into(), json!(model.trim()));
+    provider.insert("baseUrl".into(), json!(get_primary_endpoint(request)));
+    let config = decode_link_config(request)?;
+    let inline = config
+        .as_ref()
+        .map(CopilotLinkConfig::parse)
+        .transpose()?
+        .unwrap_or_default();
+    let (key, value) = if let Some(key) = request.api_key.as_deref() {
+        ("apiKey", key.trim())
+    } else if let Some(token) = inline.bearer_token {
+        ("bearerToken", token)
+    } else {
+        return Err(AppError::InvalidInput(
+            "Copilot CLI needs an API key or bearer token".into(),
+        ));
+    };
+    if value.is_empty() || has_dynamic_reference(value, false) {
+        return Err(AppError::InvalidInput(
+            "Invalid Copilot CLI credential in link".into(),
+        ));
     }
-    json!({ "env": env })
+    provider.insert(key.into(), json!(value));
+
+    let mut models = vec![json!({"id": model})];
+    if config
+        .as_ref()
+        .and_then(|value| value.get("provider"))
+        .is_some()
+    {
+        models.extend(
+            inline
+                .models
+                .into_iter()
+                .filter(|id| *id != model)
+                .map(|id| json!({"id": id})),
+        );
+    }
+    Ok(json!({ "provider": provider, "models": models }))
 }
 
 fn build_gemini_settings(request: &DeepLinkImportRequest) -> serde_json::Value {
@@ -1120,6 +1190,21 @@ fn build_custom_provider_settings(
     }))
 }
 
+/// WorkBuddy 的自定义模型卡，形状同 WorkBuddy 页面的编辑器。`url` 是完整的 Chat Completions
+/// 地址，和其他应用一样照链接原样写；模型声明 `supportsToolCall`（同编辑器「获取模型」），
+/// 否则 WorkBuddy 不让这个模型用工具。
+fn build_workbuddy_settings(
+    request: &DeepLinkImportRequest,
+) -> Result<serde_json::Value, AppError> {
+    let model = required_link_model(&AppType::WorkBuddy, request)?;
+    Ok(json!({
+        "vendor": request.name.clone().unwrap_or_default(),
+        "url": get_primary_endpoint(request),
+        "apiKey": normalize_deeplink_api_key(request.api_key.as_deref().unwrap_or_default()),
+        "models": [{ "id": model, "supportsToolCall": true }],
+    }))
+}
+
 /// 链接导入的 Kimi Code 模型的上下文窗口。Kimi 自己要求每个模型都带正数
 /// `max_context_size`（缺了拒绝运行），链接里没有这个字段。取偏小的 128K：Kimi 按它决定何时压缩，
 /// 报大了长会话会被上游拒绝，报小了只是早一点压缩。用户可在编辑器里改。
@@ -1240,7 +1325,8 @@ pub fn parse_and_merge_config(
         "copilot" => merge_copilot_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp" => {
+        "openclaw" | "opencode" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
+        | "workbuddy" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {
@@ -1411,33 +1497,80 @@ fn merge_agy_config(
     merge_gemini_config(request, env)
 }
 
-/// Copilot CLI：`config` 是 `{env:{...}}` 或扁平的 `COPILOT_*` 键；只取地址、Key、模型，
-/// 其余环境变量不从链接导入。URL 参数优先。
+/// Only import literal credentials, the endpoint, and model IDs from inline configuration.
+#[derive(Default)]
+struct CopilotLinkConfig<'a> {
+    endpoint: Option<&'a str>,
+    api_key: Option<&'a str>,
+    bearer_token: Option<&'a str>,
+    models: Vec<&'a str>,
+}
+
+impl<'a> CopilotLinkConfig<'a> {
+    fn parse(config: &'a serde_json::Value) -> Result<Self, AppError> {
+        let native = config.get("provider");
+        let node = native
+            .or_else(|| config.get("env"))
+            .unwrap_or(config)
+            .as_object()
+            .ok_or_else(|| {
+                AppError::InvalidInput("Copilot CLI provider config must be an object".into())
+            })?;
+        let get = |field, legacy| {
+            node.get(if native.is_some() { field } else { legacy })
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+        };
+        let mut models = Vec::new();
+        if native.is_some() {
+            if let Some(entries) = config.get("models") {
+                let entries = entries.as_array().ok_or_else(|| {
+                    AppError::InvalidInput("Copilot CLI models must be an array".into())
+                })?;
+                for entry in entries {
+                    let id = entry
+                        .get("id")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|id| !id.is_empty() && !has_dynamic_reference(id, false))
+                        .ok_or_else(|| {
+                            AppError::InvalidInput(
+                                "Each Copilot CLI model needs a literal model ID".into(),
+                            )
+                        })?;
+                    if !models.contains(&id) {
+                        models.push(id);
+                    }
+                }
+            }
+        } else if let Some(id) = get("id", "COPILOT_MODEL") {
+            models.push(id);
+        }
+        Ok(Self {
+            endpoint: get("baseUrl", "COPILOT_PROVIDER_BASE_URL"),
+            api_key: get("apiKey", "COPILOT_PROVIDER_API_KEY"),
+            bearer_token: get("bearerToken", "COPILOT_PROVIDER_BEARER_TOKEN"),
+            models,
+        })
+    }
+}
+
 fn merge_copilot_config(
     request: &mut DeepLinkImportRequest,
     config: &serde_json::Value,
 ) -> Result<(), AppError> {
-    let env = config.get("env").unwrap_or(config);
-    if !env.is_object() {
-        return Err(AppError::InvalidInput(
-            "Copilot CLI config/env must be an object".into(),
-        ));
-    }
-    let get = |key: &str| {
-        env.get(key)
-            .and_then(|value| value.as_str())
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    };
-    if request.api_key.is_none() {
-        request.api_key = get("COPILOT_PROVIDER_API_KEY");
+    let inline = CopilotLinkConfig::parse(config)?;
+    // A URL apiKey overrides either inline credential. Otherwise Copilot prefers
+    // bearerToken. Keep it in the inline config so a second merge retains its type.
+    if request.api_key.is_none() && inline.bearer_token.is_none() {
+        request.api_key = inline.api_key.map(str::to_owned);
     }
     if request.endpoint.is_none() {
-        request.endpoint = get("COPILOT_PROVIDER_BASE_URL");
+        request.endpoint = inline.endpoint.map(str::to_owned);
     }
     if request.model.is_none() {
-        request.model = get("COPILOT_MODEL");
+        request.model = inline.models.first().map(|id| (*id).to_owned());
     }
     Ok(())
 }
@@ -1582,13 +1715,14 @@ fn merge_additive_config(
         }
     }
 
-    // Extract endpoint from config if not provided in URL
+    // Extract endpoint from config if not provided in URL. WorkBuddy cards keep it as `url`.
     if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(base_url) = config
             .get("baseUrl")
             .or_else(|| config.get("base_url"))
             .or_else(|| config.get("options").and_then(|o| o.get("baseURL")))
             .or_else(|| config.pointer("/provider/base_url"))
+            .or_else(|| config.get("url"))
             .and_then(|v| v.as_str())
         {
             request.endpoint = Some(base_url.to_string());

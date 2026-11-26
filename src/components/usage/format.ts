@@ -1,3 +1,9 @@
+import {
+  isTraditionalChineseTag,
+  LANGUAGES,
+  languageFromLocale,
+  normalizeLanguageTag,
+} from "@/i18n/languages";
 import type { UsageDisplaySettings } from "@/types";
 export function parseFiniteNumber(value: unknown): number | null {
   if (typeof value === "number") {
@@ -254,11 +260,21 @@ export function formatMoneyTick(value: unknown, display: MoneyDisplay): string {
 /** 输出少于这个数的请求（工具调用这类）不算速度：0.1 秒回 15 个 token 会算出离谱的数。 */
 export const SPEED_MIN_OUTPUT_TOKENS = 100;
 
+/** 速度上限（tok/s）：超过该值属于整包突发或异常计时，不计入速度。 */
+export const SPEED_MAX_TPS = 10_000;
+
 interface OutputTokensPerSecondInput {
   outputTokens: unknown;
   latencyMs: unknown;
   firstTokenMs?: unknown;
   dataSource?: unknown;
+  statusCode?: unknown;
+}
+
+function isSuccessStatusOrUnset(statusCode: unknown): boolean {
+  if (statusCode == null) return true;
+  const code = parseFiniteNumber(statusCode);
+  return code != null && code >= 200 && code < 300;
 }
 
 /**
@@ -272,7 +288,9 @@ export function getGenerationMs(
   if (isSessionLogRequest(log)) return null;
   const latencyMs = parseFiniteNumber(log.latencyMs);
   const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
-  if (latencyMs == null || firstTokenMs == null) return null;
+  if (latencyMs == null || firstTokenMs == null || firstTokenMs < 0) {
+    return null;
+  }
   const generationMs = latencyMs - firstTokenMs;
   return generationMs > 0 ? generationMs : null;
 }
@@ -281,15 +299,47 @@ export function getGenerationMs(
 // 同一个网络包里，窗口只剩几毫秒，算出来的是传输突发而不是生成速度。
 export const SPEED_MIN_GENERATION_MS = 100;
 
-/** 这条请求能不能算速度：输出不少于 100 token，且生成时间不短于 100 毫秒。 */
-export function isSpeedEligible(log: OutputTokensPerSecondInput): boolean {
+/**
+ * 判断一条已达输出门槛、且带首字计时的成功路由请求是否因为传输突发/中转缓冲而被排除。
+ */
+export function isSpeedBurstExcluded(log: OutputTokensPerSecondInput): boolean {
+  if (isSessionLogRequest(log) || !isSuccessStatusOrUnset(log.statusCode)) {
+    return false;
+  }
   const outputTokens = parseFiniteNumber(log.outputTokens);
+  const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
+  const generationMs = getGenerationMs(log);
+  if (
+    outputTokens == null ||
+    outputTokens < SPEED_MIN_OUTPUT_TOKENS ||
+    firstTokenMs == null ||
+    firstTokenMs < 0
+  ) {
+    return false;
+  }
+  if (generationMs == null || generationMs < SPEED_MIN_GENERATION_MS) {
+    return true;
+  }
+  return outputTokens * 1000 > SPEED_MAX_TPS * generationMs;
+}
+
+/**
+ * 这条请求能不能算速度（与后端 `speed_eligible_sql` 同口径）：
+ * 成功的路由请求、输出 ≥ 100 token、生成时间 ≥ 100ms、速度 ≤ 10,000 tok/s。
+ */
+export function isSpeedEligible(log: OutputTokensPerSecondInput): boolean {
+  if (!isSuccessStatusOrUnset(log.statusCode)) return false;
+  const outputTokens = parseFiniteNumber(log.outputTokens);
+  const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
   const generationMs = getGenerationMs(log);
   return (
     outputTokens != null &&
     outputTokens >= SPEED_MIN_OUTPUT_TOKENS &&
+    firstTokenMs != null &&
+    firstTokenMs >= 0 &&
     generationMs != null &&
-    generationMs >= SPEED_MIN_GENERATION_MS
+    generationMs >= SPEED_MIN_GENERATION_MS &&
+    outputTokens * 1000 <= SPEED_MAX_TPS * generationMs
   );
 }
 
@@ -324,11 +374,13 @@ export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
 
 /**
  * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：会话日志导入、
- * 输出不少于 200 token、估算耗时不短于 1 秒。推出了首字的也照样按整段耗时算。
+ * 成功请求、输出不少于 200 token、估算耗时不短于 1 秒、估算速度不超过 10,000 tok/s。
+ * 推出了首字的也照样按整段耗时算。
  */
 export function isSpeedEstimateEligible(
   log: OutputTokensPerSecondInput,
 ): boolean {
+  if (!isSuccessStatusOrUnset(log.statusCode)) return false;
   const outputTokens = parseFiniteNumber(log.outputTokens);
   const latencyMs = parseFiniteNumber(log.latencyMs);
   return (
@@ -336,7 +388,8 @@ export function isSpeedEstimateEligible(
     outputTokens != null &&
     outputTokens >= SPEED_ESTIMATE_MIN_OUTPUT_TOKENS &&
     latencyMs != null &&
-    latencyMs >= SPEED_ESTIMATE_MIN_DURATION_MS
+    latencyMs >= SPEED_ESTIMATE_MIN_DURATION_MS &&
+    outputTokens * 1000 <= SPEED_MAX_TPS * latencyMs
   );
 }
 
@@ -437,36 +490,11 @@ export function formatTokensCompact(value: unknown, locale?: string): string {
   return String(num);
 }
 
-function normalizeLanguageTag(language: string): string {
-  return language.toLowerCase().replace(/_/g, "-");
-}
-
-function isTraditionalChineseLanguage(normalizedLanguage: string): boolean {
-  return (
-    normalizedLanguage === "zh-tw" ||
-    normalizedLanguage.startsWith("zh-tw-") ||
-    normalizedLanguage === "zh-hant" ||
-    normalizedLanguage.startsWith("zh-hant-") ||
-    normalizedLanguage === "zh-hk" ||
-    normalizedLanguage.startsWith("zh-hk-") ||
-    normalizedLanguage === "zh-mo" ||
-    normalizedLanguage.startsWith("zh-mo-")
-  );
-}
-
+/** 语言码或系统区域对应的日期数字 locale；空值用 en-US。 */
 export function getLocaleFromLanguage(language: string): string {
   if (!language) return "en-US";
-  const normalized = normalizeLanguageTag(language);
-  if (normalized === "zh") return "zh-CN";
-  if (isTraditionalChineseLanguage(normalized)) {
-    return "zh-TW";
-  }
-  if (normalized === "zh" || normalized.startsWith("zh-")) return "zh-CN";
-  if (normalized === "ja" || normalized.startsWith("ja-")) return "ja-JP";
-  if (normalized === "ko" || normalized.startsWith("ko-")) return "ko-KR";
-  if (normalized === "tr" || normalized.startsWith("tr-")) return "tr-TR";
-  if (normalized === "ru" || normalized.startsWith("ru-")) return "ru-RU";
-  return "en-US";
+  const id = languageFromLocale(normalizeLanguageTag(language));
+  return LANGUAGES.find((entry) => entry.id === id)!.locale;
 }
 
 interface I18nLike {
@@ -513,7 +541,7 @@ export function formatTokensShort(
   if (!Number.isFinite(value) || value <= 0) return "0";
   const decimals = compactDecimals;
   const normalizedLang = normalizeLanguageTag(lang);
-  if (isTraditionalChineseLanguage(normalizedLang)) {
+  if (isTraditionalChineseTag(normalizedLang)) {
     if (value >= 1e8) return `${(value / 1e8).toFixed(2)} 億`;
     if (value >= 1e4) return `${(value / 1e4).toFixed(decimals)} 萬`;
     return value.toLocaleString("zh-TW");

@@ -218,13 +218,14 @@ const sidebarApp = (name: string) =>
 
 const renderApp = (AppComponent: ComponentType) => {
   const client = new QueryClient();
-  return render(
+  const result = render(
     <QueryClientProvider client={client}>
       <Suspense fallback={<div data-testid="loading">loading</div>}>
         <AppComponent />
       </Suspense>
     </QueryClientProvider>,
   );
+  return { ...result, client };
 };
 
 describe("App integration with MSW", () => {
@@ -342,6 +343,35 @@ describe("App integration with MSW", () => {
     });
 
     await waitFor(() => expect(modeRequests).toBeGreaterThan(before));
+  });
+
+  // 托盘切到绑号的 Grok 官方卡时，后端可能把原 CLI 登录收进授权中心再换号
+  it("refreshes the xAI account list and Grok CLI quota after a grokbuild switch", async () => {
+    const { default: App } = await import("@/App");
+    const { client } = renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    // 授权中心状态在界面上有观察者，失效后会立刻重查，所以看 invalidateQueries 的调用
+    const invalidateSpy = vi.spyOn(client, "invalidateQueries");
+
+    emitTauriEvent("provider-switched", {
+      appType: "grokbuild",
+      providerId: "grok-official",
+    });
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["managed-auth-status", "xai_oauth"],
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["subscription", "quota", "grokbuild"],
+      });
+    });
   });
 
   it("resets provider view scroll when switching apps", async () => {

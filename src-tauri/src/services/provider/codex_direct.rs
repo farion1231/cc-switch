@@ -61,7 +61,7 @@ fn app() -> &'static str {
 /// 官方卡：`category == "official"`，或按 `is_codex_official_provider` 认出来的（早期
 /// 绑定托管账号时没存 category 的卡）。
 pub(crate) fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
         || crate::proxy::providers::is_codex_official_provider(provider)
 }
 
@@ -464,6 +464,7 @@ pub(crate) fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> 
 /// 登录（登录暂存第一次建立时用）。
 struct RowFacts {
     retired: Vec<KnownTable>,
+    unverified_retired: Vec<String>,
     third_party_keys: Vec<String>,
     official_logins: Vec<Value>,
 }
@@ -471,10 +472,16 @@ struct RowFacts {
 fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
     let mut facts = RowFacts {
         retired: Vec::new(),
+        unverified_retired: crate::codex_history_migration::remembered_legacy_codex_route_ids(),
         third_party_keys: Vec::new(),
         official_logins: Vec::new(),
     };
-    for provider in db.get_all_providers(app())?.values() {
+    // 写的是另一行：读不出来的行没有能认出来的内容（和旧版把它读成空配置一样），跳过。
+    for provider in db
+        .get_provider_rows(&AppType::Codex)?
+        .into_readable("Codex 写入前收集各行的凭据")
+        .values()
+    {
         let auth = provider.settings_config.get("auth");
         if is_official(provider) {
             if managed_account(provider).is_none() {
@@ -485,6 +492,20 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
                 }
             }
             continue;
+        }
+        facts
+            .unverified_retired
+            .extend(crate::codex_history_migration::unverified_legacy_codex_route_ids(provider));
+        for route in
+            crate::codex_history_migration::legacy_codex_route_evidence(&provider.settings_config)?
+        {
+            // The id remains managed even when its live endpoint no longer
+            // matches the saved evidence (e.g. a renamed card or edited URL).
+            facts.unverified_retired.push(route.id.clone());
+            facts.retired.push(KnownTable {
+                id: route.id,
+                base_url: route.base_url,
+            });
         }
         if let Some(key) = auth.and_then(extract_codex_auth_api_key) {
             facts.third_party_keys.push(key);
@@ -781,6 +802,7 @@ pub(crate) fn plan(
         route,
         catalog: catalog.is_some(),
         retired: facts.retired,
+        unverified_retired: facts.unverified_retired,
         preserve_retired_routes:
             crate::codex_history_migration::history_may_reference_legacy_routes(),
     };

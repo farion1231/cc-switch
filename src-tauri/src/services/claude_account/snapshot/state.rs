@@ -1,5 +1,6 @@
 //! 本机状态文件（`<数据目录>/claude-account-snapshot.json`，不同步）和切换日志。
 
+use crate::sync_utils::MutexExt;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -77,9 +78,7 @@ static STATE: Mutex<()> = Mutex::new(());
 
 /// 在锁里重读状态、改、落盘，返回改后的状态。
 pub fn update_state(data_dir: &Path, f: impl FnOnce(&mut State)) -> Result<State, AppError> {
-    let _guard = STATE
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _guard = STATE.lock_recover();
     let mut state = load_state(data_dir);
     f(&mut state);
     save_state(data_dir, &state)?;

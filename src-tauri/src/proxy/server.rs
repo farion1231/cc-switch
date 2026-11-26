@@ -10,6 +10,7 @@
 
 use super::{
     browser_guard,
+    copilot_auto_session::AutoSessionManager,
     failover_switch::FailoverSwitchManager,
     handlers,
     log_codes::srv as log_srv,
@@ -26,7 +27,7 @@ use axum::{
     Router,
 };
 use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tokio::sync::{oneshot, RwLock};
 use tokio::task::JoinHandle;
@@ -46,6 +47,8 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
+    /// Copilot Auto 会话管理器，跨请求复用 /auto 选模结果与 token
+    pub copilot_auto_sessions: Arc<AutoSessionManager>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -89,6 +92,7 @@ impl ProxyServer {
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            copilot_auto_sessions: Arc::new(AutoSessionManager::default()),
             app_handle,
             failover_manager,
         };
@@ -107,10 +111,7 @@ impl ProxyServer {
             return Err(ProxyError::AlreadyRunning);
         }
 
-        let addr: SocketAddr =
-            format!("{}:{}", self.config.listen_address, self.config.listen_port)
-                .parse()
-                .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?;
+        let addr = listen_socket_addr(&self.config.listen_address, self.config.listen_port)?;
 
         // 创建关闭通道
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -129,8 +130,12 @@ impl ProxyServer {
 
         log::info!("[{}] 代理服务器启动于 {local_addr}", log_srv::STARTED);
 
-        // 更新全局代理端口，用于系统代理检测
+        // 更新全局代理端口，用于系统代理检测；并登记活跃监听器以阻止内部请求回打自身代理
         crate::proxy::http_client::set_proxy_port(actual_port);
+        let active_listener_guard = crate::proxy::http_client::register_active_proxy_listener(
+            self.config.listen_address.clone(),
+            actual_port,
+        );
 
         // 保存关闭句柄
         *self.shutdown_tx.write().await = Some(shutdown_tx);
@@ -149,11 +154,12 @@ impl ProxyServer {
         // 开启 preserve_header_case 以捕获客户端请求头的原始大小写
         let state = self.state.clone();
         let handle = tokio::spawn(async move {
+            let _active_listener_guard = active_listener_guard;
             let mut shutdown_rx = shutdown_rx;
             loop {
                 tokio::select! {
                     result = listener.accept() => {
-                        let (stream, _remote_addr) = match result {
+                        let (stream, remote_addr) = match result {
                             Ok(v) => v,
                             Err(e) => {
                                 log::error!("[{SRV}] accept 失败: {e}", SRV = log_srv::ACCEPT_ERR);
@@ -164,6 +170,11 @@ impl ProxyServer {
 
                         let app = app.clone();
                         tokio::spawn(async move {
+                            let conn_addrs = browser_guard::ConnectionAddrs {
+                                remote: remote_addr,
+                                local: stream.local_addr().ok(),
+                            };
+
                             // Peek raw TCP bytes to capture original header casing
                             // before hyper parses (and lowercases) the header names.
                             let original_cases = {
@@ -194,6 +205,7 @@ impl ProxyServer {
 
                                     // Insert our own header case map alongside hyper's internal one
                                     parts.extensions.insert(cases);
+                                    parts.extensions.insert(conn_addrs);
 
                                     let body = axum::body::Body::new(body);
                                     let axum_req = http::Request::from_parts(parts, body);
@@ -422,7 +434,7 @@ impl ProxyServer {
             // Gemini 的 GA 版本也叫 /v1，给原 SDK 留一条出口
             .route("/gemini/v1/*path", any(handlers::handle_gemini))
             // 提高默认请求体大小限制（避免 413 Payload Too Large）
-            .layer(DefaultBodyLimit::max(200 * 1024 * 1024))
+            .layer(DefaultBodyLimit::max(handlers::MAX_REQUEST_BODY_BYTES))
             // 拒绝网页发来的请求（最外层，读请求体之前）：见 browser_guard
             .layer(middleware::from_fn_with_state(
                 self.state.clone(),
@@ -436,19 +448,9 @@ impl ProxyServer {
         *self.state.config.write().await = config.clone();
     }
 
-    /// 热更新熔断器配置
-    ///
-    /// 将新配置应用到所有已创建的熔断器实例
-    pub async fn update_circuit_breaker_configs(
-        &self,
-        config: super::circuit_breaker::CircuitBreakerConfig,
-    ) {
-        self.state.provider_router.update_all_configs(config).await;
-    }
-
     pub async fn update_circuit_breaker_config_for_app(
         &self,
-        app_type: &str,
+        app_type: &crate::app_config::AppType,
         config: super::circuit_breaker::CircuitBreakerConfig,
     ) {
         self.state
@@ -457,18 +459,45 @@ impl ProxyServer {
             .await;
     }
 
-    /// 重置指定 Provider 的熔断器
-    pub async fn reset_provider_circuit_breaker(&self, provider_id: &str, app_type: &str) {
+    pub async fn forget_circuit_breakers(
+        &self,
+        app_type: &crate::app_config::AppType,
+        provider_id: Option<&str>,
+    ) {
         self.state
             .provider_router
-            .reset_provider_breaker(provider_id, app_type)
+            .forget(app_type, provider_id)
             .await;
     }
+
+    #[cfg(test)]
+    pub(crate) fn provider_router(&self) -> Arc<ProviderRouter> {
+        self.state.provider_router.clone()
+    }
+}
+
+/// 监听地址 + 端口拼成 SocketAddr。不能拼字符串再 parse：裸 IPv6（`::1`）拼出来是
+/// `::1:15721`，`SocketAddr` 只认 `[::1]:15721`（#9743）。方括号写法也收；`localhost`
+/// 是旧库可能留下的值，按 IPv4 回环处理（设置页保存时也是这么改写的）。
+fn listen_socket_addr(listen_address: &str, port: u16) -> Result<SocketAddr, ProxyError> {
+    let host = listen_address.trim();
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    let ip = if host.eq_ignore_ascii_case("localhost") {
+        IpAddr::V4(Ipv4Addr::LOCALHOST)
+    } else {
+        host.parse::<IpAddr>()
+            .map_err(|e| ProxyError::BindFailed(format!("无效的地址: {e}")))?
+    };
+    Ok(SocketAddr::new(ip, port))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_config::AppType;
     use crate::provider::{Provider, ProviderMeta};
     use crate::AppError;
     use axum::http::{header, HeaderMap, StatusCode};
@@ -502,6 +531,47 @@ mod tests {
             0,
             "listener socket is inheritable"
         );
+    }
+
+    #[test]
+    fn listen_address_accepts_bare_and_bracketed_ipv6() {
+        for (input, expected) in [
+            ("127.0.0.1", "127.0.0.1:15721"),
+            ("0.0.0.0", "0.0.0.0:15721"),
+            ("::1", "[::1]:15721"),
+            ("[::1]", "[::1]:15721"),
+            ("::", "[::]:15721"),
+            (" ::1 ", "[::1]:15721"),
+            ("localhost", "127.0.0.1:15721"),
+        ] {
+            let addr = listen_socket_addr(input, 15721).expect(input);
+            assert_eq!(addr.to_string(), expected, "{input}");
+        }
+        for input in ["", "not-an-ip", "[::1", "::1:15721", "999.0.0.1"] {
+            assert!(listen_socket_addr(input, 15721).is_err(), "{input}");
+        }
+    }
+
+    /// IPv6 回环上能起服务；本机没有 IPv6 时跳过。
+    #[tokio::test]
+    async fn proxy_starts_on_ipv6_loopback() {
+        if std::net::TcpListener::bind("[::1]:0").is_err() {
+            return;
+        }
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_address: "::1".to_string(),
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start proxy on ::1");
+        assert_ne!(info.port, 0);
+        std::net::TcpStream::connect(("::1", info.port)).expect("connect to [::1]");
+        proxy.stop().await.expect("stop test proxy");
     }
 
     /// Codex 内置的 openai 先用 WebSocket 连 Responses：握手回 426 它才立刻改走 HTTP。
@@ -599,6 +669,58 @@ mod tests {
         proxy.stop().await.expect("stop test proxy");
     }
 
+    /// 即使代理监听在 0.0.0.0，来自本机回环的 DNS 重绑定请求仍必须被 Host 规则拦截。
+    #[tokio::test]
+    async fn wildcard_listener_still_rejects_loopback_dns_rebinding() {
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_address: "0.0.0.0".to_string(),
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let info = proxy.start().await.expect("start wildcard proxy");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+
+        let rebinding = client
+            .get(format!("http://127.0.0.1:{}/status", info.port))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "0.0.0.0 listener must still reject DNS rebinding Host headers from loopback peers"
+        );
+
+        let local_cli = client
+            .get(format!("http://127.0.0.1:{}/health", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(local_cli.status(), StatusCode::OK);
+
+        // Reuse the pooled keep-alive connection from the same reqwest::Client to verify
+        // ConnectionAddrs remains attached across subsequent requests on the same TCP stream.
+        let keep_alive_rebinding = client
+            .get(format!("http://127.0.0.1:{}/status", info.port))
+            .header(header::HOST, format!("rebind.evil.example:{}", info.port))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            keep_alive_rebinding.status(),
+            StatusCode::FORBIDDEN,
+            "keep-alive connection reuse on 0.0.0.0 listener must still reject DNS rebinding Host headers"
+        );
+
+        proxy.stop().await.expect("stop wildcard proxy");
+    }
+
     /// Regression for #3787: a provider accidentally pointing at the proxy must
     /// fail before it creates another request, even with a dynamically bound port.
     #[tokio::test]
@@ -635,8 +757,9 @@ mod tests {
                 is_full_url: Some(full_url),
                 ..ProviderMeta::default()
             });
-            db.save_provider("codex", &provider).unwrap();
-            db.set_current_provider("codex", &provider.id).unwrap();
+            db.save_provider(&AppType::Codex, &provider).unwrap();
+            db.set_current_provider(&AppType::Codex, &provider.id)
+                .unwrap();
             let before = proxy.get_status().await.total_requests;
             let request = client
                 .post(format!(
@@ -729,7 +852,6 @@ mod tests {
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -799,9 +921,9 @@ mod tests {
                 }),
                 None,
             );
-            db.save_provider("codex", &provider)
+            db.save_provider(&AppType::Codex, &provider)
                 .expect("save pasted base URL provider");
-            db.set_current_provider("codex", &provider.id)
+            db.set_current_provider(&AppType::Codex, &provider.id)
                 .expect("select pasted base URL provider");
 
             let response = client
@@ -834,6 +956,122 @@ mod tests {
                 Some("Bearer upstream-secret")
             );
         }
+
+        proxy.stop().await.expect("stop test proxy");
+        mock_handle.abort();
+    }
+
+    /// Codex 对第三方原生 Responses 上游发起 V2 压缩（`/responses`，input 末尾是
+    /// `compaction_trigger`）时，上游只回普通消息，代理要补上 Codex 必需的 compaction 条目。
+    /// `/responses/compact` 是另一套接口，同样的请求体原样透传，不补条目。
+    #[tokio::test]
+    async fn codex_compaction_item_is_added_on_responses_but_not_on_compact() {
+        const UPSTREAM_SSE: &str = "event: response.output_item.done\n\
+data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"summary so far\"}]}}\n\n\
+event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}}\n\n";
+        let paths = Arc::new(Mutex::new(Vec::<String>::new()));
+        let handler = {
+            let paths = paths.clone();
+            move |request: axum::extract::Request| {
+                let paths = paths.clone();
+                async move {
+                    paths.lock().await.push(request.uri().path().to_string());
+                    (
+                        StatusCode::OK,
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        UPSTREAM_SSE,
+                    )
+                }
+            }
+        };
+        let mock_app = Router::new()
+            .route("/v1/responses", post(handler.clone()))
+            .route("/v1/responses/compact", post(handler));
+        let mock_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind mock upstream");
+        let mock_addr = mock_listener.local_addr().expect("mock upstream address");
+        let mock_handle = tokio::spawn(async move {
+            axum::serve(mock_listener, mock_app)
+                .await
+                .expect("serve mock upstream");
+        });
+
+        let db = Arc::new(Database::memory().expect("memory database"));
+        let provider = Provider::with_id(
+            "relay".to_string(),
+            "Relay".to_string(),
+            json!({
+                "base_url": format!("http://{mock_addr}/v1"),
+                "auth": {"OPENAI_API_KEY": "upstream-secret"}
+            }),
+            None,
+        );
+        db.save_provider(&AppType::Codex, &provider)
+            .expect("save provider");
+        db.set_current_provider(&AppType::Codex, &provider.id)
+            .expect("select provider");
+        let proxy = ProxyServer::new(
+            ProxyConfig {
+                listen_port: 0,
+                ..ProxyConfig::default()
+            },
+            db,
+            None,
+        );
+        let proxy_info = proxy.start().await.expect("start test proxy");
+        let client = reqwest::Client::new();
+        let compaction_body = json!({
+            "model": "gpt-5",
+            "stream": true,
+            "input": [
+                {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+                {"type": "compaction_trigger"}
+            ]
+        });
+
+        let mut bodies = Vec::new();
+        for path in ["/v1/responses", "/v1/responses/compact"] {
+            let response = client
+                .post(format!("http://127.0.0.1:{}{path}", proxy_info.port))
+                .json(&compaction_body)
+                .send()
+                .await
+                .expect("send compaction request");
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            bodies.push(response.text().await.expect("read response body"));
+        }
+        assert_eq!(
+            *paths.lock().await,
+            vec![
+                "/v1/responses".to_string(),
+                "/v1/responses/compact".to_string()
+            ]
+        );
+
+        let compaction_items = |body: &str| {
+            body.split("\n\n")
+                .filter_map(|block| {
+                    block
+                        .lines()
+                        .find_map(|line| line.strip_prefix("data: "))
+                        .and_then(|data| serde_json::from_str::<Value>(data).ok())
+                })
+                .filter(|event| {
+                    event["type"] == "response.output_item.done"
+                        && event["item"]["type"] == "compaction"
+                })
+                .count()
+        };
+        assert_eq!(compaction_items(&bodies[0]), 1, "{}", bodies[0]);
+        assert!(
+            bodies[0].contains("ccswitch-compaction-v1:"),
+            "{}",
+            bodies[0]
+        );
+        assert_eq!(compaction_items(&bodies[1]), 0, "{}", bodies[1]);
+        assert!(bodies[1].contains("summary so far"), "{}", bodies[1]);
 
         proxy.stop().await.expect("stop test proxy");
         mock_handle.abort();
@@ -896,16 +1134,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: true,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -985,9 +1222,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL images provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL images provider");
 
         let response = client
@@ -1106,16 +1343,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: true,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -1198,9 +1434,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL images edit provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL images edit provider");
 
         let response = client
@@ -1331,16 +1567,15 @@ mod tests {
             }),
             None,
         );
-        db.save_provider("codex", &provider)
+        db.save_provider(&AppType::Codex, &provider)
             .expect("save test provider");
-        db.set_current_provider("codex", &provider.id)
+        db.set_current_provider(&AppType::Codex, &provider.id)
             .expect("select test provider");
 
         let proxy = ProxyServer::new(
             ProxyConfig {
                 listen_port: 0,
                 enable_logging: false,
-                non_streaming_timeout: 10,
                 ..ProxyConfig::default()
             },
             db.clone(),
@@ -1403,9 +1638,9 @@ mod tests {
             is_full_url: Some(true),
             ..ProviderMeta::default()
         });
-        db.save_provider("codex", &full_url_provider)
+        db.save_provider(&AppType::Codex, &full_url_provider)
             .expect("save full URL provider");
-        db.set_current_provider("codex", &full_url_provider.id)
+        db.set_current_provider(&AppType::Codex, &full_url_provider.id)
             .expect("select full URL provider");
 
         let response = client

@@ -1,10 +1,13 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CredentialStatus } from "@/types/subscription";
 
 export type ManagedAuthProvider =
   | "github_copilot"
   | "codex_oauth"
   | "xai_oauth"
   | "agy_oauth"
+  | "workbuddy_account"
+  | "codebuddy_oauth"
   | "claude_official";
 
 export type CodexLoginMethod = "browser" | "device_code";
@@ -33,6 +36,8 @@ export interface ManagedAuthAccount {
   reauth_required?: boolean;
   /** xAI-only: the refresh credential is invalid and the account is unusable. */
   requires_reauth: boolean;
+  /** WorkBuddy-only: the plaintext account type from the desktop sign-in. */
+  account_kind?: string;
   /** Claude official only: when the sign-in of an account not in Claude Code's default slot expires (ms, as last recorded). */
   login_expires_at?: number | null;
   /** Claude official only: plan (`pro` / `max` / `team` / `enterprise`) from the account's sign-in. */
@@ -96,14 +101,6 @@ export async function authCancelLogin(
   });
 }
 
-export async function authListAccounts(
-  authProvider: ManagedAuthProvider,
-): Promise<ManagedAuthAccount[]> {
-  return invoke<ManagedAuthAccount[]>("auth_list_accounts", {
-    authProvider,
-  });
-}
-
 export async function authGetStatus(
   authProvider: ManagedAuthProvider,
 ): Promise<ManagedAuthStatus> {
@@ -145,6 +142,180 @@ export async function agyAccountIsRunning(): Promise<boolean> {
   return invoke<boolean>("agy_account_is_running");
 }
 
+/** WorkBuddy 桌面端这边的登录情况：在不在运行、有没有登录、认不认得出、收录过没有。 */
+export interface WorkBuddyLiveState {
+  running: boolean;
+  signedIn: boolean;
+  recognized: boolean;
+  imported: boolean;
+  /** 最近一次「重新登录」的结果（后端会留一会儿，按 id 只提示一次） */
+  reauth?: WorkBuddyReauthOutcome | null;
+}
+
+/** 「重新登录」的结果：登回了原来的号（替换了它的快照），或登进了别的号（按普通收录处理）。 */
+export interface WorkBuddyReauthOutcome {
+  /** 这次结果的标识（完成时刻，毫秒） */
+  id: number;
+  targetId: string;
+  targetLogin: string;
+  accountId: string;
+  login: string;
+  /** 登回的就是发起重新登录的那个号 */
+  sameAccount: boolean;
+  /** 登进了别的号，而且是新收录的 */
+  created: boolean;
+}
+
+export interface WorkBuddyImportResult {
+  account: ManagedAuthAccount;
+  /** 新收录的；false 表示这个号已在列表里，只更新了副本 */
+  created: boolean;
+}
+
+export async function workbuddyAccountLiveState(): Promise<WorkBuddyLiveState> {
+  return invoke<WorkBuddyLiveState>("workbuddy_account_live_state");
+}
+
+/** 收录 WorkBuddy 当前登录的账号（已收录的就更新副本）。 */
+export async function workbuddyAccountImportCurrent(): Promise<WorkBuddyImportResult> {
+  return invoke<WorkBuddyImportResult>("workbuddy_account_import_current");
+}
+
+/**
+ * 先收录当前账号，再在本机写登出标记，让 WorkBuddy 下次打开停在登录页
+ * （不调用服务端登出）。要求 WorkBuddy 已退出。
+ *
+ * 传 `reauthAccountId` 是「重新登录」这个账号：之后登回它时替换它的旧快照，结果经
+ * `workbuddyAccountLiveState` 的 `reauth` 告诉界面。WorkBuddy 运行中时照样报错，但目标已记下。
+ */
+export async function workbuddyAccountPrepareNewLogin(
+  reauthAccountId?: string,
+): Promise<ManagedAuthAccount | null> {
+  return invoke<ManagedAuthAccount | null>(
+    "workbuddy_account_prepare_new_login",
+    { reauthAccountId: reauthAccountId ?? null },
+  );
+}
+
+export async function workbuddyAccountOpenApp(): Promise<void> {
+  return invoke("workbuddy_account_open_app");
+}
+
+/** 一次经 WorkBuddy 查到的套餐与积分（缓存在 CC Switch 的账号表里）。 */
+export interface WorkBuddyQuotaSnapshot {
+  /** 套餐名（后端给的，如「体验版」）；没有时缺省 */
+  planName?: string | null;
+  isPaid: boolean;
+  /** 本周期积分：总量 / 剩余 / 已用 */
+  total: number;
+  remaining: number;
+  used: number;
+  /** 企业号限额为「不限」：这时 total / remaining 没有意义，只看 used */
+  unlimited?: boolean;
+  /** 查询时刻（毫秒） */
+  queriedAt: number;
+  /** 还有剩余的各个资源包各自什么时候到期，按到期先后排；缺省表示这次没查到明细 */
+  expiries?: WorkBuddyCreditExpiry[] | null;
+}
+
+export interface WorkBuddyCreditExpiry {
+  credits: number;
+  /** 到期时刻（毫秒）；不会过期时为 null */
+  expiresAt: number | null;
+}
+
+/** 这次没刷新成的原因：WorkBuddy 没运行 / 不是它当前登着的号 / 它没登录 / 其他失败 */
+export type WorkBuddyQuotaUnavailable =
+  | "not_running"
+  | "not_current"
+  | "not_signed_in"
+  | "failed";
+
+export interface WorkBuddyQuota {
+  /** 最近一次成功的结果（这次刚查的或上次缓存的） */
+  snapshot: WorkBuddyQuotaSnapshot | null;
+  /** 是 WorkBuddy 当前登着的号 */
+  current: boolean;
+  /** null 表示 snapshot 是新鲜的 */
+  unavailable: WorkBuddyQuotaUnavailable | null;
+  error: string | null;
+}
+
+/**
+ * WorkBuddy 账号的套餐与积分。只有 WorkBuddy 正在运行、且就是它当前登着的号时才经它的本地接口
+ * 只读查询（5 分钟内走缓存，`force` 跳过）；其余情况给上次缓存的结果和原因。
+ */
+export async function workbuddyAccountQuota(
+  accountId: string,
+  force = false,
+): Promise<WorkBuddyQuota> {
+  return invoke<WorkBuddyQuota>("workbuddy_account_quota", {
+    accountId,
+    force,
+  });
+}
+/** CodeBuddy 凭据文件现在的状态（授权中心顶部的「收录当前账号」提示用）。 */
+export interface CodebuddyLiveSummary {
+  state: "none" | "logged_out" | "collected" | "uncollected" | "unrecognized";
+  account_id: string | null;
+  label: string | null;
+  domain: string | null;
+}
+
+export async function codebuddyAccountLive(): Promise<CodebuddyLiveSummary> {
+  return invoke<CodebuddyLiveSummary>("codebuddy_account_live");
+}
+
+/** 收录 CodeBuddy 当前登录的账号（已收录就更新副本）。 */
+export async function codebuddyAccountImportCurrent(): Promise<ManagedAuthAccount> {
+  return invoke<ManagedAuthAccount>("codebuddy_account_import_current");
+}
+
+/** 登录等待中再开一个跑 `codebuddy` 的终端（不重置这次登录）。 */
+export async function codebuddyAccountOpenLoginTerminal(): Promise<void> {
+  return invoke("codebuddy_account_open_login_terminal");
+}
+
+/** CodeBuddy 账号的套餐与积分（用该账号副本里的令牌只读查询，不切号、不续期）。 */
+export interface CodebuddyQuota {
+  credentialStatus: CredentialStatus;
+  success: boolean;
+  /** 套餐名（后端按语言给的）；企业账号为 null */
+  planName: string | null;
+  isPaid: boolean;
+  enterprise: boolean;
+  /** 企业额度不限量 */
+  unlimited: boolean;
+  /** 本周期积分：总量 / 剩余 / 已用 */
+  total: number;
+  remaining: number;
+  used: number;
+  /** 还有剩余的各资源包各自什么时候到期，按到期先后排；null 表示这次没查到套餐明细 */
+  expiries: WorkBuddyCreditExpiry[] | null;
+  error: string | null;
+  queriedAt: number | null;
+}
+
+/** 5 分钟内重复查询走后端缓存；`force` 跳过缓存（手动刷新）。 */
+export async function codebuddyAccountQuota(
+  accountId: string,
+  lang: string,
+  force = false,
+): Promise<CodebuddyQuota> {
+  return invoke<CodebuddyQuota>("codebuddy_account_quota", {
+    accountId,
+    lang,
+    force,
+  });
+}
+
+/** 供应商列表里 CodeBuddy 官方登录卡的「切换」：把 CodeBuddy 的登录换成卡片绑定的账号，返回账号 ID。 */
+export async function codebuddyAccountSwitchProvider(
+  providerId: string,
+): Promise<string> {
+  return invoke<string>("codebuddy_account_switch_provider", { providerId });
+}
+
 /** Claude 官方账号登录：浏览器回不到本机时，把落地页地址或页面上的代码交给正在等待的登录。 */
 export async function claudeAccountSubmitPaste(
   flowId: string,
@@ -166,17 +337,3 @@ export interface ClaudeLoginSwitchStatus {
 export async function getClaudeLoginSwitch(): Promise<ClaudeLoginSwitchStatus> {
   return invoke<ClaudeLoginSwitchStatus>("get_claude_login_switch");
 }
-
-export const authApi = {
-  authStartLogin,
-  authPollForAccount,
-  authCancelLogin,
-  authListAccounts,
-  authGetStatus,
-  authRemoveAccount,
-  authSetDefaultAccount,
-  authLogout,
-  agyAccountIsRunning,
-  claudeAccountSubmitPaste,
-  getClaudeLoginSwitch,
-};

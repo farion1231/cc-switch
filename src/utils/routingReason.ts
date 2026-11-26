@@ -6,7 +6,7 @@ import {
   extractCodexWireApi,
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { providerNeedsRouting } from "@/utils/providerCapabilities";
 
 /**

@@ -4,12 +4,17 @@
 //! the fresh input comes from `copilotUsage.tokenDetails` (`input`) when present, otherwise
 //! from `inputTokens - cacheReadTokens - cacheWriteTokens`. Older CLI versions do not write
 //! these events; their sessions are not imported rather than estimated from totals.
+//!
+//! 记录里的 model 只是发给上游的 wireModel，不带供应商。归属看会话当时选的模型：
+//! `session.start.data.selectedModel`，之后 `session.model_change.data.newModel`。选的是
+//! `<卡片 id>/<模型>` 且卡片在库里时记到那张卡，否则记 `_copilot_session`（官方模型）。
+use crate::app_config::AppType;
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
+use crate::proxy::usage::parser::TokenUsage;
 use crate::services::{
     session_usage::{
-        load_sync_cursors, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
+        cost_columns, metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult,
     },
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
     usage_stats::find_model_pricing,
@@ -17,18 +22,35 @@ use crate::services::{
 use rust_decimal::Decimal;
 use serde_json::Value;
 use std::{
+    collections::HashSet,
     fs,
     io::{BufRead, BufReader},
     path::Path,
 };
 
-pub fn sync_copilot_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_sessions(db, &crate::copilot_config::session_state_dir())
+pub(crate) fn sync_copilot_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_sessions_with_cursors(db, &crate::copilot_config::session_state_dir(), cursors)
 }
 
+#[cfg(test)]
 fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppError> {
+    sync_sessions_with_cursors(
+        db,
+        root,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_sessions_with_cursors(
+    db: &Database,
+    root: &Path,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
-    let cursors = load_sync_cursors(db)?;
+    let provider_ids: HashSet<String> = db.get_provider_ids(&AppType::Copilot)?;
     let Ok(sessions) = fs::read_dir(root) else {
         return Ok(result);
     };
@@ -53,6 +75,7 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
             &session.file_name().to_string_lossy(),
             &key,
             modified,
+            &provider_ids,
         ) {
             Ok(part) => result.merge(part),
             Err(error) => result.errors.push(format!(
@@ -64,8 +87,31 @@ fn sync_sessions(db: &Database, root: &Path) -> Result<SessionSyncResult, AppErr
     Ok(result)
 }
 
+/// 官方模型（以及选了已不在库里的卡）的用量归到这个占位供应商。
+const SESSION_PROVIDER_ID: &str = "_copilot_session";
+
+/// 会话里换模型的事件带出的新选择。
+fn selection_of(event: &Value) -> Option<&str> {
+    let data = &event["data"];
+    match event["type"].as_str()? {
+        "session.start" | "session.resume" => data["selectedModel"].as_str(),
+        "session.model_change" => data["newModel"].as_str(),
+        _ => None,
+    }
+}
+
+/// 选中的是 `<卡片 id>/<模型>` 且卡片在库里时归到那张卡。
+fn provider_for_selection(selected: Option<&str>, provider_ids: &HashSet<String>) -> String {
+    selected
+        .and_then(crate::copilot_config::selected_provider_name)
+        .filter(|id| provider_ids.contains(*id))
+        .unwrap_or(SESSION_PROVIDER_ID)
+        .to_string()
+}
+
 struct Record {
     request: String,
+    provider_id: String,
     model: String,
     usage: TokenUsage,
     created_ms: i64,
@@ -73,7 +119,7 @@ struct Record {
     first_token_ms: Option<i64>,
 }
 
-fn record_of(session: &str, event: &Value) -> Option<Record> {
+fn record_of(session: &str, event: &Value, provider_id: String) -> Option<Record> {
     if event["type"] != "session.usage_record" {
         return None;
     }
@@ -123,7 +169,9 @@ fn record_of(session: &str, event: &Value) -> Option<Record> {
         .filter(|ms| *ms > 0.0)
         .map(|ms| ms.round() as i64);
     Some(Record {
+        // 去重键不含供应商：老记录不会因为归属规则变化重新导入。
         request: format!("copilot:{session}:{identity}"),
+        provider_id,
         usage: TokenUsage {
             input_tokens: clamp(input),
             output_tokens: clamp(output),
@@ -146,12 +194,14 @@ fn sync_file(
     session: &str,
     key: &str,
     modified: i64,
+    provider_ids: &HashSet<String>,
 ) -> Result<SessionSyncResult, AppError> {
     let file = fs::File::open(path).map_err(|error| AppError::io(path, error))?;
     let mut reader = BufReader::new(file);
     let mut buffer = Vec::new();
     let mut bytes = 0i64;
     let mut records = Vec::new();
+    let mut selected: Option<String> = None;
     let mut result = SessionSyncResult {
         files_scanned: 1,
         ..Default::default()
@@ -172,7 +222,12 @@ fn sync_file(
         let Ok(event) = serde_json::from_slice::<Value>(&buffer) else {
             continue;
         };
-        if let Some(record) = record_of(session, &event) {
+        if let Some(model) = selection_of(&event) {
+            selected = Some(model.to_string());
+            continue;
+        }
+        let provider_id = provider_for_selection(selected.as_deref(), provider_ids);
+        if let Some(record) = record_of(session, &event, provider_id) {
             records.push(record);
         }
     }
@@ -188,13 +243,18 @@ fn sync_file(
             result.skipped += 1;
             continue;
         }
-        let amounts = costs(&tx, &record.model, &record.usage);
+        let amounts = cost_columns(
+            "copilot",
+            &record.usage,
+            find_model_pricing(&tx, &record.model).as_ref(),
+            Decimal::ONE,
+        );
         tx.execute(
             "INSERT OR IGNORE INTO proxy_request_logs (
             request_id, provider_id, app_type, model, request_model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, session_id, provider_type, is_streaming, cost_multiplier, created_at, data_source, input_token_semantics
-        ) VALUES (?1, '_copilot_session', 'copilot', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'copilot_session', 1, '1', ?13, 'copilot_session', ?14)",
+        ) VALUES (?1, ?17, 'copilot', ?2, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?15, ?16, 200, ?12, 'copilot_session', 1, '1', ?13, 'copilot_session', ?14)",
             rusqlite::params![
                 record.request,
                 record.model,
@@ -211,7 +271,8 @@ fn sync_file(
                 record.created_ms / 1000,
                 INPUT_TOKEN_SEMANTICS_FRESH,
                 record.latency_ms,
-                record.first_token_ms
+                record.first_token_ms,
+                record.provider_id
             ],
         )?;
         result.imported += 1;
@@ -219,23 +280,6 @@ fn sync_file(
     update_sync_state_on_conn(&tx, key, modified, bytes)?;
     tx.commit()?;
     Ok(result)
-}
-
-/// 五个金额（输入、输出、缓存读、缓存写、合计）；查不到价格的记 0，不代表免费。
-fn costs(conn: &rusqlite::Connection, model: &str, usage: &TokenUsage) -> [String; 5] {
-    find_model_pricing(conn, model)
-        .map(|pricing| {
-            let cost = CostCalculator::calculate_for_app("copilot", usage, &pricing, Decimal::ONE);
-            [
-                cost.input_cost,
-                cost.output_cost,
-                cost.cache_read_cost,
-                cost.cache_creation_cost,
-                cost.total_cost,
-            ]
-        })
-        .unwrap_or([Decimal::ZERO; 5])
-        .map(|value| value.to_string())
 }
 
 #[cfg(test)]
@@ -361,6 +405,57 @@ mod tests {
             assert!(messages.iter().any(|m| m.role == "user"));
             assert!(messages.iter().any(|m| m.role == "assistant"));
         }
+    }
+
+    #[test]
+    fn copilot_usage_is_attributed_to_the_selected_byok_card() {
+        let db = Database::memory().unwrap();
+        let card = crate::provider::Provider::with_id(
+            "deepseek".into(),
+            "DeepSeek".into(),
+            json!({"provider":{"baseUrl":"https://api.deepseek.com/v1"},"models":[{"id":"deepseek-v4"}]}),
+            None,
+        );
+        db.save_provider(&AppType::Copilot, &card).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        write_session(
+            root.path(),
+            &[
+                json!({"type":"session.start","data":{"selectedModel":"deepseek/deepseek-v4"}}),
+                usage_event("u1", true),
+                json!({"type":"session.model_change","data":{"newModel":"gpt-5-mini"}}),
+                usage_event("u2", true),
+                json!({"type":"session.model_change","data":{"newModel":"ghost/x"}}),
+                usage_event("u3", true),
+                json!({"type":"session.model_change","data":{"newModel":"deepseek/deepseek-v4"}}),
+                usage_event("u4", true),
+            ],
+        );
+        assert_eq!(sync_sessions(&db, root.path()).unwrap().imported, 4);
+        let conn = db.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT request_id, provider_id FROM proxy_request_logs ORDER BY request_id")
+            .unwrap();
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("copilot:session-1:u1".to_string(), "deepseek".to_string()),
+                (
+                    "copilot:session-1:u2".to_string(),
+                    SESSION_PROVIDER_ID.to_string()
+                ),
+                (
+                    "copilot:session-1:u3".to_string(),
+                    SESSION_PROVIDER_ID.to_string()
+                ),
+                ("copilot:session-1:u4".to_string(), "deepseek".to_string()),
+            ]
+        );
     }
 
     #[test]

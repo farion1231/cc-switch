@@ -71,10 +71,10 @@ describe("Command Code provider presets", () => {
     expect(env).toMatchObject({
       ANTHROPIC_BASE_URL: CLAUDE_BASE_URL,
       ANTHROPIC_AUTH_TOKEN: "",
-      ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
-      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash[1M]",
+      ANTHROPIC_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+      ANTHROPIC_DEFAULT_SONNET_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "deepseek/deepseek-v4.1-flash[1m]",
     });
     expect(preset?.apiFormat).toBe("openai_chat");
     expect(preset?.modelsUrl).toBe(

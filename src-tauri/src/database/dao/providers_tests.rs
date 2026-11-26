@@ -14,9 +14,9 @@ fn provider_list_batches_endpoints_without_crossing_apps_or_changing_order() {
     first.sort_index = Some(0);
     let mut second = provider("a");
     second.sort_index = Some(1);
-    db.save_provider("claude", &second).unwrap();
-    db.save_provider("claude", &first).unwrap();
-    db.save_provider("codex", &first).unwrap();
+    db.save_provider(&AppType::Claude, &second).unwrap();
+    db.save_provider(&AppType::Claude, &first).unwrap();
+    db.save_provider(&AppType::Codex, &first).unwrap();
     {
         let conn = db.conn.lock().unwrap();
         // Old metadata is not authoritative, even for a provider with no endpoints.
@@ -34,7 +34,7 @@ fn provider_list_batches_endpoints_without_crossing_apps_or_changing_order() {
         )
         .unwrap();
     }
-    let providers = db.get_all_providers("claude").unwrap();
+    let providers = db.get_all_providers(&AppType::Claude).unwrap();
     assert_eq!(
         providers.keys().map(String::as_str).collect::<Vec<_>>(),
         ["z", "a"]
@@ -51,9 +51,9 @@ fn provider_list_batches_endpoints_without_crossing_apps_or_changing_order() {
         .unwrap()
         .custom_endpoints
         .is_empty());
-    assert!(db.get_all_providers("gemini").unwrap().is_empty());
+    assert!(db.get_all_providers(&AppType::Gemini).unwrap().is_empty());
     assert_eq!(
-        db.get_all_providers("codex").unwrap()["z"]
+        db.get_all_providers(&AppType::Codex).unwrap()["z"]
             .meta
             .as_ref()
             .unwrap()
@@ -67,8 +67,8 @@ fn provider_list_batches_endpoints_without_crossing_apps_or_changing_order() {
 fn unchanged_provider_save_does_not_emit_a_database_change() {
     let db = Database::memory().unwrap();
     let mut provider = provider("same");
-    db.save_provider("claude", &provider).unwrap();
-    db.add_custom_endpoint("claude", "same", "https://endpoint")
+    db.save_provider(&AppType::Claude, &provider).unwrap();
+    db.add_custom_endpoint(&AppType::Claude, "same", "https://endpoint")
         .unwrap();
     {
         let conn = db.conn.lock().unwrap();
@@ -80,8 +80,11 @@ fn unchanged_provider_save_does_not_emit_a_database_change() {
     }
     let updates = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&updates);
+    let cache = db.read_cache.clone();
     db.conn.lock().unwrap().update_hook(Some(
         move |action: rusqlite::hooks::Action, _: &str, table: &str, _: i64| {
+            // Installing the counter replaces the production update hook.
+            cache.invalidate_table(table);
             if action == rusqlite::hooks::Action::SQLITE_UPDATE && table == "providers" {
                 count.fetch_add(1, Ordering::Relaxed);
             }
@@ -89,15 +92,15 @@ fn unchanged_provider_save_does_not_emit_a_database_change() {
     ));
 
     for _ in 0..5 {
-        db.save_provider("claude", &provider).unwrap();
+        db.save_provider(&AppType::Claude, &provider).unwrap();
     }
     assert_eq!(updates.load(Ordering::Relaxed), 0);
 
     // NULL <-> value transitions and normal edits must still be persisted.
     provider.notes = Some("updated".into());
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     assert_eq!(
-        db.get_provider_by_id("same", "claude")
+        db.get_provider_by_id("same", &AppType::Claude)
             .unwrap()
             .unwrap()
             .notes,
@@ -106,11 +109,11 @@ fn unchanged_provider_save_does_not_emit_a_database_change() {
     provider.notes = None;
     provider.name = "renamed".into();
     provider.settings_config = json!({"env": {"key": "changed"}});
-    db.save_provider("claude", &provider).unwrap();
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     assert_eq!(updates.load(Ordering::Relaxed), 2);
     let loaded = db
-        .get_all_providers("claude")
+        .get_all_providers(&AppType::Claude)
         .unwrap()
         .swap_remove("same")
         .unwrap();
@@ -146,7 +149,7 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
         }))
         .unwrap(),
     );
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     {
         let conn = db.conn.lock().unwrap();
         let stored: String = conn
@@ -178,20 +181,23 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
     }
     let updates = Arc::new(AtomicUsize::new(0));
     let count = Arc::clone(&updates);
+    let cache = db.read_cache.clone();
     db.conn.lock().unwrap().update_hook(Some(
         move |action: rusqlite::hooks::Action, _: &str, table: &str, _: i64| {
+            // Installing the counter replaces the production update hook.
+            cache.invalidate_table(table);
             if action == rusqlite::hooks::Action::SQLITE_UPDATE && table == "providers" {
                 count.fetch_add(1, Ordering::Relaxed);
             }
         },
     ));
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     for _ in 0..5 {
         provider = db
-            .get_provider_by_id("metadata", "claude")
+            .get_provider_by_id("metadata", &AppType::Claude)
             .unwrap()
             .unwrap();
-        db.save_provider("claude", &provider).unwrap();
+        db.save_provider(&AppType::Claude, &provider).unwrap();
     }
     assert_eq!(updates.load(Ordering::Relaxed), 0);
 
@@ -204,10 +210,10 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
         .unwrap()
         .headers
         .insert("X-First".into(), "changed".into());
-    db.save_provider("claude", &provider).unwrap();
+    db.save_provider(&AppType::Claude, &provider).unwrap();
     assert_eq!(updates.load(Ordering::Relaxed), 1);
     let loaded = db
-        .get_provider_by_id("metadata", "claude")
+        .get_provider_by_id("metadata", &AppType::Claude)
         .unwrap()
         .unwrap();
     assert_eq!(
@@ -221,32 +227,74 @@ fn unchanged_metadata_maps_do_not_emit_database_changes_after_reload() {
     );
 }
 
+/// 新版本写入、本版本认不出的 meta（比如新增的枚举值）：读出来要报错点名，不能换成默认值，
+/// 库里的原文一个字节都不能动；同应用里别的供应商单独读仍然正常。
 #[test]
-#[ignore = "manual performance benchmark; reports median latency without timing assertions"]
-fn benchmark_provider_list() {
-    for count in [10, 100, 1000] {
-        let db = Database::memory().unwrap();
-        for i in 0..count {
-            let id = format!("provider-{i:04}");
-            db.save_provider("claude", &provider(&id)).unwrap();
-            for endpoint in 0..3 {
-                db.add_custom_endpoint("claude", &id, &format!("https://endpoint-{endpoint}"))
-                    .unwrap();
-            }
-        }
-        let mut samples = Vec::new();
-        for _ in 0..25 {
-            let start = std::time::Instant::now();
-            let result = db.get_all_providers("claude").unwrap();
-            assert_eq!(result.len(), count);
-            std::hint::black_box(result);
-            samples.push(start.elapsed());
-        }
-        samples.sort_unstable();
-        eprintln!(
-            "provider_list count={count} endpoints={} median_us={}",
-            count * 3,
-            samples[samples.len() / 2].as_micros()
-        );
+fn unreadable_stored_json_is_reported_and_left_untouched() {
+    let db = Database::memory().unwrap();
+    db.save_provider(&AppType::Claude, &provider("good"))
+        .unwrap();
+    db.save_provider(&AppType::Claude, &provider("newer"))
+        .unwrap();
+    db.save_provider(&AppType::Claude, &provider("broken"))
+        .unwrap();
+    let newer_meta = json!({
+        "claudeDesktopMode": "mode-from-a-newer-version",
+        "usageScript": {"enabled": true, "language": "javascript", "code": "return 1"}
+    })
+    .to_string();
+    let raw = |id: &str| -> (String, String) {
+        db.conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT settings_config, meta FROM providers WHERE app_type = 'claude' AND id = ?1",
+                [id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+    };
+    {
+        let conn = db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE providers SET meta = ?1 WHERE app_type = 'claude' AND id = 'newer'",
+            [&newer_meta],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE providers SET settings_config = '{\"env\":' WHERE app_type = 'claude' AND id = 'broken'",
+            [],
+        )
+        .unwrap();
     }
+    let stored = (raw("newer"), raw("broken"));
+
+    let error = db
+        .get_all_providers(&AppType::Claude)
+        .unwrap_err()
+        .to_string();
+    // 列表停在第一条读不出的行（按排序是 broken），并点名它。
+    assert!(
+        error.contains("broken") && error.contains("settings_config"),
+        "{error}"
+    );
+    let error = db
+        .get_provider_by_id("newer", &AppType::Claude)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("newer") && error.contains("meta"), "{error}");
+    let error = db
+        .get_provider_by_id("broken", &AppType::Claude)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("broken") && error.contains("settings_config"),
+        "{error}"
+    );
+
+    assert!(db
+        .get_provider_by_id("good", &AppType::Claude)
+        .unwrap()
+        .is_some());
+    assert_eq!((raw("newer"), raw("broken")), stored);
 }
