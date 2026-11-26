@@ -760,12 +760,25 @@ pub(crate) fn plan(
             Some(catalog)
         }
         (None, Some(provider), Some(projection)) => {
-            plan_codex_model_catalog(
+            let mut catalog = plan_codex_model_catalog(
                 &provider.settings_config,
                 &projection.catalog_input_text(),
                 crate::proxy::providers::resolve_codex_catalog_tool_profile(provider),
             )?
-            .catalog
+            .catalog;
+            if matches!(target, Target::Proxy { .. })
+                && !official
+                && crate::codex_config::codex_card_keeps_official_speed_tiers(
+                    &provider.settings_config,
+                )
+                && crate::proxy::providers::resolve_codex_catalog_tool_profile(provider)
+                    == crate::codex_config::CodexCatalogToolProfile::NativeResponses
+            {
+                if let Some(catalog) = catalog.as_mut() {
+                    crate::codex_config::append_proxy_ultrafast_aliases(catalog);
+                }
+            }
+            catalog
         }
         _ => None,
     };

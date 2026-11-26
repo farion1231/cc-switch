@@ -251,6 +251,8 @@ interface CodexFormFieldsProps {
   // Keep the official Fast speed tier on GPT rows mirrored from Codex's bundled
   // entries: `modelCatalog.officialSpeedTiers`. Native Responses only.
   officialSpeedTiers?: boolean;
+  defaultUltrafast?: boolean;
+  onToggleDefaultUltrafast?: () => void;
   onOfficialSpeedTiersChange?: (keep: boolean) => void;
 
   // Speed Test Endpoints
@@ -712,6 +714,8 @@ export function CodexFormFields({
   autoReviewModel = "",
   onAutoReviewModelChange,
   officialSpeedTiers = false,
+  defaultUltrafast,
+  onToggleDefaultUltrafast,
   onOfficialSpeedTiersChange,
   onCatalogModelsChange,
   speedTestEndpoints,
@@ -2582,6 +2586,27 @@ export function CodexFormFields({
               <div className="space-y-3">
                 {upstreamFormatSelect}
                 {officialSpeedTiersToggle}
+                {officialSpeedTiersToggle &&
+                  onToggleDefaultUltrafast &&
+                  (officialSpeedTiers || defaultUltrafast) && (
+                    <div className="flex items-center justify-between gap-4">
+                      {labelWithHelp(
+                        t("codexConfig.defaultUltrafast"),
+                        t("codexConfig.defaultUltrafastHint"),
+                        "codexDefaultUltrafast",
+                      )}
+                      <Switch
+                        id="codexDefaultUltrafast"
+                        aria-label={t("codexConfig.defaultUltrafast")}
+                        checked={defaultUltrafast ?? false}
+                        disabled={
+                          defaultUltrafast === undefined ||
+                          (!officialSpeedTiers && !defaultUltrafast)
+                        }
+                        onCheckedChange={onToggleDefaultUltrafast}
+                      />
+                    </div>
+                  )}
                 {isAnthropicFormat && anthropicAuthFieldSelect}
                 {isAnthropicFormat && impersonateClaudeCodeToggle}
                 {isAnthropicFormat && maxOutputTokensField}

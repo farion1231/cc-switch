@@ -199,6 +199,33 @@ const getTopLevelEndIndex = (lines: string[]): number => {
   return firstSectionIndex === -1 ? lines.length : firstSectionIndex;
 };
 
+// Leave other explicitly configured tiers and profile settings to the TOML editor.
+export function codexUltrafastDefaultEdit(text: string) {
+  let tier: unknown;
+  try {
+    tier = parseToml(text).service_tier;
+  } catch {
+    return undefined;
+  }
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  if (tier === undefined) {
+    return { enabled: false, next: 'service_tier = "ultrafast"' + eol + text };
+  }
+  if (tier !== "ultrafast") return undefined;
+  const lines = text.split(eol);
+  const index = findTomlLineInRange(
+    lines,
+    /^\s*(?:service_tier|"service_tier"|'service_tier')\s*=\s*(?:"ultrafast"|'ultrafast')\s*(?:#.*)?$/,
+    0,
+    getTopLevelEndIndex(lines),
+  );
+  if (index < 0) return undefined;
+  const comment = lines[index].indexOf("#");
+  if (comment >= 0) lines[index] = lines[index].slice(comment);
+  else lines.splice(index, 1);
+  return { enabled: true, next: lines.join(eol) };
+}
+
 const getTomlSectionInsertIndex = (
   lines: string[],
   sectionRange: TomlSectionRange,
