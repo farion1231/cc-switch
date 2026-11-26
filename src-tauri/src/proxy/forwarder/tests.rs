@@ -322,7 +322,7 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_recovers_from_401s(
         .clone_from(&provider.id);
 
     for (text, warmup, stream, expected_model) in [
-        ("warmup", true, false, "claude-haiku-4.5"),
+        (".", true, false, "claude-haiku-4.5"),
         ("unsupported", false, false, "embed"),
         ("ordinary", false, false, "claude-haiku-4.6"),
         ("retry", false, false, "claude-haiku-4.6"),
@@ -336,11 +336,17 @@ async fn copilot_auto_forwarding_pairs_model_and_session_and_recovers_from_401s(
             "copilot-session-token",
             HeaderValue::from_static("client-canonical"),
         );
-        if warmup {
-            headers.insert("anthropic-beta", HeaderValue::from_static("warmup"));
+        if warmup || text == "ordinary" {
+            headers.insert(
+                "anthropic-beta",
+                HeaderValue::from_static("claude-code-20250219"),
+            );
         }
-        let mut body = json!({"model": "claude-haiku-4-5", "max_tokens": 128, "stream": stream,
+        let mut body = json!({"model": "claude-haiku-4-5", "max_tokens": if warmup { 1 } else { 128 }, "stream": stream,
             "messages": [{"role": "user", "content": text}]});
+        if text == "ordinary" {
+            body["tools"] = json!([]);
+        }
         if stream {
             body["system"] =
                 json!("You are a helpful AI assistant tasked with summarizing conversations");
