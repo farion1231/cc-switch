@@ -2780,6 +2780,7 @@
       "duration": "Dauer",
       "durationEstimated": "Dauer (geschätzt)",
       "speedTooFew": "Unter 100 Ausgabe-Token, daher keine Geschwindigkeit",
+      "speedBurst": "Als gepufferter Burst eingetroffen, daher keine Geschwindigkeit",
       "speedEstimateTooFew": "Unter 200 Ausgabe-Token, daher keine Schätzung",
       "noTimingSession": "Sitzungsprotokolle enthalten keine Zeitdaten",
       "noFirstToken": "Keine Zeit bis zum ersten Token, daher keine Geschwindigkeit",

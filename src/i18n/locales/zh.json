@@ -2780,6 +2780,7 @@
       "duration": "耗时",
       "durationEstimated": "耗时（估算）",
       "speedTooFew": "输出不到 100 token，不算速度",
+      "speedBurst": "疑似缓冲后突发吐出，不算速度",
       "speedEstimateTooFew": "输出不到 200 token，不估速度",
       "noTimingSession": "会话日志没有计时数据",
       "noFirstToken": "没有首字计时，不算速度",

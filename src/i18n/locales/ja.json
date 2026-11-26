@@ -2780,6 +2780,7 @@
       "duration": "所要時間",
       "durationEstimated": "所要時間（推定）",
       "speedTooFew": "出力が 100 トークン未満のため速度は出しません",
+      "speedBurst": "バッファ後の一括到着とみられるため速度は出しません",
       "speedEstimateTooFew": "出力が 200 トークン未満のため速度は推定しません",
       "noTimingSession": "セッションログには計測データがありません",
       "noFirstToken": "最初のトークンの計測がないため速度は出しません",

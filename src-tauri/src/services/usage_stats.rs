@@ -156,14 +156,22 @@ pub const SPEED_MIN_OUTPUT_TOKENS: i64 = 100;
 /// 或短回复整段落在同一个网络包里，算出来的是传输突发而不是生成速度。
 pub const SPEED_MIN_GENERATION_MS: i64 = 100;
 
+/// 速度上限（tok/s）：超过该值的样本属于整包突发或异常计时（如整段工具调用末帧一次吐出），
+/// 不应计入速度或拉高汇总。
+pub const SPEED_MAX_TPS: i64 = 10_000;
+
 /// 明细行能不能计速度的 SQL 条件（和前端 `isSpeedEligible` 同口径）。会话日志导入的行
 /// 也可能有首字（按时间戳推出来的），所以先按来源分开，不能只看有没有首字。
 fn speed_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
-        "{data_source} = 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+        "{data_source} = 'proxy' \
+         AND {alias}.status_code >= 200 AND {alias}.status_code < 300 \
+         AND {alias}.first_token_ms IS NOT NULL \
+         AND {alias}.first_token_ms >= 0 \
          AND {alias}.output_tokens >= {SPEED_MIN_OUTPUT_TOKENS} \
-         AND {alias}.latency_ms - {alias}.first_token_ms >= {SPEED_MIN_GENERATION_MS}"
+         AND ({alias}.latency_ms - {alias}.first_token_ms) >= {SPEED_MIN_GENERATION_MS} \
+         AND {alias}.output_tokens * 1000 <= {SPEED_MAX_TPS} * ({alias}.latency_ms - {alias}.first_token_ms)"
     )
 }
 
@@ -182,8 +190,10 @@ fn speed_estimate_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
     format!(
         "{data_source} <> 'proxy' \
+         AND {alias}.status_code >= 200 AND {alias}.status_code < 300 \
          AND {alias}.output_tokens >= {SPEED_ESTIMATE_MIN_OUTPUT_TOKENS} \
-         AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS}"
+         AND {alias}.latency_ms >= {SPEED_ESTIMATE_MIN_DURATION_MS} \
+         AND {alias}.output_tokens * 1000 <= {SPEED_MAX_TPS} * {alias}.latency_ms"
     )
 }
 
@@ -201,7 +211,10 @@ fn first_token_eligible_sql(alias: &str) -> String {
 /// 组装请求的时间，系统性偏高。
 fn est_first_token_eligible_sql(alias: &str) -> String {
     let data_source = data_source_expr(alias);
-    format!("{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL")
+    format!(
+        "{data_source} <> 'proxy' AND {alias}.first_token_ms IS NOT NULL \
+         AND {alias}.status_code >= 200 AND {alias}.status_code < 300"
+    )
 }
 
 /// Grouping key expression for [`first_token_medians`].

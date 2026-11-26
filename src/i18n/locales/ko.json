@@ -2775,6 +2775,7 @@
       "duration": "소요 시간",
       "durationEstimated": "소요 시간 (추정)",
       "speedTooFew": "출력이 100토큰 미만이므로 속도를 계산하지 않습니다.",
+      "speedBurst": "버퍼링 후 한 번에 전송된 것으로 보여 속도를 계산하지 않습니다.",
       "speedEstimateTooFew": "출력이 200토큰 미만이므로 속도를 추정하지 않습니다.",
       "noTimingSession": "세션 로그에는 타이밍 데이터가 없습니다.",
       "noFirstToken": "첫 토큰 시간 데이터가 없어 속도를 계산하지 않습니다.",

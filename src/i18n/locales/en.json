@@ -2780,6 +2780,7 @@
       "duration": "Duration",
       "durationEstimated": "Duration (estimated)",
       "speedTooFew": "Under 100 output tokens, so no speed",
+      "speedBurst": "Arrived in a buffered burst, so no speed",
       "speedEstimateTooFew": "Under 200 output tokens, so no estimate",
       "noTimingSession": "Session logs have no timing data",
       "noFirstToken": "No first-token timing, so no speed",

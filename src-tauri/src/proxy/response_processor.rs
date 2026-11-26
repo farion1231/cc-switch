@@ -409,6 +409,8 @@ struct SseUsageCollectorInner {
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
     should_collect: Option<StreamUsageEventFilter>,
+    /// 观察的流是不是转换层合成的（上游格式与客户端格式不同）。
+    converted_stream: bool,
     finished: AtomicBool,
 }
 
@@ -419,6 +421,29 @@ impl SseUsageCollector {
         should_collect: Option<StreamUsageEventFilter>,
         callback: impl Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static,
     ) -> Self {
+        Self::build(start_time, should_collect, false, callback)
+    }
+
+    /// 观察转换层合成的流时用它（例如 OpenAI Chat 上游转成 Anthropic 给 Claude Code）。
+    ///
+    /// 转换器只在拿到可见内容时才合成内容帧：上游先做隐藏推理时，合成流里第一个
+    /// 内容帧要等推理结束、正文开始才出现，而输出 token（分子）仍含全部推理 token。
+    /// 按内容帧算首字会把推理时间扣出生成窗口，速度虚高好几倍。所以转换流沿用
+    /// 「第一个非元数据事件」的计时，推理时间留在分母里。
+    pub fn new_for_converted_stream(
+        start_time: std::time::Instant,
+        should_collect: Option<StreamUsageEventFilter>,
+        callback: impl Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static,
+    ) -> Self {
+        Self::build(start_time, should_collect, true, callback)
+    }
+
+    fn build(
+        start_time: std::time::Instant,
+        should_collect: Option<StreamUsageEventFilter>,
+        converted_stream: bool,
+        callback: impl Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static,
+    ) -> Self {
         let on_complete: UsageCallbackWithTiming = Arc::new(callback);
         Self {
             inner: Arc::new(SseUsageCollectorInner {
@@ -427,6 +452,7 @@ impl SseUsageCollector {
                 start_time,
                 on_complete,
                 should_collect,
+                converted_stream,
                 finished: AtomicBool::new(false),
             }),
         }
@@ -448,7 +474,12 @@ impl SseUsageCollector {
         if self.inner.first_output_time.get().is_some() {
             return;
         }
-        if sse_data_starts_output(event_name, data) {
+        let starts_output = if self.inner.converted_stream {
+            sse_data_is_non_metadata_event(event_name, data)
+        } else {
+            sse_data_starts_output(event_name, data)
+        };
+        if starts_output {
             let _ = self.inner.first_output_time.set(std::time::Instant::now());
         }
     }
@@ -489,10 +520,10 @@ impl SseUsageCollector {
     }
 }
 
-/// 判断一行 SSE data 是否标志着模型开始输出（口径同 Sub2API 的 semantic TTFT）：
-/// 跳过只宣告响应开始或保活的元数据事件，其余非空事件都算。Chat Completions /
-/// Gemini 的分块没有事件类型，一律算。
-fn sse_data_starts_output(event_name: Option<&str>, data: &str) -> bool {
+/// 转换流的首字判定：跳过只宣告响应开始或保活的元数据事件，其余非空事件都算
+/// （见 [`SseUsageCollector::new_for_converted_stream`]）。Chat Completions / Gemini 的
+/// 分块没有事件类型，一律算。
+fn sse_data_is_non_metadata_event(event_name: Option<&str>, data: &str) -> bool {
     let data = data.trim();
     if data.is_empty() || data == "[DONE]" {
         return false;
@@ -508,6 +539,114 @@ fn sse_data_starts_output(event_name: Option<&str>, data: &str) -> bool {
         event_type.as_str(),
         "response.created" | "response.in_progress" | "ping" | "keepalive"
     )
+}
+
+/// 判断 JSON 值是否包含实际内容（过滤 `null`、`""`、`[]`、`{}`）。
+fn json_value_non_empty(value: Option<&Value>) -> bool {
+    match value {
+        None | Some(Value::Null) => false,
+        Some(Value::String(s)) => !s.is_empty(),
+        Some(Value::Array(items)) => !items.is_empty(),
+        Some(Value::Object(map)) => !map.is_empty(),
+        Some(_) => true,
+    }
+}
+
+/// 判断一行 SSE data 是否标志着模型开始输出（按协议识别真实内容帧，跳过元数据/空壳帧）：
+/// - Anthropic：跳过 `message_start`、`ping`、空 `content_block_start(text)`、`message_delta`/`stop`；
+///   在 `content_block_delta` 含非空 `text`/`thinking`/`partial_json`，或 `content_block_start`
+///   宣告 `tool_use`/`server_tool_use`/`thinking`/`redacted_thinking`（或含非空 `text`）时触发。
+/// - OpenAI Responses：跳过 `response.created`/`in_progress`/`content_part.added`/`completed`/`failed`
+///   及 `output_item.added(message)`；在内容/推理/工具参数 delta 非空，或 `output_item.added`
+///   为 `function_call`/`custom_tool_call`/`reasoning` 时触发。
+/// - OpenAI Chat Completions：跳过空 `choices: []` 与不含 `delta` 的 usage 尾块；
+///   保留 `delta.role`（与 `content`/`refusal`/`reasoning_content`/`reasoning`/`tool_calls`/`function_call`
+///   并列触发），避免隐藏推理模型在推理前先发 role 首块时把思考耗时扣除、却在 `completion_tokens`
+///   中仍计入推理 token 而导致速度虚高（见 #9858）。
+/// - Gemini：仅在 `candidates[*].content.parts[*]` 含非空 `text` 或 `functionCall` 时触发。
+fn sse_data_starts_output(event_name: Option<&str>, data: &str) -> bool {
+    let data = data.trim();
+    if data.is_empty() || data == "[DONE]" {
+        return false;
+    }
+    let Ok(value) = serde_json::from_str::<Value>(data) else {
+        return false;
+    };
+
+    let event_type = value
+        .get("type")
+        .and_then(Value::as_str)
+        .or_else(|| event_name.map(str::trim).filter(|name| !name.is_empty()))
+        .unwrap_or("");
+
+    match event_type {
+        // Anthropic Messages SSE
+        "content_block_delta" => {
+            let Some(delta) = value.get("delta") else {
+                return false;
+            };
+            json_value_non_empty(delta.get("text"))
+                || json_value_non_empty(delta.get("thinking"))
+                || json_value_non_empty(delta.get("partial_json"))
+        }
+        "content_block_start" => {
+            let Some(block) = value.get("content_block") else {
+                return false;
+            };
+            matches!(
+                block.get("type").and_then(Value::as_str),
+                Some("tool_use" | "server_tool_use" | "thinking" | "redacted_thinking")
+            ) || json_value_non_empty(block.get("text"))
+        }
+        "message_start" | "message_delta" | "message_stop" | "content_block_stop" | "ping"
+        | "keepalive" | "error" => false,
+
+        // OpenAI Responses SSE
+        "response.output_text.delta"
+        | "response.refusal.delta"
+        | "response.reasoning.delta"
+        | "response.reasoning_text.delta"
+        | "response.reasoning_summary_text.delta"
+        | "response.function_call_arguments.delta"
+        | "response.custom_tool_call_input.delta" => json_value_non_empty(value.get("delta")),
+        "response.output_item.added" => matches!(
+            value.pointer("/item/type").and_then(Value::as_str),
+            Some("function_call" | "custom_tool_call" | "reasoning")
+        ),
+        other if other.starts_with("response.") => false,
+
+        // OpenAI Chat Completions & Gemini SSE (and untyped chunks)
+        _ => {
+            if let Some(choices) = value.get("choices").and_then(Value::as_array) {
+                return choices.iter().any(|choice| {
+                    let Some(delta) = choice.get("delta") else {
+                        return false;
+                    };
+                    json_value_non_empty(delta.get("role"))
+                        || json_value_non_empty(delta.get("content"))
+                        || json_value_non_empty(delta.get("refusal"))
+                        || json_value_non_empty(delta.get("reasoning_content"))
+                        || json_value_non_empty(delta.get("reasoning"))
+                        || json_value_non_empty(delta.get("tool_calls"))
+                        || json_value_non_empty(delta.get("function_call"))
+                });
+            }
+            if let Some(candidates) = value.get("candidates").and_then(Value::as_array) {
+                return candidates.iter().any(|candidate| {
+                    candidate
+                        .pointer("/content/parts")
+                        .and_then(Value::as_array)
+                        .is_some_and(|parts| {
+                            parts.iter().any(|part| {
+                                json_value_non_empty(part.get("text"))
+                                    || json_value_non_empty(part.get("functionCall"))
+                            })
+                        })
+                });
+            }
+            false
+        }
+    }
 }
 
 struct SseUsageFinishGuard {
@@ -1316,6 +1455,67 @@ mod tests {
 
     #[test]
     fn sse_data_starts_output_skips_metadata_events() {
+        // Common empty / keepalive / non-JSON payloads
+        assert!(!sse_data_starts_output(Some("ping"), r#"{"type":"ping"}"#));
+        assert!(!sse_data_starts_output(
+            Some("keepalive"),
+            r#"{"type":"keepalive"}"#
+        ));
+        assert!(!sse_data_starts_output(None, "[DONE]"));
+        assert!(!sse_data_starts_output(None, "  "));
+        assert!(!sse_data_starts_output(None, "not-json"));
+
+        // Anthropic Messages API: skip lifecycle/empty shells, trigger on real content/thinking/tool starts
+        assert!(!sse_data_starts_output(
+            Some("message_start"),
+            r#"{"type":"message_start","message":{"id":"msg_1","content":[]}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("content_block_start"),
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("content_block_delta"),
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":""}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("content_block_delta"),
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig"}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("message_delta"),
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("message_stop"),
+            r#"{"type":"message_stop"}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("content_block_delta"),
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("content_block_delta"),
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("content_block_delta"),
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"a\":"}}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("content_block_start"),
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"ls"}}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("content_block_start"),
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("content_block_start"),
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"abc"}}"#
+        ));
+
+        // OpenAI Responses API: skip created/in_progress/message shell/content_part.added/completed
         assert!(!sse_data_starts_output(
             Some("response.created"),
             r#"{"type":"response.created"}"#
@@ -1324,23 +1524,284 @@ mod tests {
             None,
             r#"{"type":"response.in_progress","response":{}}"#
         ));
-        assert!(!sse_data_starts_output(Some("ping"), r#"{"type":"ping"}"#));
-        assert!(!sse_data_starts_output(None, "[DONE]"));
-        assert!(!sse_data_starts_output(None, "  "));
-
+        assert!(!sse_data_starts_output(
+            Some("response.output_item.added"),
+            r#"{"type":"response.output_item.added","item":{"type":"message","role":"assistant","content":[]}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("response.content_part.added"),
+            r#"{"type":"response.content_part.added","part":{"type":"output_text","text":""}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("response.output_text.delta"),
+            r#"{"type":"response.output_text.delta","delta":""}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("response.completed"),
+            r#"{"type":"response.completed","response":{"usage":{"output_tokens":5}}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            Some("response.failed"),
+            r#"{"type":"response.failed","response":{"error":{"message":"boom"}}}"#
+        ));
         assert!(sse_data_starts_output(
             Some("response.output_text.delta"),
             r#"{"type":"response.output_text.delta","delta":"hi"}"#
         ));
         assert!(sse_data_starts_output(
-            Some("message_start"),
-            r#"{"type":"message_start"}"#
+            Some("response.reasoning_text.delta"),
+            r#"{"type":"response.reasoning_text.delta","delta":"step"}"#
         ));
-        // Chat Completions / Gemini 分块没有事件类型
+        assert!(sse_data_starts_output(
+            Some("response.reasoning.delta"),
+            r#"{"type":"response.reasoning.delta","delta":"step"}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("response.function_call_arguments.delta"),
+            r#"{"type":"response.function_call_arguments.delta","delta":"{"}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("response.output_item.added"),
+            r#"{"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1"}}"#
+        ));
+        assert!(sse_data_starts_output(
+            Some("response.output_item.added"),
+            r#"{"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1"}}"#
+        ));
+
+        // OpenAI Chat Completions API: skip empty choices / usage-only / empty delta chunks,
+        // while keeping `delta.role` so hidden-reasoning models don't drop reasoning time (#9858).
+        assert!(!sse_data_starts_output(
+            None,
+            r#"{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20}}"#
+        ));
+        assert!(!sse_data_starts_output(
+            None,
+            r#"{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#
+        ));
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}"#
+        ));
         assert!(sse_data_starts_output(
             None,
             r#"{"choices":[{"delta":{"content":"hi"}}]}"#
         ));
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"choices":[{"delta":{"reasoning_content":"think"}}]}"#
+        ));
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1"}]}}]}"#
+        ));
+
+        // Gemini API: skip empty candidates/parts/usage-only chunks, trigger on text or functionCall
+        assert!(!sse_data_starts_output(
+            None,
+            r#"{"candidates":[{"content":{"parts":[]}}]}"#
+        ));
+        assert!(!sse_data_starts_output(
+            None,
+            r#"{"candidates":[{"content":{"parts":[{"text":""}]}}]}"#
+        ));
+        assert!(!sse_data_starts_output(
+            None,
+            r#"{"usageMetadata":{"promptTokenCount":10,"totalTokenCount":20}}"#
+        ));
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}"#
+        ));
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"candidates":[{"content":{"parts":[{"thought":true,"text":"hmm"}]}}]}"#
+        ));
+        assert!(sse_data_starts_output(
+            None,
+            r#"{"candidates":[{"content":{"parts":[{"functionCall":{"name":"ls","args":{}}}]}}]}"#
+        ));
+    }
+
+    /// 回归：Anthropic 流式响应在 `message_start` 后可能先经历模型思考/排队延迟才发出首个内容块，
+    /// `first_token_ms` 必须落在首个真实内容事件上，不能提前记在 `message_start`。
+    #[tokio::test]
+    async fn first_token_ms_skips_anthropic_message_start_and_empty_text_block() {
+        let start = std::time::Instant::now();
+        let recorded = Arc::new(std::sync::Mutex::new(None));
+        let recorded_in_cb = recorded.clone();
+        let collector = SseUsageCollector::new(
+            start,
+            Some(super::super::handler_config::claude_stream_usage_event_filter),
+            move |_events, first_token_ms| {
+                *recorded_in_cb.lock().unwrap() =
+                    Some((first_token_ms, start.elapsed().as_millis() as u64));
+            },
+        );
+
+        let upstream = async_stream::stream! {
+            yield Ok::<_, std::io::Error>(Bytes::from(
+                "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"content\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":0}}}\n\n",
+            ));
+            yield Ok(Bytes::from(
+                "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            yield Ok(Bytes::from(
+                "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            yield Ok(Bytes::from(
+                "event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":120}}\n\n",
+            ));
+        };
+        let stream = create_logged_passthrough_stream_with_terminal_hook(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+            None,
+        );
+        futures::pin_mut!(stream);
+        while stream.next().await.is_some() {}
+
+        let (first_token_ms, latency_ms) = recorded.lock().unwrap().expect("collector finished");
+        let first_token_ms = first_token_ms.expect("first output recorded");
+        assert!(
+            first_token_ms >= 50,
+            "expected first_token_ms after message_start delay, got {first_token_ms}"
+        );
+        assert!(
+            latency_ms >= first_token_ms + 50,
+            "first_token_ms={first_token_ms}, latency_ms={latency_ms}"
+        );
+    }
+
+    /// 隐藏推理的耗时：上游先发一个不带内容的开头，过 80ms 才开始吐正文。
+    const HIDDEN_REASONING_MS: u64 = 80;
+
+    /// 把（已经转换过的）流交给收集器跑完，返回记下的 first_token_ms。
+    async fn first_token_through(
+        stream: impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+        converted_stream: bool,
+    ) -> u64 {
+        let start = std::time::Instant::now();
+        let recorded = Arc::new(std::sync::Mutex::new(None));
+        let recorded_in_cb = recorded.clone();
+        let callback = move |_events, first_token_ms| {
+            *recorded_in_cb.lock().unwrap() = Some(first_token_ms);
+        };
+        let collector = if converted_stream {
+            SseUsageCollector::new_for_converted_stream(start, None, callback)
+        } else {
+            SseUsageCollector::new(start, None, callback)
+        };
+        let stream = create_logged_passthrough_stream_with_terminal_hook(
+            stream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+            None,
+        );
+        futures::pin_mut!(stream);
+        while stream.next().await.is_some() {}
+        let recorded = *recorded.lock().unwrap();
+        recorded
+            .expect("collector finished")
+            .expect("first output recorded")
+    }
+
+    fn chat_hidden_reasoning_upstream(
+    ) -> impl futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static {
+        async_stream::stream! {
+            yield Ok::<_, std::io::Error>(Bytes::from(
+                "data: {\"id\":\"c1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(HIDDEN_REASONING_MS)).await;
+            yield Ok(Bytes::from(
+                "data: {\"id\":\"c1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\n",
+            ));
+            yield Ok(Bytes::from(
+                "data: {\"id\":\"c1\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":300,\"completion_tokens_details\":{\"reasoning_tokens\":250}}}\n\n",
+            ));
+            yield Ok(Bytes::from("data: [DONE]\n\n"));
+        }
+    }
+
+    /// 回归：Claude Code 接 OpenAI Chat 上游、隐藏推理时，转换层要等正文才合成内容帧。
+    /// 按内容帧算首字会把推理时间扣出生成窗口（分子却含推理 token），转换流必须
+    /// 从第一个非元数据事件算。
+    #[tokio::test]
+    async fn converted_chat_to_anthropic_keeps_hidden_reasoning_in_generation_window() {
+        let converted = first_token_through(
+            super::super::providers::streaming::create_anthropic_sse_stream(
+                chat_hidden_reasoning_upstream(),
+            ),
+            true,
+        )
+        .await;
+        assert!(
+            converted < HIDDEN_REASONING_MS,
+            "converted stream first_token_ms={converted}"
+        );
+        // 对照：同一条流按内容帧判，首字被推到正文开始
+        let semantic = first_token_through(
+            super::super::providers::streaming::create_anthropic_sse_stream(
+                chat_hidden_reasoning_upstream(),
+            ),
+            false,
+        )
+        .await;
+        assert!(
+            semantic >= HIDDEN_REASONING_MS,
+            "semantic first_token_ms={semantic}"
+        );
+    }
+
+    /// 回归：Claude Code 接 OpenAI Responses 上游、推理条目不带 summary 时，转换层
+    /// 只在推理结束后才开 thinking 块；首字同样要从第一个非元数据事件算。
+    #[tokio::test]
+    async fn converted_responses_to_anthropic_keeps_hidden_reasoning_in_generation_window() {
+        let upstream = async_stream::stream! {
+            yield Ok::<_, std::io::Error>(Bytes::from(
+                "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\",\"model\":\"m\",\"status\":\"in_progress\",\"output\":[]}}\n\n",
+            ));
+            yield Ok(Bytes::from(
+                "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            ));
+            tokio::time::sleep(Duration::from_millis(HIDDEN_REASONING_MS)).await;
+            yield Ok(Bytes::from(
+                "event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[]}}\n\n",
+            ));
+            yield Ok(Bytes::from(
+                "event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":1,\"item\":{\"id\":\"msg_1\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[]}}\n\n",
+            ));
+            yield Ok(Bytes::from(
+                "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"item_id\":\"msg_1\",\"output_index\":1,\"content_index\":0,\"delta\":\"hello\"}\n\n",
+            ));
+            yield Ok(Bytes::from(
+                "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"model\":\"m\",\"status\":\"completed\",\"output\":[],\"usage\":{\"input_tokens\":10,\"output_tokens\":300,\"output_tokens_details\":{\"reasoning_tokens\":250}}}}\n\n",
+            ));
+        };
+        let converted = first_token_through(
+            super::super::providers::streaming_responses::create_anthropic_sse_stream_from_responses_with_web_search_options(
+                upstream, None, None,
+            ),
+            true,
+        )
+        .await;
+        assert!(
+            converted < HIDDEN_REASONING_MS,
+            "converted stream first_token_ms={converted}"
+        );
     }
 
     /// 回归：上游 response.created 不带 usage 时，首个被 usage 过滤器收下的是
