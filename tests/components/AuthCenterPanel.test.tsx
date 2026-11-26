@@ -37,6 +37,9 @@ vi.mock("@/components/providers/KimiAccountLogin", () => ({
 vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
   WorkBuddyAccountSection: () => <div data-testid="workbuddy" />,
 }));
+vi.mock("@/components/settings/auth/AutoQuotaToggle", () => ({
+  AutoQuotaToggle: () => null,
+}));
 vi.mock("@/components/providers/forms/CodebuddyAccountSection", () => ({
   CodebuddyAccountSection: () => <div data-testid="codebuddy" />,
 }));

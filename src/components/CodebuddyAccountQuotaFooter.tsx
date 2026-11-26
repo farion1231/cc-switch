@@ -2,6 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { useCodebuddyAccountQuota } from "@/lib/query/subscription";
 import { codebuddyQuotaState } from "@/components/settings/auth/AccountQuota";
+import { ManualQuotaIdle } from "@/components/SubscriptionQuotaFooter";
 import { QuotaLines } from "@/components/quota/QuotaLines";
 import { failedLines } from "@/components/quota/quotaRules";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
@@ -28,7 +29,12 @@ const CodebuddyAccountQuotaFooter: React.FC<
     isError,
     error,
     refresh,
+    manualIdle,
   } = useCodebuddyAccountQuota(accountId, lang);
+  // 只手动查询、还没查过：写一句「点刷新查询额度」，首次手动加载期间也留着让 ↻ 转圈
+  if (!quota && !isError && manualIdle) {
+    return <ManualQuotaIdle inline loading={loading} refetch={refresh} />;
+  }
   const state =
     !quota && isError
       ? {

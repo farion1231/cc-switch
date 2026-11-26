@@ -3617,9 +3617,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
     // 与 `create_tray_menu` 保持一致：用户隐藏的 app 不参与外部 API 查询，
     // 避免在未使用的 app 上浪费请求、撞 rate limit 或反复触发鉴权失败日志。
-    let visible_apps = crate::settings::get_settings()
-        .visible_apps
-        .unwrap_or_default();
+    let settings = crate::settings::get_settings();
+    let visible_apps = settings.visible_apps.unwrap_or_default();
+    let official_manual_only = settings.official_quota_manual_only;
 
     let mut usage_futures = Vec::new();
 
@@ -3655,7 +3655,9 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
             }
         };
 
-        if let Some(source) = tray_usage_source(app_type, &current) {
+        if let Some(source) = tray_usage_source(app_type, &current)
+            .filter(|source| auto_refresh_allowed(source, &current, official_manual_only))
+        {
             let app_clone = app.clone();
             let state = app.state::<AppState>();
             let copilot_state = app.state::<CopilotAuthState>();
@@ -3718,6 +3720,34 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     join_all(usage_futures).await;
 }
 
+/// 这一路额度查询打的是不是官方账号的接口。托管 Codex、Claude 账号、客户端订阅都是；
+/// 脚本路径里 GitHub Copilot 卡（查 Copilot 账号用量）和官方订阅模板（xAI OAuth 查
+/// SuperGrok 账号额度）也是，其余脚本是第三方余额 / 套餐查询。
+fn queries_official_account(source: &TrayUsageSource, provider: &Provider) -> bool {
+    match source {
+        TrayUsageSource::Script => provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.usage_script.as_ref())
+            .and_then(|script| script.template_type.as_deref())
+            .is_some_and(|template| {
+                template == TEMPLATE_TYPE_GITHUB_COPILOT
+                    || template == TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION
+            }),
+        _ => true,
+    }
+}
+
+/// 托盘自己发起的额度查询（悬停、面板弹出）能不能查这一家。「自动查询额度」关着时
+/// 不替官方账号查（托盘照常显示上次的缓存）；第三方余额脚本不是官方账号，照常刷新。
+fn auto_refresh_allowed(
+    source: &TrayUsageSource,
+    provider: &Provider,
+    official_manual_only: bool,
+) -> bool {
+    !official_manual_only || !queries_official_account(source, provider)
+}
+
 /// 托盘面板发起过的脚本额度查询：(应用, 供应商 id) → 上次查询时间。
 static PANEL_SCRIPT_QUERIES: LazyLock<Mutex<HashMap<(AppType, String), std::time::Instant>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -3733,9 +3763,9 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
     };
-    let visible_apps = crate::settings::get_settings()
-        .visible_apps
-        .unwrap_or_default();
+    let settings = crate::settings::get_settings();
+    let visible_apps = settings.visible_apps.unwrap_or_default();
+    let official_manual_only = settings.official_quota_manual_only;
     let mut due = Vec::new();
     for app_type in TRAY_APPS.iter().filter(|app| visible_apps.is_visible(app)) {
         let rows = match app_state.db.get_provider_rows(app_type) {
@@ -3746,7 +3776,10 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
             }
         };
         for (id, provider) in &rows {
-            if tray_usage_source(app_type, provider) != Some(TrayUsageSource::Script) {
+            if !tray_usage_source(app_type, provider).is_some_and(|source| {
+                source == TrayUsageSource::Script
+                    && auto_refresh_allowed(&source, provider, official_manual_only)
+            }) {
                 continue;
             }
             let interval_minutes = provider

@@ -353,6 +353,68 @@ fn mode_names_follow_the_v7_terms_in_every_language() {
 
 // ─── 额度文字 ───
 
+fn script_provider(template_type: &str, provider_type: Option<&str>) -> Provider {
+    serde_json::from_value(serde_json::json!({
+        "id": "script",
+        "name": "Script",
+        "settingsConfig": {},
+        "meta": {
+            "providerType": provider_type,
+            "usage_script": {
+                "enabled": true,
+                "language": "javascript",
+                "code": "",
+                "templateType": template_type
+            }
+        }
+    }))
+    .unwrap()
+}
+
+#[test]
+fn manual_only_quota_skips_official_accounts_but_not_third_party_scripts() {
+    let any_provider = script_provider("balance", None);
+    let official = [
+        TrayUsageSource::ManagedCodex("acct".into()),
+        TrayUsageSource::ClaudeAccount("acct".into()),
+        TrayUsageSource::Subscription,
+    ];
+    for source in &official {
+        assert!(auto_refresh_allowed(source, &any_provider, false));
+        assert!(!auto_refresh_allowed(source, &any_provider, true));
+    }
+
+    // 脚本路径里查官方账号的：Copilot 卡、xAI OAuth（官方订阅模板）。
+    let copilot = script_provider("github_copilot", Some("github_copilot"));
+    let xai = script_provider("official_subscription", Some("xai_oauth"));
+    for provider in [&copilot, &xai] {
+        assert_eq!(
+            tray_usage_source(&AppType::Claude, provider),
+            Some(TrayUsageSource::Script)
+        );
+        assert!(auto_refresh_allowed(
+            &TrayUsageSource::Script,
+            provider,
+            false
+        ));
+        assert!(!auto_refresh_allowed(
+            &TrayUsageSource::Script,
+            provider,
+            true
+        ));
+    }
+
+    // 第三方余额 / 套餐脚本不是官方账号，照常刷新。
+    for template in ["balance", "token_plan", "custom"] {
+        let provider = script_provider(template, None);
+        assert!(auto_refresh_allowed(
+            &TrayUsageSource::Script,
+            &provider,
+            true
+        ));
+    }
+}
+
 fn make_quota(tool: &str, success: bool, tiers: Vec<QuotaTier>) -> SubscriptionQuota {
     SubscriptionQuota {
         tool: tool.to_string(),
