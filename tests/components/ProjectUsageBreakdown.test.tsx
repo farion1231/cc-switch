@@ -57,6 +57,7 @@ const providerStat: ProviderStats = {
   freshInputTokens: 10,
   cacheCreationTokens: 0,
   cacheReadTokens: 90,
+  cacheableInputTokens: 100,
 };
 
 describe("ProjectUsageBreakdown", () => {

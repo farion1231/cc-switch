@@ -12,26 +12,15 @@ import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { providersApi, type AppId } from "@/lib/api";
-import { isProxyAppId } from "@/config/appConfig";
+import { appHas } from "@/config/appSpecs";
+import { getLocaleFromLanguage } from "@/components/usage/format";
 
 export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
   const queryClient = useQueryClient();
   const { t, i18n } = useTranslation();
 
   const sortedProviders = useMemo(() => {
-    const language = i18n.language?.toLowerCase();
-    const locale =
-      i18n.language === "zh"
-        ? "zh-CN"
-        : i18n.language === "zh-TW"
-          ? "zh-TW"
-          : language === "ja" || language?.startsWith("ja-")
-            ? "ja-JP"
-            : language === "ko" || language?.startsWith("ko-")
-              ? "ko-KR"
-              : language === "ru" || language?.startsWith("ru-")
-                ? "ru-RU"
-                : "en-US";
+    const locale = getLocaleFromLanguage(i18n.language ?? "");
     return Object.values(providers).sort((a, b) => {
       if (a.sortIndex !== undefined && b.sortIndex !== undefined) {
         return a.sortIndex - b.sortIndex;
@@ -89,7 +78,7 @@ export function useDragSort(providers: Record<string, Provider>, appId: AppId) {
         });
 
         // Routing apps derive failover order from sort_index.
-        if (isProxyAppId(appId)) {
+        if (appHas(appId, "localProxy")) {
           await queryClient.invalidateQueries({
             queryKey: ["failoverQueue", appId],
           });

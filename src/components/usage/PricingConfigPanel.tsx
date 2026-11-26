@@ -39,13 +39,11 @@ import {
   parseFiniteNumber,
 } from "./format";
 import { usageTable } from "./usageTable";
+import { APP_IDS_WITH, type AppIdWith } from "@/config/appSpecs";
 
-/** 计费默认配置只管这 4 个有路由用量管线的应用 */
-const PRICING_APPS = ["claude", "codex", "gemini", "grokbuild"] as const;
-type PricingApp = (typeof PRICING_APPS)[number];
 type PricingModelSource = "request" | "response";
 
-type SourceState = Record<PricingApp, PricingModelSource>;
+type SourceState = Record<AppIdWith<"localProxy">, PricingModelSource>;
 
 const DEFAULT_SOURCES: SourceState = {
   claude: "response",
@@ -117,7 +115,7 @@ function useBillingSources() {
       setIsLoading(true);
       try {
         const results = await Promise.all(
-          PRICING_APPS.map(async (app) => {
+          APP_IDS_WITH.localProxy.map(async (app) => {
             const source = await proxyApi.getPricingModelSource(app);
             return {
               app,
@@ -169,13 +167,15 @@ function BillingDefaultsDialog({
     if (open) setDraft(initial);
   }, [open, initial]);
 
-  const isDirty = PRICING_APPS.some((app) => draft[app] !== initial[app]);
+  const isDirty = APP_IDS_WITH.localProxy.some(
+    (app) => draft[app] !== initial[app],
+  );
 
   const save = async () => {
     setIsSaving(true);
     try {
       await Promise.all(
-        PRICING_APPS.map((app) =>
+        APP_IDS_WITH.localProxy.map((app) =>
           proxyApi.setPricingModelSource(app, draft[app]),
         ),
       );
@@ -210,12 +210,13 @@ function BillingDefaultsDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col px-6 py-2">
-          {PRICING_APPS.map((app, index) => (
+          {APP_IDS_WITH.localProxy.map((app, index) => (
             <div
               key={app}
               className={cn(
                 "flex h-11 items-center gap-3",
-                index < PRICING_APPS.length - 1 && "border-b border-border",
+                index < APP_IDS_WITH.localProxy.length - 1 &&
+                  "border-b border-border",
               )}
             >
               <AppGlyph app={app} size={16} badgeClassName="bg-surface" />
@@ -286,9 +287,9 @@ function BillingDefaultsRow() {
   const groups = (["response", "request"] as const)
     .map((source) => ({
       source,
-      apps: PRICING_APPS.filter((app) => sources[app] === source).map(
-        (app) => APP_DISPLAY_NAME[app],
-      ),
+      apps: APP_IDS_WITH.localProxy
+        .filter((app) => sources[app] === source)
+        .map((app) => APP_DISPLAY_NAME[app]),
     }))
     .filter((group) => group.apps.length > 0);
   const summary = joinClauses(

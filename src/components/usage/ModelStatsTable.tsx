@@ -11,7 +11,12 @@ import {
   getResolvedLang,
 } from "./format";
 import { usageTable } from "./usageTable";
-import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
+import {
+  CacheHitRateCell,
+  CacheHitRateHeader,
+  PerformanceCells,
+  PerformanceHeaders,
+} from "./statsColumns";
 import type { UsageRangeSelection } from "@/types/usage";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 
@@ -111,7 +116,7 @@ export function ModelStatsTable({
               <th className={cn(usageTable.th, usageTable.groupGap)}>
                 {t("usage.tokens")}
               </th>
-              <th className={usageTable.th}>{t("usage.cacheHitRate")}</th>
+              <CacheHitRateHeader />
               <PerformanceHeaders />
             </tr>
           </thead>
@@ -147,11 +152,7 @@ export function ModelStatsTable({
                   >
                     {formatTokensCompact(stat.totalTokens, locale)}
                   </td>
-                  <td className={usageTable.td}>
-                    {(stat.cacheableInputTokens ?? 0) > 0
-                      ? `${((stat.cacheHitRate ?? 0) * 100).toFixed(1)}%`
-                      : "—"}
-                  </td>
+                  <CacheHitRateCell stat={stat} locale={locale} />
                   <PerformanceCells stat={stat} />
                 </tr>
               ))

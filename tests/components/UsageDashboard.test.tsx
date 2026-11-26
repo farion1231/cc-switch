@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
@@ -9,6 +9,8 @@ import {
 } from "@/components/usage/UsageDashboard";
 import type { UsageRangeSelection } from "@/types/usage";
 import { setSettings } from "../msw/state";
+import { createTestQueryClient } from "../utils/testQueryClient";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const useProviderStatsMock = vi.hoisted(() => vi.fn());
 const useModelStatsMock = vi.hoisted(() => vi.fn());
@@ -153,11 +155,7 @@ vi.mock("@/lib/query/proxy", () => ({
 }));
 
 const renderDashboard = (props: ComponentProps<typeof UsageDashboard> = {}) => {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false },
-    },
-  });
+  const queryClient = createTestQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
       <UsageDashboard {...props} />
@@ -402,9 +400,12 @@ describe("UsageDashboard", () => {
         pi: false,
         mcode: false,
         kimi: false,
+        dsh: false,
         agy: false,
         omp: false,
         copilot: false,
+        workbuddy: false,
+        codebuddy: false,
       },
     });
     renderDashboard({ initialAppType: "gemini" });
@@ -559,6 +560,7 @@ describe("UsageDashboard", () => {
         undefined,
       ),
     );
+    await waitForOverlayTransition();
     await user.click(
       screen.getByRole("button", {
         name: "Synthetic Provider / usage.modelFilter.label",
@@ -670,6 +672,7 @@ describe("UsageDashboard", () => {
       name: "Synthetic Alpha",
     });
     expect(singleProjectButtons).toHaveLength(2);
+    await waitForOverlayTransition();
     await user.click(singleProjectButtons[0]);
     await user.click(
       screen.getByRole("menuitemcheckbox", {
@@ -707,6 +710,7 @@ describe("UsageDashboard", () => {
     );
     expect(screen.getByText("usage.quality.summary:3,2")).toBeInTheDocument();
 
+    await waitForOverlayTransition();
     await user.click(
       screen.getByRole("button", {
         name: "usage.projectFilter.selected:2",
@@ -927,9 +931,7 @@ describe("UsageDashboard", () => {
   });
 
   it("does not scan until settings load, and never once they say scanning is off", async () => {
-    const client = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
+    const client = createTestQueryClient();
     const view = render(
       <QueryClientProvider client={client}>
         <UsageDashboard settingsReady={false} />

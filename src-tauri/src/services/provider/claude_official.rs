@@ -28,7 +28,7 @@ pub const CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR";
 
 /// Claude 官方卡（预设标了 `category: "official"`）。
 pub fn is_official(provider: &Provider) -> bool {
-    provider.category.as_deref() == Some("official")
+    provider.has_official_category()
 }
 
 /// 官方卡绑定的账号 key；没绑（默认登录）或不是官方卡时为 `None`。
@@ -229,8 +229,7 @@ fn pointer_account(db: &Database) -> Option<String> {
     let current =
         crate::mode::current::provider_for(db, &app, crate::mode::current::Purpose::Direct)
             .ok()??;
-    let providers = db.get_all_providers(app.as_str()).ok()?;
-    bound_account(providers.get(&current)?)
+    bound_account(&db.get_provider_by_id(&current, &app).ok()??)
 }
 
 /// 账号在默认槽位、要用默认目录开终端时：Claude Code 现在用的必须是官方卡，否则
@@ -241,7 +240,7 @@ pub fn ensure_default_terminal_is_official(db: &Database) -> Result<(), AppError
         None
     } else {
         crate::mode::current::provider_for(db, &app, crate::mode::current::Purpose::Direct)?
-            .and_then(|id| db.get_all_providers(app.as_str()).ok()?.get(&id).cloned())
+            .and_then(|id| db.get_provider_by_id(&id, &app).ok()?)
     };
     if in_use.as_ref().is_some_and(is_official) {
         return Ok(());
@@ -289,19 +288,18 @@ pub async fn refresh_live_after_account_change(
     let Some(current) = current else {
         return Ok(());
     };
-    let providers = state
+    let Some(provider) = state
         .db
-        .get_all_providers(app.as_str())
-        .map_err(|error| error.to_string())?;
-    let Some(provider) = providers.get(&current) else {
+        .get_provider_by_id(&current, &app)
+        .map_err(|error| error.to_string())?
+    else {
         return Ok(());
     };
-    if !is_official(provider) {
+    if !is_official(&provider) {
         return Ok(());
     }
     // 可能要等 Claude Code 的锁、访问钥匙串：别占着异步线程
     let db = state.db.clone();
-    let provider = provider.clone();
     tokio::task::spawn_blocking(move || {
         super::claude_direct::reapply(db.as_ref(), Some(&provider), &provider).map(|_| ())
     })

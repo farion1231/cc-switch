@@ -1,9 +1,12 @@
 //! Import MCode's committed token-usage projection without modifying its database.
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::{calculator::CostCalculator, parser::TokenUsage};
+use crate::proxy::usage::parser::TokenUsage;
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
-use crate::services::{session_usage::SessionSyncResult, usage_stats::find_model_pricing};
+use crate::services::{
+    session_usage::{cost_columns, SessionSyncResult},
+    usage_stats::find_model_pricing,
+};
 use crate::session_manager::providers::mcode;
 use rusqlite::{params, OptionalExtension};
 use rust_decimal::Decimal;
@@ -66,13 +69,15 @@ fn sync_from_database(
         let native_cost: Option<f64> = row.get(9)?;
         let cost = match native_cost {
             Some(cost) if cost.is_finite() && cost >= 0.0 => cost.to_string(),
-            _ => find_model_pricing(&tx, model)
-                .map(|pricing| {
-                    CostCalculator::calculate_for_app("mcode", &usage, &pricing, Decimal::ONE)
-                        .total_cost
-                        .to_string()
-                })
-                .unwrap_or_else(|| "0".into()),
+            _ => {
+                let [.., total] = cost_columns(
+                    "mcode",
+                    &usage,
+                    find_model_pricing(&tx, model).as_ref(),
+                    Decimal::ONE,
+                );
+                total
+            }
         };
         let request_id = format!("mcode:{session_id}:{id}");
         let changed = tx.execute(

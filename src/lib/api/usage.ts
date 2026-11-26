@@ -13,10 +13,8 @@ import type {
   ModelPricing,
   ModelsDevSyncConfig,
   ModelsDevSyncState,
-  ProviderLimitStatus,
   PaginatedLogs,
   SessionSyncResult,
-  DataSourceSummary,
 } from "@/types/usage";
 import type { FetchedExchangeRates, UsageResult } from "@/types";
 import type { AppId } from "./types";
@@ -328,13 +326,6 @@ export const usageApi = {
     return invoke("delete_model_pricing", { modelId });
   },
 
-  checkProviderLimits: async (
-    providerId: string,
-    appType: string,
-  ): Promise<ProviderLimitStatus> => {
-    return invoke("check_provider_limits", { providerId, appType });
-  },
-
   // Session usage sync
   syncSessionUsage: async (): Promise<SessionSyncResult> => {
     return invoke("sync_session_usage");
@@ -347,10 +338,6 @@ export const usageApi = {
 
   rebuildCodexUsage: async (): Promise<SessionSyncResult> => {
     return invoke("rebuild_codex_usage");
-  },
-
-  getDataSourceBreakdown: async (): Promise<DataSourceSummary[]> => {
-    return invoke("get_usage_data_sources");
   },
 
   /** 取 USD 对各显示币种的汇率：主源 open.er-api.com，失败退 floatrates.com */

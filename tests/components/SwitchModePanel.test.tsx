@@ -5,12 +5,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { toast } from "sonner";
 import type { Provider } from "@/types";
-import type { ModeAppId } from "@/config/appConfig";
 import type { AppMode } from "@/types/proxy";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { server } from "../msw/server";
 import { getSettings, setSettings } from "../msw/state";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import type { AppIdWith } from "@/config/appSpecs";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -82,7 +82,7 @@ function mockMode(
 }
 
 function renderPanel(
-  app: ModeAppId,
+  app: AppIdWith<"routeMode">,
   providers: Record<string, Provider>,
   onSwitch = vi.fn(),
 ) {

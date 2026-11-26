@@ -17,7 +17,7 @@ use super::copilot_auth::GitHubDeviceCodeResponse;
 
 const XAI_ISSUER: &str = "https://auth.x.ai";
 const XAI_DISCOVERY_URL: &str = "https://auth.x.ai/.well-known/openid-configuration";
-const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
+pub(crate) const XAI_CLIENT_ID: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_SCOPE: &str = "openid profile email offline_access grok-cli:access api:access";
 const XAI_USER_AGENT: &str = "cc-switch-xai-oauth";
 const TOKEN_REFRESH_BUFFER_MS: i64 = 60_000;
@@ -49,6 +49,19 @@ pub enum XaiOAuthError {
     IoError(String),
     #[error("账号不存在: {0}")]
     AccountNotFound(String),
+}
+
+impl XaiOAuthError {
+    /// 网络 / 刷新端点暂时失败：不代表登录失效，调用方应让用户稍后重试而不是重新登录
+    pub(crate) fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::NetworkError(_)
+                | Self::TokenFetchFailed(_)
+                | Self::ParseError(_)
+                | Self::IoError(_)
+        )
+    }
 }
 
 impl From<reqwest::Error> for XaiOAuthError {
@@ -109,6 +122,14 @@ struct XaiTokenClaims {
     preferred_username: Option<String>,
     #[serde(default)]
     name: Option<String>,
+    #[serde(default)]
+    exp: Option<i64>,
+    #[serde(default)]
+    team_id: Option<String>,
+    #[serde(default)]
+    principal_type: Option<String>,
+    #[serde(default)]
+    principal_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -177,6 +198,26 @@ struct XaiOAuthStore {
     accounts: HashMap<String, XaiAccountData>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     default_account_id: Option<String>,
+}
+
+/// 按磁盘上的账号表给出 `(account_id -> 显示名, 默认账号 id)`（同 [`XaiOAuthAccount::from`]）：托盘同步读状态用。
+pub fn labels_on_disk(data_dir: &std::path::Path) -> (HashMap<String, String>, Option<String>) {
+    let Ok(content) = fs::read_to_string(data_dir.join("xai_oauth_auth.json")) else {
+        return (HashMap::new(), None);
+    };
+    let Ok(store) = serde_json::from_str::<XaiOAuthStore>(&content) else {
+        return (HashMap::new(), None);
+    };
+    let default_id = store
+        .default_account_id
+        .filter(|id| XaiOAuthManager::is_usable_account(&store.accounts, id))
+        .or_else(|| XaiOAuthManager::fallback_default_account_id(&store.accounts));
+    let labels = store
+        .accounts
+        .iter()
+        .map(|(id, data)| (id.clone(), XaiOAuthAccount::from(data).login))
+        .collect();
+    (labels, default_id)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -387,17 +428,143 @@ impl XaiOAuthManager {
             return Err(XaiOAuthError::ReauthRequired(account_id.to_string()));
         }
 
-        let tokens = match self.refresh_with_token(&account.refresh_token).await {
-            Ok(tokens) => tokens,
+        let (tokens, used_refresh) = match self.refresh_with_token(&account.refresh_token).await {
+            Ok(tokens) => (tokens, account.refresh_token.clone()),
             Err(XaiOAuthError::RefreshTokenInvalid) => {
-                self.mark_reauth_required(account_id).await?;
-                return Err(XaiOAuthError::ReauthRequired(account_id.to_string()));
+                // 和 Grok CLI 共用的 refresh token 可能已被 CLI 轮换掉：用它手里那个再试一次
+                let cli_refresh = crate::grok_auth::read_live_login_from_disk()
+                    .filter(|live| live.user_id == account_id)
+                    .and_then(|live| live.refresh_token)
+                    .filter(|token| *token != account.refresh_token);
+                let recovered = match cli_refresh {
+                    Some(cli_refresh) => match self.refresh_with_token(&cli_refresh).await {
+                        Ok(tokens) => Some((tokens, cli_refresh)),
+                        Err(XaiOAuthError::RefreshTokenInvalid) => None,
+                        Err(error) => return Err(error),
+                    },
+                    None => None,
+                };
+                match recovered {
+                    Some(recovered) => recovered,
+                    None => {
+                        self.mark_reauth_required(account_id).await?;
+                        return Err(XaiOAuthError::ReauthRequired(account_id.to_string()));
+                    }
+                }
             }
             Err(error) => return Err(error),
         };
 
-        self.commit_refreshed_tokens(account_id, &account.refresh_token, tokens)
+        self.commit_refreshed_tokens(account_id, &account.refresh_token, &used_refresh, tokens)
             .await
+    }
+
+    /// 切到绑了这个账号的 Grok 官方卡时，要写进 Grok CLI `auth.json` 的登录（令牌快过期时先刷新）。
+    pub(crate) async fn grok_cli_login(
+        &self,
+        account_id: &str,
+    ) -> Result<crate::grok_auth::GrokCliLogin, XaiOAuthError> {
+        let access_token = self.get_valid_token_for_account(account_id).await?;
+        let account = self
+            .accounts
+            .read()
+            .await
+            .get(account_id)
+            .cloned()
+            .ok_or_else(|| XaiOAuthError::AccountNotFound(account_id.to_string()))?;
+        let cached_expiry = self
+            .access_tokens
+            .read()
+            .await
+            .get(account_id)
+            .map(|token| token.expires_at_ms);
+        Ok(cli_login_from(&account, access_token, cached_expiry))
+    }
+
+    /// 把 Grok CLI 现在登录的号收进授权中心：已有这个号且 refresh token 不同（CLI 轮换过、
+    /// 或另登了一次）时换成 CLI 的；没有这个号就新加一个。先用 CLI 的 refresh token 刷新一次
+    /// 确认还有效，失效的不收。CLI 那边的令牌若因此被轮换，立刻写回去。
+    ///
+    /// 返回这次自己写回 `auth.json` 的那条登录（没写回为 `None`）：调用方拿它更新联网前读到
+    /// 的 live，作为之后发布时的比对基准，而不是联网后再读一遍盘——那样会把这期间 Grok CLI
+    /// 轮换出来的令牌或用户新登录的号当成基准，接着把它们覆盖掉。
+    pub(crate) async fn absorb_grok_cli_login(
+        &self,
+        live: &crate::grok_auth::LiveLogin,
+    ) -> Result<Option<crate::grok_auth::LiveLogin>, XaiOAuthError> {
+        let Some(cli_refresh) = live.refresh_token.as_deref() else {
+            return Ok(None);
+        };
+        let account_id = live.user_id.as_str();
+        let refresh_lock = self.get_refresh_lock(account_id).await;
+        let _refresh_guard = refresh_lock.lock().await;
+
+        let existing = self.accounts.read().await.get(account_id).cloned();
+        if existing
+            .as_ref()
+            .is_some_and(|account| account.refresh_token == cli_refresh && !account.requires_reauth)
+        {
+            return Ok(None);
+        }
+
+        let tokens = match self.refresh_with_token(cli_refresh).await {
+            Ok(tokens) => tokens,
+            Err(XaiOAuthError::RefreshTokenInvalid) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let new_refresh = tokens
+            .refresh_token
+            .clone()
+            .filter(|token| !token.trim().is_empty())
+            .unwrap_or_else(|| cli_refresh.to_string());
+        let cached = CachedAccessToken {
+            token: tokens.access_token.clone(),
+            expires_at_ms: compute_expires_at_ms(tokens.expires_in),
+        };
+
+        let login = existing
+            .and_then(|account| account.login)
+            .or_else(|| live.email.clone());
+        self.add_account_internal(
+            account_id.to_string(),
+            login,
+            new_refresh.clone(),
+            None,
+            Some(cached.clone()),
+        )
+        .await?;
+
+        if new_refresh == cli_refresh {
+            return Ok(None);
+        }
+        Ok(self
+            .sync_grok_cli_after_refresh(account_id, cli_refresh, &cached)
+            .await)
+    }
+
+    /// cc-switch 刷新换了 refresh token 后，同步给共用这个令牌的 Grok CLI（失败只记日志）。
+    /// 返回写进 `auth.json` 的那条登录，没写为 `None`。
+    async fn sync_grok_cli_after_refresh(
+        &self,
+        account_id: &str,
+        consumed_refresh: &str,
+        access: &CachedAccessToken,
+    ) -> Option<crate::grok_auth::LiveLogin> {
+        let account = self.accounts.read().await.get(account_id).cloned()?;
+        let login = cli_login_from(&account, access.token.clone(), Some(access.expires_at_ms));
+        match crate::grok_auth::sync_after_refresh(consumed_refresh, &login) {
+            Ok(Some(written)) => {
+                log::info!("[XaiOAuth] 已把刷新后的令牌同步给 Grok CLI（account={account_id}）");
+                Some(written)
+            }
+            Ok(None) => None,
+            Err(err) => {
+                log::warn!(
+                    "[XaiOAuth] 同步刷新后的令牌给 Grok CLI 失败（account={account_id}）: {err}"
+                );
+                None
+            }
+        }
     }
 
     pub async fn get_valid_token(&self) -> Result<String, XaiOAuthError> {
@@ -451,7 +618,59 @@ impl XaiOAuthManager {
             .await?;
         self.access_tokens.write().await.remove(account_id);
         self.refresh_locks.write().await.remove(account_id);
+        // 还原 Grok CLI 登录时可能要刷新令牌（会再拿这把锁），先放开
+        drop(_mutation_guard);
+        self.release_grok_cli_login(&[account_id.to_string()]).await;
         Ok(())
+    }
+
+    /// 授权中心删掉了这些号：Grok CLI 现在登录的若是 CC Switch 替其中某个号写的（有登录暂存、
+    /// 且不是暂存里原来的号），就按暂存还原原来的登录；原来的号也没了就删掉这一条，不让
+    /// CLI 继续用已删除的号。Grok CLI 自己的登录不碰。失败只记日志。
+    async fn release_grok_cli_login(&self, removed: &[String]) {
+        let stash = match crate::grok_auth::read_stash() {
+            Ok(Some(stash)) => stash,
+            Ok(None) => return,
+            Err(err) => {
+                log::warn!("[XaiOAuth] 删除账号后没有处理 Grok CLI 登录: {err}");
+                return;
+            }
+        };
+        let Some(live) = crate::grok_auth::read_live_login_from_disk() else {
+            return;
+        };
+        if !removed.contains(&live.user_id) || stash.user_id.as_deref() == Some(&live.user_id) {
+            return;
+        }
+        let login = match stash
+            .user_id
+            .as_deref()
+            .filter(|user| !removed.iter().any(|id| id == user))
+        {
+            Some(original) => self
+                .grok_cli_login(original)
+                .await
+                .inspect_err(|err| {
+                    log::warn!(
+                        "[XaiOAuth] 还原 Grok CLI 原来的登录失败，改为退出登录（account={original}）: {err}"
+                    )
+                })
+                .ok(),
+            None => None,
+        };
+        let patch = crate::grok_auth::GrokAuthPatch {
+            write: stash.restore_write(login),
+            expected: Some(live),
+        };
+        match crate::grok_auth::write_now(&patch) {
+            Ok(()) => {
+                if let Err(err) = crate::config::delete_file(&crate::grok_auth::stash_path()) {
+                    log::warn!("[XaiOAuth] 删除 Grok 登录暂存失败: {err}");
+                }
+                log::info!("[XaiOAuth] 删除账号后已还原 Grok CLI 的登录");
+            }
+            Err(err) => log::warn!("[XaiOAuth] 删除账号后处理 Grok CLI 登录失败: {err}"),
+        }
     }
 
     pub async fn set_default_account(&self, account_id: &str) -> Result<(), XaiOAuthError> {
@@ -469,6 +688,7 @@ impl XaiOAuthManager {
 
     pub async fn clear_auth(&self) -> Result<(), XaiOAuthError> {
         let _mutation_guard = self.mutation_lock.lock().await;
+        let removed: Vec<String> = self.accounts.read().await.keys().cloned().collect();
         if self.storage_path.exists() {
             fs::remove_file(&self.storage_path)?;
         }
@@ -477,7 +697,31 @@ impl XaiOAuthManager {
         self.access_tokens.write().await.clear();
         self.refresh_locks.write().await.clear();
         self.pending_device_codes.write().await.clear();
+        drop(_mutation_guard);
+        self.release_grok_cli_login(&removed).await;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn seed_test_account_with_token_endpoint(
+        &self,
+        account_id: &str,
+        refresh_token: &str,
+        token_endpoint: String,
+    ) {
+        self.add_account_internal(
+            account_id.to_string(),
+            Some(format!("{account_id}@example.com")),
+            refresh_token.to_string(),
+            None,
+            None,
+        )
+        .await
+        .expect("seed test xAI account");
+        *self.discovered_endpoints.write().await = Some(OAuthEndpoints {
+            token_endpoint: token_endpoint.clone(),
+            device_authorization_endpoint: token_endpoint,
+        });
     }
 
     async fn discover_endpoints(&self) -> Result<OAuthEndpoints, XaiOAuthError> {
@@ -517,7 +761,7 @@ impl XaiOAuthManager {
         refresh_token: &str,
     ) -> Result<OAuthTokenResponse, XaiOAuthError> {
         let endpoints = self.discover_endpoints().await?;
-        let response = crate::proxy::http_client::get()
+        let response = crate::proxy::http_client::get_for_url(&endpoints.token_endpoint)
             .post(&endpoints.token_endpoint)
             .header("User-Agent", XAI_USER_AGENT)
             .form(&[
@@ -607,6 +851,7 @@ impl XaiOAuthManager {
         &self,
         account_id: &str,
         expected_refresh_token: &str,
+        used_refresh_token: &str,
         tokens: OAuthTokenResponse,
     ) -> Result<String, XaiOAuthError> {
         let _mutation_guard = self.mutation_lock.lock().await;
@@ -623,32 +868,39 @@ impl XaiOAuthManager {
             ));
         }
 
-        let refresh_token_changed = tokens
+        // 没回新 refresh token 时沿用这次刷新用的那个（可能是从 Grok CLI 借来的）
+        let next_refresh_token = tokens
             .refresh_token
             .as_deref()
             .filter(|token| !token.trim().is_empty())
-            .is_some_and(|refresh_token| {
-                if refresh_token == account.refresh_token {
-                    false
-                } else {
-                    account.refresh_token = refresh_token.to_string();
-                    true
-                }
-            });
-        if refresh_token_changed {
-            let default_account_id = self.default_account_id.read().await.clone();
+            .unwrap_or(used_refresh_token)
+            .to_string();
+        if next_refresh_token != account.refresh_token {
+            account.refresh_token = next_refresh_token.clone();
+            let stored_default = self.default_account_id.read().await.clone();
+            let default_account_id = match stored_default {
+                Some(id) if Self::is_usable_account(&accounts, &id) => Some(id),
+                _ => Self::fallback_default_account_id(&accounts),
+            };
             self.persist_and_commit(accounts, default_account_id)
                 .await?;
         }
 
         let access_token = tokens.access_token;
-        self.access_tokens.write().await.insert(
-            account_id.to_string(),
-            CachedAccessToken {
-                token: access_token.clone(),
-                expires_at_ms: compute_expires_at_ms(tokens.expires_in),
-            },
-        );
+        let cached = CachedAccessToken {
+            token: access_token.clone(),
+            expires_at_ms: compute_expires_at_ms(tokens.expires_in),
+        };
+        self.access_tokens
+            .write()
+            .await
+            .insert(account_id.to_string(), cached.clone());
+        drop(_mutation_guard);
+        if next_refresh_token != used_refresh_token {
+            let _ = self
+                .sync_grok_cli_after_refresh(account_id, used_refresh_token, &cached)
+                .await;
+        }
         Ok(access_token)
     }
 
@@ -659,7 +911,11 @@ impl XaiOAuthManager {
             .get_mut(account_id)
             .ok_or_else(|| XaiOAuthError::AccountNotFound(account_id.to_string()))?;
         account.requires_reauth = true;
-        let default_account_id = Self::fallback_default_account_id(&accounts);
+        let stored_default = self.default_account_id.read().await.clone();
+        let default_account_id = match stored_default {
+            Some(id) if id != account_id && Self::is_usable_account(&accounts, &id) => Some(id),
+            _ => Self::fallback_default_account_id(&accounts),
+        };
         self.persist_and_commit(accounts, default_account_id)
             .await?;
         self.access_tokens.write().await.remove(account_id);
@@ -911,6 +1167,30 @@ fn refresh_response_requires_reauth(
         status,
         reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
     ) || (status == reqwest::StatusCode::BAD_REQUEST && response_body_is_invalid)
+}
+
+/// 账号要写进 Grok CLI 的登录。过期时间优先取令牌里的 `exp`。
+fn cli_login_from(
+    account: &XaiAccountData,
+    access_token: String,
+    cached_expiry_ms: Option<i64>,
+) -> crate::grok_auth::GrokCliLogin {
+    let claims = parse_jwt_claims(&access_token).unwrap_or_default();
+    let expires_at_ms = claims
+        .exp
+        .map(|exp| exp.saturating_mul(1_000))
+        .or(cached_expiry_ms)
+        .unwrap_or_else(|| compute_expires_at_ms(None));
+    crate::grok_auth::GrokCliLogin {
+        account_id: account.account_id.clone(),
+        email: account.login.clone().or(claims.email),
+        access_token,
+        refresh_token: account.refresh_token.clone(),
+        expires_at_ms,
+        team_id: claims.team_id,
+        principal_type: claims.principal_type,
+        principal_id: claims.principal_id,
+    }
 }
 
 fn parse_jwt_claims(token: &str) -> Option<XaiTokenClaims> {
@@ -1270,6 +1550,7 @@ mod tests {
             .commit_refreshed_tokens(
                 "account-one",
                 "old-refresh-token",
+                "old-refresh-token",
                 OAuthTokenResponse {
                     access_token: "stale-access-token".to_string(),
                     refresh_token: None,
@@ -1301,6 +1582,7 @@ mod tests {
         let replaced_result = manager
             .commit_refreshed_tokens(
                 "account-one",
+                "old-refresh-token",
                 "old-refresh-token",
                 OAuthTokenResponse {
                     access_token: "stale-access-token".to_string(),
@@ -1351,5 +1633,136 @@ mod tests {
         assert!(manager.list_accounts().await.is_empty());
         assert!(manager.access_tokens.read().await.is_empty());
         assert!(!data_dir.path().join("xai_oauth_auth.json").exists());
+    }
+
+    fn test_account(
+        id: &str,
+        login: &str,
+        authenticated_at: i64,
+        requires_reauth: bool,
+    ) -> XaiAccountData {
+        XaiAccountData {
+            account_id: id.to_string(),
+            login: Some(login.to_string()),
+            refresh_token: format!("refresh-{id}"),
+            authenticated_at,
+            requires_reauth,
+        }
+    }
+
+    #[tokio::test]
+    async fn mark_reauth_required_preserves_valid_default_when_non_default_invalidated() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let mut accounts = HashMap::new();
+        accounts.insert(
+            "account-a".to_string(),
+            test_account("account-a", "a@example.com", 100, false),
+        );
+        accounts.insert(
+            "account-b".to_string(),
+            test_account("account-b", "b@example.com", 200, false),
+        );
+        accounts.insert(
+            "account-c".to_string(),
+            test_account("account-c", "c@example.com", 300, false),
+        );
+        manager
+            .persist_and_commit(accounts, Some("account-a".to_string()))
+            .await
+            .unwrap();
+        manager.access_tokens.write().await.insert(
+            "account-b".to_string(),
+            CachedAccessToken {
+                token: "cached-b".to_string(),
+                expires_at_ms: chrono::Utc::now().timestamp_millis() + 3_600_000,
+            },
+        );
+
+        manager.mark_reauth_required("account-b").await.unwrap();
+
+        let status = manager.get_status().await;
+        assert_eq!(status.default_account_id.as_deref(), Some("account-a"));
+        assert_eq!(status.username.as_deref(), Some("a@example.com"));
+        assert!(!manager.access_tokens.read().await.contains_key("account-b"));
+
+        let reloaded = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let reloaded_status = reloaded.get_status().await;
+        assert_eq!(
+            reloaded_status.default_account_id.as_deref(),
+            Some("account-a")
+        );
+        assert!(reloaded_status
+            .accounts
+            .iter()
+            .find(|account| account.id == "account-b")
+            .is_some_and(|account| account.requires_reauth));
+    }
+
+    #[tokio::test]
+    async fn mark_reauth_required_falls_back_to_newest_usable_when_default_invalidated() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let mut accounts = HashMap::new();
+        accounts.insert(
+            "account-a".to_string(),
+            test_account("account-a", "a@example.com", 100, false),
+        );
+        accounts.insert(
+            "account-b".to_string(),
+            test_account("account-b", "b@example.com", 200, false),
+        );
+        accounts.insert(
+            "account-c".to_string(),
+            test_account("account-c", "c@example.com", 300, false),
+        );
+        manager
+            .persist_and_commit(accounts, Some("account-a".to_string()))
+            .await
+            .unwrap();
+
+        manager.mark_reauth_required("account-a").await.unwrap();
+
+        let status = manager.get_status().await;
+        assert_eq!(status.default_account_id.as_deref(), Some("account-c"));
+
+        let reloaded = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        assert_eq!(
+            reloaded.get_status().await.default_account_id.as_deref(),
+            Some("account-c")
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_reauth_required_selects_usable_when_no_default_and_clears_when_last_invalidated()
+    {
+        let data_dir = tempfile::tempdir().unwrap();
+        let manager = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let mut accounts = HashMap::new();
+        accounts.insert(
+            "account-a".to_string(),
+            test_account("account-a", "a@example.com", 100, false),
+        );
+        accounts.insert(
+            "account-b".to_string(),
+            test_account("account-b", "b@example.com", 200, false),
+        );
+        manager.persist_and_commit(accounts, None).await.unwrap();
+
+        manager.mark_reauth_required("account-a").await.unwrap();
+        assert_eq!(
+            manager.get_status().await.default_account_id.as_deref(),
+            Some("account-b")
+        );
+
+        manager.mark_reauth_required("account-b").await.unwrap();
+        let final_status = manager.get_status().await;
+        assert!(!final_status.authenticated);
+        assert!(final_status.default_account_id.is_none());
+
+        let reloaded = XaiOAuthManager::new(data_dir.path().to_path_buf());
+        let reloaded_status = reloaded.get_status().await;
+        assert!(!reloaded_status.authenticated);
+        assert!(reloaded_status.default_account_id.is_none());
     }
 }

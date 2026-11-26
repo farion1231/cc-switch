@@ -102,7 +102,10 @@ struct GrokUsageEvent {
 }
 
 /// 同步 Grok Build 使用数据（从 updates.jsonl 会话日志）
-pub fn sync_grokbuild_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+pub(crate) fn sync_grokbuild_usage(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let files = collect_grok_updates_files();
 
     let mut result = SessionSyncResult {
@@ -110,10 +113,8 @@ pub fn sync_grokbuild_usage(db: &Database) -> Result<SessionSyncResult, AppError
         ..Default::default()
     };
 
-    let cursors = crate::services::session_usage::load_sync_cursors(db)?;
-
     for file_path in &files {
-        match sync_single_grok_file(db, file_path, &cursors) {
+        match sync_single_grok_file(db, file_path, cursors) {
             Ok(file_result) => result.merge(file_result),
             Err(e) => {
                 let msg = format!("Grok Build 会话文件解析失败 {}: {e}", file_path.display());

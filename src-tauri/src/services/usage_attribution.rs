@@ -221,10 +221,44 @@ pub fn provider_config_fingerprint(settings_config: &str) -> String {
 }
 
 impl Database {
+    pub(crate) fn backfill_claude_session_keys_on_conn(
+        conn: &Connection,
+    ) -> Result<usize, AppError> {
+        let rows = {
+            let mut statement = conn.prepare(
+                "SELECT request_id, app_type, session_id FROM proxy_request_logs
+                 WHERE app_type IN ('claude', 'claude-desktop') AND session_key = ''
+                   AND COALESCE(session_id, '') <> ''
+                   AND COALESCE(data_source, 'proxy') = 'proxy'",
+            )?;
+            let rows = statement.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        let mut updated = 0;
+        for (request_id, app_type, session_id) in rows {
+            let key = normalize_session_key(&app_type, &session_id);
+            if !key.is_empty() {
+                updated += conn.execute(
+                    "UPDATE proxy_request_logs SET session_key = ?1
+                     WHERE request_id = ?2 AND session_key = ''",
+                    params![key, request_id],
+                )?;
+            }
+        }
+        Ok(updated)
+    }
+
     pub fn backfill_claude_desktop_projects(&self) -> Result<usize, AppError> {
-        // Unchanged session files are not re-imported, so repair retained gateway
-        // rows from the existing index as well as handling newly imported evidence.
+        // Retained pre-upgrade rows only have session_id. Keep it unchanged and
+        // normalize the association key before applying existing project evidence.
         let conn = lock_conn!(self.conn);
+        Self::backfill_claude_session_keys_on_conn(&conn)?;
         conn.execute(
             "UPDATE proxy_request_logs SET (project_key, project_path, project_name) = (
                  SELECT p.project_key,
@@ -233,20 +267,22 @@ impl Database {
                         CASE WHEN proxy_request_logs.project_name = ''
                              THEN p.project_name ELSE proxy_request_logs.project_name END
                  FROM session_projects p
-                 WHERE p.app_type IN ('claude-desktop', 'claude')
-                   AND p.session_key = proxy_request_logs.session_key AND p.project_key <> ''
+                 WHERE (p.app_type = proxy_request_logs.app_type OR (
+                           proxy_request_logs.app_type = 'claude-desktop' AND p.app_type = 'claude'
+                       )) AND p.session_key = proxy_request_logs.session_key AND p.project_key <> ''
                  ORDER BY (p.app_type = 'claude-desktop') DESC LIMIT 1
              )
-             WHERE app_type = 'claude-desktop' AND project_key = '' AND session_key <> ''
+             WHERE app_type IN ('claude', 'claude-desktop') AND project_key = '' AND session_key <> ''
                AND COALESCE(data_source, 'proxy') = 'proxy'
                AND EXISTS (
                  SELECT 1 FROM session_projects p
-                 WHERE p.app_type IN ('claude-desktop', 'claude')
-                   AND p.session_key = proxy_request_logs.session_key AND p.project_key <> ''
+                 WHERE (p.app_type = proxy_request_logs.app_type OR (
+                           proxy_request_logs.app_type = 'claude-desktop' AND p.app_type = 'claude'
+                       )) AND p.session_key = proxy_request_logs.session_key AND p.project_key <> ''
                )",
             [],
         )
-        .map_err(|e| AppError::Database(format!("补齐 Desktop 代理明细项目失败: {e}")))
+        .map_err(|e| AppError::Database(format!("补齐 Claude 代理明细项目失败: {e}")))
     }
 
     /// Repair retained project identities using current Git metadata, without
@@ -506,6 +542,9 @@ impl Database {
         conn: &Connection,
         project: &SessionProject,
     ) -> Result<usize, AppError> {
+        if matches!(project.app_type.as_str(), "claude" | "claude-desktop") {
+            Self::backfill_claude_session_keys_on_conn(conn)?;
+        }
         conn.execute(
             "INSERT INTO session_projects
                 (app_type, session_key, project_key, project_path, project_name, source, updated_at)
@@ -695,7 +734,7 @@ pub fn record_activation_for_current_state(
     app_type: &AppType,
     source: &str,
 ) -> Result<bool, AppError> {
-    if app_type.is_additive_mode() || !app_type.has_route_mode() {
+    if app_type.spec().additive || !app_type.spec().route_mode {
         return Ok(false);
     }
     let mode_state = crate::mode::current::mode_state(app_type);
@@ -708,7 +747,7 @@ pub fn record_activation_for_current_state(
         crate::mode::current::provider_for(db, app_type, crate::mode::current::Purpose::InUse)?;
     let fingerprint = provider_id
         .as_deref()
-        .and_then(|id| db.get_provider_by_id(id, app_type.as_str()).ok().flatten())
+        .and_then(|id| db.get_provider_by_id(id, app_type).ok().flatten())
         .map(|provider| provider_config_fingerprint(&provider.settings_config.to_string()))
         .unwrap_or_default();
     db.record_provider_activation(
@@ -801,7 +840,7 @@ pub fn provider_name_snapshot_on_conn(
 /// 启动时为所有切换式客户端补一条基线，保证升级后新产生的会话有归属依据。
 pub fn ensure_startup_baselines(db: &Database) {
     for app_type in AppType::all() {
-        if app_type.is_additive_mode() || !app_type.has_route_mode() {
+        if app_type.spec().additive || !app_type.spec().route_mode {
             continue;
         }
         if let Err(err) = record_activation_for_current_state(db, &app_type, "startup") {
@@ -1157,6 +1196,33 @@ mod tests {
         db.upsert_session_project(&exact)?;
         assert_eq!(db.session_project("claude-desktop", "shared")?, Some(exact));
         assert_eq!(db.session_project("claude", "shared")?, Some(project));
+        Ok(())
+    }
+
+    #[test]
+    fn project_index_normalizes_retained_claude_gateway_session_ids() -> Result<(), AppError> {
+        let db = Database::memory()?;
+        {
+            let conn = lock_conn!(db.conn);
+            for app in ["claude", "claude-desktop"] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs
+                     (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, session_id)
+                     VALUES (?1, 'kept', ?1, 'm', 1, 500, 100, 'user_synthetic_session_shared')",
+                    [app],
+                )?;
+            }
+        }
+        let project =
+            project_from_cwd("claude", "shared", "/synthetic/project", "session_meta").unwrap();
+        db.upsert_session_project(&project)?;
+        let count: i64 = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE session_key = 'shared'
+             AND project_key = ?1 AND session_id = 'user_synthetic_session_shared' AND provider_id = 'kept'",
+            [project.project_key], |row| row.get(0),
+        )?;
+        assert_eq!(count, 2);
+        assert_eq!(db.backfill_claude_desktop_projects()?, 0);
         Ok(())
     }
 

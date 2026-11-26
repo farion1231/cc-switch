@@ -1,12 +1,5 @@
 // 使用统计相关类型定义
 
-export interface TokenUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-}
-
 export interface RequestLog {
   requestId: string;
   providerId: string;
@@ -18,6 +11,7 @@ export interface RequestLog {
   pricingModel?: string;
   costMultiplier: string;
   inputTokens: number;
+  freshInputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
@@ -51,12 +45,6 @@ export interface SessionSyncResult {
   suspectedDuplicates: number;
   deferredFiles: number;
   errors: string[];
-}
-
-export interface DataSourceSummary {
-  dataSource: string;
-  requestCount: number;
-  totalCostUsd: string;
 }
 
 export interface PaginatedLogs {
@@ -129,14 +117,16 @@ export interface ProviderStats {
   /** 新增输入（已按客户端输入语义归一化，不含缓存） */
   freshInputTokens?: number;
   cacheCreationTokens?: number;
-  cacheReadTokens?: number;
   /** 可缓存输入 = 新增输入 + 缓存写入 + 缓存命中 */
-  cacheableInputTokens?: number;
   /** cache_read / cacheable_input，0–1；分母为 0 时 UI 显示 — */
   cacheHitRate?: number;
   totalCost: string;
   successRate: number;
   avgLatencyMs: number;
+  /** 缓存命中 Tokens：命中率的分子 */
+  cacheReadTokens: number;
+  /** 可缓存输入（新增输入 + 缓存写入 + 缓存命中）：命中率的分母，与指标卡同口径 */
+  cacheableInputTokens: number;
   /** 速度分子：有首字、输出 ≥ 100 token 的明细请求的输出之和（日汇总不计） */
   speedOutputTokens?: number;
   /** 速度分母：同一批请求的（耗时 − 首字）之和，毫秒 */
@@ -188,12 +178,14 @@ export interface ModelStats {
   totalTokens: number;
   freshInputTokens?: number;
   cacheCreationTokens?: number;
-  cacheReadTokens?: number;
-  cacheableInputTokens?: number;
   cacheHitRate?: number;
   totalCost: string;
   avgCostPerRequest: string;
   successRate: number;
+  /** 缓存命中 Tokens：命中率的分子 */
+  cacheReadTokens: number;
+  /** 可缓存输入（新增输入 + 缓存写入 + 缓存命中）：命中率的分母，与指标卡同口径 */
+  cacheableInputTokens: number;
   /** 速度分子分母，口径同 ProviderStats 的四个速度字段 */
   speedOutputTokens?: number;
   speedGenerationMs?: number;
@@ -237,16 +229,6 @@ export interface UsageScopeFilters {
   projectKey?: string;
   /** 项目集合取并集；未传或空数组表示全部，空字符串成员表示未识别项目。 */
   projectKeys?: string[];
-}
-
-export interface ProviderLimitStatus {
-  providerId: string;
-  dailyUsage: string;
-  dailyLimit?: string;
-  dailyExceeded: boolean;
-  monthlyUsage: string;
-  monthlyLimit?: string;
-  monthlyExceeded: boolean;
 }
 
 export type UsageRangePreset =
@@ -293,9 +275,11 @@ export type AppType =
   | "omp"
   | "mcode"
   | "kimi"
+  | "codebuddy"
   | "dsh"
   | "agy"
-  | "copilot";
+  | "copilot"
+  | "workbuddy";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -309,37 +293,32 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "omp",
   "mcode",
   "kimi",
+  "codebuddy",
   "dsh",
   "agy",
   "copilot",
+  "workbuddy",
 ];
 
-/**
- * App types whose proxy uses an OpenAI-style protocol. Two consequences:
- *
- * 1. `inputTokens` already includes the cached portion (must subtract
- *    `cacheReadTokens` to get fresh-input semantics — see
- *    [getFreshInputTokens]).
- * 2. The protocol does not report cache _creation_ separately, only cache
- *    _reads_. So `cacheCreationTokens` is always 0 for these app types and
- *    the UI should label it as N/A rather than 0.
- *
- * Mirror of the Rust `CACHE_INCLUSIVE_APP_TYPES` whitelist.
- */
-export const CACHE_INCLUSIVE_APP_TYPES: ReadonlySet<string> = new Set([
-  "codex",
+const NO_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "gemini",
   "grokbuild",
 ]);
 
+/** Session import stores 0 cache writes for these apps, so a 0 in the log means "not reported". */
+export function omitsCacheWrites(appType: string): boolean {
+  return NO_CACHE_WRITE_APP_TYPES.has(appType);
+}
+
 // Pi and Oh My Pi sessions can mix Anthropic and OpenAI APIs, but the dashboard
-// aggregates only by app type. Treat cache-write coverage as partial without
-// changing their fresh-input token semantics.
+// aggregates only by app type. Treat cache-write coverage as partial.
 const PARTIAL_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([
   "pi",
   "omp",
   "mcode",
   "kimi",
+  "workbuddy",
+  "codebuddy",
 ]);
 
 export type CacheWriteAvailability = "ok" | "partial" | "na";
@@ -349,35 +328,13 @@ export function getCacheWriteAvailability(
 ): CacheWriteAvailability {
   if (appTypes.length === 0) return "ok";
   const unavailable = appTypes.filter((appType) =>
-    CACHE_INCLUSIVE_APP_TYPES.has(appType),
+    NO_CACHE_WRITE_APP_TYPES.has(appType),
   ).length;
   if (unavailable === appTypes.length) return "na";
   const partial = appTypes.some((appType) =>
     PARTIAL_CACHE_WRITE_APP_TYPES.has(appType),
   );
   return unavailable === 0 && !partial ? "ok" : "partial";
-}
-
-/** Subset of request-log fields needed to derive cache-normalized input. */
-export interface CacheNormalizableLog {
-  appType: string;
-  inputTokens: number;
-  cacheReadTokens: number;
-}
-
-/**
- * For a single request log, return the input token count with cache reads
- * removed. Anthropic-style providers already report `inputTokens` without
- * cache, so they pass through unchanged.
- */
-export function getFreshInputTokens(log: CacheNormalizableLog): number {
-  if (
-    CACHE_INCLUSIVE_APP_TYPES.has(log.appType) &&
-    log.inputTokens >= log.cacheReadTokens
-  ) {
-    return log.inputTokens - log.cacheReadTokens;
-  }
-  return log.inputTokens;
 }
 
 export const NON_NEGATIVE_DECIMAL_REGEX = /^\d+(?:\.\d+)?$/;
@@ -422,10 +379,4 @@ export function isUnpricedUsage(log: UsageCostLog): boolean {
     (!Number.isFinite(multiplier) || multiplier !== 0) &&
     totalCost === 0
   );
-}
-
-export interface StatsFilters {
-  timeRange: UsageRangePreset;
-  providerId?: string;
-  appType?: string;
 }

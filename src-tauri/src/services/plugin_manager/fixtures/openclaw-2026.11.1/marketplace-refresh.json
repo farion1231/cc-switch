@@ -1,0 +1,16 @@
+{
+  "source": "hosted",
+  "entries": 183,
+  "metadata": {
+    "url": "https://clawhub.ai/v1/feeds/plugins",
+    "status": 200,
+    "etag": "W/\"sha256:a76f852c223d24805ce64d779b2ab32f9dec9475aefb379a5f7d2ffb4a12a3d8-gzip\"",
+    "lastModified": "Fri, 06 Nov 2026 12:25:32 GMT",
+    "checksum": "sha256:a76f852c223d24805ce64d779b2ab32f9dec9475aefb379a5f7d2ffb4a12a3d8"
+  },
+  "feed": {
+    "id": "clawhub-official",
+    "generatedAt": "2026-11-06T12:25:12.208Z",
+    "sequence": 544
+  }
+}

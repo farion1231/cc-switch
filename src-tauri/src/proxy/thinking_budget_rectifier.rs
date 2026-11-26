@@ -121,6 +121,47 @@ pub fn rectify_thinking_budget(body: &mut Value) -> BudgetRectifyResult {
     }
 }
 
+/// 检测上游是否拒绝关闭思考
+///
+/// 有的上游模型思考常开，收到 `thinking.type = "disabled"` 直接报 400。
+/// Claude Code 的 auto mode 分类器请求固定带 disabled（Issue #8887），
+/// 例如 MiniMax-M3.1-Flash 返回：
+/// `model "MiniMax-M3.1-Flash" requires adaptive thinking; thinking.type="disabled" ... is not allowed (2013)`。
+/// 与 budget 整流共用 `request_thinking_budget` 子开关。
+pub fn should_rectify_thinking_disabled(
+    error_message: Option<&str>,
+    config: &RectifierConfig,
+) -> bool {
+    if !config.enabled || !config.request_thinking_budget {
+        return false;
+    }
+    let Some(msg) = error_message else {
+        return false;
+    };
+    let lower = msg.to_lowercase();
+    lower.contains("thinking")
+        && lower.contains("disabled")
+        && (lower.contains("not allowed") || lower.contains("requires adaptive thinking"))
+}
+
+/// 对请求体执行关思考整流：删掉 `thinking.type = "disabled"`，让上游按默认思考
+///
+/// 只删 disabled，其它取值不动（不是这个报错的成因，删了也不会好）。
+pub fn rectify_thinking_disabled(body: &mut Value) -> BudgetRectifyResult {
+    let before = snapshot_budget(body);
+    if before.thinking_type.as_deref() == Some("disabled") {
+        if let Some(obj) = body.as_object_mut() {
+            obj.remove("thinking");
+        }
+    }
+    let after = snapshot_budget(body);
+    BudgetRectifyResult {
+        applied: before != after,
+        before,
+        after,
+    }
+}
+
 fn snapshot_budget(body: &Value) -> BudgetRectifySnapshot {
     let max_tokens = body.get("max_tokens").and_then(|v| v.as_u64());
     let thinking = body.get("thinking").and_then(|t| t.as_object());
@@ -361,5 +402,82 @@ mod tests {
         assert_eq!(result.before, result.after);
         assert_eq!(body["thinking"]["budget_tokens"], 32000);
         assert_eq!(body["max_tokens"], 64001);
+    }
+
+    // ==================== 关思考整流（Issue #8887）====================
+
+    /// MiniMax-M3.1-Flash 的原始错误响应体（10-26 实测）
+    const MINIMAX_DISABLED_ERROR: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"invalid params, model \"MiniMax-M3.1-Flash\" requires adaptive thinking; thinking.type=\"disabled\" (including reasoning.effort=none) is not allowed (2013)"},"request_id":"072e005c15d09825a8667dba1a975010"}"#;
+
+    #[test]
+    fn test_detect_thinking_disabled_not_allowed() {
+        assert!(should_rectify_thinking_disabled(
+            Some(MINIMAX_DISABLED_ERROR),
+            &enabled_config()
+        ));
+        // 不该被 budget 整流或签名整流认领
+        assert!(!should_rectify_thinking_budget(
+            Some(MINIMAX_DISABLED_ERROR),
+            &enabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_detect_thinking_disabled_respects_switches() {
+        assert!(!should_rectify_thinking_disabled(
+            Some(MINIMAX_DISABLED_ERROR),
+            &budget_disabled_config()
+        ));
+        assert!(!should_rectify_thinking_disabled(
+            Some(MINIMAX_DISABLED_ERROR),
+            &master_disabled_config()
+        ));
+    }
+
+    #[test]
+    fn test_no_detect_thinking_disabled_for_unrelated_error() {
+        assert!(!should_rectify_thinking_disabled(
+            Some("Invalid `signature` in `thinking` block"),
+            &enabled_config()
+        ));
+        assert!(!should_rectify_thinking_disabled(
+            Some("thinking is disabled for this account"),
+            &enabled_config()
+        ));
+        assert!(!should_rectify_thinking_disabled(None, &enabled_config()));
+    }
+
+    #[test]
+    fn test_rectify_thinking_disabled_removes_field() {
+        // auto mode 分类器第 1 步的请求形状
+        let mut body = json!({
+            "model": "MiniMax-M3.1-Flash",
+            "max_tokens": 64,
+            "thinking": { "type": "disabled" },
+            "stop_sequences": ["</block>"]
+        });
+
+        let result = rectify_thinking_disabled(&mut body);
+
+        assert!(result.applied);
+        assert_eq!(result.before.thinking_type.as_deref(), Some("disabled"));
+        assert_eq!(result.after.thinking_type, None);
+        assert!(body.get("thinking").is_none());
+        assert_eq!(body["max_tokens"], 64);
+        assert_eq!(body["stop_sequences"], json!(["</block>"]));
+    }
+
+    #[test]
+    fn test_rectify_thinking_disabled_leaves_other_types() {
+        let mut body = json!({
+            "model": "MiniMax-M3.1-Flash",
+            "max_tokens": 64,
+            "thinking": { "type": "adaptive" }
+        });
+
+        let result = rectify_thinking_disabled(&mut body);
+
+        assert!(!result.applied);
+        assert_eq!(body["thinking"]["type"], "adaptive");
     }
 }

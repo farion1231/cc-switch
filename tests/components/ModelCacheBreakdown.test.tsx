@@ -22,6 +22,7 @@ function model(
     freshInputTokens: fresh,
     cacheCreationTokens: write,
     cacheReadTokens: read,
+    cacheableInputTokens: fresh + read + write,
   };
 }
 
@@ -53,7 +54,7 @@ describe("ModelCacheBreakdown", () => {
   });
 
   it("keeps zero-input and missing data distinct and reports excluded models", () => {
-    const missing = { ...model("missing", 0, 0), cacheReadTokens: undefined };
+    const missing = { ...model("missing", 0, 0), freshInputTokens: undefined };
     render(
       <ModelCacheBreakdown
         title="模型缓存"

@@ -12,7 +12,12 @@ import {
 } from "./format";
 import { usageTable } from "./usageTable";
 import { getUsageProviderLabel, usageProviderTitle } from "./providerLabel";
-import { PerformanceCells, PerformanceHeaders } from "./statsColumns";
+import {
+  CacheHitRateCell,
+  CacheHitRateHeader,
+  PerformanceCells,
+  PerformanceHeaders,
+} from "./statsColumns";
 import { ProviderUsageBreakdown } from "./ProviderUsageBreakdown";
 import type { UsageRangeSelection } from "@/types/usage";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
@@ -127,7 +132,7 @@ export function ProviderStatsTable({
               <th className={cn(usageTable.th, usageTable.groupGap)}>
                 {t("usage.tokens")}
               </th>
-              <th className={usageTable.th}>{t("usage.cacheHitRate")}</th>
+              <CacheHitRateHeader />
               <PerformanceHeaders />
             </tr>
           </thead>
@@ -188,11 +193,7 @@ export function ProviderStatsTable({
                       >
                         {formatTokensCompact(stat.totalTokens, locale)}
                       </td>
-                      <td className={usageTable.td}>
-                        {(stat.cacheableInputTokens ?? 0) > 0
-                          ? `${((stat.cacheHitRate ?? 0) * 100).toFixed(1)}%`
-                          : "—"}
-                      </td>
+                      <CacheHitRateCell stat={stat} locale={locale} />
                       <PerformanceCells stat={stat} />
                     </tr>
                     {isExpanded ? (

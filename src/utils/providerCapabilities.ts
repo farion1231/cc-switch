@@ -1,6 +1,7 @@
 import type { AppId } from "@/lib/api";
 import type { Provider } from "@/types";
 import { isOAuthProviderType } from "@/config/constants";
+import { isCopilotOfficialCard } from "@/config/copilotConfig";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import {
   extractCodexBaseUrl,
@@ -9,11 +10,10 @@ import {
   hasExplicitNonOpenAiCodexModelProvider,
   isCodexAnthropicWireApi,
   isCodexChatWireApi,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 
 export const CODEX_OFFICIAL_PROVIDER_ID = "codex-official";
 export const GROKBUILD_OFFICIAL_PROVIDER_ID = "grokbuild-official";
-export const KIMI_OFFICIAL_PROVIDER_ID = "managed:kimi-code";
 
 export type CodexOfficialIdentity =
   | "native_login"
@@ -99,6 +99,8 @@ export function isOfficialAccount(
       | undefined;
     return config?.type === "kimi" && nonEmptyString(config?.oauth?.key);
   }
+  // Copilot CLI：没有自带模型（provider 节点）的卡用 Copilot 自己的 GitHub 登录
+  if (appId === "copilot") return isCopilotOfficialCard(provider);
   return (
     provider.category === "official" ||
     resolveCodexOfficialIdentity(appId, provider) !== null
@@ -129,7 +131,14 @@ export function supportsConnectivityCheck(
   appId: AppId,
   provider: Pick<Provider, "category">,
 ): boolean {
-  if (appId === "mcode" || appId === "dsh" || appId === "kimi") return false;
+  if (
+    appId === "mcode" ||
+    appId === "dsh" ||
+    appId === "kimi" ||
+    appId === "workbuddy" ||
+    appId === "codebuddy"
+  )
+    return false;
   return (
     provider.category !== "official" &&
     provider.category !== "omo" &&

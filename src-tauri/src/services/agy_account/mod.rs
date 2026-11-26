@@ -2,7 +2,8 @@
 //!
 //! agy 只有一份全局登录，存在系统钥匙串里（见 `keychain`）。CC Switch 自己存每个账号的整份
 //! 登录数据（`agy_accounts.json`，0600，不随云同步），切换就是把目标账号那份写进钥匙串，
-//! agy 下次启动就是这个号。账号按 id_token 的 `sub` 区分（邮箱可能相同前缀，名字可改）。
+//! agy 下次启动就是这个号。账号按 id_token 的 `sub` 区分（邮箱可能相同前缀，名字可改）；
+//! agy 1.5 起钥匙串里没有 id_token，按 refresh token / 邮箱对回已收录的号（见 `read_live`）。
 //!
 //! 几条规矩：
 //! - 写之前先把钥匙串里现在那份收回来：是已收录的号就更新它（agy 续期后写回的新 access
@@ -62,6 +63,11 @@ struct StoreFile {
     /// 切走它时照样收录（切换绝不弄丢登录），收录后就从这里去掉。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dismissed: Vec<String>,
+    /// 已删账号的 `sub -> email`（不含令牌）：agy 1.5 钥匙串里不再带 `id_token`，
+    /// 只有 `id_token_email`；留着邮箱才能在不发网的情况下认出钥匙串里还是这个被删掉的号，
+    /// 切走时也能按原 `sub` 收回。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    dismissed_emails: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -105,7 +111,7 @@ pub struct AgyAccountStatus {
     pub accounts: Vec<AgyAccount>,
     /// agy 当前登录的是哪个已收录的号；没登录、或读不到钥匙串时为 `None`
     pub current_account_id: Option<String>,
-    /// 这个平台能不能切号（目前只有 macOS）
+    /// 这个平台能不能切号（macOS、Windows 和 Linux）。
     pub supported: bool,
 }
 
@@ -280,7 +286,7 @@ impl AgyAccountManager {
         let mut store = self.store.lock().await;
         let mut current = None;
         if keychain::supported() {
-            match self.read_live().await {
+            match self.read_live(&store, false).await {
                 Ok(live) => {
                     let (id, changed) = absorb(&mut store, live, false);
                     current = id;
@@ -317,7 +323,7 @@ impl AgyAccountManager {
             ));
         }
 
-        let live = self.read_live().await?;
+        let live = self.read_live(&store, true).await?;
         if let LiveLogin::Unrecognized(raw) = &live {
             self.stash_unrecognized(raw)?;
         }
@@ -335,32 +341,34 @@ impl AgyAccountManager {
         let login = Arc::clone(&self.login);
         run_blocking(move || login.write(&encoded)).await?;
 
-        // 写完读回来核对，钥匙串偶尔会静默失败
-        let written = match self.read_live().await? {
-            LiveLogin::Known { credential, .. } => {
-                refresh_token_of(&credential).map(str::to_string)
+        // 核验失败时只重读，避免再次覆盖 agy 可能已经更新过的登录。
+        for _ in 0..2 {
+            if let Ok(LiveLogin::Known { credential, .. }) = self.read_live(&store, false).await {
+                let written = refresh_token_of(&credential);
+                if written.is_some() && written == expected.as_deref() {
+                    log::info!("[AgyAccount] 已切换 agy 登录");
+                    return Ok(());
+                }
             }
-            _ => None,
-        };
-        if written.is_none() || written != expected {
-            return Err(AppError::localized(
-                "agy.account.write_verify_failed",
-                "写入后核对不一致，agy 的登录可能没有切换成功",
-                "The written sign-in did not verify; agy may not have switched accounts.",
-            ));
         }
-        log::info!("[AgyAccount] 已切换 agy 登录");
-        Ok(())
+        Err(AppError::localized(
+            "agy.account.write_verify_failed",
+            "已写入钥匙串，但无法确认 agy 当前登录的账号。请先在授权中心检查当前登录，再重试。",
+            "The keychain write completed, but agy's current account could not be verified. Check the current sign-in in Auth Center before retrying.",
+        ))
     }
 
     /// 只删 CC Switch 里的副本。删的是 agy 正登着的号时记下来，免得查看状态时又被收回来。
     pub async fn remove(&self, account_id: &str) -> Result<(), AppError> {
         let mut store = self.store.lock().await;
-        if store.accounts.remove(account_id).is_none() {
+        let Some(removed) = store.accounts.remove(account_id) else {
             return Err(account_not_found(account_id));
-        }
+        };
         if !store.dismissed.iter().any(|id| id == account_id) {
             store.dismissed.push(account_id.to_string());
+        }
+        if let Some(email) = removed.email.filter(|email| !email.is_empty()) {
+            store.dismissed_emails.insert(account_id.to_string(), email);
         }
         self.persist(&store)
     }
@@ -368,12 +376,14 @@ impl AgyAccountManager {
     pub async fn remove_all(&self) -> Result<Vec<String>, AppError> {
         let mut store = self.store.lock().await;
         let removed: Vec<String> = store.accounts.keys().cloned().collect();
-        for id in &removed {
-            if !store.dismissed.contains(id) {
+        for (id, account) in std::mem::take(&mut store.accounts) {
+            if !store.dismissed.contains(&id) {
                 store.dismissed.push(id.clone());
             }
+            if let Some(email) = account.email.filter(|email| !email.is_empty()) {
+                store.dismissed_emails.insert(id, email);
+            }
         }
-        store.accounts.clear();
         self.persist(&store)?;
         Ok(removed)
     }
@@ -413,7 +423,7 @@ impl AgyAccountManager {
             return None;
         }
         let mut store = self.store.lock().await;
-        let live = match self.read_live().await {
+        let live = match self.read_live(&store, false).await {
             Ok(live) => live,
             Err(error) => {
                 log::warn!("[AgyAccount] 读取 agy 当前登录失败: {error}");
@@ -434,7 +444,7 @@ impl AgyAccountManager {
         {
             let mut store = self.store.lock().await;
             if keychain::supported() {
-                if let Ok(live) = self.read_live().await {
+                if let Ok(live) = self.read_live(&store, false).await {
                     if absorb(&mut store, live, false).1 {
                         if let Err(error) = self.persist(&store) {
                             log::warn!("[AgyAccount] 保存账号文件失败: {error}");
@@ -496,21 +506,64 @@ impl AgyAccountManager {
 
     // ---------- 内部 ----------
 
-    async fn read_live(&self) -> Result<LiveLogin, AppError> {
+    /// 读钥匙串里 agy 当前的登录并认出是谁。`store` 用来认 agy 1.5 起的新格式：那份 JSON 不再带
+    /// id_token，只有 `id_token_email`（可能带 `writer_id`），先按 refresh token、再按邮箱对已收录的号；
+    /// 都对不上（agy 里新登录的号）时用 access token 问 Google（若 access token 已过期则先拿
+    /// refresh token 续期）。
+    async fn read_live(
+        &self,
+        store: &StoreFile,
+        allow_unlock: bool,
+    ) -> Result<LiveLogin, AppError> {
         let login = Arc::clone(&self.login);
-        let raw = run_blocking(move || login.read()).await?;
+        let raw = run_blocking(move || {
+            if allow_unlock {
+                login.read_for_switch()
+            } else {
+                login.read()
+            }
+        })
+        .await?;
         let Some(raw) = raw else {
             return Ok(LiveLogin::None);
         };
-        let parsed = keychain::decode(&raw).ok().and_then(|credential| {
-            let claims = credential["id_token"].as_str().and_then(oauth::identity)?;
-            refresh_token_of(&credential)?;
-            Some((credential, claims))
-        });
-        Ok(match parsed {
-            Some((credential, claims)) => LiveLogin::Known { credential, claims },
-            None => LiveLogin::Unrecognized(raw),
-        })
+        let Some(mut credential) = keychain::decode(&raw)
+            .ok()
+            .filter(|credential| refresh_token_of(credential).is_some())
+        else {
+            return Ok(LiveLogin::Unrecognized(raw));
+        };
+        if let Some(claims) = credential["id_token"].as_str().and_then(oauth::identity) {
+            return Ok(LiveLogin::Known { credential, claims });
+        }
+        if let Some(claims) = match_stored(store, &credential) {
+            return Ok(LiveLogin::Known { credential, claims });
+        }
+        let token = oauth::usable_access_token(&credential, Duration::ZERO).map(str::to_string);
+        if let Some(token) = token {
+            if let Some(mut claims) = oauth::fetch_identity(&token).await {
+                if claims.email.is_none() {
+                    claims.email = live_email(&credential);
+                }
+                return Ok(LiveLogin::Known { credential, claims });
+            }
+        }
+        if let Some(refresh_token) = refresh_token_of(&credential).map(str::to_string) {
+            if let Ok(tokens) = oauth::refresh(&refresh_token).await {
+                oauth::apply_refresh(&mut credential, &tokens);
+                let claims = match credential["id_token"].as_str().and_then(oauth::identity) {
+                    Some(claims) => Some(claims),
+                    None => oauth::fetch_identity(&tokens.access_token).await,
+                };
+                if let Some(mut claims) = claims {
+                    if claims.email.is_none() {
+                        claims.email = live_email(&credential);
+                    }
+                    return Ok(LiveLogin::Known { credential, claims });
+                }
+            }
+        }
+        Ok(LiveLogin::Unrecognized(raw))
     }
 
     fn stash_unrecognized(&self, raw: &str) -> Result<(), AppError> {
@@ -527,6 +580,7 @@ impl AgyAccountManager {
             version: 1,
             accounts: store.accounts.clone(),
             dismissed: store.dismissed.clone(),
+            dismissed_emails: store.dismissed_emails.clone(),
         };
         let content = serde_json::to_vec_pretty(&snapshot)
             .map_err(|source| AppError::JsonSerialize { source })?;
@@ -547,7 +601,15 @@ fn absorb(
     let sub = claims.sub.clone().unwrap_or_default();
     if let Some(existing) = store.accounts.get_mut(&sub) {
         let mut changed = false;
-        if existing.credential != credential {
+        // CC Switch 查额度续期只存自己的副本、不写钥匙串：同一条 refresh token 下若副本里的
+        // 过期时间比钥匙串那份还新，保留副本，别被钥匙串里的旧令牌冲掉。
+        let stored_is_newer = refresh_token_of(&existing.credential)
+            == refresh_token_of(&credential)
+            && matches!(
+                (token_expiry(&existing.credential), token_expiry(&credential)),
+                (Some(stored), Some(live_exp)) if stored > live_exp
+            );
+        if !stored_is_newer && existing.credential != credential {
             existing.credential = credential;
             existing.requires_reauth = false;
             changed = true;
@@ -560,9 +622,24 @@ fn absorb(
     }
     let dismissed = store.dismissed.contains(&sub);
     if dismissed && !import_dismissed {
-        return (None, false);
+        // 旧版删过的号只有 `dismissed` 里的 sub、没有邮箱：第一次经 userinfo 认出后顺手把邮箱
+        // 补进 `dismissed_emails`，往后查看状态就能直接走本地 `match_stored`，不再每次持锁发请求。
+        let changed = claims
+            .email
+            .or_else(|| live_email(&credential))
+            .filter(|email| !email.is_empty())
+            .is_some_and(|email| {
+                if store.dismissed_emails.get(&sub) == Some(&email) {
+                    false
+                } else {
+                    store.dismissed_emails.insert(sub, email);
+                    true
+                }
+            });
+        return (None, changed);
     }
     store.dismissed.retain(|id| *id != sub);
+    store.dismissed_emails.remove(&sub);
     upsert(store, credential, &claims);
     (Some(sub), true)
 }
@@ -580,6 +657,7 @@ fn fill(slot: &mut Option<String>, value: Option<String>) -> bool {
 fn upsert(store: &mut StoreFile, credential: Value, claims: &oauth::IdentityClaims) -> AgyAccount {
     let sub = claims.sub.clone().unwrap_or_default();
     store.dismissed.retain(|id| *id != sub);
+    store.dismissed_emails.remove(&sub);
     let now = chrono::Utc::now().timestamp();
     let entry = store
         .accounts
@@ -613,6 +691,60 @@ fn refresh_token_of(credential: &Value) -> Option<&str> {
         .pointer("/token/refresh_token")
         .and_then(Value::as_str)
         .filter(|token| !token.is_empty())
+}
+
+fn token_expiry(credential: &Value) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    let expiry = credential.pointer("/token/expiry")?.as_str()?;
+    chrono::DateTime::parse_from_rfc3339(expiry).ok()
+}
+
+/// agy 1.5 起写进钥匙串的邮箱（替代了 id_token）。
+fn live_email(credential: &Value) -> Option<String> {
+    credential
+        .get("id_token_email")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|email| !email.is_empty())
+        .map(str::to_string)
+}
+
+/// 不带 id_token 的登录对应哪个已收录（或已删但仍在钥匙串里）的号：同一个 refresh token
+/// 优先，其次邮箱相同（在 agy 里重新登录过同一个号，或刚在 CC Switch 里删掉的号）。
+fn match_stored(store: &StoreFile, credential: &Value) -> Option<oauth::IdentityClaims> {
+    let refresh_token = refresh_token_of(credential)?;
+    let email = live_email(credential);
+    if let Some(account) = store
+        .accounts
+        .values()
+        .find(|account| refresh_token_of(&account.credential) == Some(refresh_token))
+        .or_else(|| {
+            let email = email.as_deref()?;
+            store.accounts.values().find(|account| {
+                account
+                    .email
+                    .as_deref()
+                    .is_some_and(|stored| stored.eq_ignore_ascii_case(email))
+            })
+        })
+    {
+        return Some(oauth::IdentityClaims {
+            sub: Some(account.sub.clone()),
+            email: email.or_else(|| account.email.clone()),
+            name: None,
+            picture: None,
+        });
+    }
+    let email = email?;
+    let (sub, stored_email) = store
+        .dismissed_emails
+        .iter()
+        .find(|(_, stored)| stored.eq_ignore_ascii_case(&email))?;
+    Some(oauth::IdentityClaims {
+        sub: Some(sub.clone()),
+        email: Some(stored_email.clone()),
+        name: None,
+        picture: None,
+    })
 }
 
 async fn run_blocking<T: Send + 'static>(

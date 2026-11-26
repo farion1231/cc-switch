@@ -39,9 +39,7 @@ pub fn remove_server_from_omp(id: &str) -> Result<(), AppError> {
 }
 
 fn sync(id: &str, change: OmpChange<'_>) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     sync_locked(id, change)
 }
 
@@ -50,9 +48,7 @@ pub(crate) fn sync_and_commit<T>(
     change: OmpChange<'_>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     crate::mcode_config::write_and_commit(
         &crate::omp_config::get_omp_mcp_path()?,
         || sync_locked(id, change),
@@ -173,9 +169,7 @@ pub(crate) fn is_disabled_managed(id: &str, spec: &Value) -> Result<bool, AppErr
 }
 
 pub(crate) fn remove_disabled_if_managed(id: &str, spec: &Value) -> Result<(), AppError> {
-    let _guard = WRITE_LOCK
-        .lock()
-        .map_err(|e| AppError::Message(e.to_string()))?;
+    let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let document = read_document()?;
     if document["mcpServers"].get(id).is_some_and(|entry| {
         entry.get("enabled") == Some(&json!(false)) && transport_spec(entry) == transport_spec(spec)
@@ -205,11 +199,18 @@ fn native_enabled(document: &Value, id: &str, spec: &Value) -> bool {
 
 pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read_document()?;
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
     let mut skipped = Vec::new();
     let servers = document.get("mcpServers").and_then(Value::as_object);
     for (id, native) in servers.into_iter().flatten() {
+        if unreadable.contains(id) {
+            skipped.push(format!("'{id}': stored server is unreadable"));
+            continue;
+        }
         let mut spec = unified_spec(native);
         if super::validation::validate_server_spec(&spec).is_err() {
             skipped.push(format!("'{id}': invalid transport configuration"));
