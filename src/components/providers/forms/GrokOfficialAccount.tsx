@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { ManagedBoundAccountLine } from "./shared/ManagedAccountSelect";
+import { ManagedBoundAccountLine } from "./shared/ManagedBoundAccountLine";
 
 /** 绑了账号的 Grok 官方卡副标题 */
 export function GrokBoundAccountLine({

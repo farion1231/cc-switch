@@ -729,55 +729,6 @@ describe("useManagedAuth", () => {
     );
   });
 
-  it("invalidates inactive app providers cache when authStatus.accounts changes via refresh", async () => {
-    const queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    });
-    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-    queryClient.setQueryData(["providers", "workbuddy"], { providers: {} });
-
-    const { result } = renderHook(() => useManagedAuth("workbuddy_account"), {
-      wrapper: createWrapper(queryClient),
-    });
-    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
-
-    // Initial load must not invalidate providers unnecessarily.
-    expect(invalidateSpy).not.toHaveBeenCalledWith(
-      expect.objectContaining({ queryKey: ["providers", "workbuddy"] }),
-    );
-
-    apiMocks.authGetStatus.mockResolvedValueOnce({
-      provider: "workbuddy_account",
-      authenticated: true,
-      default_account_id: "wb-1",
-      accounts: [
-        {
-          id: "wb-1",
-          provider: "workbuddy_account",
-          login: "alice",
-          avatar_url: null,
-          authenticated_at: 1,
-          is_default: true,
-          github_domain: "workbuddy",
-        },
-      ],
-    });
-
-    await act(async () => {
-      await result.current.refetchStatus();
-    });
-
-    await waitFor(() =>
-      expect(invalidateSpy).toHaveBeenCalledWith({
-        queryKey: ["providers", "workbuddy"],
-        refetchType: "all",
-      }),
-    );
-  });
-
   it("invalidates app providers cache when cancelBackendFlow reports login already committed", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {

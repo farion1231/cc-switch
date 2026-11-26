@@ -789,7 +789,9 @@ impl Database {
     /// 比 `get_all_providers` 轻量得多：只读 id 列、无 endpoint 子查询、首条命中即返回。
     /// 用于 `import_default_config` 决定是否跳过 live 导入。
     pub fn has_non_official_seed_provider(&self, app_type: &AppType) -> Result<bool, AppError> {
-        use crate::database::dao::providers_seed::is_official_seed_id;
+        use crate::database::dao::providers_seed::{
+            is_official_account_card_id, is_official_seed_id,
+        };
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare("SELECT id FROM providers WHERE app_type = ?1")
@@ -799,11 +801,7 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
             let id: String = row.get(0).map_err(|e| AppError::Database(e.to_string()))?;
-            if !is_official_seed_id(&id)
-                && !crate::services::provider::official_account_cards::is_official_account_card_id(
-                    &id,
-                )
-            {
+            if !is_official_seed_id(&id) && !is_official_account_card_id(&id) {
                 return Ok(true);
             }
         }

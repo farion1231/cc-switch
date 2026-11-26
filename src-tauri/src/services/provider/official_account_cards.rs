@@ -12,13 +12,15 @@
 //! Kimi (`kimi_oauth`) already maintains one card per saved account in its native config, and
 //! DeepSeek Harness (`dsh_account`) has a single native account rendered directly via `DshAccountCard`.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::app_config::AppType;
-use crate::database::Database;
+use crate::database::{official_seed_for_app, Database, OFFICIAL_ACCOUNT_CARD_INFIX};
 use crate::error::AppError;
 use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta, UsageScript};
 use crate::store::AppState;
@@ -28,8 +30,7 @@ use super::{
     lock_native_provider_operations,
 };
 
-const DISMISSED_SETTING_PREFIX: &str = "official_account_cards_dismissed:";
-const OFFICIAL_ACCOUNT_CARD_INFIX: &str = "-official-acct-";
+const DISMISSED_FILENAME: &str = "official-account-cards-dismissed.json";
 
 pub(crate) const AUTH_PROVIDER_CLAUDE_OFFICIAL: &str = "claude_official";
 pub(crate) const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
@@ -39,6 +40,19 @@ pub(crate) const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
 pub(crate) const AUTH_PROVIDER_WORKBUDDY_ACCOUNT: &str = "workbuddy_account";
 pub(crate) const AUTH_PROVIDER_CODEBUDDY_OAUTH: &str = "codebuddy_oauth";
 
+/// Canonical mapping between supported app types and their Auth Center official providers.
+pub(crate) const OFFICIAL_CARD_APPS: &[(AppType, &str)] = &[
+    (AppType::Claude, AUTH_PROVIDER_CLAUDE_OFFICIAL),
+    (AppType::Codex, AUTH_PROVIDER_CODEX_OAUTH),
+    (AppType::GrokBuild, AUTH_PROVIDER_XAI_OAUTH),
+    (AppType::Agy, AUTH_PROVIDER_AGY_OAUTH),
+    (AppType::Copilot, AUTH_PROVIDER_GITHUB_COPILOT),
+    (AppType::WorkBuddy, AUTH_PROVIDER_WORKBUDDY_ACCOUNT),
+    (AppType::Codebuddy, AUTH_PROVIDER_CODEBUDDY_OAUTH),
+];
+
+static DISMISSED_FILE_LOCK: Mutex<()> = Mutex::new(());
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OfficialAccountEntry {
     pub id: String,
@@ -47,30 +61,18 @@ pub(crate) struct OfficialAccountEntry {
 
 /// Maps an app type to the Auth Center provider whose saved accounts appear as cards on its page.
 pub(crate) fn auth_provider_for_app(app_type: &AppType) -> Option<&'static str> {
-    match app_type {
-        AppType::Claude => Some(AUTH_PROVIDER_CLAUDE_OFFICIAL),
-        AppType::Codex => Some(AUTH_PROVIDER_CODEX_OAUTH),
-        AppType::GrokBuild => Some(AUTH_PROVIDER_XAI_OAUTH),
-        AppType::Agy => Some(AUTH_PROVIDER_AGY_OAUTH),
-        AppType::Copilot => Some(AUTH_PROVIDER_GITHUB_COPILOT),
-        AppType::WorkBuddy => Some(AUTH_PROVIDER_WORKBUDDY_ACCOUNT),
-        AppType::Codebuddy => Some(AUTH_PROVIDER_CODEBUDDY_OAUTH),
-        _ => None,
-    }
+    OFFICIAL_CARD_APPS
+        .iter()
+        .find(|(app, _)| app == app_type)
+        .map(|(_, provider)| *provider)
 }
 
 /// Inverse of [`auth_provider_for_app`].
 pub(crate) fn app_for_auth_provider(auth_provider: &str) -> Option<AppType> {
-    match auth_provider {
-        AUTH_PROVIDER_CLAUDE_OFFICIAL => Some(AppType::Claude),
-        AUTH_PROVIDER_CODEX_OAUTH => Some(AppType::Codex),
-        AUTH_PROVIDER_XAI_OAUTH => Some(AppType::GrokBuild),
-        AUTH_PROVIDER_AGY_OAUTH => Some(AppType::Agy),
-        AUTH_PROVIDER_GITHUB_COPILOT => Some(AppType::Copilot),
-        AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Some(AppType::WorkBuddy),
-        AUTH_PROVIDER_CODEBUDDY_OAUTH => Some(AppType::Codebuddy),
-        _ => None,
-    }
+    OFFICIAL_CARD_APPS
+        .iter()
+        .find(|(_, provider)| *provider == auth_provider)
+        .map(|(app, _)| app.clone())
 }
 
 /// Deterministic provider card ID for an auto-created official account card.
@@ -81,81 +83,81 @@ pub(crate) fn official_account_card_id(app_type: &AppType, account_id: &str) -> 
 }
 
 /// Whether `id` follows the deterministic prefix of an auto-created official account card.
+#[cfg(test)]
 pub(crate) fn is_official_account_card_id(id: &str) -> bool {
-    [
-        AppType::Claude,
-        AppType::Codex,
-        AppType::GrokBuild,
-        AppType::Agy,
-        AppType::Copilot,
-        AppType::WorkBuddy,
-        AppType::Codebuddy,
-    ]
-    .iter()
-    .any(|app| {
-        let prefix = format!("{}{OFFICIAL_ACCOUNT_CARD_INFIX}", app.as_str());
-        id.strip_prefix(&prefix)
-            .is_some_and(|rest| rest.len() == 16 && rest.bytes().all(|b| b.is_ascii_hexdigit()))
-    })
+    crate::database::is_official_account_card_id(id)
 }
 
-fn dismissed_setting_key(app_type: &AppType) -> String {
-    format!("{DISMISSED_SETTING_PREFIX}{}", app_type.as_str())
+fn dismissed_file_path() -> PathBuf {
+    crate::config::get_app_config_dir().join(DISMISSED_FILENAME)
 }
 
-fn load_dismissed(db: &Database, app_type: &AppType) -> BTreeSet<String> {
-    let key = dismissed_setting_key(app_type);
-    match db.get_setting(&key) {
-        Ok(Some(raw)) => serde_json::from_str::<BTreeSet<String>>(&raw).unwrap_or_default(),
-        _ => BTreeSet::new(),
+fn read_dismissed_map() -> BTreeMap<String, BTreeSet<String>> {
+    let path = dismissed_file_path();
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    serde_json::from_str::<BTreeMap<String, BTreeSet<String>>>(&raw).unwrap_or_default()
+}
+
+fn write_dismissed_map(map: &BTreeMap<String, BTreeSet<String>>) -> Result<(), AppError> {
+    let path = dismissed_file_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
     }
+    let bytes =
+        serde_json::to_vec_pretty(map).map_err(|e| AppError::JsonSerialize { source: e })?;
+    crate::config::atomic_write_private(&path, &bytes)
 }
 
-fn save_dismissed(
-    db: &Database,
-    app_type: &AppType,
-    dismissed: &BTreeSet<String>,
-) -> Result<(), AppError> {
-    let key = dismissed_setting_key(app_type);
-    let json =
-        serde_json::to_string(dismissed).map_err(|e| AppError::JsonSerialize { source: e })?;
-    db.set_setting(&key, &json)
+pub(crate) fn load_dismissed(app_type: &AppType) -> BTreeSet<String> {
+    let _guard = DISMISSED_FILE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    read_dismissed_map()
+        .remove(app_type.as_str())
+        .unwrap_or_default()
 }
 
-fn mark_dismissed(db: &Database, app_type: &AppType, account_id: &str) -> Result<(), AppError> {
+fn mark_dismissed(app_type: &AppType, account_id: &str) -> Result<(), AppError> {
     let account_id = account_id.trim();
     if account_id.is_empty() {
         return Ok(());
     }
-    let mut dismissed = load_dismissed(db, app_type);
-    if dismissed.insert(account_id.to_string()) {
-        save_dismissed(db, app_type, &dismissed)?;
+    let _guard = DISMISSED_FILE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut map = read_dismissed_map();
+    let set = map.entry(app_type.as_str().to_string()).or_default();
+    if set.insert(account_id.to_string()) {
+        write_dismissed_map(&map)?;
     }
     Ok(())
 }
 
-pub(crate) fn clear_dismissed_locked(state: &AppState, app_type: &AppType, account_ids: &[String]) {
+pub(crate) fn clear_dismissed(app_type: &AppType, account_ids: &[String]) {
     if account_ids.is_empty() || auth_provider_for_app(app_type).is_none() {
         return;
     }
-    let _native_guard = lock_native_provider_operations(state, app_type);
-    clear_dismissed(&state.db, app_type, account_ids);
-}
-
-pub(crate) fn clear_dismissed(db: &Database, app_type: &AppType, account_ids: &[String]) {
-    if account_ids.is_empty() || auth_provider_for_app(app_type).is_none() {
+    let _guard = DISMISSED_FILE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let mut map = read_dismissed_map();
+    let Some(set) = map.get_mut(app_type.as_str()) else {
         return;
-    }
-    let mut dismissed = load_dismissed(db, app_type);
+    };
     let mut changed = false;
     for id in account_ids {
         let trimmed = id.trim();
-        if !trimmed.is_empty() && dismissed.remove(trimmed) {
+        if !trimmed.is_empty() && set.remove(trimmed) {
             changed = true;
         }
     }
     if changed {
-        if let Err(error) = save_dismissed(db, app_type, &dismissed) {
+        if set.is_empty() {
+            map.remove(app_type.as_str());
+        }
+        if let Err(error) = write_dismissed_map(&map) {
             log::warn!(
                 "[OfficialAccountCards] Failed to clear dismissed accounts for {}: {error}",
                 app_type.as_str()
@@ -192,6 +194,54 @@ pub(crate) fn bound_official_account_id(app_type: &AppType, provider: &Provider)
         .filter(|id| !id.is_empty())
 }
 
+/// Ensures an existing bound official card cannot have its Auth Center account binding reassigned
+/// or removed. Pre-upgrade unbound official cards may bind an account once.
+pub(crate) fn ensure_official_binding_unchanged(
+    app_type: &AppType,
+    existing: Option<&Provider>,
+    incoming: &Provider,
+) -> Result<(), AppError> {
+    if auth_provider_for_app(app_type).is_none() {
+        return Ok(());
+    }
+    let Some(existing) = existing else {
+        return Ok(());
+    };
+    if !is_official_for_app(app_type, existing) {
+        return Ok(());
+    }
+    let existing_bound = bound_official_account_id(app_type, existing);
+    let incoming_bound = bound_official_account_id(app_type, incoming);
+    if existing_bound.is_some() && existing_bound != incoming_bound {
+        return Err(AppError::InvalidInput(
+            "官方登录卡片不支持切换账号，请在授权中心管理账号".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn seed_card_defaults(
+    seed_app: &AppType,
+    display_login: &str,
+) -> (
+    String,
+    Value,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    let seed = official_seed_for_app(seed_app).expect("missing official seed for app");
+    let settings_config: Value =
+        serde_json::from_str(seed.settings_config_json).expect("valid official seed JSON");
+    (
+        format!("{} ({display_login})", seed.name),
+        settings_config,
+        Some(seed.website_url.to_string()),
+        Some(seed.icon.to_string()),
+        Some(seed.icon_color.to_string()),
+    )
+}
+
 fn build_official_card(
     app_type: &AppType,
     auth_provider: &str,
@@ -209,58 +259,61 @@ fn build_official_card(
 
     let (name, settings_config, website_url, icon, icon_color, common_config_enabled, usage_script) =
         match app_type {
-            AppType::Claude => (
-                format!("Claude Official ({display_login})"),
-                json!({ "env": {} }),
-                Some("https://www.anthropic.com/claude-code".to_string()),
-                Some("anthropic".to_string()),
-                Some("#D4915D".to_string()),
-                Some(true),
-                None,
-            ),
-            AppType::Codex => (
-                format!("OpenAI Official ({display_login})"),
-                json!({ "auth": {}, "config": "" }),
-                Some("https://chatgpt.com/codex".to_string()),
-                Some("openai".to_string()),
-                Some("#00A67E".to_string()),
-                Some(true),
-                None,
-            ),
-            AppType::GrokBuild => (
-                format!("Grok Official ({display_login})"),
-                json!({ "config": "" }),
-                Some("https://x.ai/grok".to_string()),
-                Some("grok".to_string()),
-                Some("currentColor".to_string()),
-                None,
-                None,
-            ),
-            AppType::Agy => (
-                format!("Antigravity ({display_login})"),
-                json!({ "env": {}, "config": {} }),
-                Some("https://ai.google.dev/".to_string()),
-                Some("gemini".to_string()),
-                Some("#4285F4".to_string()),
-                None,
-                Some(UsageScript {
-                    enabled: true,
-                    language: "javascript".to_string(),
-                    code: String::new(),
-                    timeout: None,
-                    api_key: None,
-                    base_url: None,
-                    access_token: None,
-                    user_id: None,
-                    template_type: Some("official_subscription".to_string()),
-                    auto_query_interval: None,
-                    coding_plan_provider: None,
-                    access_key_id: None,
-                    secret_access_key: None,
-                    team_organization_id: None,
-                    team_project_id: None,
-                }),
-            ),
+            AppType::Claude | AppType::Codex => {
+                let (name, settings_config, website_url, icon, icon_color) =
+                    seed_card_defaults(app_type, display_login);
+                (
+                    name,
+                    settings_config,
+                    website_url,
+                    icon,
+                    icon_color,
+                    Some(true),
+                    None,
+                )
+            }
+            AppType::GrokBuild => {
+                let (name, settings_config, website_url, icon, icon_color) =
+                    seed_card_defaults(app_type, display_login);
+                (
+                    name,
+                    settings_config,
+                    website_url,
+                    icon,
+                    icon_color,
+                    None,
+                    None,
+                )
+            }
+            AppType::Agy => {
+                let (_, settings_config, website_url, icon, icon_color) =
+                    seed_card_defaults(&AppType::Gemini, display_login);
+                (
+                    format!("Antigravity ({display_login})"),
+                    settings_config,
+                    website_url,
+                    icon,
+                    icon_color,
+                    None,
+                    Some(UsageScript {
+                        enabled: true,
+                        language: "javascript".to_string(),
+                        code: String::new(),
+                        timeout: None,
+                        api_key: None,
+                        base_url: None,
+                        access_token: None,
+                        user_id: None,
+                        template_type: Some("official_subscription".to_string()),
+                        auto_query_interval: None,
+                        coding_plan_provider: None,
+                        access_key_id: None,
+                        secret_access_key: None,
+                        team_organization_id: None,
+                        team_project_id: None,
+                    }),
+                )
+            }
             AppType::Copilot => (
                 format!("GitHub Copilot ({display_login})"),
                 json!({ "env": {} }),
@@ -317,9 +370,9 @@ fn build_official_card(
     provider
 }
 
-/// Ensures every saved official account (not dismissed and not already bound to an official card)
-/// has a dedicated provider card in `app_type`. Caller must already hold the per-app native lock
-/// when calling during provider list/mutation flows, or use [`sync_app_cards_locked`].
+/// Ensures every saved official account (not dismissed locally and not already bound to an official
+/// card) has a dedicated provider card in `app_type`. Caller must already hold the per-app native
+/// lock when calling during provider list/mutation flows, or use [`sync_app_cards_locked`].
 pub(crate) fn sync_app_cards(
     db: &Database,
     app_type: &AppType,
@@ -343,7 +396,7 @@ pub(crate) fn sync_app_cards(
         taken_ids.insert(entry.id);
     }
 
-    let dismissed = load_dismissed(db, app_type);
+    let dismissed = load_dismissed(app_type);
     let mut next_sort = db.next_sort_index_for_app(app_type)?;
     let now_ms = chrono::Utc::now().timestamp_millis();
     let mut created = 0usize;
@@ -380,7 +433,6 @@ pub(crate) fn sync_app_cards(
 }
 
 /// Acquires the per-app native provider lock before calling [`sync_app_cards`].
-#[allow(dead_code)]
 pub(crate) fn sync_app_cards_locked(
     state: &AppState,
     app_type: &AppType,
@@ -390,7 +442,7 @@ pub(crate) fn sync_app_cards_locked(
     sync_app_cards(&state.db, app_type, accounts)
 }
 
-/// Clears any dismissed markers for `accounts` and syncs cards under the per-app native provider lock.
+/// Clears any local dismissed markers for `accounts` and syncs cards under the per-app native lock.
 pub(crate) fn clear_dismissed_and_sync_locked(
     state: &AppState,
     app_type: &AppType,
@@ -401,19 +453,17 @@ pub(crate) fn clear_dismissed_and_sync_locked(
     }
     let _native_guard = lock_native_provider_operations(state, app_type);
     let ids: Vec<String> = accounts.iter().map(|entry| entry.id.clone()).collect();
-    clear_dismissed(&state.db, app_type, &ids);
+    clear_dismissed(app_type, &ids);
     sync_app_cards(&state.db, app_type, accounts)
 }
 
-/// Records an account as dismissed if the user deletes the last official card bound to it,
-/// so background/list syncs do not immediately recreate a deleted card. Returns `Some(account_id)`
-/// when the deleted card was the last remaining official card in `app_type` covering that account.
-pub(crate) fn record_deleted_card(
-    db: &Database,
-    app_type: &AppType,
-    deleted: &Provider,
-) -> Option<String> {
-    let account_id = bound_official_account_id(app_type, deleted)?;
+/// Records an account as locally dismissed when the user deletes the last official card in
+/// `app_type` bound to it, so startup/passive syncs do not recreate the card. Auth Center
+/// accounts are never deleted by deleting provider cards; account deletion lives in Auth Center.
+pub(crate) fn record_deleted_card(db: &Database, app_type: &AppType, deleted: &Provider) {
+    let Some(account_id) = bound_official_account_id(app_type, deleted) else {
+        return;
+    };
     let still_covered = match db.get_provider_rows(app_type) {
         Ok(rows) => rows.readable.values().any(|provider| {
             bound_official_account_id(app_type, provider).as_deref() == Some(&account_id)
@@ -423,53 +473,17 @@ pub(crate) fn record_deleted_card(
                 "[OfficialAccountCards] Failed to inspect remaining cards after deleting {}: {error}",
                 deleted.id
             );
-            return None;
+            return;
         }
     };
-    if still_covered {
-        return None;
+    if !still_covered {
+        if let Err(error) = mark_dismissed(app_type, &account_id) {
+            log::warn!(
+                "[OfficialAccountCards] Failed to mark dismissed account {account_id} for {}: {error}",
+                app_type.as_str()
+            );
+        }
     }
-    if let Err(error) = mark_dismissed(db, app_type, &account_id) {
-        log::warn!(
-            "[OfficialAccountCards] Failed to mark dismissed account {account_id} for {}: {error}",
-            app_type.as_str()
-        );
-    }
-    let auth_provider = auth_provider_for_app(app_type)?;
-    // These logins also back Claude/Codex/ClaudeDesktop providers (bound, or by the "first account"
-    // fallback), so deleting one app's card only hides it and never signs the account out.
-    if matches!(
-        auth_provider,
-        AUTH_PROVIDER_CODEX_OAUTH | AUTH_PROVIDER_GITHUB_COPILOT | AUTH_PROVIDER_XAI_OAUTH
-    ) || bound_in_other_apps(db, app_type, auth_provider, &account_id)
-    {
-        return None;
-    }
-    Some(account_id)
-}
-
-/// Whether a provider of another app is still bound to this Auth Center account.
-/// Fails closed: an unreadable app or row counts as still bound.
-fn bound_in_other_apps(
-    db: &Database,
-    app_type: &AppType,
-    auth_provider: &str,
-    account_id: &str,
-) -> bool {
-    AppType::all()
-        .filter(|other| other != app_type)
-        .any(|other| match db.get_provider_rows(&other) {
-            // A malformed row may still carry a binding we cannot see: keep the account.
-            Ok(rows) if !rows.unreadable.is_empty() => true,
-            Ok(rows) => rows.readable.values().any(|provider| {
-                provider
-                    .meta
-                    .as_ref()
-                    .and_then(|meta| meta.managed_account_id_for(auth_provider))
-                    .is_some_and(|id| id.trim() == account_id)
-            }),
-            Err(_) => true,
-        })
 }
 
 /// Cleans up auto-created cards (and clears dismissal flags) when accounts are removed/logged out
@@ -519,7 +533,7 @@ fn cleanup_removed_accounts_inner(
             None
         };
 
-    clear_dismissed(&state.db, app_type, account_ids);
+    clear_dismissed(app_type, account_ids);
 
     let queued_ids: HashSet<String> = if app_type.spec().local_proxy {
         state
@@ -604,33 +618,30 @@ mod tests {
             entry("acct-2", "bob@example.com"),
         ];
 
-        for app in [
-            AppType::Claude,
-            AppType::Codex,
-            AppType::GrokBuild,
-            AppType::Agy,
-            AppType::Copilot,
-            AppType::WorkBuddy,
-            AppType::Codebuddy,
-        ] {
-            let created = sync_app_cards(&state.db, &app, &accounts).unwrap();
+        for (app, expected_auth_provider) in OFFICIAL_CARD_APPS {
+            let created = sync_app_cards(&state.db, app, &accounts).unwrap();
             assert_eq!(created, 2, "expected 2 cards for {}", app.as_str());
+            assert_eq!(auth_provider_for_app(app), Some(*expected_auth_provider));
+            assert_eq!(
+                app_for_auth_provider(expected_auth_provider).as_ref(),
+                Some(app)
+            );
 
-            let providers = state.db.get_all_providers(&app).unwrap();
+            let providers = state.db.get_all_providers(app).unwrap();
             assert_eq!(providers.len(), 2);
 
-            let card1_id = official_account_card_id(&app, "acct-1");
+            let card1_id = official_account_card_id(app, "acct-1");
             assert!(is_official_account_card_id(&card1_id));
             let card1 = providers.get(&card1_id).expect("card1 exists");
             assert_eq!(card1.category.as_deref(), Some("official"));
             assert_eq!(
-                bound_official_account_id(&app, card1).as_deref(),
+                bound_official_account_id(app, card1).as_deref(),
                 Some("acct-1")
             );
-            if app == AppType::Codebuddy {
+            if *app == AppType::Codebuddy {
                 assert!(card1_id.starts_with("codebuddy-official-"));
             }
-            if app == AppType::Agy {
+            if *app == AppType::Agy {
                 let usage = card1
                     .meta
                     .as_ref()
@@ -651,7 +662,6 @@ mod tests {
         let (_home, _env, state) = test_state();
         state.db.init_default_official_providers().unwrap();
 
-        // Bind a user-created card (and a seed card) to acct-1; acct-2 is unbound.
         let mut user_card = Provider::with_id(
             "custom-claude-work".into(),
             "My Work Claude".into(),
@@ -681,7 +691,6 @@ mod tests {
             1
         );
 
-        // Unbound seed card claude-official is preserved, user_card covers acct-1, and only acct-2 gets a card.
         let providers = state.db.get_all_providers(&AppType::Claude).unwrap();
         assert!(providers.contains_key("claude-official"));
         assert!(providers.contains_key("custom-claude-work"));
@@ -689,7 +698,6 @@ mod tests {
         let acct2_id = official_account_card_id(&AppType::Claude, "acct-2");
         assert!(providers.contains_key(&acct2_id));
 
-        // Rename acct-2 card and re-sync: must not duplicate or overwrite the custom name.
         let mut renamed = providers.get(&acct2_id).unwrap().clone();
         renamed.name = "Bob Custom Name".into();
         state.db.save_provider(&AppType::Claude, &renamed).unwrap();
@@ -708,7 +716,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn deleting_card_marks_dismissed_and_prevents_resurrection_until_cleared() {
+    fn deleting_card_marks_local_dismissed_and_prevents_resurrection_until_cleared() {
         let (_home, _env, state) = test_state();
         let accounts = vec![entry("acct-1", "alice@example.com")];
         sync_app_cards(&state.db, &AppType::Agy, &accounts).unwrap();
@@ -720,6 +728,7 @@ mod tests {
             .get_provider_by_id(&card_id, &AppType::Agy)
             .unwrap()
             .is_none());
+        assert!(load_dismissed(&AppType::Agy).contains("acct-1"));
 
         // Subsequent sync does not resurrect the deleted card.
         assert_eq!(
@@ -733,7 +742,8 @@ mod tests {
             .is_none());
 
         // Re-login / explicit re-import clears dismissal and restores the card.
-        clear_dismissed(&state.db, &AppType::Agy, &["acct-1".to_string()]);
+        clear_dismissed(&AppType::Agy, &["acct-1".to_string()]);
+        assert!(load_dismissed(&AppType::Agy).is_empty());
         assert_eq!(
             sync_app_cards(&state.db, &AppType::Agy, &accounts).unwrap(),
             1
@@ -747,6 +757,26 @@ mod tests {
 
     #[test]
     #[serial]
+    fn dismissed_state_is_local_only_and_excluded_from_cloud_sync() {
+        let (_home, _env, state) = test_state();
+        mark_dismissed(&AppType::Claude, "acct-local").unwrap();
+
+        // Sync export must not contain the local-only dismissed marker.
+        let exported = state.db.export_sql_string_for_sync().unwrap();
+        assert!(!exported.contains("official_account_cards_dismissed"));
+        assert!(!exported.contains("acct-local"));
+
+        // Importing a remote sync snapshot preserves local dismissed state.
+        let remote_db = Database::memory().unwrap();
+        remote_db.init_default_official_providers().unwrap();
+        let remote_sql = remote_db.export_sql_string_for_sync().unwrap();
+        state.db.import_sql_string_for_sync(&remote_sql).unwrap();
+
+        assert!(load_dismissed(&AppType::Claude).contains("acct-local"));
+    }
+
+    #[test]
+    #[serial]
     fn removing_account_cleans_unreferenced_auto_cards_and_spares_user_or_referenced_cards() {
         let (_home, _env, state) = test_state();
         let accounts = vec![
@@ -755,7 +785,6 @@ mod tests {
         ];
         sync_app_cards(&state.db, &AppType::Claude, &accounts).unwrap();
 
-        // Mark acct-active's card as current direct provider.
         let active_card_id = official_account_card_id(&AppType::Claude, "acct-active");
         state
             .db
@@ -763,7 +792,6 @@ mod tests {
             .unwrap();
         crate::settings::set_current_provider(&AppType::Claude, Some(&active_card_id)).unwrap();
 
-        // Also add a user-created card bound to acct-free.
         let mut user_card = Provider::with_id(
             "user-created-claude".into(),
             "User Created".into(),
@@ -848,14 +876,12 @@ mod tests {
         let free_card_id = official_account_card_id(&AppType::Codex, "acct-free");
         let active_card_id = official_account_card_id(&AppType::Codex, "acct-active");
 
-        // Mark active_card_id as current direct provider.
         state
             .db
             .set_current_provider(&AppType::Codex, &active_card_id)
             .unwrap();
         crate::settings::set_current_provider(&AppType::Codex, Some(&active_card_id)).unwrap();
 
-        // Also add a user-created card bound to acct-free.
         let mut user_card = Provider::with_id(
             "user-codex-card".into(),
             "User Codex".into(),
@@ -873,7 +899,6 @@ mod tests {
         });
         state.db.save_provider(&AppType::Codex, &user_card).unwrap();
 
-        // Hold the Codex switch lock just like remove_codex_oauth_account_with_switch_lock does.
         let _switch_guard = tauri::async_runtime::block_on(
             state
                 .proxy_service
@@ -884,14 +909,11 @@ mod tests {
             cleanup_removed_accounts_with_switch_lock_held(&state, &AppType::Codex, &removed_ids);
         assert_eq!(removed, 1);
 
-        // Unbind remaining cards afterward (just like remove/logout does).
         state
             .db
             .unbind_codex_managed_accounts(&removed_ids)
             .unwrap();
 
-        // Auto card for unreferenced acct-free was deleted (no zombie card);
-        // active card and user-created card survived and had authBinding unbound.
         assert!(state
             .db
             .get_provider_by_id(&free_card_id, &AppType::Codex)
@@ -910,7 +932,6 @@ mod tests {
             .expect("user card preserved");
         assert!(bound_official_account_id(&AppType::Codex, &user_after).is_none());
 
-        // Re-logging in acct-free recreates its bound card cleanly instead of colliding with a zombie.
         assert_eq!(
             clear_dismissed_and_sync_locked(
                 &state,
@@ -933,7 +954,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn record_deleted_card_returns_uncovered_account_id_only_for_last_official_card() {
+    fn record_deleted_card_marks_dismissed_only_after_last_official_card() {
         let (_home, _env, state) = test_state();
         let accounts = vec![entry("acct-1", "alice@example.com")];
         sync_app_cards(&state.db, &AppType::Claude, &accounts).unwrap();
@@ -973,10 +994,8 @@ mod tests {
             .db
             .delete_provider(&AppType::Claude, "relay-card")
             .unwrap();
-        assert_eq!(
-            record_deleted_card(&state.db, &AppType::Claude, &non_official),
-            None
-        );
+        record_deleted_card(&state.db, &AppType::Claude, &non_official);
+        assert!(load_dismissed(&AppType::Claude).is_empty());
 
         let auto_card = state
             .db
@@ -987,69 +1006,14 @@ mod tests {
             .db
             .delete_provider(&AppType::Claude, &auto_id)
             .unwrap();
-        assert_eq!(
-            record_deleted_card(&state.db, &AppType::Claude, &auto_card),
-            None
-        );
-        assert!(load_dismissed(&state.db, &AppType::Claude).is_empty());
+        record_deleted_card(&state.db, &AppType::Claude, &auto_card);
+        assert!(load_dismissed(&AppType::Claude).is_empty());
 
         state
             .db
             .delete_provider(&AppType::Claude, "custom-claude-acct-1")
             .unwrap();
-        assert_eq!(
-            record_deleted_card(&state.db, &AppType::Claude, &duplicate).as_deref(),
-            Some("acct-1")
-        );
-        assert!(load_dismissed(&state.db, &AppType::Claude).contains("acct-1"));
-    }
-
-    #[test]
-    #[serial]
-    fn record_deleted_card_keeps_accounts_other_apps_still_use() {
-        let (_home, _env, state) = test_state();
-        let bound = |id: &str, auth_provider: &str, account: &str| {
-            let mut provider = Provider::with_id(id.into(), id.into(), json!({ "env": {} }), None);
-            provider.category = Some("official".into());
-            provider.meta = Some(ProviderMeta {
-                auth_binding: Some(AuthBinding {
-                    source: AuthBindingSource::ManagedAccount,
-                    auth_provider: Some(auth_provider.into()),
-                    account_id: Some(account.into()),
-                }),
-                ..Default::default()
-            });
-            provider
-        };
-
-        // Codex OAuth logins also back Claude providers: deleting the Codex card only hides it.
-        let codex_card = bound("codex-card", AUTH_PROVIDER_CODEX_OAUTH, "acct-c");
-        assert_eq!(
-            record_deleted_card(&state.db, &AppType::Codex, &codex_card),
-            None
-        );
-        assert!(load_dismissed(&state.db, &AppType::Codex).contains("acct-c"));
-
-        // A Claude account still bound by another app's provider is kept too.
-        let claude_card = bound("claude-card", AUTH_PROVIDER_CLAUDE_OFFICIAL, "acct-1");
-        let desktop = bound("desktop-card", AUTH_PROVIDER_CLAUDE_OFFICIAL, "acct-1");
-        state
-            .db
-            .save_provider(&AppType::ClaudeDesktop, &desktop)
-            .unwrap();
-        assert_eq!(
-            record_deleted_card(&state.db, &AppType::Claude, &claude_card),
-            None
-        );
-        assert!(load_dismissed(&state.db, &AppType::Claude).contains("acct-1"));
-
-        state
-            .db
-            .delete_provider(&AppType::ClaudeDesktop, "desktop-card")
-            .unwrap();
-        assert_eq!(
-            record_deleted_card(&state.db, &AppType::Claude, &claude_card).as_deref(),
-            Some("acct-1")
-        );
+        record_deleted_card(&state.db, &AppType::Claude, &duplicate);
+        assert!(load_dismissed(&AppType::Claude).contains("acct-1"));
     }
 }

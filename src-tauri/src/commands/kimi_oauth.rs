@@ -30,7 +30,7 @@ pub async fn kimi_oauth_poll(
 ) -> Result<KimiLoginPoll, String> {
     let poll = state.poll(&flow_id).await?;
     if poll.authenticated {
-        crate::commands::auth::emit_official_cards_updated(&app, &AppType::Kimi);
+        crate::commands::official_cards_sync::emit_official_cards_updated(&app, &AppType::Kimi);
     }
     Ok(poll)
 }
@@ -61,7 +61,7 @@ pub async fn kimi_oauth_remove(
         })
         .await;
     if result.is_ok() {
-        crate::commands::auth::emit_official_cards_updated(&app, &AppType::Kimi);
+        crate::commands::official_cards_sync::emit_official_cards_updated(&app, &AppType::Kimi);
     }
     result
 }

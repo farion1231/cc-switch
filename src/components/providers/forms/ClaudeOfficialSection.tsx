@@ -7,7 +7,7 @@ import { authApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useManagedAuth } from "./hooks/useManagedAuth";
-import { ManagedBoundAccountLine } from "./shared/ManagedAccountSelect";
+import { ManagedBoundAccountLine } from "./shared/ManagedBoundAccountLine";
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import {
   ManagedAccountRemoveDialog,

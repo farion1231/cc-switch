@@ -107,9 +107,10 @@ import {
   type ClaudeReasoningEffortChoice,
 } from "./ClaudeReasoningEffortField";
 import {
+  OfficialAccountAddForm,
   OfficialAccountManagedInfo,
-  OfficialAccountPresetPanel,
   useClaudeOfficialAddBlockedByWsl,
+  useOfficialAccountAddStep,
   type DirectModeFormatNotice,
 } from "./shared";
 import {
@@ -131,7 +132,6 @@ import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
 import { CodebuddyProviderForm } from "./CodebuddyProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
-import { usePresetStep } from "./presetStep";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import type { AppMode } from "@/types/proxy";
 import {
@@ -1106,7 +1106,6 @@ function ProviderFormFull({
     return () => onStackLayoutChange?.(false);
   }, [useStackLayout, onStackLayoutChange]);
   const requiresCodexOauthLogin = isClaudeCodexOauthProvider;
-  const presetStep = usePresetStep();
   const claudeBlockedByWsl = useClaudeOfficialAddBlockedByWsl(appId);
   const officialManagedAuthProvider: ManagedAuthProvider | null =
     appId === "claude" && category === "official" && claudeBlockedByWsl !== true
@@ -1118,12 +1117,10 @@ function ProviderFormFull({
           : null;
   const isOfficialAccountAdd =
     !isEditMode && officialManagedAuthProvider !== null;
-  const showOfficialAccountAdd =
-    isOfficialAccountAdd && (!presetStep || presetStep.step === "form");
-  useEffect(() => {
-    onAccountLoginChange?.(showOfficialAccountAdd);
-    return () => onAccountLoginChange?.(false);
-  }, [showOfficialAccountAdd, onAccountLoginChange]);
+  const { showOfficialAccountAdd } = useOfficialAccountAddStep(
+    isOfficialAccountAdd,
+    onAccountLoginChange,
+  );
 
   const {
     templateValues,
@@ -2588,26 +2585,13 @@ function ProviderFormFull({
 
   if (isOfficialAccountAdd && officialManagedAuthProvider) {
     return (
-      <Form {...form}>
-        <form
-          id="provider-form"
-          className="space-y-6"
-          onSubmit={(event) => event.preventDefault()}
-        >
-          {presetSelector}
-          {showOfficialAccountAdd && (
-            <OfficialAccountPresetPanel
-              authProvider={officialManagedAuthProvider}
-              onManageAuthAccounts={
-                officialManagedAuthProvider === "agy_oauth" &&
-                !canSwitchAgyAccount()
-                  ? undefined
-                  : onManageAuthAccounts
-              }
-            />
-          )}
-        </form>
-      </Form>
+      <OfficialAccountAddForm
+        form={form}
+        presetSelector={presetSelector}
+        showPanel={showOfficialAccountAdd}
+        authProvider={officialManagedAuthProvider}
+        onManageAuthAccounts={onManageAuthAccounts}
+      />
     );
   }
 
@@ -2948,9 +2932,6 @@ function ProviderFormFull({
                 websiteUrl={codexWebsiteUrl}
                 isPartner={isCodexPartner}
                 partnerPromotionKey={codexPartnerPromotionKey}
-                isCodexOauthPreset={false}
-                selectedCodexAccountId={selectedCodexAccountId}
-                onCodexAccountSelect={setSelectedCodexAccountId}
                 onManageAuthAccounts={onManageAuthAccounts}
                 shouldShowSpeedTest={shouldShowSpeedTest}
                 codexBaseUrl={codexBaseUrl}

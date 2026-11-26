@@ -35,15 +35,15 @@ import {
   ApiKeySection,
   EndpointField,
   ModelDropdown,
+  OfficialAccountAddForm,
   OfficialAccountManagedInfo,
-  OfficialAccountPresetPanel,
+  useOfficialAccountAddStep,
 } from "./shared";
 import {
   fillCodebuddyModel,
   metadataFilledAnything,
 } from "./modelMetadataFill";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
-import { usePresetStep } from "./presetStep";
 import type { ProviderFormProps } from "./ProviderForm";
 
 const PRESET_ENTRIES = codebuddyProviderPresets.map((preset, index) => ({
@@ -142,15 +142,12 @@ export function CodebuddyProviderForm({
         CODEBUDDY_OFFICIAL_AUTH_PROVIDER,
       ),
   );
-  const step = usePresetStep();
   const isEdit = Boolean(initialData);
   const isOfficialAccountAdd = !isEdit && isOfficial;
-  const showOfficialAccountAdd =
-    isOfficialAccountAdd && (!step || step.step === "form");
-  useEffect(() => {
-    onAccountLoginChange?.(showOfficialAccountAdd);
-    return () => onAccountLoginChange?.(false);
-  }, [showOfficialAccountAdd, onAccountLoginChange]);
+  const { showOfficialAccountAdd } = useOfficialAccountAddStep(
+    isOfficialAccountAdd,
+    onAccountLoginChange,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // The key is the model `id` in models.json and the value of `/model`, so it
@@ -314,21 +311,13 @@ export function CodebuddyProviderForm({
 
   if (isOfficialAccountAdd) {
     return (
-      <Form {...form}>
-        <form
-          id="provider-form"
-          className="space-y-6"
-          onSubmit={(event) => event.preventDefault()}
-        >
-          {presetSelector}
-          {showOfficialAccountAdd && (
-            <OfficialAccountPresetPanel
-              authProvider={CODEBUDDY_OFFICIAL_AUTH_PROVIDER}
-              onManageAuthAccounts={onManageAuthAccounts}
-            />
-          )}
-        </form>
-      </Form>
+      <OfficialAccountAddForm
+        form={form}
+        presetSelector={presetSelector}
+        showPanel={showOfficialAccountAdd}
+        authProvider={CODEBUDDY_OFFICIAL_AUTH_PROVIDER}
+        onManageAuthAccounts={onManageAuthAccounts}
+      />
     );
   }
 

@@ -100,20 +100,14 @@ pub async fn codebuddy_account_import_current(
         id: mapped.id.clone(),
         login: mapped.login.clone(),
     };
-    let state_clone = app_state.inner().clone();
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) =
-            crate::services::provider::official_account_cards::clear_dismissed_and_sync_locked(
-                &state_clone,
-                &AppType::Codebuddy,
-                &[entry],
-            )
-        {
-            log::warn!("[CodebuddyAccount] 同步官方账号卡片失败: {error}");
-        }
-    })
+    crate::commands::official_cards_sync::sync_official_cards_and_emit(
+        &app,
+        app_state.inner(),
+        &AppType::Codebuddy,
+        &[entry],
+        true,
+    )
     .await;
-    crate::commands::auth::emit_official_cards_updated(&app, &AppType::Codebuddy);
     Ok(mapped)
 }
 

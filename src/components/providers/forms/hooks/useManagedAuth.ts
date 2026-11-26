@@ -5,6 +5,7 @@ import { toast } from "@/lib/toast";
 import { authApi } from "@/lib/api";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import type { CodexLoginMethod, ManagedLoginMethod } from "@/lib/api/auth";
+import { appIdForAuthTarget } from "@/lib/authBinding";
 import { deliverLoginLink, readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { copyText } from "@/lib/clipboard";
 import {
@@ -12,23 +13,11 @@ import {
   subscriptionKeys,
 } from "@/lib/query/subscription";
 import type {
-  AppId,
   ManagedAuthAccount,
   ManagedAuthProvider,
   ManagedAuthStatus,
   ManagedAuthDeviceCodeResponse,
 } from "@/lib/api";
-
-export const OFFICIAL_APP_BY_AUTH_PROVIDER: Record<ManagedAuthProvider, AppId> =
-  {
-    claude_official: "claude",
-    codex_oauth: "codex",
-    xai_oauth: "grokbuild",
-    agy_oauth: "agy",
-    github_copilot: "copilot",
-    workbuddy_account: "workbuddy",
-    codebuddy_oauth: "codebuddy",
-  };
 
 type PollingState = "idle" | "polling" | "success" | "error";
 type LoginRequest = {
@@ -96,28 +85,11 @@ export function useManagedAuth(
   const invalidateAppProviders = useCallback(
     () =>
       queryClient.invalidateQueries({
-        queryKey: ["providers", OFFICIAL_APP_BY_AUTH_PROVIDER[authProvider]],
+        queryKey: ["providers", appIdForAuthTarget(authProvider)],
         refetchType: "all",
       }),
     [authProvider, queryClient],
   );
-
-  // 后台自动收录/状态轮询新增或移除账号时，同步刷新对应应用的供应商列表（含非活跃挂载的缓存）
-  const prevAccountIdsRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!authStatus) return;
-    const signature = authStatus.accounts
-      .map((account) => account.id)
-      .sort()
-      .join("\n");
-    if (
-      prevAccountIdsRef.current !== null &&
-      prevAccountIdsRef.current !== signature
-    ) {
-      void invalidateAppProviders();
-    }
-    prevAccountIdsRef.current = signature;
-  }, [authStatus, invalidateAppProviders]);
 
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { authApi } from "@/lib/api";
@@ -8,8 +8,7 @@ import type { CodebuddyAccountsState } from "@/components/providers/presentation
 import { extractErrorMessage } from "@/utils/errorUtils";
 
 const STATUS_KEY = ["managed-auth-status", "codebuddy_oauth"] as const;
-export const CODEBUDDY_LIVE_KEY = ["codebuddy-account-live"] as const;
-const LIVE_KEY = CODEBUDDY_LIVE_KEY;
+const LIVE_KEY = ["codebuddy-account-live"] as const;
 
 /**
  * 授权中心账号「⋯」里的「切换 CodeBuddy 到这个账号」：走授权中心的通用切号命令，和官方卡的
@@ -101,24 +100,6 @@ export function useCodebuddyOfficialCards(enabled: boolean): {
   });
 
   const data = status.data;
-  // 轮询期间如果有新登录账号或移除账号，自动刷新 CodeBuddy 供应商列表
-  const prevAccountIdsRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!enabled || !data) return;
-    const signature = data.accounts
-      .map((account) => account.id)
-      .sort()
-      .join("\n");
-    if (
-      prevAccountIdsRef.current !== null &&
-      prevAccountIdsRef.current !== signature
-    ) {
-      void queryClient.invalidateQueries({
-        queryKey: ["providers", "codebuddy"],
-      });
-    }
-    prevAccountIdsRef.current = signature;
-  }, [enabled, queryClient, data]);
   const state = useMemo<CodebuddyAccountsState>(
     () => ({
       status: status.isSuccess ? "ready" : status.isError ? "error" : "loading",

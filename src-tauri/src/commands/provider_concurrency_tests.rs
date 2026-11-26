@@ -31,16 +31,12 @@ fn native_provider_lists_wait_for_mutations_before_reading_snapshots() {
         let state = app.state::<AppState>();
         let guard =
             tauri::async_runtime::block_on(state.proxy_service.lock_switch_for_app(app_type));
-        let mut listing = std::pin::pin!(super::get_providers(
-            app.handle().clone(),
-            app.state(),
-            app_type.into(),
-        ));
+        let mut listing = std::pin::pin!(super::get_providers(app.state(), app_type.into()));
         let early_result = tauri::async_runtime::block_on(async {
             // A mutation for this app must not stall unrelated provider reads.
             tokio::time::timeout(
                 Duration::from_secs(5),
-                super::get_providers(app.handle().clone(), app.state(), "opencode".into()),
+                super::get_providers(app.state(), "opencode".into()),
             )
             .await
             .unwrap()
@@ -110,9 +106,8 @@ fn deleting_during_native_list_refresh_does_not_resurrect_the_provider() {
     assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
 
     let handle = app.handle().clone();
-    let list_handle = handle.clone();
     let listing = tauri::async_runtime::spawn(async move {
-        super::get_providers(list_handle, handle.state(), "kimi".into()).await
+        super::get_providers(handle.state(), "kimi".into()).await
     });
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut writer = loop {
@@ -132,7 +127,6 @@ fn deleting_during_native_list_refresh_does_not_resurrect_the_provider() {
     };
 
     let mut deleting = std::pin::pin!(super::delete_provider(
-        app.handle().clone(),
         app.state(),
         "kimi".into(),
         "deleted".into()
@@ -171,11 +165,7 @@ fn deleting_during_native_list_refresh_does_not_resurrect_the_provider() {
         .contains("deleted"));
     std::fs::remove_file(&nickname_file).unwrap();
     std::fs::write(&nickname_file, "{}").unwrap();
-    let refreshed = tauri::async_runtime::block_on(super::get_providers(
-        app.handle().clone(),
-        app.state(),
-        "kimi".into(),
-    ))
-    .unwrap();
+    let refreshed =
+        tauri::async_runtime::block_on(super::get_providers(app.state(), "kimi".into())).unwrap();
     assert!(!refreshed.contains_key("deleted"));
 }

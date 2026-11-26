@@ -69,23 +69,14 @@ pub async fn workbuddy_account_import_current(
         id: imported.account.id.clone(),
         login: imported.account.login.clone(),
     };
-    let state_clone = app_state.inner().clone();
-    let _ = tauri::async_runtime::spawn_blocking(move || {
-        if let Err(error) =
-            crate::services::provider::official_account_cards::clear_dismissed_and_sync_locked(
-                &state_clone,
-                &crate::app_config::AppType::WorkBuddy,
-                &[entry],
-            )
-        {
-            log::warn!("[WorkBuddyAccount] 同步官方账号卡片失败: {error}");
-        }
-    })
-    .await;
-    crate::commands::auth::emit_official_cards_updated(
+    crate::commands::official_cards_sync::sync_official_cards_and_emit(
         &app,
+        app_state.inner(),
         &crate::app_config::AppType::WorkBuddy,
-    );
+        &[entry],
+        true,
+    )
+    .await;
     Ok(imported)
 }
 
@@ -112,23 +103,14 @@ pub async fn workbuddy_account_prepare_new_login(
             id: account.id.clone(),
             login: account.login.clone(),
         };
-        let state_clone = app_state.inner().clone();
-        let _ = tauri::async_runtime::spawn_blocking(move || {
-            if let Err(error) =
-                crate::services::provider::official_account_cards::clear_dismissed_and_sync_locked(
-                    &state_clone,
-                    &crate::app_config::AppType::WorkBuddy,
-                    &[entry],
-                )
-            {
-                log::warn!("[WorkBuddyAccount] 同步官方账号卡片失败: {error}");
-            }
-        })
-        .await;
-        crate::commands::auth::emit_official_cards_updated(
+        crate::commands::official_cards_sync::sync_official_cards_and_emit(
             &app,
+            app_state.inner(),
             &crate::app_config::AppType::WorkBuddy,
-        );
+            &[entry],
+            true,
+        )
+        .await;
     }
     Ok(captured)
 }

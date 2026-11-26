@@ -84,10 +84,8 @@ export function CodebuddyOfficialAccountLine({
   accountId,
   manualNote,
 }: {
-  provider: Provider;
   accountId: string | null;
   manualNote?: string;
-  onEdit?: (provider: Provider) => void;
 }) {
   const { t } = useTranslation();
   const { data, isSuccess, isError } = useQuery(

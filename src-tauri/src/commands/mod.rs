@@ -20,6 +20,7 @@ mod kimi_oauth;
 mod mcp;
 mod misc;
 mod model_fetch;
+pub(crate) mod official_cards_sync;
 mod omo;
 mod omp;
 mod openclaw;

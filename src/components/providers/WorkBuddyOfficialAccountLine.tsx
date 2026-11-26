@@ -13,7 +13,6 @@ import { useWorkBuddyAccountQuota } from "./workbuddyQuota";
 
 interface WorkBuddyOfficialAccountLineProps {
   provider: Provider;
-  onEdit?: (provider: Provider) => void;
 }
 
 /**

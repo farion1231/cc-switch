@@ -63,8 +63,9 @@ import {
   ModelDropdown,
   ModelInputWithFetch,
   NativeConfigEditor,
+  OfficialAccountAddForm,
   OfficialAccountManagedInfo,
-  OfficialAccountPresetPanel,
+  useOfficialAccountAddStep,
 } from "./shared";
 import {
   FetchedModelPicker,
@@ -72,7 +73,6 @@ import {
 } from "./FetchedModelPicker";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
-import { usePresetStep } from "./presetStep";
 import type { ProviderFormProps } from "./ProviderForm";
 
 const PRESETS = [
@@ -308,14 +308,11 @@ export function CopilotProviderForm({
         settingsConfig: initialConfig,
       })
     : category === "official";
-  const step = usePresetStep();
   const isOfficialAccountAdd = !isEdit && isOfficial;
-  const showOfficialAccountAdd =
-    isOfficialAccountAdd && (!step || step.step === "form");
-  useEffect(() => {
-    onAccountLoginChange?.(showOfficialAccountAdd);
-    return () => onAccountLoginChange?.(false);
-  }, [showOfficialAccountAdd, onAccountLoginChange]);
+  const { showOfficialAccountAdd } = useOfficialAccountAddStep(
+    isOfficialAccountAdd,
+    onAccountLoginChange,
+  );
   const [officialModel, setOfficialModel] = useState(
     () => copilotEnvOf(initialConfig).COPILOT_MODEL ?? "",
   );
@@ -908,21 +905,13 @@ export function CopilotProviderForm({
 
   if (isOfficialAccountAdd) {
     return (
-      <Form {...form}>
-        <form
-          id="provider-form"
-          className="space-y-6"
-          onSubmit={(event) => event.preventDefault()}
-        >
-          {presetSelector}
-          {showOfficialAccountAdd && (
-            <OfficialAccountPresetPanel
-              authProvider="github_copilot"
-              onManageAuthAccounts={onManageAuthAccounts}
-            />
-          )}
-        </form>
-      </Form>
+      <OfficialAccountAddForm
+        form={form}
+        presetSelector={presetSelector}
+        showPanel={showOfficialAccountAdd}
+        authProvider="github_copilot"
+        onManageAuthAccounts={onManageAuthAccounts}
+      />
     );
   }
 

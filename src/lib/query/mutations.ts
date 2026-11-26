@@ -21,12 +21,7 @@ import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import {
   invalidateAgyLoginCaches,
   invalidateGrokCliLoginCaches,
-  subscriptionKeys,
 } from "@/lib/query/subscription";
-import { managedAuthStatusQueryKey } from "@/lib/query/managedAuth";
-import { WORKBUDDY_LIVE_KEY } from "@/components/providers/workbuddyOfficial";
-import { CODEBUDDY_LIVE_KEY } from "@/lib/query/codebuddy";
-import { KIMI_OAUTH_STATUS_KEY } from "@/components/providers/forms/hooks/useKimiOAuth";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { appHas } from "@/config/appSpecs";
 
@@ -263,69 +258,6 @@ export const useUpdateProviderMutation = (appId: AppId) => {
   });
 };
 
-async function invalidateOfficialAuthCaches(
-  queryClient: ReturnType<typeof useQueryClient>,
-  appId: AppId,
-) {
-  switch (appId) {
-    case "claude":
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: managedAuthStatusQueryKey("claude_official"),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: subscriptionKeys.quota("claude"),
-        }),
-      ]);
-      break;
-    case "codex":
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: managedAuthStatusQueryKey("codex_oauth"),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: subscriptionKeys.quota("codex"),
-        }),
-      ]);
-      break;
-    case "grokbuild":
-      await invalidateGrokCliLoginCaches(queryClient);
-      break;
-    case "agy":
-      await invalidateAgyLoginCaches(queryClient);
-      break;
-    case "copilot":
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: managedAuthStatusQueryKey("github_copilot"),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: subscriptionKeys.quota("copilot"),
-        }),
-      ]);
-      break;
-    case "workbuddy":
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: managedAuthStatusQueryKey("workbuddy_account"),
-        }),
-        queryClient.invalidateQueries({ queryKey: WORKBUDDY_LIVE_KEY }),
-      ]);
-      break;
-    case "codebuddy":
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: managedAuthStatusQueryKey("codebuddy_oauth"),
-        }),
-        queryClient.invalidateQueries({ queryKey: CODEBUDDY_LIVE_KEY }),
-      ]);
-      break;
-    case "kimi":
-      await queryClient.invalidateQueries({ queryKey: KIMI_OAUTH_STATUS_KEY });
-      break;
-  }
-}
-
 export const useDeleteProviderMutation = (appId: AppId) => {
   const queryClient = useQueryClient();
   const { t } = useTranslation();
@@ -336,7 +268,6 @@ export const useDeleteProviderMutation = (appId: AppId) => {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
-      await invalidateOfficialAuthCaches(queryClient, appId);
 
       if (appId === "opencode") {
         await queryClient.invalidateQueries({

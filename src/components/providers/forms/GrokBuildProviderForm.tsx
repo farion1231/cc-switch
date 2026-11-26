@@ -56,10 +56,10 @@ import { resolveProviderIcon } from "@/utils/providerIcon";
 import { useDraftEditorProjection } from "./hooks/useDraftEditorProjection";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { usePresetStep } from "./presetStep";
 import {
+  OfficialAccountAddForm,
   OfficialAccountManagedInfo,
-  OfficialAccountPresetPanel,
+  useOfficialAccountAddStep,
 } from "./shared";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
@@ -111,14 +111,11 @@ export function GrokBuildProviderForm({
   const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
-  const step = usePresetStep();
   const isOfficialAccountAdd = !initialData && category === "official";
-  const showOfficialAccountAdd =
-    isOfficialAccountAdd && (!step || step.step === "form");
-  useEffect(() => {
-    onAccountLoginChange?.(showOfficialAccountAdd);
-    return () => onAccountLoginChange?.(false);
-  }, [showOfficialAccountAdd, onAccountLoginChange]);
+  const { showOfficialAccountAdd } = useOfficialAccountAddStep(
+    isOfficialAccountAdd,
+    onAccountLoginChange,
+  );
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
   );
@@ -503,21 +500,13 @@ export function GrokBuildProviderForm({
 
   if (isOfficialAccountAdd) {
     return (
-      <Form {...form}>
-        <form
-          id="provider-form"
-          onSubmit={(event) => event.preventDefault()}
-          className="space-y-6"
-        >
-          {presetSelector}
-          {showOfficialAccountAdd && (
-            <OfficialAccountPresetPanel
-              authProvider="xai_oauth"
-              onManageAuthAccounts={onManageAuthAccounts}
-            />
-          )}
-        </form>
-      </Form>
+      <OfficialAccountAddForm
+        form={form}
+        presetSelector={presetSelector}
+        showPanel={showOfficialAccountAdd}
+        authProvider="xai_oauth"
+        onManageAuthAccounts={onManageAuthAccounts}
+      />
     );
   }
 

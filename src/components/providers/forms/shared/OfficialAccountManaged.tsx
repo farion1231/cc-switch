@@ -1,11 +1,14 @@
+import type { ReactNode } from "react";
+import { useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
+import type { UseFormReturn } from "react-hook-form";
 import { authApi } from "@/lib/api";
 import type { AppId, AuthCenterTarget, ManagedAuthProvider } from "@/lib/api";
-import { canSwitchAgyAccount } from "@/lib/authBinding";
 import { managedAuthStatusQuery } from "@/lib/query/managedAuth";
 import { Button } from "@/components/ui/button";
+import { Form } from "@/components/ui/form";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -14,18 +17,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-const OFFICIAL_AUTH_TARGET_BY_APP: Partial<Record<AppId, AuthCenterTarget>> = {
-  claude: "claude_official",
-  codex: "codex_oauth",
-  grokbuild: "xai_oauth",
-  agy: "agy_oauth",
-  copilot: "github_copilot",
-  workbuddy: "workbuddy_account",
-  codebuddy: "codebuddy_oauth",
-  kimi: "kimi_oauth",
-  dsh: "dsh_account",
-};
+import { usePresetStep } from "../presetStep";
+import type { ProviderFormData } from "@/lib/schemas/provider";
 
 /**
  * Claude 配置目录在 WSL 里时授权中心不能登录 Claude 账号：官方预设不能跳过去，
@@ -48,27 +41,60 @@ export function useClaudeOfficialAddBlockedByWsl(
 }
 
 /**
- * 若某应用选择“官方登录”预设应直接前往授权中心统一配置，返回对应的授权中心分区；否则返回 null。
+ * 统一管理各表单新增官方账号时的步进状态与提交按钮显隐通知。
  */
-export function officialAuthTargetForPreset(
-  appId: AppId | undefined,
-  category: string | undefined,
-  claudeBlockedByWsl = false,
-): AuthCenterTarget | null {
-  if (!appId || category !== "official") {
-    return null;
-  }
-  const target = OFFICIAL_AUTH_TARGET_BY_APP[appId] ?? null;
-  if (target === "agy_oauth" && !canSwitchAgyAccount()) {
-    return null;
-  }
-  if (target === "claude_official" && claudeBlockedByWsl) {
-    return null;
-  }
-  return target;
+export function useOfficialAccountAddStep(
+  isOfficialAccountAdd: boolean,
+  onAccountLoginChange?: (active: boolean) => void,
+) {
+  const presetStep = usePresetStep();
+  const showOfficialAccountAdd =
+    isOfficialAccountAdd && (!presetStep || presetStep.step === "form");
+  useEffect(() => {
+    onAccountLoginChange?.(showOfficialAccountAdd);
+    return () => onAccountLoginChange?.(false);
+  }, [showOfficialAccountAdd, onAccountLoginChange]);
+  return { presetStep, showOfficialAccountAdd };
 }
 
-export interface OfficialAccountPresetPanelProps {
+export interface OfficialAccountAddFormProps {
+  form: UseFormReturn<ProviderFormData>;
+  presetSelector: ReactNode;
+  showPanel: boolean;
+  authProvider: AuthCenterTarget;
+  onManageAuthAccounts?: (target: AuthCenterTarget) => void;
+}
+
+/**
+ * 新增官方账号时复用的表单外壳：保留顶部预设选择器，并展示前往授权中心的统一入口。
+ */
+export function OfficialAccountAddForm({
+  form,
+  presetSelector,
+  showPanel,
+  authProvider,
+  onManageAuthAccounts,
+}: OfficialAccountAddFormProps) {
+  return (
+    <Form {...form}>
+      <form
+        id="provider-form"
+        className="space-y-6"
+        onSubmit={(event) => event.preventDefault()}
+      >
+        {presetSelector}
+        {showPanel && (
+          <OfficialAccountPresetPanel
+            authProvider={authProvider}
+            onManageAuthAccounts={onManageAuthAccounts}
+          />
+        )}
+      </form>
+    </Form>
+  );
+}
+
+interface OfficialAccountPresetPanelProps {
   authProvider: AuthCenterTarget;
   onManageAuthAccounts?: (target: AuthCenterTarget) => void;
   description?: string;
@@ -78,7 +104,7 @@ export interface OfficialAccountPresetPanelProps {
 /**
  * 统一的新增官方账号入口：引导到授权中心统一登录/收录，登录后自动在供应商页面显示为独立卡片。
  */
-export function OfficialAccountPresetPanel({
+function OfficialAccountPresetPanel({
   authProvider,
   onManageAuthAccounts,
   description,

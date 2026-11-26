@@ -40,25 +40,6 @@ export function useKimiOAuth() {
     ]);
   }, [queryClient]);
 
-  const prevAccountIdsRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!status.data) return;
-    const signature = status.data.accounts
-      .map((account) => account.id)
-      .sort()
-      .join("\n");
-    if (
-      prevAccountIdsRef.current !== null &&
-      prevAccountIdsRef.current !== signature
-    ) {
-      void queryClient.invalidateQueries({
-        queryKey: ["providers", "kimi"],
-        refetchType: "all",
-      });
-    }
-    prevAccountIdsRef.current = signature;
-  }, [queryClient, status.data]);
-
   const clearTimer = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;

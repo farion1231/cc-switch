@@ -45,7 +45,6 @@ import {
   type FetchedModelSelection,
 } from "./FetchedModelPicker";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
-import { usePresetStep } from "./presetStep";
 import {
   fillWorkBuddyModel,
   metadataFilledAnything,
@@ -54,8 +53,9 @@ import {
   ApiKeySection,
   EndpointField,
   ModelDropdown,
+  OfficialAccountAddForm,
   OfficialAccountManagedInfo,
-  OfficialAccountPresetPanel,
+  useOfficialAccountAddStep,
 } from "./shared";
 import type { ProviderFormProps } from "./ProviderForm";
 
@@ -176,15 +176,12 @@ export function WorkBuddyProviderForm({
         WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
       )?.trim() || null,
   );
-  const step = usePresetStep();
   const isEdit = Boolean(initialData);
   const isOfficialAccountAdd = !isEdit && isOfficial;
-  const showOfficialAccountAdd =
-    isOfficialAccountAdd && (!step || step.step === "form");
-  useEffect(() => {
-    onAccountLoginChange?.(showOfficialAccountAdd);
-    return () => onAccountLoginChange?.(false);
-  }, [showOfficialAccountAdd, onAccountLoginChange]);
+  const { showOfficialAccountAdd } = useOfficialAccountAddStep(
+    isOfficialAccountAdd,
+    onAccountLoginChange,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // The key is stored on every models.json entry this provider owns, so it is
@@ -428,21 +425,13 @@ export function WorkBuddyProviderForm({
 
   if (isOfficialAccountAdd) {
     return (
-      <Form {...form}>
-        <form
-          id="provider-form"
-          className="space-y-6"
-          onSubmit={(event) => event.preventDefault()}
-        >
-          {presetSelector}
-          {showOfficialAccountAdd && (
-            <OfficialAccountPresetPanel
-              authProvider={WORKBUDDY_ACCOUNT_AUTH_PROVIDER}
-              onManageAuthAccounts={onManageAuthAccounts}
-            />
-          )}
-        </form>
-      </Form>
+      <OfficialAccountAddForm
+        form={form}
+        presetSelector={presetSelector}
+        showPanel={showOfficialAccountAdd}
+        authProvider={WORKBUDDY_ACCOUNT_AUTH_PROVIDER}
+        onManageAuthAccounts={onManageAuthAccounts}
+      />
     );
   }
 

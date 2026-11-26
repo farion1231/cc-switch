@@ -50,13 +50,18 @@ pub(crate) fn save_from_editor(
     let _guard = lock_native_provider_operations(state, &app);
     ProviderService::prepare_new_provider(&app, &mut provider)?;
     let previous = state.db.get_provider_by_id(&provider.id, &app)?;
+    super::official_account_cards::ensure_official_binding_unchanged(
+        &app,
+        previous.as_ref(),
+        &provider,
+    )?;
     let binding_changed = binding != previous.as_ref().and_then(bound_account_id);
 
     state.db.save_provider(&app, &provider)?;
     if let Some(account_id) =
         super::official_account_cards::bound_official_account_id(&app, &provider)
     {
-        super::official_account_cards::clear_dismissed(&state.db, &app, &[account_id]);
+        super::official_account_cards::clear_dismissed(&app, &[account_id]);
     }
     if !binding_changed {
         return Ok(true);

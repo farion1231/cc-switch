@@ -8,8 +8,9 @@ export { GptContextWindowHint } from "./GptContextWindowHint";
 export type { DirectModeFormatNotice } from "./DirectModeFormatWarning";
 export { NativeConfigEditor } from "./NativeConfigEditor";
 export {
+  OfficialAccountAddForm,
   OfficialAccountManagedInfo,
-  OfficialAccountPresetPanel,
-  officialAuthTargetForPreset,
   useClaudeOfficialAddBlockedByWsl,
+  useOfficialAccountAddStep,
 } from "./OfficialAccountManaged";
+export { officialAuthTargetForPreset } from "@/lib/authBinding";

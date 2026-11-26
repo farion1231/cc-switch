@@ -53,11 +53,6 @@ import { isTextEditableTarget } from "@/utils/domUtils";
 import { extractProviderBaseUrl } from "@/utils/codexConfigUtils";
 import { usePiCurrentState } from "@/lib/query/pi";
 import { useCodebuddyOfficialCards } from "@/lib/query/codebuddy";
-import { useAgyOfficialCards } from "@/lib/query/agy";
-import {
-  canSwitchAgyAccount,
-  resolveManagedAccountId,
-} from "@/lib/authBinding";
 import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderMeta";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
@@ -200,17 +195,6 @@ export function ProviderList({
     );
   const { state: codebuddyAccounts, switchAccount: switchCodebuddyAccount } =
     useCodebuddyOfficialCards(hasCodebuddyOfficial);
-  // Antigravity 官方登录卡：有绑定账号的官方卡时才读账号和当前在用状态
-  const hasAgyBoundOfficial =
-    appId === "agy" &&
-    canSwitchAgyAccount() &&
-    Object.values(providers).some(
-      (provider) =>
-        isOfficialAccount("agy", provider) &&
-        Boolean(resolveManagedAccountId(provider.meta, "agy_oauth")?.trim()),
-    );
-  const { state: agyAccounts, switchAccount: switchAgyAccount } =
-    useAgyOfficialCards(hasAgyBoundOfficial);
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -410,9 +394,6 @@ export function ProviderList({
         t,
         providers: filteredProviders,
         openTerminal: (provider) => onOpenTerminal?.(provider),
-        ...(canSwitchAgyAccount()
-          ? { agyAccounts, switchAccount: switchAgyAccount }
-          : {}),
       });
     }
     const defaultPrimary =
@@ -509,8 +490,6 @@ export function ProviderList({
     onSetAsDefault,
     workbuddyOfficial,
     switchWorkBuddyAccount,
-    agyAccounts,
-    switchAgyAccount,
   ]);
 
   const piStateRawError =
@@ -633,9 +612,10 @@ export function ProviderList({
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
-      // 卡片主按钮已经是「打开终端」时（未绑号的 agy 卡、Copilot CLI 官方卡），「更多」/右侧不再重复
+      // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
       onOpenTerminal={
-        presentation.buttons.some((button) => button.key === "openTerminal")
+        appId === "agy" ||
+        (appId === "copilot" && isOfficialAccount(appId, provider))
           ? undefined
           : onOpenTerminal
       }
