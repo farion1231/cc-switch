@@ -5216,9 +5216,9 @@
     "helpTitle": "What is Accounts?",
     "group": {
       "helpTitle": "How {{service}} accounts are used",
-      "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
+      "copilotHelp": "Used by GitHub Copilot presets in Claude Code, Claude Desktop and Codex, and by Copilot CLI's official-login binding. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
-      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
+      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex, and by Grok Build's official-login binding. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
       "codebuddyHelp": "The official sign-in for CodeBuddy (both the China and international sites). To switch accounts, choose \"Switch CodeBuddy to this account\" in the account's … menu, or add the \"CodeBuddy Official Sign-in\" card linked to it in the provider list. \"Add account\" opens a terminal running codebuddy and adds the account here once you finish; if CodeBuddy is already signed in, it's signed out for now and can be restored if you give up. CodeBuddy refreshes its own tokens.",
       "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, choose “Switch WorkBuddy to this account” in the account's … menu, or add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",

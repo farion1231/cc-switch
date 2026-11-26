@@ -17,34 +17,52 @@ vi.mock("@/lib/authBinding", () => ({
 }));
 
 vi.mock("@/components/providers/forms/ClaudeOfficialSection", () => ({
-  ClaudeOfficialSection: () => <div data-testid="claude" />,
+  ClaudeOfficialSection: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="claude" data-help-side={helpSide} />
+  ),
 }));
 vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
-  CopilotAuthSection: () => <div data-testid="copilot" />,
+  CopilotAuthSection: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="copilot" data-help-side={helpSide} />
+  ),
 }));
 vi.mock("@/components/providers/forms/CodexOAuthSection", () => ({
-  CodexOAuthSection: () => <div data-testid="codex" />,
+  CodexOAuthSection: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="codex" data-help-side={helpSide} />
+  ),
 }));
 vi.mock("@/components/providers/forms/XaiOAuthSection", () => ({
-  XaiOAuthSection: () => <div data-testid="xai" />,
+  XaiOAuthSection: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="xai" data-help-side={helpSide} />
+  ),
 }));
 vi.mock("@/components/providers/forms/AgyOAuthSection", () => ({
-  AgyOAuthSection: () => <div data-testid="agy" />,
+  AgyOAuthSection: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="agy" data-help-side={helpSide} />
+  ),
 }));
 vi.mock("@/components/providers/KimiAccountLogin", () => ({
-  KimiAccountLogin: () => <div data-testid="kimi" />,
+  KimiAccountLogin: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="kimi" data-help-side={helpSide} />
+  ),
 }));
 vi.mock("@/components/settings/auth/WorkBuddyAccountSection", () => ({
-  WorkBuddyAccountSection: () => <div data-testid="workbuddy" />,
+  WorkBuddyAccountSection: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="workbuddy" data-help-side={helpSide} />
+  ),
 }));
 vi.mock("@/components/settings/auth/AutoQuotaToggle", () => ({
   AutoQuotaToggle: () => null,
 }));
 vi.mock("@/components/providers/forms/CodebuddyAccountSection", () => ({
-  CodebuddyAccountSection: () => <div data-testid="codebuddy" />,
+  CodebuddyAccountSection: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="codebuddy" data-help-side={helpSide} />
+  ),
 }));
 vi.mock("@/components/providers/DshAccount", () => ({
-  DshAccountLogin: () => <div data-testid="dsh" />,
+  DshAccountLogin: ({ helpSide }: { helpSide?: string }) => (
+    <div data-testid="dsh" data-help-side={helpSide} />
+  ),
 }));
 
 let resizeCallbacks: Array<() => void> = [];
@@ -159,10 +177,24 @@ describe("AuthCenterPanel scroll target", () => {
   });
 });
 
-const cardOrder = () =>
-  screen
-    .getAllByTestId(/^(claude|copilot|codex|xai|kimi|dsh|agy|workbuddy)$/)
-    .map((card) => card.dataset.testid);
+const CARD_TEST_ID =
+  /^(claude|copilot|codex|xai|kimi|dsh|agy|workbuddy|codebuddy)$/;
+
+const renderedCards = () => screen.queryAllByTestId(CARD_TEST_ID);
+
+const cardOrder = () => renderedCards().map((card) => card.dataset.testid);
+
+const cardHelpSides = () =>
+  renderedCards().map((card) => [card.dataset.testid, card.dataset.helpSide]);
+
+const onlyVisibleApps = (
+  ...shown: (typeof APP_IDS)[number][]
+): Settings["visibleApps"] => {
+  const shownSet = new Set(shown);
+  return Object.fromEntries(
+    APP_IDS.map((app) => [app, shownSet.has(app)]),
+  ) as Settings["visibleApps"];
+};
 
 describe("AuthCenterPanel card order and visibility", () => {
   afterEach(() => {
@@ -181,6 +213,7 @@ describe("AuthCenterPanel card order and visibility", () => {
       "dsh",
       "agy",
       "workbuddy",
+      "codebuddy",
     ]);
   });
 
@@ -205,6 +238,7 @@ describe("AuthCenterPanel card order and visibility", () => {
       "xai",
       "kimi",
       "dsh",
+      "codebuddy",
       "claude",
     ]);
   });
@@ -215,26 +249,155 @@ describe("AuthCenterPanel card order and visibility", () => {
         claude: false,
         "claude-desktop": false,
         codex: false,
+        grokbuild: false,
         kimi: false,
       } as Settings["visibleApps"],
     };
     render(<AuthCenterPanel />);
     // Copilot CLI 还显示着：Copilot 卡留下，排到 Copilot CLI 的位置；
-    // ChatGPT、xAI、Claude 官方、Kimi 的应用全藏了
-    expect(cardOrder()).toEqual(["dsh", "agy", "copilot", "workbuddy"]);
+    // ChatGPT、xAI（含 Grok Build）、Claude 官方、Kimi 的应用全藏了
+    expect(cardOrder()).toEqual([
+      "dsh",
+      "agy",
+      "copilot",
+      "workbuddy",
+      "codebuddy",
+    ]);
+  });
+
+  it("keeps the xAI card visible when Grok Build is shown", () => {
+    mocks.settings = {
+      visibleApps: {
+        claude: false,
+        "claude-desktop": false,
+        codex: false,
+      } as Settings["visibleApps"],
+    };
+    const { rerender } = render(<AuthCenterPanel />);
+    expect(cardOrder()).toEqual([
+      "xai",
+      "kimi",
+      "dsh",
+      "agy",
+      "copilot",
+      "workbuddy",
+      "codebuddy",
+    ]);
+
+    // 只保留 Grok Build 一个应用时，xAI 卡仍然可见且只有这一张
+    mocks.settings = {
+      visibleApps: onlyVisibleApps("grokbuild"),
+    };
+    rerender(<AuthCenterPanel />);
+    expect(cardHelpSides()).toEqual([["xai", "bottom"]]);
+  });
+
+  it("moves the xAI card to the top when Grok Build is dragged first", () => {
+    mocks.settings = {
+      appOrder: ["grokbuild", ...APP_IDS.filter((app) => app !== "grokbuild")],
+    };
+    render(<AuthCenterPanel />);
+    expect(cardOrder()[0]).toBe("xai");
+  });
+
+  it("sets helpSide to top only for the last card when multiple cards render", () => {
+    const { rerender } = render(<AuthCenterPanel />);
+    expect(cardHelpSides()).toEqual([
+      ["claude", "bottom"],
+      ["copilot", "bottom"],
+      ["codex", "bottom"],
+      ["xai", "bottom"],
+      ["kimi", "bottom"],
+      ["dsh", "bottom"],
+      ["agy", "bottom"],
+      ["workbuddy", "bottom"],
+      ["codebuddy", "top"],
+    ]);
+
+    // 拖拽排序后：WorkBuddy 排在最前改为向下弹，Claude 排在最后改为向上弹
+    const moved = new Set(["workbuddy", "claude"]);
+    mocks.settings = {
+      appOrder: [
+        "workbuddy",
+        ...APP_IDS.filter((app) => !moved.has(app)),
+        "claude",
+      ],
+    };
+    rerender(<AuthCenterPanel />);
+    expect(cardHelpSides()[0]).toEqual(["workbuddy", "bottom"]);
+    expect(cardHelpSides().at(-1)).toEqual(["claude", "top"]);
+
+    // GitHub Copilot 成为多卡里的最后一张时同样向上弹
+    mocks.settings = {
+      visibleApps: onlyVisibleApps("dsh", "copilot"),
+    };
+    rerender(<AuthCenterPanel />);
+    expect(cardHelpSides()).toEqual([
+      ["dsh", "bottom"],
+      ["copilot", "top"],
+    ]);
+
+    // ChatGPT（codex_oauth）成为多卡里的最后一张时同样向上弹
+    mocks.settings = {
+      appOrder: [
+        "copilot",
+        "grokbuild",
+        "codex",
+        ...APP_IDS.filter(
+          (app) => app !== "copilot" && app !== "grokbuild" && app !== "codex",
+        ),
+      ],
+      visibleApps: onlyVisibleApps("copilot", "grokbuild", "codex"),
+    };
+    rerender(<AuthCenterPanel />);
+    expect(cardHelpSides()).toEqual([
+      ["copilot", "bottom"],
+      ["xai", "bottom"],
+      ["codex", "top"],
+    ]);
+
+    // 只剩一张卡片（即使是原本垫底的 WorkBuddy）时贴近顶部，向下弹
+    mocks.settings = {
+      visibleApps: onlyVisibleApps("workbuddy"),
+    };
+    rerender(<AuthCenterPanel />);
+    expect(cardHelpSides()).toEqual([["workbuddy", "bottom"]]);
+
+    // 所有应用都隐藏时不渲染任何卡片
+    mocks.settings = {
+      visibleApps: onlyVisibleApps(),
+    };
+    rerender(<AuthCenterPanel />);
+    expect(cardOrder()).toEqual([]);
   });
 
   it("always shows the card a provider form jumps to", () => {
     mocks.settings = {
       visibleApps: { kimi: false } as Settings["visibleApps"],
     };
-    render(<AuthCenterPanel authScrollTarget="kimi_oauth" />);
+    const { rerender } = render(
+      <AuthCenterPanel authScrollTarget="kimi_oauth" />,
+    );
     expect(cardOrder()).toContain("kimi");
+
+    // 全部应用都隐藏时，从表单跳转进来的单张卡片依然渲染且说明卡向下弹
+    mocks.settings = {
+      visibleApps: onlyVisibleApps(),
+    };
+    rerender(<AuthCenterPanel authScrollTarget="xai_oauth" />);
+    expect(cardHelpSides()).toEqual([["xai", "bottom"]]);
   });
 
   it("omits Antigravity where account switching is unsupported", () => {
     mocks.canSwitchAgy = false;
-    render(<AuthCenterPanel />);
+    const { rerender } = render(<AuthCenterPanel />);
     expect(cardOrder()).not.toContain("agy");
+
+    // 过滤掉不可用的 agy 后只剩 1 张卡片，说明卡按实际渲染数量改为向下弹
+    mocks.settings = {
+      visibleApps: onlyVisibleApps("agy", "workbuddy"),
+    };
+    rerender(<AuthCenterPanel />);
+    expect(cardHelpSides()).toEqual([["workbuddy", "bottom"]]);
   });
 });
