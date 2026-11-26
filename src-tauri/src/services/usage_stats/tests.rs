@@ -4958,7 +4958,7 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
                     date, app_type, provider_id, model, request_count, success_count,
                     input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
                     total_cost_usd, avg_latency_ms
-                ) VALUES ('2026-06-08', 'agy', '_agy_session', 'gemini-4-argon-high', 2, 1, 200, 400, 0, 0, '5', 1000)",
+                ) VALUES ('2026-06-08', 'agy', '_agy_session', 'gemini-4-argon-high', 2, 1, 200, 400, 40, 10, '5', 1000)",
             [],
         )?;
         // 带前缀的 `-tiered` 也要支持合并及筛选回查。
@@ -4986,7 +4986,7 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
         .find(|s| s.model == "gemini-4-argon")
         .expect("merged argon stat");
     assert_eq!(stat.request_count, 8);
-    assert_eq!(stat.total_tokens, 2400);
+    assert_eq!(stat.total_tokens, 2450);
     assert_eq!(stat.total_cost, "26.000000");
     assert_eq!(stat.avg_cost_per_request, "3.250000");
     assert!((stat.success_rate - 700.0 / 8.0).abs() < 0.001);
@@ -5023,7 +5023,7 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
         Some("agy"),
         None,
         model,
-        false,
+        true,
     )?;
     assert_eq!(trends.iter().map(|t| t.request_count).sum::<u64>(), 8);
     let hourly = db.get_daily_trends(
@@ -5032,9 +5032,26 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
         Some("agy"),
         None,
         model,
-        false,
+        true,
     )?;
     assert_eq!(hourly.iter().map(|t| t.request_count).sum::<u64>(), 6);
+    for bucket in trends.iter().chain(&hourly) {
+        if bucket.request_count == 0 {
+            assert!(bucket.model_stats.is_empty());
+            continue;
+        }
+        assert_eq!(bucket.model_stats.len(), 1);
+        let model_stat = &bucket.model_stats[0];
+        assert_eq!(model_stat.model, "gemini-4-argon");
+        assert_eq!(model_stat.request_count, bucket.request_count);
+        assert!((model_stat.total_cost - bucket.total_cost.parse::<f64>().unwrap()).abs() < 1e-6);
+        assert_eq!(
+            model_stat.total_tokens,
+            bucket.total_tokens
+                + bucket.total_cache_read_tokens
+                + bucket.total_cache_creation_tokens
+        );
+    }
     let logs = db.get_request_logs(
         &LogFilters {
             model: model.map(str::to_string),
