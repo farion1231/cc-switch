@@ -37,6 +37,16 @@ export const extractErrorMessage = (error: unknown): string => {
   return "";
 };
 
+/** Backend guard used when a Claude Desktop edit must move into local routing. */
+export const isClaudeDesktopNeedsRoutingError = (error: unknown): boolean => {
+  const message = extractErrorMessage(error);
+  return (
+    message.includes("switch.desktop_needs_routing") ||
+    message.includes("This provider only works through local routing") ||
+    message.includes("这个供应商要经本地路由才能用")
+  );
+};
+
 export const translatePiProviderMutationError = (
   message: string,
   t: (key: string, options?: Record<string, unknown>) => string,

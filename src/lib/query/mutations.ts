@@ -8,6 +8,7 @@ import { parseLiveEditConflict } from "@/lib/errors/liveEditConflict";
 import type { Provider, SessionMeta, Settings } from "@/types";
 import {
   extractErrorMessage,
+  isClaudeDesktopNeedsRoutingError,
   translateKimiProviderMutationError,
   translatePiProviderMutationError,
 } from "@/utils/errorUtils";
@@ -223,6 +224,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     },
     onError: (error: Error) => {
       if (parseLiveEditConflict(error)) return;
+      // The provider action handles this sentinel by entering routing and retrying.
+      if (
+        appId === "claude-desktop" &&
+        isClaudeDesktopNeedsRoutingError(error)
+      ) {
+        return;
+      }
       const rawDetail = extractErrorMessage(error);
       const detail =
         (appHas(appId, "piFamily")

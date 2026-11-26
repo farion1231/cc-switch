@@ -58,6 +58,7 @@ const openclawApiGetModelCatalogMock = vi.fn();
 const openclawApiSetModelCatalogMock = vi.fn();
 const openclawApiGetDefaultModelMock = vi.fn();
 const openclawApiSetDefaultModelMock = vi.fn();
+const proxySetTakeoverForAppMock = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   piApi: {
@@ -83,6 +84,19 @@ vi.mock("@/lib/api", () => ({
       openclawApiGetDefaultModelMock(...args),
     setDefaultModel: (...args: unknown[]) =>
       openclawApiSetDefaultModelMock(...args),
+  },
+}));
+
+vi.mock("@/lib/api/proxy", () => ({
+  proxyApi: {
+    setProxyTakeoverForApp: (...args: unknown[]) =>
+      proxySetTakeoverForAppMock(...args),
+  },
+}));
+
+vi.mock("@/lib/query/proxy", () => ({
+  proxyKeys: {
+    takeoverStatus: ["proxyTakeoverStatus"],
   },
 }));
 
@@ -124,6 +138,7 @@ beforeEach(() => {
   openclawApiSetModelCatalogMock.mockReset();
   openclawApiGetDefaultModelMock.mockReset();
   openclawApiSetDefaultModelMock.mockReset();
+  proxySetTakeoverForAppMock.mockReset();
   toastSuccessMock.mockReset();
   toastErrorMock.mockReset();
   toastInfoMock.mockReset();
@@ -136,6 +151,47 @@ beforeEach(() => {
 });
 
 describe("useProviderActions", () => {
+  it("automatically enters Claude Desktop routing and retries a routed provider update", async () => {
+    const routingError = new Error(
+      "switch.desktop_needs_routing: switch Claude Desktop to the routing mode first",
+    );
+    updateProviderMutateAsync
+      .mockRejectedValueOnce(routingError)
+      .mockResolvedValueOnce(undefined);
+    proxySetTakeoverForAppMock.mockResolvedValueOnce(undefined);
+    providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);
+    const { wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const provider = createProvider({
+      category: "custom",
+      meta: { claudeDesktopMode: "proxy" },
+    });
+
+    const { result } = renderHook(
+      () => useProviderActions("claude-desktop", false),
+      { wrapper },
+    );
+
+    await act(async () => {
+      await result.current.updateProvider(provider);
+    });
+
+    expect(proxySetTakeoverForAppMock).toHaveBeenCalledWith(
+      "claude-desktop",
+      true,
+      false,
+      provider.id,
+    );
+    expect(updateProviderMutateAsync).toHaveBeenCalledTimes(2);
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["proxyTakeoverStatus"],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ["providers", "claude-desktop"],
+    });
+    expect(providersApiUpdateTrayMenuMock).toHaveBeenCalledTimes(1);
+  });
+
   it("should update tray menu when calling updateProvider", async () => {
     updateProviderMutateAsync.mockResolvedValueOnce(undefined);
     providersApiUpdateTrayMenuMock.mockResolvedValueOnce(true);

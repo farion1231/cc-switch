@@ -27,13 +27,18 @@ import {
 } from "@/lib/query";
 import { usageKeys } from "@/lib/query/usage";
 import { routeSwitchNotification } from "@/utils/routeSwitchNotification";
-import { extractErrorMessage } from "@/utils/errorUtils";
+import {
+  extractErrorMessage,
+  isClaudeDesktopNeedsRoutingError,
+} from "@/utils/errorUtils";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { supportsOfficialProxyTakeover } from "@/utils/providerCapabilities";
 import { getRoutingReason } from "@/utils/routingReason";
 import { logFrontendInfo } from "@/lib/frontendLogger";
 import { codexHistorySplitToastExtras } from "@/utils/codexHistorySplitHint";
 import { appHas } from "@/config/appSpecs";
+import { proxyApi } from "@/lib/api/proxy";
+import { proxyKeys } from "@/lib/query/proxy";
 
 /**
  * Hook for managing provider actions (add, update, delete, switch)
@@ -155,11 +160,44 @@ export function useProviderActions(
       originalId?: string,
       editorSave?: ProviderEditorSave,
     ) => {
-      await updateProviderMutation.mutateAsync({
-        provider,
-        originalId,
-        editorSave,
-      });
+      try {
+        await updateProviderMutation.mutateAsync({
+          provider,
+          originalId,
+          editorSave,
+        });
+      } catch (error) {
+        // Claude Desktop mapping and managed-account cards cannot be written
+        // in direct mode. Enter routing and retry once so this remains one action.
+        if (
+          activeApp === "claude-desktop" &&
+          !isProxyTakeover &&
+          isClaudeDesktopNeedsRoutingError(error)
+        ) {
+          logFrontendInfo(
+            `[UPDATE] ${activeApp} ${provider.id} needs routing; entering routing and retrying`,
+          );
+          await proxyApi.setProxyTakeoverForApp(
+            activeApp,
+            true,
+            false,
+            provider.id,
+          );
+          await queryClient.invalidateQueries({
+            queryKey: proxyKeys.takeoverStatus,
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["providers", activeApp],
+          });
+          await updateProviderMutation.mutateAsync({
+            provider,
+            originalId,
+            editorSave,
+          });
+        } else {
+          throw error;
+        }
+      }
 
       // 更新托盘菜单（失败不影响主操作）
       try {
@@ -171,7 +209,7 @@ export function useProviderActions(
         );
       }
     },
-    [updateProviderMutation],
+    [activeApp, isProxyTakeover, queryClient, updateProviderMutation],
   );
 
   // 切换供应商
