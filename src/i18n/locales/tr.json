@@ -2656,6 +2656,11 @@
       "cost": "Maliyet",
       "requestsLegend": "İstekler",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "Trend dökümü",
+      "byModel": "Modele göre",
+      "unknownModel": "Bilinmeyen model",
+      "otherModels": "Diğer modeller",
+      "byApp": "Uygulamaya göre",
       "hourly": "Saatlik",
       "daily": "Günlük"
     },

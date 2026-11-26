@@ -2727,6 +2727,11 @@
       "cost": "Kosten",
       "requestsLegend": "Anfragen",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "Trendaufschlüsselung",
+      "byModel": "Nach Modell",
+      "unknownModel": "Unbekanntes Modell",
+      "otherModels": "Andere Modelle",
+      "byApp": "Nach App",
       "hourly": "stündlich",
       "daily": "täglich"
     },

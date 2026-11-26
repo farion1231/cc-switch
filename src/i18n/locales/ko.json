@@ -2722,6 +2722,11 @@
       "cost": "비용",
       "requestsLegend": "요청 수",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "추세 세부 내역",
+      "byModel": "모델별",
+      "unknownModel": "알 수 없는 모델",
+      "otherModels": "기타 모델",
+      "byApp": "앱별",
       "hourly": "매시간",
       "daily": "일일"
     },
