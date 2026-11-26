@@ -3358,6 +3358,9 @@ fn classic_tool_template_keeps_the_classic_tool_contract() {
     assert_eq!(template["shell_type"], "unified_exec");
     assert_eq!(template["include_skills_usage_instructions"], true);
     assert_eq!(template["include_plugin_usage_instructions"], true);
+    // 官方 gpt-5.5 真能响应 tool_search。这份骨架也是没有 `codex` 时的官方条目，
+    // 保持 true；第三方目录在生成时清掉，不靠改模板。
+    assert_eq!(template["supports_search_tool"], true);
     // 新官方条目才有的 code mode / v2 子代理 / 实验工具，不能被带给第三方模型。
     assert!(template.get("tool_mode").is_none());
     assert!(template.get("multi_agent_version").is_none());
@@ -3398,6 +3401,116 @@ fn proxy_chat_catalog_ignores_codex_models_cache() {
     assert_eq!(entry["shell_type"], "unified_exec");
     assert!(entry.get("tool_mode").is_none());
     assert_ne!(entry["base_instructions"], "cached");
+}
+
+/// 第三方目录（含命中官方 slug 的镜像行、Stack 路由行）不得声明
+/// `supports_search_tool`。经典模板是 true；漏清一次，Codex 就把 MCP 藏到
+/// 中转实现不了的 `tool_search` 后面（#6653 / #6647）。
+#[test]
+fn third_party_catalogs_do_not_declare_supports_search_tool() {
+    let settings = json!({
+        "modelCatalog": { "models": [
+            { "model": "glm-5.3" },
+            { "model": "gpt-5.5" }
+        ] }
+    });
+
+    for profile in [
+        CodexCatalogToolProfile::ProxyChat,
+        CodexCatalogToolProfile::Copilot,
+        CodexCatalogToolProfile::NativeResponses,
+        CodexCatalogToolProfile::Anthropic,
+    ] {
+        let catalog = codex_model_catalog_from_settings(&settings, "", profile)
+            .expect("catalog generation")
+            .expect("configured models yield a catalog");
+        let models = catalog["models"].as_array().expect("models");
+        assert_eq!(models.len(), 2, "{profile:?}");
+        for model in models {
+            assert_eq!(
+                model.get("supports_search_tool"),
+                Some(&json!(false)),
+                "{profile:?} {}",
+                model["slug"]
+            );
+        }
+    }
+
+    // 活的官方列表带 true 时，第三方镜像行仍要清掉；提示词和 freeform 工具保留。
+    let mut official = official_gpt_row("gpt-5.5", "GPT-5.5 prompt");
+    official["supports_search_tool"] = json!(true);
+    let official = normalize_codex_native_rows(vec![official]).expect("official row");
+    with_official_models(official, || {
+        for profile in [
+            CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::NativeResponses,
+        ] {
+            let catalog = codex_model_catalog_from_settings(
+                &json!({ "modelCatalog": { "models": [{ "model": "gpt-5.5" }] } }),
+                "",
+                profile,
+            )
+            .expect("catalog generation")
+            .expect("catalog");
+            let entry = &catalog["models"][0];
+            assert_eq!(entry["supports_search_tool"], json!(false), "{profile:?}");
+            assert_eq!(entry["apply_patch_tool_type"], "freeform", "{profile:?}");
+            assert_eq!(
+                entry["model_messages"]["instructions_template"], "GPT-5.5 prompt",
+                "{profile:?}"
+            );
+        }
+    });
+
+    let stacked = plan_codex_stack_catalog(
+        CodexStackRoute::ThirdParty(CodexCatalogRow {
+            settings: &settings,
+            config_text: "",
+            profile: CodexCatalogToolProfile::ProxyChat,
+        }),
+        &[],
+        false,
+    )
+    .expect("stack catalog");
+    for model in stacked["models"].as_array().expect("stack models") {
+        assert_eq!(
+            model["supports_search_tool"],
+            json!(false),
+            "{}",
+            model["slug"]
+        );
+    }
+
+    // 生成过程不改模板：官方兜底条目仍然声明 true。
+    assert_eq!(
+        load_codex_classic_tool_template()["supports_search_tool"],
+        json!(true)
+    );
+
+    // 官方路由的原生行原样保留。官方 gpt-5.5 真支持 tool_search，不能被这次清理改掉。
+    let native = normalize_codex_native_rows(vec![native_row(
+        "gpt-5.5",
+        json!({
+            "base_instructions": "official",
+            "supports_search_tool": true,
+            "priority": 1
+        }),
+    )])
+    .expect("official native row");
+    let official = plan_codex_stack_catalog(
+        CodexStackRoute::Official {
+            native,
+            config_text: "",
+        },
+        &[],
+        false,
+    )
+    .expect("official catalog");
+    assert_eq!(
+        official["models"][0]["supports_search_tool"],
+        json!(true),
+        "official-route gpt-5.5 keeps tool_search"
+    );
 }
 
 #[test]

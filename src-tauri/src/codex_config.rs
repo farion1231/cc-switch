@@ -1458,8 +1458,25 @@ fn codex_catalog_model_entry(
         .get("default_reasoning_level")
         .and_then(|value| value.as_str());
     apply_codex_reasoning_level_override(entry_obj, template_default, spec);
+    clear_synthesized_codex_search_tool(entry_obj);
 
     entry
+}
+
+/// Catalog rows CC Switch synthesizes must not advertise `supports_search_tool`.
+///
+/// Codex defers namespaced MCP tools behind `tool_search` only when this flag
+/// is true (`search_tool_enabled` in codex-rs). Official gpt-5.5 really serves
+/// that tool, so `gpt5_5_template.json` stays true and official-route native
+/// rows (`CodexStackRoute::Official`) are copied unchanged. Rows built here are
+/// the third-party or Copilot catalog. Chat conversion does not implement
+/// `tool_search`, and a custom Responses relay does not either. A leaked true
+/// hides every MCP tool behind `not_declared` (same failure as the DeepSeek
+/// catalog, #6653 / #6647). Hosted web search does not read this flag. A
+/// mirrored GPT row keeps the official prompt and tool declarations; only this
+/// client-side deferral flag is cleared.
+fn clear_synthesized_codex_search_tool(entry_obj: &mut serde_json::Map<String, Value>) {
+    entry_obj.insert("supports_search_tool".to_string(), json!(false));
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -2565,6 +2582,10 @@ fn codex_official_model_entry(
         // 同 `codex_catalog_model_entry`：严格的 Chat 网关拒收 `original` 精度的图片。
         obj.insert("supports_image_detail_original".to_string(), json!(false));
     }
+    // 命中的是官方条目，但这行仍由第三方中转提供。官方的 `supports_search_tool:
+    // true` 不能跟着提示词和工具一起照抄，否则 Codex 把 MCP 藏进中转实现不了的
+    // `tool_search`（同 #6653）。
+    clear_synthesized_codex_search_tool(obj);
     entry
 }
 
