@@ -417,11 +417,20 @@ mod switching {
         assert_eq!(manager.access_token("alice").await.unwrap(), "fresh");
         assert_eq!(*login.reads.lock().unwrap(), 0, "副本有效时不读钥匙串");
 
+        // 账号尚未收录但钥匙串里正登着它（如冷启动云同步卡片抢在 status() 前查额度）：仍读钥匙串收回
+        let mut unimported_bob = credential("bob", "live-bob");
+        unimported_bob["token"]["expiry"] = json!(in_an_hour());
+        set_live(&login, &unimported_bob);
+        assert_eq!(manager.access_token("bob").await.unwrap(), "live-bob");
+        assert_eq!(*login.reads.lock().unwrap(), 1);
+
+        // 删掉的账号即使钥匙串里还登着它，也不会被重新收回
+        manager.remove("bob").await.unwrap();
         assert!(matches!(
-            manager.access_token("nobody").await,
+            manager.access_token("bob").await,
             Err(AccountQuotaError::NotFound)
         ));
-        assert_eq!(*login.reads.lock().unwrap(), 0, "未知账号也不读钥匙串");
+        assert_eq!(*login.reads.lock().unwrap(), 2);
     }
 
     #[tokio::test]
@@ -478,6 +487,15 @@ mod switching {
             Err(AccountQuotaError::NeedsReauth)
         ));
         assert_eq!(*login.reads.lock().unwrap(), 3);
+
+        // 4. 账号处于 requires_reauth 且钥匙串里仍是同一份旧凭据：不误清 requires_reauth
+        set_live(&login, &credential("charlie", "fresh"));
+        assert!(matches!(
+            manager.access_token("charlie").await,
+            Err(AccountQuotaError::NeedsReauth)
+        ));
+        assert_eq!(*login.reads.lock().unwrap(), 4);
+        assert!(manager.store.lock().await.accounts["charlie"].requires_reauth);
     }
 
     #[tokio::test]
@@ -822,5 +840,32 @@ async fn quota_limits_concurrent_upstream_requests() {
     );
     assert!(matches!(results[0], Err(AccountQuotaError::Failed(_))));
     assert!(results[1..].iter().all(|result| result.is_ok()));
+    assert_eq!(
+        manager.quota_permits.available_permits(),
+        MAX_CONCURRENT_QUOTA_QUERIES
+    );
     assert_eq!(*login.reads.lock().unwrap(), 0);
+
+    // 取消进行中的查额度任务也不应泄漏信号量许可
+    let (cancel_entered_tx, cancel_entered_rx) = tokio::sync::oneshot::channel();
+    let mut cancel_entered_tx = Some(cancel_entered_tx);
+    let mut pending_query = Box::pin(manager.quota_with(&ids[0], move |_token| {
+        if let Some(tx) = cancel_entered_tx.take() {
+            let _ = tx.send(());
+        }
+        std::future::pending::<Result<quota::AccountQuota, quota::QuotaError>>()
+    }));
+    tokio::select! {
+        _ = &mut pending_query => panic!("pending query should not finish"),
+        _ = cancel_entered_rx => {}
+    }
+    assert_eq!(
+        manager.quota_permits.available_permits(),
+        MAX_CONCURRENT_QUOTA_QUERIES - 1
+    );
+    drop(pending_query);
+    assert_eq!(
+        manager.quota_permits.available_permits(),
+        MAX_CONCURRENT_QUOTA_QUERIES
+    );
 }

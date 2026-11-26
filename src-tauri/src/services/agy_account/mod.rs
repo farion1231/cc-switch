@@ -470,13 +470,13 @@ impl AgyAccountManager {
     async fn access_token(&self, account_id: &str) -> Result<String, AccountQuotaError> {
         {
             let mut store = self.store.lock().await;
-            let account = store
-                .accounts
-                .get(account_id)
-                .ok_or(AccountQuotaError::NotFound)?;
-            if !account.requires_reauth {
-                if let Some(token) = oauth::usable_access_token(&account.credential, TOKEN_MARGIN) {
-                    return Ok(token.to_string());
+            if let Some(account) = store.accounts.get(account_id) {
+                if !account.requires_reauth {
+                    if let Some(token) =
+                        oauth::usable_access_token(&account.credential, TOKEN_MARGIN)
+                    {
+                        return Ok(token.to_string());
+                    }
                 }
             }
             if keychain::supported() {

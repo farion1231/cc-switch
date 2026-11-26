@@ -326,10 +326,7 @@ fn sanitize_log_text(value: &str, max_chars: usize) -> Option<String> {
     let mut prev_space = false;
     let mut count = 0;
     for ch in value.chars() {
-        let mapped = if matches!(
-            ch,
-            '\r' | '\n' | '\t' | '\u{0085}' | '\u{2028}' | '\u{2029}'
-        ) {
+        let mapped = if ch.is_whitespace() {
             ' '
         } else if ch.is_control() {
             continue;
@@ -643,7 +640,7 @@ mod tests {
         );
         assert_eq!(
             invalid_grant_detail(&json!({
-                "error_subtype": " \r\n\t\x00 ",
+                "error_subtype": " \r\n\t\x00\u{00a0}\u{3000} ",
                 "error_description": 123
             })),
             None
@@ -651,7 +648,7 @@ mod tests {
 
         let dirty = invalid_grant_detail(&json!({
             "error_subtype": "invalid_rapt\r\nFAKE",
-            "error_description": "line1\r\n\tline2\x00\x1b[31m\u{2028}line3"
+            "error_description": "line1\r\n\tline2\x00\x1b[31m\x0bline3\u{2028}\u{00a0}line4"
         }))
         .unwrap();
         assert!(!dirty
@@ -659,7 +656,7 @@ mod tests {
             .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')));
         assert_eq!(
             dirty,
-            "subtype=invalid_rapt FAKE, description=line1 line2[31m line3"
+            "subtype=invalid_rapt FAKE, description=line1 line2[31m line3 line4"
         );
 
         let long_subtype = "s".repeat(MAX_LOG_SUBTYPE_CHARS + 20);
