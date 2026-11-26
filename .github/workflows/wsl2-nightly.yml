@@ -30,6 +30,9 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    env:
+      # 与 ci.yml 的 backend-v3 缓存指纹对齐，确保直接复用 Windows 依赖缓存
+      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -60,7 +63,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri -> target
-          shared-key: backend-v2
+          shared-key: backend-v3
           save-if: false
 
       - name: Install cargo-nextest
