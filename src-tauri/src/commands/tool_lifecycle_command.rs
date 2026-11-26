@@ -1157,7 +1157,10 @@ fn package_manager_anchored_command_from_paths(
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
-    let pkg = tool_spec(tool).npm_package?;
+    let NpmPackage {
+        name: pkg,
+        install_args,
+    } = npm_package_for_install(tool, bin_path, real_target)?;
     let source = infer_install_source(Path::new(bin_path));
     // omp 的 npm 包只能由 bun 运行：除 bun 外的 node 管理器装不出能跑的 omp。
     if tool == "omp" && source != "bun" {
@@ -1181,10 +1184,7 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    anchored_npm_command(
-        bin_path,
-        &format!("i -g {pkg}@latest{}", tool_spec(tool).npm_install_args),
-    )
+    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest{install_args}"))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -1279,7 +1279,9 @@ pub(super) fn anchored_command_from_paths(
         // Bun-installed OpenCode upgrades through bun, not npm.
         let npm_scripts_package = match tool {
             "claude" => Some("@anthropic-ai/claude-code"),
-            "opencode" if !real_lower.contains("/.bun/") => Some("opencode-ai"),
+            "opencode" if !real_lower.contains("/.bun/") => {
+                npm_package_for_install(tool, bin_path, real_target).map(|pkg| pkg.name)
+            }
             _ => None,
         };
         if let Some(pkg) = npm_scripts_package {
@@ -1301,7 +1303,10 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
     if tool == "omp" {
         return None;
     }
-    let pkg = tool_spec(tool).npm_package?;
+    let NpmPackage {
+        name: pkg,
+        install_args,
+    } = npm_package_for_install(tool, bin_path, bin_path)?;
 
     match infer_install_source(Path::new(bin_path)) {
         "volta" => {
@@ -1323,9 +1328,8 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
         _ => {
             let npm = sibling_bin_with_ext(bin_path, "npm", &["cmd", "exe"])?;
             Some(format!(
-                "{} i -g {pkg}@latest{}",
+                "{} i -g {pkg}@latest{install_args}",
                 win_quote_path_for_batch(&npm),
-                tool_spec(tool).npm_install_args
             ))
         }
     }
@@ -2106,6 +2110,16 @@ mod tests {
             assert_eq!(
                 anchored_command_from_paths("opencode", &bin_path, &bin_path).as_deref(),
                 Some(format!("{pnpm} add -g opencode-ai@latest").as_str())
+            );
+            // OpenCode 2 的 shim 指向 @opencode/cli；装 opencode-ai 会被 pnpm 静默顶掉入口。
+            std::fs::write(
+                &bin_path,
+                "@\"%~dp0\\global\\5\\node_modules\\@opencode\\cli\\bin\\opencode.exe\" %*",
+            )
+            .unwrap();
+            assert_eq!(
+                anchored_command_from_paths("opencode", &bin_path, &bin_path).as_deref(),
+                Some(format!("{pnpm} add -g @opencode/cli@latest").as_str())
             );
 
             let (_dir, sub, bin_path) = setup_sibling("v22.19.0", "mcode.cmd", &["npm.cmd"]);
