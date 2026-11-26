@@ -2,7 +2,6 @@ import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
-import { syncCurrentProvidersLiveSafe } from "@/utils/postChangeSync";
 
 export type ImportStatus =
   | "idle"
@@ -96,13 +95,13 @@ export function useImportExport(
       }
 
       setBackupId(result.backupId ?? null);
-      // 导入成功后立即触发外部刷新（与 live 同步结果解耦）
-      // - 避免 sync 失败时 UI 不刷新
+      // 导入成功后立即触发外部刷新（与后置同步警告解耦）
+      // - 避免后置同步部分失败时 UI 不刷新
       // - 避免依赖 setTimeout（组件卸载会取消）
       void onImportSuccess?.();
 
-      const syncResult = await syncCurrentProvidersLiveSafe();
-      if (syncResult.ok) {
+      const postSyncWarning = result.warning?.trim();
+      if (!postSyncWarning) {
         setStatus("success");
         toast.success(
           t("settings.importSuccess", {
@@ -111,16 +110,18 @@ export function useImportExport(
           { closeButton: true },
         );
       } else {
-        console.error(
-          "[useImportExport] Failed to sync live config",
-          syncResult.error,
+        console.warn(
+          "[useImportExport] Post-import sync completed with warning",
+          postSyncWarning,
         );
         setStatus("partial-success");
+        setErrorMessage(postSyncWarning);
         toast.warning(
-          t("settings.importPartialSuccess", {
+          `${t("settings.importPartialSuccess", {
             defaultValue:
               "配置已导入，但同步到当前供应商失败。请手动重新选择一次供应商。",
-          }),
+          })}\n${postSyncWarning}`,
+          { closeButton: true },
         );
       }
     } catch (error) {

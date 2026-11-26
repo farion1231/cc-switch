@@ -940,6 +940,40 @@ describe("OpenCodeFormFields", () => {
     });
   });
 
+  it("exposes DeepSeek Harness reasoningEfforts with unknown keys in extra fields instead of hiding them", () => {
+    const onModelsChange = vi.fn();
+    const malformed = {
+      name: "Doubao",
+      reasoningEfforts: { false: null, low: "low", max: "max" },
+    };
+    renderOpenCodeForm({
+      modelDialect: "dsh",
+      onModelsChange,
+      models: { doubao: malformed },
+    });
+
+    expandFirstModel();
+    expect(
+      screen.queryByRole("button", { name: "pi.form.thinkingLevelsLabel" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("reasoningEfforts")).toBeInTheDocument();
+
+    // 重新打开思考开关时用默认合法档位覆盖异常对象
+    fireEvent.click(screen.getByLabelText("pi.form.reasoning"));
+    expect(onModelsChange).toHaveBeenLastCalledWith({
+      doubao: {
+        ...malformed,
+        reasoning: true,
+        reasoningEfforts: {
+          off: null,
+          low: "low",
+          medium: "medium",
+          high: "high",
+        },
+      },
+    });
+  });
+
   // 自定义 DSH 模型也要能填兼容性（百炼兼容模式不认 developer 角色，#9330）
   it("offers DeepSeek Harness compatibility for models that have none yet", () => {
     const onModelsChange = vi.fn();

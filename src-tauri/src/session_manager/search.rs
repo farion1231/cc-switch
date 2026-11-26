@@ -1,28 +1,28 @@
 //! 会话正文搜索索引（issue #7420）。
 //!
-//! 会话页的元数据搜索（标题、目录、首末消息）在前端用 FlexSearch 做；消息正文太大，
+//! 会话页的元数据搜索（标题、目录、首末消息）在前端完成；消息正文太大，
 //! 放不进前端内存，这里在 Rust 侧维护一份 SQLite FTS5 索引：
 //!
 //! - 独立文件 `~/.cc-switch/session-index.db`，不进主库，不参与备份与云同步。它只是
 //!   缓存，删掉后下次打开会话页会重建；关掉「搜索消息正文」时整个文件一起删除
 //! - 每条消息一行，只收用户与 Agent 的正文（Text 块）；思考、工具参数与输出、
 //!   注入内容（AGENTS.md、system-reminder…）不收
-//! - trigram 分词：中文、代码标识符都能按子串命中；不足 3 个字符的查询 trigram
-//!   用不上，对规范化正文做精确子串扫描
+//! - trigram 支持长词子串匹配；无正文、无位置信息的短词索引收录一字/两字，避免正文扫描
 //! - 增量：文件使用 `(mtime, len)`，SQLite 使用会话原始行 revision；没变的会话不再解析
 //!
 //! FTS 行的 rowid 由「源 id × 2^24 + 消息序号」组成，重建一个会话时按 rowid 区间删除，
 //! 不必扫全表。
 
 use crate::sync_utils::MutexExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::UNIX_EPOCH;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, params_from_iter, Connection, OpenFlags, OptionalExtension};
 use serde::Serialize;
 
 use super::cache::{self, Fingerprint};
@@ -31,7 +31,7 @@ use super::model::{SessionBlock, SessionMessage};
 
 const INDEX_FILE: &str = "session-index.db";
 /// 索引格式版本；表结构或收录规则变了就加一，旧索引整体重建
-const INDEX_VERSION: i64 = 2;
+const INDEX_VERSION: i64 = 4;
 /// rowid 里留给消息序号的位数（单个会话最多 1600 万条消息，超出部分不收）
 const ROW_SHIFT: u32 = 24;
 const MAX_MESSAGES_PER_SOURCE: usize = 1 << ROW_SHIFT;
@@ -250,8 +250,44 @@ fn match_expression(query: &str) -> String {
     format!("\"{}\"", query.replace('"', "\"\""))
 }
 
+// Encode code points into ASCII terms so whitespace, punctuation and emoji
+// retain literal substring semantics. Deduplicate postings within each message.
+fn short_grams(normalized: &str) -> String {
+    let mut terms = HashSet::new();
+    let mut previous = None;
+    for c in normalized.chars() {
+        terms.insert((c, None));
+        if let Some(p) = previous {
+            terms.insert((p, Some(c)));
+        }
+        previous = Some(c);
+    }
+    let mut encoded = String::new();
+    for (a, b) in terms {
+        match b {
+            Some(b) => {
+                write!(encoded, "b{:x}z{:x} ", a as u32, b as u32).unwrap();
+            }
+            None => {
+                write!(encoded, "u{:x} ", a as u32).unwrap();
+            }
+        }
+    }
+    encoded
+}
+
+fn short_query(query: &str) -> String {
+    let mut chars = query.chars();
+    let a = chars.next().expect("nonempty query") as u32;
+    match chars.next() {
+        Some(b) => format!("b{a:x}z{:x}", b as u32),
+        None => format!("u{a:x}"),
+    }
+}
+
 pub struct SessionIndex {
     conn: Connection,
+    generation: Arc<()>,
 }
 
 impl SessionIndex {
@@ -260,6 +296,18 @@ impl SessionIndex {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         Self::init(conn)
+    }
+
+    fn open_reader(path: &Path) -> rusqlite::Result<Self> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(std::time::Duration::from_millis(100))?;
+        Ok(Self {
+            conn,
+            generation: Arc::new(()),
+        })
     }
 
     #[cfg(test)]
@@ -271,7 +319,8 @@ impl SessionIndex {
         let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
         if version != INDEX_VERSION {
             conn.execute_batch(
-                "DROP TABLE IF EXISTS message_text;
+                "DROP TABLE IF EXISTS message_short;
+                 DROP TABLE IF EXISTS message_text;
                  DROP TABLE IF EXISTS indexed_sources;",
             )?;
         }
@@ -285,10 +334,15 @@ impl SessionIndex {
                  UNIQUE (provider_id, source_path)
              );
              CREATE VIRTUAL TABLE IF NOT EXISTS message_text
-                 USING fts5(text UNINDEXED, normalized, tokenize = 'trigram case_sensitive 1');",
+                 USING fts5(text UNINDEXED, normalized, tokenize = 'trigram case_sensitive 1');
+             CREATE VIRTUAL TABLE IF NOT EXISTS message_short USING fts5(
+                 grams, content='', contentless_delete=1, detail=none, tokenize='ascii');",
         )?;
         conn.pragma_update(None, "user_version", INDEX_VERSION)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            generation: Arc::new(()),
+        })
     }
 
     pub fn stored_fingerprint(
@@ -354,12 +408,13 @@ impl SessionIndex {
             let mut insert = tx.prepare(
                 "INSERT INTO message_text (rowid, text, normalized) VALUES (?1, ?2, ?3)",
             )?;
+            let mut short_insert =
+                tx.prepare("INSERT INTO message_short (rowid, grams) VALUES (?1, ?2)")?;
             for (index, text) in rows {
-                insert.execute(params![
-                    (id << ROW_SHIFT) + *index as i64,
-                    text,
-                    text.to_lowercase()
-                ])?;
+                let rowid = (id << ROW_SHIFT) + *index as i64;
+                let normalized = text.to_lowercase();
+                insert.execute(params![rowid, text, normalized])?;
+                short_insert.execute(params![rowid, short_grams(&normalized)])?;
             }
         }
         tx.commit()
@@ -369,6 +424,10 @@ impl SessionIndex {
     pub fn compact(&self) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO message_text (message_text) VALUES ('optimize')",
+            [],
+        )?;
+        self.conn.execute(
+            "INSERT INTO message_short (message_short) VALUES ('optimize')",
             [],
         )?;
         self.conn.execute_batch("VACUUM;")?;
@@ -419,64 +478,72 @@ impl SessionIndex {
     }
 
     /// 按会话聚合的正文命中。`providers` 为 None 时不按应用过滤。
+    #[cfg(test)]
     pub fn search(
         &self,
         query: &str,
         providers: Option<&HashSet<String>>,
         limit: usize,
     ) -> rusqlite::Result<Vec<ContentHit>> {
+        self.search_cancellable(query, providers, limit, &SearchTask::default())
+    }
+
+    fn search_cancellable(
+        &self,
+        query: &str,
+        providers: Option<&HashSet<String>>,
+        limit: usize,
+        task: &SearchTask,
+    ) -> rusqlite::Result<Vec<ContentHit>> {
+        task.check()?;
         let query = query.trim();
         if query.is_empty() || limit == 0 {
             return Ok(Vec::new());
         }
 
-        let sources: HashMap<i64, (String, String)> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT id, provider_id, source_path FROM indexed_sources")?;
-            let rows = stmt.query_map([], |row| Ok((row.get(0)?, (row.get(1)?, row.get(2)?))))?;
-            rows.collect::<rusqlite::Result<_>>()?
-        };
-        // 应用过滤要在截断（MAX_HIT_ROWS）之前生效，否则其他应用的大量命中会把选中应用挤掉
-        let allowed: Option<Vec<i64>> = providers.map(|set| {
-            sources
-                .iter()
-                .filter(|(_, (provider_id, _))| set.contains(provider_id))
-                .map(|(id, _)| *id)
-                .collect()
-        });
-        if allowed.as_ref().is_some_and(Vec::is_empty) {
+        if providers.is_some_and(HashSet::is_empty) {
             return Ok(Vec::new());
         }
-        // 传给 SQL 的源 id 列表（JSON 数组）；None 表示不过滤
-        let allowed_json = allowed
-            .as_ref()
-            .map(|ids| serde_json::to_string(ids).unwrap_or_else(|_| "[]".into()));
-        let source_filter =
-            format!("(?3 IS NULL OR (rowid >> {ROW_SHIFT}) IN (SELECT value FROM json_each(?3)))");
-
+        // A read transaction keeps row IDs, source metadata and snippets on the
+        // same WAL snapshot while replace_source commits on the writer.
+        let snapshot = self.conn.unchecked_transaction()?;
         let normalized = query.to_lowercase();
-        let rowids: Vec<i64> = if normalized.chars().count() >= MIN_MATCH_CHARS {
-            let mut stmt = self.conn.prepare(&format!(
-                "SELECT rowid FROM message_text WHERE message_text MATCH ?1 AND {source_filter}
-                 ORDER BY rank LIMIT ?2"
-            ))?;
-            let rows = stmt.query_map(
-                params![match_expression(&normalized), MAX_HIT_ROWS, allowed_json],
-                |row| row.get(0),
-            )?;
-            rows.collect::<rusqlite::Result<_>>()?
+        let short = normalized.chars().count() < MIN_MATCH_CHARS;
+        let table = if short {
+            "message_short"
         } else {
-            // 短词在已规范化的正文上精确匹配；不经过 LIKE 的 ASCII 折叠或通配符。
-            // 在 LIMIT 前完成匹配与应用过滤，错误候选不会消耗命中预算。
-            let mut stmt = self.conn.prepare(&format!(
-                "SELECT rowid FROM message_text WHERE instr(normalized, ?1) > 0 AND {source_filter}
-                 ORDER BY rowid DESC LIMIT ?2"
-            ))?;
-            let rows = stmt.query_map(params![normalized, MAX_HIT_ROWS, allowed_json], |row| {
-                row.get(0)
+            "message_text"
+        };
+        let expression = if short {
+            short_query(&normalized)
+        } else {
+            match_expression(&normalized)
+        };
+        let mut arguments: Vec<rusqlite::types::Value> =
+            vec![expression.into(), MAX_HIT_ROWS.into()];
+        let filter = if let Some(providers) = providers {
+            arguments.extend(providers.iter().cloned().map(Into::into));
+            format!(
+                "AND s.provider_id IN ({})",
+                (3..3 + providers.len())
+                    .map(|i| format!("?{i}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )
+        } else {
+            String::new()
+        };
+        let ordering = if short { "m.rowid DESC" } else { "m.rank" };
+        let sql = format!(
+            "SELECT m.rowid FROM {table} m JOIN indexed_sources s ON s.id = (m.rowid >> {ROW_SHIFT})
+             WHERE {table} MATCH ?1 {filter} ORDER BY {ordering} LIMIT ?2"
+        );
+        let rowids = {
+            let mut stmt = snapshot.prepare(&sql)?;
+            let rows = stmt.query_map(params_from_iter(arguments.iter()), |row| {
+                row.get::<_, i64>(0)
             })?;
-            rows.collect::<rusqlite::Result<_>>()?
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
         };
         if rowids.is_empty() {
             return Ok(Vec::new());
@@ -486,10 +553,8 @@ impl SessionIndex {
         let mut order: Vec<i64> = Vec::new();
         let mut best: HashMap<i64, (Vec<i64>, usize)> = HashMap::new();
         for rowid in rowids {
+            task.check()?;
             let source_id = rowid >> ROW_SHIFT;
-            if !sources.contains_key(&source_id) {
-                continue;
-            }
             let (top, count) = best.entry(source_id).or_insert_with(|| {
                 order.push(source_id);
                 (Vec::new(), 0)
@@ -500,23 +565,61 @@ impl SessionIndex {
             }
         }
 
-        let mut text_stmt = self
-            .conn
-            .prepare("SELECT text FROM message_text WHERE rowid = ?1")?;
-        let mut hits = Vec::new();
-        for source_id in order.into_iter().take(limit) {
-            let (top, match_count) = &best[&source_id];
-            let (provider_id, source_path) = &sources[&source_id];
-            let snippets = top
-                .iter()
-                .map(|&rowid| {
-                    let text: String = text_stmt.query_row(params![rowid], |row| row.get(0))?;
-                    let (text, highlights) = make_highlighted_snippet(&text, query);
-                    Ok(ContentSnippet {
+        order.truncate(limit);
+        let selected: Vec<i64> = order
+            .iter()
+            .flat_map(|id| best[id].0.iter().copied())
+            .collect();
+        let mut snippets_by_row = HashMap::with_capacity(selected.len());
+        let mut sources = HashMap::with_capacity(order.len());
+        // DEFAULT_LIMIT needs <=600 parameters. Chunk larger internal callers
+        // too, so this also works with SQLite's conservative variable limit.
+        for chunk in selected.chunks(900) {
+            task.check()?;
+            let sql = format!(
+                "SELECT m.rowid, m.text, s.id, s.provider_id, s.source_path
+                 FROM message_text m JOIN indexed_sources s ON s.id = (m.rowid >> {ROW_SHIFT})
+                 WHERE m.rowid IN ({})",
+                vec!["?"; chunk.len()].join(",")
+            );
+            let mut stmt = snapshot.prepare(&sql)?;
+            let mut rows = stmt.query(params_from_iter(chunk))?;
+            loop {
+                task.check()?;
+                let Some(row) = rows.next()? else { break };
+                let rowid: i64 = row.get(0)?;
+                // Build the small snippet before advancing the batch cursor;
+                // do not retain up to 600 complete 20,000-character messages.
+                let raw: String = row.get(1)?;
+                task.check()?;
+                let (text, highlights) = make_highlighted_snippet(&raw, query);
+                snippets_by_row.insert(
+                    rowid,
+                    ContentSnippet {
                         message_index: (rowid & ((1 << ROW_SHIFT) - 1)) as usize,
                         text,
                         highlights,
-                    })
+                    },
+                );
+                if let std::collections::hash_map::Entry::Vacant(entry) =
+                    sources.entry(row.get::<_, i64>(2)?)
+                {
+                    entry.insert((row.get::<_, String>(3)?, row.get::<_, String>(4)?));
+                }
+            }
+        }
+        let mut hits = Vec::new();
+        for source_id in order {
+            let (top, match_count) = &best[&source_id];
+            let (provider_id, source_path) = sources
+                .get(&source_id)
+                .ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+            let snippets = top
+                .iter()
+                .map(|rowid| {
+                    snippets_by_row
+                        .remove(rowid)
+                        .ok_or(rusqlite::Error::QueryReturnedNoRows)
                 })
                 .collect::<rusqlite::Result<_>>()?;
             hits.push(ContentHit {
@@ -532,6 +635,10 @@ impl SessionIndex {
 
 fn delete_rows(conn: &Connection, source_id: i64) -> rusqlite::Result<()> {
     conn.execute(
+        "DELETE FROM message_short WHERE rowid >= ?1 AND rowid < ?2",
+        params![source_id << ROW_SHIFT, (source_id + 1) << ROW_SHIFT],
+    )?;
+    conn.execute(
         "DELETE FROM message_text WHERE rowid >= ?1 AND rowid < ?2",
         params![source_id << ROW_SHIFT, (source_id + 1) << ROW_SHIFT],
     )?;
@@ -540,10 +647,147 @@ fn delete_rows(conn: &Connection, source_id: i64) -> rusqlite::Result<()> {
 
 // ── 全局索引与后台同步 ───────────────────────────────────────────────
 
+// Ordinary readers/writers share this guard. Initialization and deletion take
+// it exclusively, so Windows can close readers before unlinking the cache and its WAL files.
+static INDEX_LIFETIME: RwLock<()> = RwLock::new(());
+
+const SEARCH_CANCELLED: &str = "Session content search cancelled";
+const SEARCH_PROGRESS_OPS: i32 = 1_000;
+const MAX_EARLY_CANCELLATIONS: usize = 128;
+
+#[derive(Default)]
+struct SearchTask {
+    cancelled: Arc<AtomicBool>,
+}
+
+impl SearchTask {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+
+    fn check(&self) -> rusqlite::Result<()> {
+        if self.is_cancelled() {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_INTERRUPT),
+                None,
+            ));
+        }
+        Ok(())
+    }
+
+    fn run<T>(
+        &self,
+        conn: &Connection,
+        f: impl FnOnce() -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<Option<T>> {
+        let cancelled = Arc::clone(&self.cancelled);
+        conn.progress_handler(
+            SEARCH_PROGRESS_OPS,
+            Some(move || cancelled.load(Ordering::Relaxed)),
+        );
+        // Keep the callback scoped to this search on every exit, including
+        // errors and unwinding, before the reader connection is released.
+        let _progress = SearchProgress(conn);
+        let result = self.check().and_then(|()| f()).and_then(|value| {
+            self.check()?;
+            Ok(value)
+        });
+        match result {
+            Err(error)
+                if self.is_cancelled()
+                    && error.sqlite_error_code()
+                        == Some(rusqlite::ErrorCode::OperationInterrupted) =>
+            {
+                Ok(None)
+            }
+            // A concurrent cancellation must never hide an open/SQL error (#9512).
+            other => other.map(Some),
+        }
+    }
+}
+
+struct SearchProgress<'a>(&'a Connection);
+
+impl Drop for SearchProgress<'_> {
+    fn drop(&mut self) {
+        self.0.progress_handler(0, None::<fn() -> bool>);
+    }
+}
+
+#[derive(Default)]
+struct SearchRequests {
+    active: HashMap<String, Arc<SearchTask>>,
+    // Cancellation can overtake the async search command's first poll.
+    // Late cancellations use the same bounded queue; request IDs are unique.
+    cancelled: VecDeque<String>,
+}
+
+impl SearchRequests {
+    fn begin(&mut self, id: &str) -> Arc<SearchTask> {
+        let task = Arc::new(SearchTask::default());
+        if let Some(at) = self.cancelled.iter().position(|pending| pending == id) {
+            self.cancelled.remove(at);
+            task.cancel();
+        }
+        if let Some(previous) = self.active.insert(id.to_string(), Arc::clone(&task)) {
+            previous.cancel();
+        }
+        task
+    }
+
+    fn cancel(&mut self, id: &str) {
+        if let Some(task) = self.active.get(id) {
+            task.cancel();
+        } else if !self.cancelled.iter().any(|pending| pending == id) {
+            if self.cancelled.len() == MAX_EARLY_CANCELLATIONS {
+                self.cancelled.pop_front();
+            }
+            self.cancelled.push_back(id.to_string());
+        }
+    }
+}
+
+static SEARCH_REQUESTS: LazyLock<Mutex<SearchRequests>> =
+    LazyLock::new(|| Mutex::new(SearchRequests::default()));
+
+pub struct SearchRequest {
+    id: String,
+    task: Arc<SearchTask>,
+}
+
+impl Drop for SearchRequest {
+    fn drop(&mut self) {
+        let mut requests = SEARCH_REQUESTS.lock_recover();
+        if requests
+            .active
+            .get(&self.id)
+            .is_some_and(|task| Arc::ptr_eq(task, &self.task))
+        {
+            requests.active.remove(&self.id);
+        }
+    }
+}
+
+pub fn begin_search(id: String) -> SearchRequest {
+    let task = SEARCH_REQUESTS.lock_recover().begin(&id);
+    SearchRequest { id, task }
+}
+
+pub fn cancel_search(id: &str) {
+    SEARCH_REQUESTS.lock_recover().cancel(id);
+}
+
 static INDEX: LazyLock<Mutex<Option<SessionIndex>>> = LazyLock::new(|| Mutex::new(None));
 static STATUS: LazyLock<Mutex<IndexStatus>> = LazyLock::new(|| Mutex::new(IndexStatus::default()));
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static RERUN: AtomicBool = AtomicBool::new(false);
+
+/// [`with_index_in`] 在持锁后再次检查开关时返回的哨兵：功能被关掉不是失败。
+const DISABLED: &str = "Session content search is disabled";
 
 pub fn index_path() -> PathBuf {
     crate::config::get_app_config_dir().join(INDEX_FILE)
@@ -572,9 +816,26 @@ fn with_index_in<T>(
     is_enabled: impl Fn() -> bool,
     f: impl FnOnce(&mut SessionIndex) -> rusqlite::Result<T>,
 ) -> Result<T, String> {
+    let mut shared = Some(
+        INDEX_LIFETIME
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    );
+    let exclusive = if slot.lock_recover().is_none() {
+        drop(shared.take());
+        // Initial schema setup may replace the file. Ordinary writes and
+        // compaction keep sharing the lifetime guard with independent readers.
+        Some(
+            INDEX_LIFETIME
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    } else {
+        None
+    };
     let mut guard = slot.lock_recover();
     if !is_enabled() {
-        return Err("Session content search is disabled".to_string());
+        return Err(DISABLED.to_string());
     }
     if guard.is_none() {
         if let Some(dir) = path.parent() {
@@ -591,7 +852,47 @@ fn with_index_in<T>(
         *guard = Some(index?);
     }
     let index = guard.as_mut().expect("index opened above");
-    f(index).map_err(|e| format!("Session index error: {e}"))
+    let generation = Arc::clone(&index.generation);
+    let result = f(index);
+    drop(guard);
+    drop(shared);
+    drop(exclusive);
+    if result.as_ref().err().is_some_and(is_corruption) {
+        discard_corrupt_index(slot, path, Some(generation));
+    }
+    result.map_err(|error| format!("Session index error: {error}"))
+}
+
+fn is_corruption(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+    )
+}
+
+fn discard_corrupt_index(
+    slot: &Mutex<Option<SessionIndex>>,
+    path: &Path,
+    generation: Option<Arc<()>>,
+) {
+    // Both readers and writers must close before unlinking the cache or its WAL.
+    let _lifetime = INDEX_LIFETIME
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut guard = slot.lock_recover();
+    let same_generation = match (guard.as_ref(), generation.as_ref()) {
+        (Some(index), Some(generation)) => Arc::ptr_eq(&index.generation, generation),
+        (None, None) => true,
+        _ => false,
+    };
+    // Another failed query may already have removed and rebuilt this cache
+    // while we were waiting for the exclusive guard.
+    if same_generation {
+        *guard = None;
+        if let Err(cleanup) = remove_index_files(path) {
+            log::warn!("清理损坏的会话正文索引失败: {cleanup}");
+        }
+    }
 }
 
 fn remove_index_files(path: &Path) -> std::io::Result<()> {
@@ -621,6 +922,12 @@ fn remove_index_files_with(
 
 /// 删除整个索引文件（关闭功能时调用）
 pub fn clear() -> Result<(), String> {
+    for task in SEARCH_REQUESTS.lock_recover().active.values() {
+        task.cancel();
+    }
+    let _lifetime = INDEX_LIFETIME
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     clear_in(&INDEX, &STATUS, &index_path())
 }
 
@@ -646,21 +953,117 @@ pub fn forget_source(provider_id: &str, source_path: &str) {
     }
 }
 
-pub fn search(query: &str, providers: Option<Vec<String>>, limit: usize) -> ContentSearchResult {
+/// 在消息正文里搜索。索引打不开或查询失败时上报错误，不返回空结果：
+/// 空结果会被界面当成「正文里没有这个词」，而索引只是缓存，坏了是可以修的。
+pub fn search(
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+    request: SearchRequest,
+) -> Result<ContentSearchResult, String> {
+    search_in_with_task(
+        &INDEX,
+        &index_path(),
+        enabled,
+        query,
+        providers,
+        limit,
+        &request.task,
+    )
+}
+
+/// [`search`] 的实现，索引槽、路径、开关可替换（测试用）。
+#[cfg(test)]
+fn search_in(
+    slot: &Mutex<Option<SessionIndex>>,
+    path: &Path,
+    is_enabled: impl Fn() -> bool,
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+) -> Result<ContentSearchResult, String> {
+    search_in_with_task(
+        slot,
+        path,
+        is_enabled,
+        query,
+        providers,
+        limit,
+        &SearchTask::default(),
+    )
+}
+
+fn search_in_with_task(
+    slot: &Mutex<Option<SessionIndex>>,
+    path: &Path,
+    is_enabled: impl Fn() -> bool,
+    query: &str,
+    providers: Option<Vec<String>>,
+    limit: usize,
+    task: &SearchTask,
+) -> Result<ContentSearchResult, String> {
+    if task.is_cancelled() {
+        return Err(SEARCH_CANCELLED.to_string());
+    }
+    let mut lifetime = INDEX_LIFETIME
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let status = status();
-    if !enabled() || query.trim().is_empty() {
-        return ContentSearchResult {
-            hits: Vec::new(),
-            status,
-        };
+    let empty = || ContentSearchResult {
+        hits: Vec::new(),
+        status,
+    };
+    if !is_enabled() || query.trim().is_empty() {
+        return Ok(empty());
+    }
+    // Initialize or rebuild before opening a reader, but never wait for a
+    // running writer just to check whether the index is already open.
+    let needs_open = match slot.try_lock() {
+        Ok(guard) => guard.is_none(),
+        Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner().is_none(),
+        Err(std::sync::TryLockError::WouldBlock) => false,
+    };
+    if needs_open || !path.exists() {
+        drop(lifetime);
+        if let Err(error) = with_index_in(slot, path, &is_enabled, |_| Ok(())) {
+            if error == DISABLED {
+                return Ok(empty());
+            }
+            log::warn!("会话正文搜索失败: {error}");
+            return Err(error);
+        }
+        lifetime = INDEX_LIFETIME
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !is_enabled() {
+            return Ok(empty());
+        }
+    }
+    if task.is_cancelled() {
+        return Err(SEARCH_CANCELLED.to_string());
     }
     let providers: Option<HashSet<String>> = providers.map(|list| list.into_iter().collect());
-    let hits =
-        with_index(|index| index.search(query, providers.as_ref(), limit)).unwrap_or_else(|e| {
-            log::warn!("会话正文搜索失败: {e}");
-            Vec::new()
-        });
-    ContentSearchResult { hits, status }
+    let result = SessionIndex::open_reader(path).and_then(|index| {
+        task.run(&index.conn, || {
+            index.search_cancellable(query, providers.as_ref(), limit.min(DEFAULT_LIMIT), task)
+        })
+    });
+    if result.as_ref().err().is_some_and(is_corruption) {
+        let generation = slot
+            .lock_recover()
+            .as_ref()
+            .map(|index| Arc::clone(&index.generation));
+        drop(lifetime);
+        discard_corrupt_index(slot, path, generation);
+    }
+    let hits = result
+        .map_err(|error| {
+            let error = format!("Session index error: {error}");
+            log::warn!("会话正文搜索失败: {error}");
+            error
+        })?
+        .ok_or_else(|| SEARCH_CANCELLED.to_string())?;
+    Ok(ContentSearchResult { hits, status })
 }
 
 /// 在后台线程里把索引同步到当前的会话列表；已经在跑时只记一次「跑完再来一遍」。
@@ -821,6 +1224,8 @@ fn index_changed_source(
 mod tests {
     use super::*;
     use crate::session_manager::model::EventKind;
+
+    mod cancellation;
 
     fn fp(len: i64) -> StoredFingerprint {
         StoredFingerprint {
@@ -1354,7 +1759,7 @@ mod tests {
         assert_eq!(hits[0].snippets[0].message_index, 1);
         assert!(hits[0].snippets[0].text.contains("跑马灯"));
 
-        // 两个字：trigram 用不上，走规范化子串扫描
+        // 两个字：走无正文的短词索引
         let hits = index.search("正交", None, 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].source_path, "/b.jsonl");
@@ -1402,7 +1807,7 @@ mod tests {
         assert_eq!(index.search("éclair", None, 10).unwrap().len(), 1);
         assert_eq!(index.search("ÉCLAIR", None, 10).unwrap().len(), 1);
         assert_eq!(index.search("ПРИВЕТ", None, 10).unwrap().len(), 1);
-        // 不足 3 个字符：在规范化正文上逐行比较
+        // 不足 3 个字符：在规范化短词索引上匹配
         let hits = index.search("éc", None, 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert!(hits[0].snippets[0].text.contains("Éclair"));
@@ -1458,7 +1863,7 @@ mod tests {
     #[test]
     fn provider_filter_applies_before_the_hit_row_cap() {
         let mut index = SessionIndex::open_in_memory().unwrap();
-        // 先插入选中应用的唯一命中，再让其他应用占满候选上限（LIKE 路径按 rowid 倒序）
+        // 先插入选中应用的唯一命中，再让其他应用占满候选上限（短词路径按 rowid 倒序）
         index
             .replace_source(
                 "codex",
@@ -1550,6 +1955,237 @@ mod tests {
         );
         assert!(!enabled.load(Ordering::SeqCst));
         assert!(path.is_dir());
+    }
+
+    #[test]
+    fn non_corruption_errors_preserve_the_index() {
+        let index = SessionIndex::open_in_memory().unwrap();
+        let slot = Mutex::new(Some(index));
+        let result: Result<(), String> = with_index_in(
+            &slot,
+            Path::new("unused-index-path"),
+            || true,
+            |_| Err(rusqlite::Error::InvalidQuery),
+        );
+        assert!(result.is_err());
+        assert!(slot.lock_recover().is_some());
+    }
+
+    #[test]
+    fn search_recovers_from_corrupt_fts_segments() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        for (table, query) in [
+            ("message_text_data", "needle"),
+            ("message_short_data", "代"),
+        ] {
+            assert_search_recovers_from_corrupt_fts_segments(table, query);
+        }
+    }
+
+    fn assert_search_recovers_from_corrupt_fts_segments(table: &str, query: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        {
+            let mut index = SessionIndex::open(&path).unwrap();
+            index
+                .replace_source("codex", "/synthetic", fp(1), &rows(&["代理 needle"]))
+                .unwrap();
+            index
+                .conn
+                .execute(
+                    &format!("UPDATE {table} SET block = x'00' WHERE id > 10"),
+                    [],
+                )
+                .unwrap();
+        }
+        // Opening succeeds even though reading the FTS segment fails.
+        let index = SessionIndex::open(&path).unwrap();
+        assert_eq!(
+            index
+                .search(query, None, 10)
+                .unwrap_err()
+                .sqlite_error_code(),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt)
+        );
+        let slot = Mutex::new(Some(index));
+        assert!(search_in(&slot, &path, || true, query, None, 10).is_err());
+        assert!(slot.lock_recover().is_none());
+        assert!(
+            !path.exists(),
+            "corrupt cache must be removed before releasing the lock"
+        );
+        with_index_in(
+            &slot,
+            &path,
+            || true,
+            |index| index.replace_source("codex", "/synthetic", fp(1), &rows(&["代理 needle"])),
+        )
+        .unwrap();
+        assert_eq!(
+            search_in(&slot, &path, || true, query, None, 10)
+                .unwrap()
+                .hits
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn stale_corruption_cleanup_preserves_a_rebuilt_index() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        let index = SessionIndex::open(&path).unwrap();
+        let generation = Arc::clone(&index.generation);
+        let slot = Mutex::new(Some(index));
+        discard_corrupt_index(&slot, &path, Some(Arc::clone(&generation)));
+        with_index_in(
+            &slot,
+            &path,
+            || true,
+            |index| index.replace_source("codex", "/synthetic", fp(1), &rows(&["needle"])),
+        )
+        .unwrap();
+        discard_corrupt_index(&slot, &path, Some(generation));
+        assert!(path.exists());
+        assert_eq!(
+            search_in(&slot, &path, || true, "needle", None, 10)
+                .unwrap()
+                .hits
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn search_reports_reader_open_failures_instead_of_empty_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        // An already-initialized writer must not hide failures on the independent reader.
+        let slot = Mutex::new(Some(SessionIndex::open_in_memory().unwrap()));
+        let error = search_in(&slot, dir.path(), || true, "needle", None, 10)
+            .expect_err("opening a directory as a read-only index must report an error");
+        assert!(!error.trim().is_empty());
+        assert!(slot.lock_recover().is_some());
+    }
+
+    #[test]
+    fn search_reports_candidate_and_snippet_sql_failures_instead_of_empty_hits() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        for table in ["message_short", "message_text"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join(INDEX_FILE);
+            let mut index = SessionIndex::open(&path).unwrap();
+            index
+                .replace_source("codex", "/synthetic", fp(1), &rows(&["代理 needle"]))
+                .unwrap();
+            // Missing short postings fail candidate selection; missing text fails
+            // the later snippet batch after the short-query candidates were found.
+            index
+                .conn
+                .execute_batch(&format!("DROP TABLE {table}"))
+                .unwrap();
+            let slot = Mutex::new(Some(index));
+            let error = search_in(&slot, &path, || true, "代", None, 10)
+                .expect_err("SQL failures must not look like an ordinary empty result");
+            assert!(error.contains(table), "{error}");
+            assert!(slot.lock_recover().is_some());
+            assert!(
+                path.exists(),
+                "non-corruption errors must preserve the cache"
+            );
+        }
+    }
+
+    #[test]
+    fn search_reports_missing_snippet_rows_instead_of_partial_hits() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        let mut index = SessionIndex::open(&path).unwrap();
+        index
+            .replace_source(
+                "codex",
+                "/synthetic",
+                fp(1),
+                &rows(&["代理 first", "代理 second"]),
+            )
+            .unwrap();
+        // Simulate inconsistent short postings: the batch finds one text row,
+        // but must report the missing row just as a per-row query would.
+        index
+            .conn
+            .execute(
+                "DELETE FROM message_text WHERE rowid = (SELECT MAX(rowid) FROM message_text)",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            index.search("代", None, 10),
+            Err(rusqlite::Error::QueryReturnedNoRows)
+        ));
+        let slot = Mutex::new(Some(index));
+        let error = search_in(&slot, &path, || true, "代", None, 10)
+            .expect_err("a missing snippet row must not produce partial or empty hits");
+        assert!(error.contains(&rusqlite::Error::QueryReturnedNoRows.to_string()));
+    }
+
+    #[test]
+    fn search_reports_index_failures_instead_of_empty_hits() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        // 索引文件位置被一个目录占着：打不开，也删不掉
+        fs::create_dir(&path).unwrap();
+        let slot = Mutex::new(None);
+        let enabled = AtomicBool::new(true);
+
+        let result = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        );
+        // 空命中会被界面当成「正文里没有这个词」，这里必须报错
+        let error = result.expect_err("an unreadable index must not look empty");
+        assert!(!error.trim().is_empty(), "the failure needs a reason");
+
+        // 索引只是缓存：挡路的目录挪开后，界面上的「重试」要能自愈
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        fs::remove_dir(&path).unwrap();
+        let recovered = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        )
+        .expect("the retry must rebuild the index");
+        assert!(recovered.hits.is_empty());
+
+        // 功能关着时不算失败：没有索引是正常状态
+        enabled.store(false, Ordering::SeqCst);
+        let empty = search_in(
+            &slot,
+            &path,
+            || enabled.load(Ordering::SeqCst),
+            "needle",
+            None,
+            10,
+        )
+        .expect("a disabled search is not a failure");
+        assert!(empty.hits.is_empty());
     }
 
     #[test]
@@ -1672,5 +2308,125 @@ mod tests {
 
         assert_eq!(make_snippet("Hello World", "world"), "Hello World");
         assert_eq!(make_snippet("short", "missing"), "short");
+    }
+
+    #[test]
+    fn short_postings_are_literal_and_follow_replacement_and_deletion() {
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        index
+            .replace_source(
+                "codex",
+                "/short",
+                fp(1),
+                &rows(&["代理 报错 路由 😀x 0% _ İ ΟΣ"]),
+            )
+            .unwrap();
+        for query in [
+            "代", "代理", "报错", "路由", "😀", "😀x", "0%", "_", "i", "ς",
+        ] {
+            assert_eq!(index.search(query, None, 10).unwrap().len(), 1, "{query}");
+        }
+        for query in ["理代", "%_", "x😀", "δ"] {
+            assert!(index.search(query, None, 10).unwrap().is_empty());
+        }
+        index
+            .replace_source("codex", "/short", fp(2), &rows(&["新词"]))
+            .unwrap();
+        assert!(index.search("代理", None, 10).unwrap().is_empty());
+        assert_eq!(index.search("新词", None, 10).unwrap().len(), 1);
+        index.remove_source("codex", "/short").unwrap();
+        assert!(index.search("新词", None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn wal_reader_searches_while_writer_holds_uncommitted_changes() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        let mut writer = SessionIndex::open(&path).unwrap();
+        writer
+            .replace_source("codex", "/a", fp(1), &rows(&["代理 needle"]))
+            .unwrap();
+        let slot = Arc::new(Mutex::new(Some(writer)));
+        let mut guard = slot.lock_recover();
+        let writer = guard.as_mut().unwrap();
+        let tx = writer.conn.transaction().unwrap();
+        tx.execute("UPDATE indexed_sources SET source_path='/uncommitted'", [])
+            .unwrap();
+        let (send, recv) = std::sync::mpsc::channel();
+        let reader_slot = Arc::clone(&slot);
+        let reader = std::thread::spawn(move || {
+            let hits = search_in(&reader_slot, &path, || true, "代理", None, 10)
+                .unwrap()
+                .hits;
+            assert_eq!(hits[0].source_path, "/a");
+            send.send(()).unwrap();
+        });
+        let completed = recv.recv_timeout(std::time::Duration::from_secs(2));
+        tx.rollback().unwrap();
+        drop(guard);
+        reader.join().unwrap();
+        completed.expect("reader must finish before writer releases its transaction");
+    }
+
+    #[test]
+    #[ignore = "manual synthetic search benchmark"]
+    fn benchmark_short_search() {
+        use std::time::Instant;
+        let mut index = SessionIndex::open_in_memory().unwrap();
+        let rows: Vec<_> = (0..5000)
+            .map(|i| {
+                (
+                    i,
+                    format!(
+                        "{} {}",
+                        "普通对话 metadata and code ".repeat(100),
+                        if i % 1000 == 0 { "代理" } else { "结束" }
+                    ),
+                )
+            })
+            .collect();
+        index
+            .replace_source("codex", "/bench", fp(1), &rows)
+            .unwrap();
+        let start = Instant::now();
+        for _ in 0..20 {
+            assert_eq!(index.search("代理", None, 10).unwrap()[0].match_count, 5);
+        }
+        let indexed = start.elapsed() / 20;
+        let start = Instant::now();
+        for _ in 0..20 {
+            let count: i64 = index
+                .conn
+                .query_row(
+                    "SELECT count(*) FROM message_text WHERE instr(normalized, '代理') > 0",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 5);
+        }
+        eprintln!(
+            "5000 messages: indexed search+snippets {indexed:?}; original instr scan {:?}",
+            start.elapsed() / 20
+        );
+        index.compact().unwrap();
+        let pages = || {
+            index
+                .conn
+                .query_row("PRAGMA page_count", [], |row| row.get::<_, u64>(0))
+                .unwrap()
+        };
+        let with_short = pages();
+        index
+            .conn
+            .execute_batch("DROP TABLE message_short; VACUUM;")
+            .unwrap();
+        eprintln!(
+            "compacted pages (4096 bytes): with short index {with_short}, trigram only {}",
+            pages()
+        );
     }
 }

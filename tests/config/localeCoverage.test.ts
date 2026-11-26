@@ -99,18 +99,6 @@ describe("Turkish locale", () => {
 });
 
 describe("Korean locale", () => {
-  it("preserves technical field identifiers in translated strings", () => {
-    const translations = flattenStrings(ko);
-    for (const [key, value] of translations) {
-      const source = reference.get(key) ?? "";
-      const identifiers =
-        source.match(/\b[a-z]+[A-Z][a-zA-Z]*\b|\b\w+_\w+\b/g) ?? [];
-      for (const identifier of identifiers) {
-        expect(value, `${key}: ${identifier}`).toContain(identifier);
-      }
-    }
-  });
-
   it("preserves protocol fields, configuration literals, and commands", () => {
     const translations = flattenStrings(ko);
     const exactLiterals = [

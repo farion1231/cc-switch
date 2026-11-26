@@ -27,6 +27,10 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/api/subscription", () => ({
   subscriptionApi: { getClaudeAccountQuota: mocks.getClaudeAccountQuota },
 }));
+vi.mock("@/lib/api/settings", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/settings")>()),
+  settingsApi: { get: mocks.getSettings, save: mocks.saveSettings },
+}));
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
   authApi: { workbuddyAccountQuota: mocks.workbuddyAccountQuota },

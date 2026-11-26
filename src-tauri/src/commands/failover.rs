@@ -81,7 +81,10 @@ pub async fn get_failover_queue(
     if app_enum != AppType::Codex {
         return Ok(queue);
     }
-    let providers = state.db.get_all_providers(&app_enum)?;
+    let providers = state
+        .db
+        .get_provider_rows(&app_enum)?
+        .into_readable("故障转移队列");
     Ok(queue
         .into_iter()
         .filter(|item| {
@@ -117,8 +120,9 @@ pub async fn remove_from_failover_queue(
 ) -> Result<(), String> {
     let app_enum = require_failover_app(&app_type)?;
     state
-        .db
-        .remove_from_failover_queue(&app_enum, &provider_id)?;
+        .proxy_service
+        .remove_from_failover_queue(&app_enum, &provider_id)
+        .await?;
     crate::tray::refresh_tray_menu(&app);
     Ok(())
 }
@@ -151,6 +155,9 @@ pub async fn set_auto_failover_enabled(
     log::info!(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );
+    let guard = crate::mode::controller::lock_settled(state.inner(), &app_enum)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // 读取当前配置
     let mut config = state.db.get_proxy_config_for_app(&app_enum).await?;
@@ -162,7 +169,10 @@ pub async fn set_auto_failover_enabled(
     // 队列为空时把当前供应商自动加入作为 P1，避免用户陷入"必须先加队列才能开启"的死锁
     let mut auto_added_provider_id: Option<String> = None;
     let p1_provider_id = if enabled {
-        let all_providers = state.db.get_all_providers(&app_enum)?;
+        let all_providers = state
+            .db
+            .get_provider_rows(&app_enum)?
+            .into_readable("开启故障转移");
         let mut queue = state
             .db
             .get_failover_queue(&app_enum)?
@@ -220,9 +230,9 @@ pub async fn set_auto_failover_enabled(
 
     // 开启前先切到 P1。只有切换成功后才写入 auto_failover_enabled=true，
     // 避免 P1 不可切换（例如 official provider）时留下“开关已开但目标未切”的脏状态。
-    // Stack 模式不做故障转移，切换在锁内拒绝（见 `switch_route_for_failover`）。
+    // Stack 模式不做故障转移，切换在锁内拒绝。
     if enabled {
-        if let Err(e) = crate::mode::controller::switch_route_for_failover(
+        if let Err(e) = crate::mode::controller::switch_route_for_failover_locked(
             state.inner(),
             &app_enum,
             &p1_provider_id,
@@ -230,7 +240,10 @@ pub async fn set_auto_failover_enabled(
         .await
         {
             if let Some(provider_id) = auto_added_provider_id {
-                let _ = state.db.remove_from_failover_queue(&app_enum, &provider_id);
+                let _ = state
+                    .proxy_service
+                    .remove_from_failover_queue(&app_enum, &provider_id)
+                    .await;
             }
             return Err(e);
         }
@@ -242,6 +255,7 @@ pub async fn set_auto_failover_enabled(
 
     // 写回数据库
     state.db.update_proxy_config_for_app(config).await?;
+    drop(guard);
 
     if enabled {
         // 发射 provider-switched 事件（让前端刷新当前供应商）

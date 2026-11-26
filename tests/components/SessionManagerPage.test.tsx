@@ -511,6 +511,60 @@ describe("SessionManagerPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("reports a text index failure instead of claiming there are no matches", async () => {
+    const searchSpy = vi
+      .spyOn(sessionsApi, "searchContent")
+      .mockRejectedValue(
+        "Session index error: database disk image is malformed",
+      );
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "const a" },
+    });
+
+    // 索引读不出来时不能声称「没有会话包含…」
+    expect(
+      await screen.findByText(
+        "正文搜索失败，暂时只能按标题、目录和首末消息查找",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("没有会话的标题、目录或消息正文包含“const a”"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重试" })).toBeInTheDocument();
+    searchSpy.mockRestore();
+  });
+
+  it("keeps title matches and explains the partial result when only text search fails", async () => {
+    // 标题命中照常列出：正文索引坏了不该把整个搜索变成失败
+    const searchSpy = vi
+      .spyOn(sessionsApi, "searchContent")
+      .mockRejectedValue(
+        "Session index error: database disk image is malformed",
+      );
+    renderPage("codex");
+    await screen.findByText("Alpha Session");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "搜索会话" }), {
+      target: { value: "Alpha" },
+    });
+
+    expect(
+      await screen.findByText(
+        "正文搜索失败，暂时只能按标题、目录和首末消息查找",
+      ),
+    ).toBeInTheDocument();
+    // 标题命中仍在列表里（不是空状态），提示里带上具体原因
+    expect(
+      within(sessionList()).getAllByRole("button", { name: /Alpha Session/ })
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(/malformed/)).toBeInTheDocument();
+    searchSpy.mockRestore();
+  });
+
   it("keeps message text search off by default and offers it from an empty search", async () => {
     setSettings({ sessionContentSearchEnabled: undefined });
     const sync = vi.spyOn(sessionsApi, "syncContentIndex");
@@ -553,8 +607,8 @@ describe("SessionManagerPage", () => {
     await openAppMenu();
     const menu = await screen.findByRole("menu");
     const items = within(menu).getAllByRole("menuitemradio");
-    // 全部应用 + 15 个来源，按会话数从多到少
-    expect(items).toHaveLength(16);
+    // 全部应用 + 16 个来源，按会话数从多到少
+    expect(items).toHaveLength(17);
     expect(items[0]).toHaveTextContent("全部应用5");
     expect(items[1]).toHaveTextContent("Codex3");
     expect(items[items.length - 1]).toHaveTextContent("无会话");
@@ -591,6 +645,7 @@ describe("SessionManagerPage", () => {
         omp: false,
         copilot: false,
         workbuddy: false,
+        codebuddy: false,
       },
     });
     renderPage("codex");

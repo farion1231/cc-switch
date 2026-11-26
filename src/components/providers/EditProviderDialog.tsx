@@ -75,7 +75,6 @@ export function EditProviderDialog({
   modeView,
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
-  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
   const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
@@ -85,27 +84,45 @@ export function EditProviderDialog({
     setAuthSettingsTarget(null);
   }, [appId, open, provider?.id]);
 
-  const formReadyToken = useMemo(
-    () => Symbol("provider-form-ready"),
+  const formSessionSequence = useRef(0);
+  const formSessionToken = useMemo(
+    () => ++formSessionSequence.current,
     [appId, open, provider?.id],
   );
-  const currentFormReadyToken = useRef(formReadyToken);
-  currentFormReadyToken.current = formReadyToken;
+  const currentFormSessionToken = useRef(formSessionToken);
+  currentFormSessionToken.current = formSessionToken;
+  // The host stays mounted between edits. A pending save from a closed form
+  // must neither disable the next editor nor clear its own pending submission.
+  const [formSubmittingState, setFormSubmittingState] = useState({
+    token: formSessionToken,
+    submitting: false,
+  });
+  const isFormSubmitting =
+    formSubmittingState.token === formSessionToken &&
+    formSubmittingState.submitting;
+  const handleSubmittingChange = useCallback(
+    (submitting: boolean) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setFormSubmittingState({ token: formSessionToken, submitting });
+      }
+    },
+    [formSessionToken],
+  );
   const [formReadyState, setFormReadyState] = useState({
-    token: formReadyToken,
+    token: formSessionToken,
     ready: !appHas(appId, "piFamily"),
   });
   const isFormReady =
-    formReadyState.token === formReadyToken
+    formReadyState.token === formSessionToken
       ? formReadyState.ready
       : !appHas(appId, "piFamily");
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
-      if (currentFormReadyToken.current === formReadyToken) {
-        setFormReadyState({ token: formReadyToken, ready });
+      if (currentFormSessionToken.current === formSessionToken) {
+        setFormReadyState({ token: formSessionToken, ready });
       }
     },
-    [formReadyToken],
+    [formSessionToken],
   );
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
@@ -119,7 +136,8 @@ export function EditProviderDialog({
 
   // Claude：底部 JSON 显示「切到这个供应商之后 settings.json 的样子」，保存时拿它做三方比较。
   const [editorView, setEditorView] = useState<ProviderEditorView | null>(null);
-  const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
+  const { submitWithConflictRetry, conflictDialog } =
+    useLiveEditConflict(formSessionToken);
 
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
@@ -200,7 +218,8 @@ export function EditProviderDialog({
         appId === "dsh" ||
         appId === "omp" ||
         appId === "copilot" ||
-        appId === "workbuddy"
+        appId === "workbuddy" ||
+        appId === "codebuddy"
       ) {
         if (!cancelled) {
           setLiveSettings(null);
@@ -326,7 +345,7 @@ export function EditProviderDialog({
             ? { editorSave: { base: editorView.settings, onConflict } }
             : {}),
         });
-        closeDialog();
+        if (currentFormSessionToken.current === formSessionToken) closeDialog();
       };
       await submitWithConflictRetry(submit);
     },
@@ -337,6 +356,7 @@ export function EditProviderDialog({
       provider,
       editorView,
       submitWithConflictRetry,
+      formSessionToken,
     ],
   );
 
@@ -413,13 +433,14 @@ export function EditProviderDialog({
         </div>
       ) : (
         <ProviderForm
+          key={formSessionToken}
           appId={appId}
           providerId={provider.id}
           submitLabel={t("common.save")}
           onSubmit={handleSubmit}
           onCancel={closeDialog}
           onManageAuthAccounts={setAuthSettingsTarget}
-          onSubmittingChange={setIsFormSubmitting}
+          onSubmittingChange={handleSubmittingChange}
           onSubmitReadyChange={handleSubmitReadyChange}
           initialData={initialData}
           showButtons={false}

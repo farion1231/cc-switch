@@ -152,4 +152,45 @@ describe("useUpdateProviderMutation", () => {
       queryKey: ["providers", "pi"],
     });
   });
+
+  // 保存当前绑号的 Grok 官方卡可能改写 CLI 登录：成功失败都重读授权中心和 CLI 额度
+  it.each([false, true])(
+    "invalidates the xAI account list and Grok CLI quota after a grokbuild update (failed=%s)",
+    async (fails) => {
+      if (fails) apiMocks.update.mockRejectedValue(new Error("boom"));
+      const { wrapper, invalidateSpy } = createWrapper();
+      const { result } = renderHook(
+        () => useUpdateProviderMutation("grokbuild"),
+        { wrapper },
+      );
+
+      await act(async () => {
+        await result.current
+          .mutateAsync({ provider: createProvider() })
+          .catch(() => undefined);
+      });
+
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["managed-auth-status", "xai_oauth"],
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["subscription", "quota", "grokbuild"],
+      });
+    },
+  );
+
+  it("leaves the Grok caches alone for other apps", async () => {
+    const { wrapper, invalidateSpy } = createWrapper();
+    const { result } = renderHook(() => useUpdateProviderMutation("claude"), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await result.current.mutateAsync({ provider: createProvider() });
+    });
+
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: ["managed-auth-status", "xai_oauth"],
+    });
+  });
 });

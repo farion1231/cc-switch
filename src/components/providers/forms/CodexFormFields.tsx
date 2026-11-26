@@ -86,6 +86,11 @@ import {
   type CopilotModel,
 } from "@/lib/api/copilot";
 import {
+  copilotAutoCatalogModel,
+  copilotFetchedModels,
+  COPILOT_AUTO_MODEL_ID,
+} from "@/lib/copilot-model-options";
+import {
   fetchModelsForConfig,
   fetchXaiOauthModels,
   modelFetchRequestHeaders,
@@ -108,6 +113,7 @@ import {
   metadataFilledAnything,
 } from "./modelMetadataFill";
 import { normalizeEnabledCodexChatEffortParam } from "./helpers/codexChatReasoning";
+import { stripClaudeOneMMarker } from "./hooks/useModelState";
 import type {
   ClaudeApiKeyField,
   CodexApiFormat,
@@ -941,22 +947,50 @@ export function CodexFormFields({
           selectedGitHubAccountId
             ? copilotGetModelsForAccount(selectedGitHubAccountId)
             : copilotGetModels(),
-        (models) => {
-          const usableModels = models.filter((model) =>
+        (options) => {
+          const usableModels = options.models.filter((model) =>
             isCopilotModelSupportedByCodex(model, copilotApiFormat),
           );
-          const fetched = usableModels.map((model) => ({
-            id: model.id,
-            ownedBy: model.vendor || null,
-          }));
+          const hasAuto = options.autoRoutingSupported;
+          const autoName = t("copilot.autoModelName", {
+            defaultValue: "GitHub Copilot Auto",
+          });
+          const autoCatalogModel = copilotAutoCatalogModel(autoName);
+          const existingAuto = catalogModels.find(
+            (model) =>
+              model.model === autoCatalogModel.model ||
+              stripClaudeOneMMarker(model.model) ===
+                stripClaudeOneMMarker(autoCatalogModel.model),
+          );
+          const mergedAutoCatalogModel = {
+            ...(existingAuto ?? {}),
+            ...autoCatalogModel,
+            displayName: existingAuto?.displayName?.trim()
+              ? existingAuto.displayName
+              : autoName,
+            contextWindow:
+              existingAuto?.contextWindow ?? autoCatalogModel.contextWindow,
+            baseInstructions:
+              existingAuto?.baseInstructions ??
+              autoCatalogModel.baseInstructions,
+            reasoningLevels:
+              existingAuto?.reasoningLevels ?? autoCatalogModel.reasoningLevels,
+            inputModalities:
+              existingAuto?.inputModalities ?? autoCatalogModel.inputModalities,
+          };
+          const fetched = copilotFetchedModels(
+            { models: usableModels, autoRoutingSupported: hasAuto },
+            autoName,
+          );
           setFetchedModels(fetched);
 
           if (onCatalogModelsChange) {
             const existing = new Map(
               catalogModels.map((model) => [model.model, model]),
             );
-            onCatalogModelsChange(
-              usableModels.map((model) => ({
+            onCatalogModelsChange([
+              ...(hasAuto ? [mergedAutoCatalogModel] : []),
+              ...usableModels.map((model) => ({
                 ...(existing.get(model.id) ?? {}),
                 model: model.id,
                 displayName: model.name || model.id,
@@ -979,11 +1013,17 @@ export function CodexFormFields({
                   ? { reasoningLevels: model.reasoning_effort }
                   : {}),
               })),
-            );
+            ]);
           }
+          // 默认模型是用户的显式选择（虚拟模型本就不在上游列表里）：刷新列表
+          // 不能自动改写默认模型，那会静默换掉用户选中的项。[1M] 标记的写法
+          // 与干净 id 算同一个虚拟模型。
+          const defaultPinned =
+            stripClaudeOneMMarker(codexModel) === COPILOT_AUTO_MODEL_ID;
           if (
             usableModels.length > 0 &&
             onModelChange &&
+            !defaultPinned &&
             !usableModels.some((model) => model.id === codexModel)
           ) {
             const defaultModel =
@@ -992,13 +1032,13 @@ export function CodexFormFields({
               ) ?? usableModels[0];
             onModelChange(defaultModel.id);
           }
-          return usableModels.length;
+          return usableModels.length + Number(hasAuto);
         },
         "[Copilot] Failed to fetch models:",
         // 后端返回 0 个＝账号本身无可选模型（Copilot Free 通常如此）；
         // 否则是有模型但都不支持当前上游格式
         (models) =>
-          models.length === 0
+          models.models.length === 0 && !models.autoRoutingSupported
             ? t("copilot.noPickerModels")
             : t("copilot.noModelsForApiFormat"),
       );
@@ -1274,10 +1314,20 @@ export function CodexFormFields({
     ],
   );
 
-  // 默认模型下拉建议 = 模型映射的"实际请求模型"列 ∪ 拉取到的 /models 列表
+  // 默认模型下拉建议 = 模型映射的"实际请求模型"列 ∪ 拉取到的 /models 列表；
+  // Copilot 卡再补上代理发布的虚拟项（上游目录不含它），让用户随时能选回。
   const defaultModelSuggestions = useMemo<FetchedModel[]>(() => {
     const seen = new Set<string>();
     const suggestions: FetchedModel[] = [];
+    if (isCopilotPreset && fetchedModels.some((model) => model.isCopilotAuto)) {
+      suggestions.push({
+        id: COPILOT_AUTO_MODEL_ID,
+        ownedBy: t("copilot.autoModelName", {
+          defaultValue: "GitHub Copilot Auto",
+        }),
+      });
+      seen.add(COPILOT_AUTO_MODEL_ID);
+    }
     for (const row of catalogRows) {
       const id = row.model.trim();
       if (!id || seen.has(id)) continue;
@@ -1295,10 +1345,13 @@ export function CodexFormFields({
       suggestions.push(model);
     }
     return suggestions;
-  }, [catalogRows, fetchedModels, t]);
+  }, [catalogRows, fetchedModels, isCopilotPreset, t]);
 
-  // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）
+  // 填了映射时才提示"默认模型不在映射中"（无映射的供应商本来就直接请求任意模型名）。
+  // 虚拟模型不提示：能力标记会让发布目录带上虚拟项（直连与聚合都覆盖），
+  // 「/model 里没有这一项」的前提不成立。
   const isDefaultModelOutsideCatalog =
+    stripClaudeOneMMarker(trimmedDefaultModel) !== COPILOT_AUTO_MODEL_ID &&
     catalogRows.length > 0 &&
     !!trimmedDefaultModel &&
     !catalogRows.some((row) => row.model.trim() === trimmedDefaultModel);
@@ -2086,10 +2139,13 @@ export function CodexFormFields({
 
   // 默认模型 —— config.toml 顶层 model，Codex 启动时默认请求的模型。实时写回 TOML；留空则删行。
   // 有模型列表时第一行就是它，不显示这个框（Grok Build 没有列表，一直显示）；列表为空时
-  // 两种布局都显示，聚合模式下发布的就是它。
+  // 两种布局都显示，聚合模式下发布的就是它。默认模型是虚拟项、不在列表里时也要显示，
+  // 否则用户没有把默认模型切回具体模型的入口。
   const defaultModelField = category !== "official" &&
     onModelChange &&
-    (!firstRowIsDefault || catalogRows.length === 0) && (
+    (!firstRowIsDefault ||
+      catalogRows.length === 0 ||
+      stripClaudeOneMMarker(trimmedDefaultModel) === COPILOT_AUTO_MODEL_ID) && (
       <div className="space-y-1.5">
         {labelWithHelp(
           t("codexConfig.defaultModelLabel", { defaultValue: "默认模型" }),

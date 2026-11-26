@@ -54,7 +54,21 @@ impl Database {
 
     /// 获取故障转移队列中的供应商（完整 Provider 信息，与队列的排序一致）
     pub fn get_failover_providers(&self, app_type: &AppType) -> Result<Vec<Provider>, AppError> {
-        Ok(self.load_providers(app_type, true)?.into_values().collect())
+        self.read_cache.failover.get_or_load(app_type.as_str(), || {
+            self.get_failover_providers_uncached(app_type)
+        })
+    }
+
+    fn get_failover_providers_uncached(
+        &self,
+        app_type: &AppType,
+    ) -> Result<Vec<Provider>, AppError> {
+        // 路由不写库：一个成员读不出来就跳过它，用其余成员照常转发。
+        Ok(self
+            .load_providers(app_type, true)?
+            .into_readable("故障转移队列")
+            .into_values()
+            .collect())
     }
 
     /// 添加供应商到故障转移队列

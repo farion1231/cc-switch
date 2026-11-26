@@ -36,7 +36,8 @@ import {
   useToggleMcpApp,
 } from "@/hooks/useMcp";
 import type { McpServer } from "@/types";
-import type { McpAppSyncOutcome } from "@/lib/api/mcp";
+import { mcpApi, type McpAppSyncOutcome } from "@/lib/api/mcp";
+import { UnreadableEntriesNotice } from "@/components/common/UnreadableEntriesNotice";
 import { mcpPresets } from "@/config/mcpPresets";
 import { settingsApi } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
@@ -107,6 +108,10 @@ const IMPORT_SOURCE_FILES: Record<
   kimi: { file: "~/.kimi-code/mcp.json" },
   copilot: { file: "~/.copilot/mcp-config.json" },
   workbuddy: { file: "~/.workbuddy/mcp.json" },
+  codebuddy: {
+    file: "~/.codebuddy/.mcp.json",
+    noteKey: "mcpPage.import.codebuddyNote",
+  },
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
@@ -115,6 +120,7 @@ const IMPORT_SOURCE_FILES: Record<
 const WRITE_THEN_SAVE_APPS: ReadonlySet<AppIdWith<"mcp">> = new Set([
   "mcode",
   "kimi",
+  "codebuddy",
   "dsh",
   "workbuddy",
   "pi",
@@ -752,6 +758,15 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
             </Notice>
           ))}
         </NoticeSlot>
+
+        <div className="flex flex-col gap-2 px-6 pb-3 empty:hidden">
+          <UnreadableEntriesNotice
+            queryKey={["mcp", "unreadable"]}
+            load={mcpApi.getUnreadableServers}
+            remove={mcpApi.deleteUnifiedServer}
+            invalidate={[["mcp", "all"]]}
+          />
+        </div>
 
         <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
           {isLoading ? (

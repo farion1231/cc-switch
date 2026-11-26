@@ -43,7 +43,8 @@ describe("system language subtag boundaries", () => {
     ["zh-hkx", "zh"],
   ])("maps %s to %s on first launch", async (language, expected) => {
     vi.stubGlobal("navigator", { language });
-    const { default: i18n } = await import("@/i18n");
+    const { default: i18n, i18nReady } = await import("@/i18n");
+    await i18nReady;
     expect(i18n.language).toBe(expected);
   });
 });

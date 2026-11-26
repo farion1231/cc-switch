@@ -9,11 +9,25 @@ use super::*;
 struct MemoryLogin {
     value: StdMutex<Option<String>>,
     writes: StdMutex<usize>,
+    locked: StdMutex<bool>,
+    post_write_read_failures: StdMutex<usize>,
 }
 
 impl AgyLoginStore for MemoryLogin {
     fn read(&self) -> Result<Option<String>, AppError> {
+        if *self.locked.lock().unwrap() {
+            return Err(AppError::Config("test keychain is locked".into()));
+        }
+        let mut failures = self.post_write_read_failures.lock().unwrap();
+        if *failures > 0 && *self.writes.lock().unwrap() > 0 {
+            *failures -= 1;
+            return Err(AppError::Config("test keychain readback failed".into()));
+        }
         Ok(self.value.lock().unwrap().clone())
+    }
+    fn read_for_switch(&self) -> Result<Option<String>, AppError> {
+        *self.locked.lock().unwrap() = false;
+        self.read()
     }
     fn write(&self, value: &str) -> Result<(), AppError> {
         *self.value.lock().unwrap() = Some(value.to_string());
@@ -63,10 +77,93 @@ async fn add(manager: &AgyAccountManager, sub: &str) {
     manager.persist(&store).unwrap();
 }
 
-// 以下测试只在能切号的平台（macOS、Windows）上有意义：其他平台 status 不读钥匙串、切换直接报不支持。
-#[cfg(any(target_os = "macos", windows))]
+// 以下测试只在支持切号的平台上有意义。
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod switching {
     use super::*;
+
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
+    use crate::services::provider::agy_direct::save_from_editor;
+    use crate::store::AppState;
+
+    fn official_card(account: &str) -> Provider {
+        let mut provider =
+            Provider::with_id("official".into(), "Antigravity".into(), json!({}), None);
+        provider.category = Some("official".into());
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("agy_oauth".into()),
+                account_id: Some(account.into()),
+            }),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn saving_a_new_provider_binding_changes_the_live_login() {
+        let (_dir, login, manager) = manager();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        set_live(&login, &credential("alice", "a1"));
+        tauri::async_runtime::block_on(add(&manager, "bob"));
+        state
+            .db
+            .save_provider(&AppType::Agy, &official_card("alice"))
+            .unwrap();
+
+        let mut card = official_card("bob");
+        save_from_editor(&state, &manager, card.clone()).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        let status = tauri::async_runtime::block_on(manager.status()).unwrap();
+        assert_eq!(status.current_account_id.as_deref(), Some("bob"));
+
+        tauri::async_runtime::block_on(manager.switch_to("alice")).unwrap();
+        card.name = "Renamed card".into();
+        save_from_editor(&state, &manager, card.clone()).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+
+        card.meta = None;
+        save_from_editor(&state, &manager, card).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn a_missing_bound_account_leaves_the_login_and_provider_unchanged() {
+        let (_dir, login, manager) = manager();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        set_live(&login, &credential("alice", "a1"));
+        let previous = official_card("alice");
+        state.db.save_provider(&AppType::Agy, &previous).unwrap();
+
+        let card = official_card("missing");
+        assert!(save_from_editor(&state, &manager, card.clone()).is_err());
+        let saved = state
+            .db
+            .get_provider_by_id(&card.id, &AppType::Agy)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved
+                .meta
+                .unwrap()
+                .managed_account_id_for("agy_oauth")
+                .as_deref(),
+            Some("alice")
+        );
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+
+        let mut new_card = card;
+        new_card.id = "new".into();
+        assert!(save_from_editor(&state, &manager, new_card).is_err());
+        assert!(state
+            .db
+            .get_provider_by_id("new", &AppType::Agy)
+            .unwrap()
+            .is_none());
+    }
 
     #[tokio::test]
     async fn status_collects_the_login_agy_already_has() {
@@ -80,6 +177,27 @@ mod switching {
             Some("alice@example.com")
         );
         assert_eq!(*login.writes.lock().unwrap(), 0, "查看状态不写钥匙串");
+    }
+
+    #[tokio::test]
+    async fn status_leaves_a_locked_keychain_alone_but_switch_can_unlock_it() {
+        let (_dir, login, manager) = manager();
+        set_live(&login, &credential("alice", "a1"));
+        add(&manager, "bob").await;
+        *login.locked.lock().unwrap() = true;
+
+        let status = manager.status().await.unwrap();
+        assert!(status.current_account_id.is_none());
+        assert_eq!(status.accounts.len(), 1);
+        assert!(*login.locked.lock().unwrap());
+
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        assert!(manager
+            .list()
+            .await
+            .iter()
+            .any(|account| account.id == "alice"));
     }
 
     #[tokio::test]
@@ -124,6 +242,50 @@ mod switching {
         manager.status().await.unwrap();
         manager.switch_to("alice").await.unwrap();
         assert_eq!(*login.writes.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn saving_a_binding_recovers_from_a_transient_readback_failure() {
+        let (_dir, login, manager) = manager();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        set_live(&login, &credential("alice", "a1"));
+        tauri::async_runtime::block_on(add(&manager, "bob"));
+        *login.post_write_read_failures.lock().unwrap() = 1;
+
+        let card = official_card("bob");
+        save_from_editor(&state, &manager, card.clone()).unwrap();
+
+        let saved = state
+            .db
+            .get_provider_by_id(&card.id, &AppType::Agy)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved
+                .meta
+                .unwrap()
+                .managed_account_id_for("agy_oauth")
+                .as_deref(),
+            Some("bob")
+        );
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        assert_eq!(*login.writes.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn persistent_readback_failure_reports_that_the_login_is_unverified() {
+        let (_dir, login, manager) = manager();
+        set_live(&login, &credential("alice", "a1"));
+        add(&manager, "bob").await;
+        *login.post_write_read_failures.lock().unwrap() = 2;
+
+        let error = manager.switch_to("bob").await.unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Localized { key, .. } if key == "agy.account.write_verify_failed"
+        ));
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        assert_eq!(*login.writes.lock().unwrap(), 1);
     }
 
     #[tokio::test]
@@ -365,6 +527,7 @@ mod switching {
     /// Windows 经凭据管理器）、原地更新、读回都正常。默认不跑：`cargo test agy_account -- --ignored`。
     #[test]
     #[ignore]
+    #[cfg(any(target_os = "macos", windows))]
     fn real_keychain_round_trip_on_a_test_item() {
         let store = keychain::SystemKeychain::named("cc-switch-agy-selftest", "probe");
         let first = keychain::encode(&credential("probe", "one")).unwrap();

@@ -1,0 +1,33 @@
+{
+  "version": "4.0.37",
+  "items": [
+    {
+      "type": "improve",
+      "zh": "读不出来的供应商和 MCP 条目原样保留，不再被默认值覆盖",
+      "zh-TW": "讀不出來的供應商和 MCP 條目原樣保留，不再被預設值覆蓋",
+      "en": "Providers and MCP servers that can't be read are kept as is instead of overwritten",
+      "ja": "読み取れないプロバイダーと MCP をそのまま保持し、既定値で上書きしないように"
+    },
+    {
+      "type": "new",
+      "zh": "Pi 新增 Mistral AI 预设",
+      "zh-TW": "Pi 新增 Mistral AI 預設",
+      "en": "New Mistral AI preset for Pi",
+      "ja": "Pi に Mistral AI のプリセットを追加"
+    },
+    {
+      "type": "fix",
+      "zh": "修复本地路由监听 IPv6 地址时无法启动",
+      "zh-TW": "修正本地路由監聽 IPv6 位址時無法啟動",
+      "en": "The local route now starts on IPv6 listen addresses",
+      "ja": "ローカルルーティングが IPv6 アドレスで起動しない問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "修复损坏的 Claude 插件配置文件被清空",
+      "zh-TW": "修正損壞的 Claude 外掛設定檔被清空",
+      "en": "A broken Claude plugin config file is no longer wiped",
+      "ja": "壊れた Claude プラグイン設定ファイルが消去される問題を修正"
+    }
+  ]
+}

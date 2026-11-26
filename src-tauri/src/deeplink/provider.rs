@@ -200,10 +200,7 @@ fn copilot_link_provider_id(state: &AppState, name: &str) -> Result<String, AppE
     slug.truncate(56);
     let slug = slug.trim_end_matches('-').to_string();
     let taken = |id: &str| -> Result<bool, AppError> {
-        Ok(state
-            .db
-            .get_provider_by_id(id, &AppType::Copilot)?
-            .is_some()
+        Ok(state.db.provider_exists(id, &AppType::Copilot)?
             || crate::copilot_config::provider_key_exists(id)?)
     };
     if !taken(&slug)? {
@@ -247,7 +244,8 @@ impl ApiFormat {
     ///
     /// Claude Code、Codex、Grok Build 写进 `meta.apiFormat`（非原生格式由本地路由转换）；
     /// 其余应用写进各自配置里选择协议的字段：OpenCode 的 `npm`、OpenClaw / Pi 的 `api`、
-    /// Hermes 的 `api_mode`。Gemini CLI 只有原生接口。
+    /// Hermes 的 `api_mode`。Gemini CLI 只有原生接口。WorkBuddy 的自定义模型只走
+    /// Chat Completions，卡片不写协议字段，这里只用来放行这一种格式。
     fn native_value(self, app_type: &AppType) -> Option<&'static str> {
         use ApiFormat::*;
         match (app_type, self) {
@@ -292,6 +290,7 @@ impl ApiFormat {
             (AppType::Copilot, Anthropic) => Some("anthropic"),
             (AppType::Copilot, OpenAiChat) => Some("completions"),
             (AppType::Copilot, OpenAiResponses) => Some("responses"),
+            (AppType::WorkBuddy, OpenAiChat) => Some("openai-completions"),
             _ => None,
         }
     }
@@ -437,9 +436,10 @@ pub(crate) fn build_provider_from_request(
         }
         AppType::Kimi => build_kimi_settings(request, api_format)?,
         AppType::Copilot => build_copilot_settings(request, api_format)?,
-        AppType::WorkBuddy => {
+        AppType::WorkBuddy => build_workbuddy_settings(request)?,
+        AppType::Codebuddy => {
             return Err(AppError::InvalidInput(
-                "Add WorkBuddy providers from the WorkBuddy page".into(),
+                "Add CodeBuddy models from the CodeBuddy page".into(),
             ))
         }
         AppType::Agy => {
@@ -1190,6 +1190,21 @@ fn build_custom_provider_settings(
     }))
 }
 
+/// WorkBuddy 的自定义模型卡，形状同 WorkBuddy 页面的编辑器。`url` 是完整的 Chat Completions
+/// 地址，和其他应用一样照链接原样写；模型声明 `supportsToolCall`（同编辑器「获取模型」），
+/// 否则 WorkBuddy 不让这个模型用工具。
+fn build_workbuddy_settings(
+    request: &DeepLinkImportRequest,
+) -> Result<serde_json::Value, AppError> {
+    let model = required_link_model(&AppType::WorkBuddy, request)?;
+    Ok(json!({
+        "vendor": request.name.clone().unwrap_or_default(),
+        "url": get_primary_endpoint(request),
+        "apiKey": normalize_deeplink_api_key(request.api_key.as_deref().unwrap_or_default()),
+        "models": [{ "id": model, "supportsToolCall": true }],
+    }))
+}
+
 /// 链接导入的 Kimi Code 模型的上下文窗口。Kimi 自己要求每个模型都带正数
 /// `max_context_size`（缺了拒绝运行），链接里没有这个字段。取偏小的 128K：Kimi 按它决定何时压缩，
 /// 报大了长会话会被上游拒绝，报小了只是早一点压缩。用户可在编辑器里改。
@@ -1310,7 +1325,8 @@ pub fn parse_and_merge_config(
         "copilot" => merge_copilot_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp" => {
+        "openclaw" | "opencode" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
+        | "workbuddy" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {
@@ -1699,13 +1715,14 @@ fn merge_additive_config(
         }
     }
 
-    // Extract endpoint from config if not provided in URL
+    // Extract endpoint from config if not provided in URL. WorkBuddy cards keep it as `url`.
     if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(base_url) = config
             .get("baseUrl")
             .or_else(|| config.get("base_url"))
             .or_else(|| config.get("options").and_then(|o| o.get("baseURL")))
             .or_else(|| config.pointer("/provider/base_url"))
+            .or_else(|| config.get("url"))
             .and_then(|v| v.as_str())
         {
             request.endpoint = Some(base_url.to_string());

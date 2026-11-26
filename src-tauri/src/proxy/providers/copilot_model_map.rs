@@ -14,6 +14,7 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CopilotProtocol {
+    Messages,
     Responses,
     Chat,
 }
@@ -218,30 +219,34 @@ pub fn transport_for(
     supported_endpoints: &[String],
     api_format: CodexCopilotApiFormat,
 ) -> Option<CopilotTransport> {
-    let supported = |expected: &[&str]| {
-        supported_endpoints.iter().find_map(|endpoint| {
-            let path = endpoint
-                .split_once('?')
-                .map_or(endpoint.as_str(), |(path, _)| path)
-                .trim_end_matches('/');
-            expected
-                .iter()
-                .any(|candidate| path.eq_ignore_ascii_case(candidate))
-                .then(|| path.to_string())
-        })
-    };
-
     let protocols: &[CopilotProtocol] = match api_format {
         CodexCopilotApiFormat::Auto => &[CopilotProtocol::Responses, CopilotProtocol::Chat],
         CodexCopilotApiFormat::OpenaiResponses => &[CopilotProtocol::Responses],
         CodexCopilotApiFormat::OpenaiChat => &[CopilotProtocol::Chat],
     };
+    advertised_transport(supported_endpoints, protocols)
+}
+
+pub(crate) fn advertised_transport(
+    supported_endpoints: &[String],
+    protocols: &[CopilotProtocol],
+) -> Option<CopilotTransport> {
     protocols.iter().find_map(|&protocol| {
         let paths: &[&str] = match protocol {
+            CopilotProtocol::Messages => &["/v1/messages"],
             CopilotProtocol::Responses => &["/responses", "/v1/responses"],
             CopilotProtocol::Chat => &["/chat/completions", "/v1/chat/completions"],
         };
-        supported(paths).map(|endpoint| CopilotTransport { protocol, endpoint })
+        supported_endpoints.iter().find_map(|endpoint| {
+            let path = endpoint.split('?').next()?.trim_end_matches('/');
+            paths
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(path))
+                .then(|| CopilotTransport {
+                    protocol,
+                    endpoint: path.to_string(),
+                })
+        })
     })
 }
 
@@ -332,15 +337,41 @@ mod tests {
     }
 
     #[test]
-    fn one_m_bracket_to_dash() {
-        assert_eq!(
-            normalize_to_copilot_id("claude-sonnet-4-6[1m]"),
-            Some("claude-sonnet-4.6-1m".to_string())
-        );
-        assert_eq!(
-            normalize_to_copilot_id("claude-opus-4-6[1m]"),
-            Some("claude-opus-4.6-1m".to_string())
-        );
+    fn normalizes_model_ids_to_copilot_form() {
+        for (case, input_a, expected_a, input_b, expected_b) in [
+            (
+                "one_m_bracket_to_dash",
+                "claude-sonnet-4-6[1m]",
+                "claude-sonnet-4.6-1m",
+                "claude-opus-4-6[1m]",
+                "claude-opus-4.6-1m",
+            ),
+            (
+                "date_suffix_stripped",
+                "claude-haiku-4-5-20251001",
+                "claude-haiku-4.5",
+                "claude-sonnet-4-5-20250929",
+                "claude-sonnet-4.5",
+            ),
+            (
+                "case_insensitive_on_prefix_and_suffix",
+                "Claude-Sonnet-4-6",
+                "Claude-Sonnet-4.6",
+                "claude-sonnet-4-6[1M]",
+                "claude-sonnet-4.6-1m",
+            ),
+        ] {
+            assert_eq!(
+                normalize_to_copilot_id(input_a),
+                Some(expected_a.to_string()),
+                "{case}"
+            );
+            assert_eq!(
+                normalize_to_copilot_id(input_b),
+                Some(expected_b.to_string()),
+                "{case}"
+            );
+        }
     }
 
     #[test]
@@ -350,18 +381,6 @@ mod tests {
         assert_eq!(
             normalize_to_copilot_id("claude-sonnet-4.6[1m]"),
             Some("claude-sonnet-4.6-1m".to_string())
-        );
-    }
-
-    #[test]
-    fn date_suffix_stripped() {
-        assert_eq!(
-            normalize_to_copilot_id("claude-haiku-4-5-20251001"),
-            Some("claude-haiku-4.5".to_string())
-        );
-        assert_eq!(
-            normalize_to_copilot_id("claude-sonnet-4-5-20250929"),
-            Some("claude-sonnet-4.5".to_string())
         );
     }
 
@@ -384,18 +403,6 @@ mod tests {
     fn legacy_three_part_versions_untouched() {
         assert_eq!(normalize_to_copilot_id("claude-3-5-sonnet"), None);
         assert_eq!(normalize_to_copilot_id("claude-3-5-sonnet-20241022"), None);
-    }
-
-    #[test]
-    fn case_insensitive_on_prefix_and_suffix() {
-        assert_eq!(
-            normalize_to_copilot_id("Claude-Sonnet-4-6"),
-            Some("Claude-Sonnet-4.6".to_string())
-        );
-        assert_eq!(
-            normalize_to_copilot_id("claude-sonnet-4-6[1M]"),
-            Some("claude-sonnet-4.6-1m".to_string())
-        );
     }
 
     #[test]
@@ -439,6 +446,7 @@ mod tests {
             supports_parallel_tool_calls: None,
             supports_vision: None,
             reasoning_effort: None,
+            billing: None,
         }
     }
 
@@ -452,36 +460,47 @@ mod tests {
     }
 
     #[test]
-    fn resolve_exact_match_after_normalize() {
-        let models = vec![
-            model("claude-sonnet-4.6"),
-            model("claude-opus-4.6"),
-            model("claude-haiku-4.5"),
-        ];
-        assert_eq!(
-            resolve_against_models("claude-sonnet-4-6", &models),
-            Some("claude-sonnet-4.6".to_string())
-        );
+    fn resolves_against_available_models() {
+        for (case, available_a, available_b, available_c, requested, expected) in [
+            (
+                "resolve_exact_match_after_normalize",
+                "claude-sonnet-4.6",
+                "claude-opus-4.6",
+                "claude-haiku-4.5",
+                "claude-sonnet-4-6",
+                "claude-sonnet-4.6",
+            ),
+            // 用户请求 opus 4.8 但 Copilot 账号只有 opus 4.6
+            (
+                "resolve_falls_back_to_highest_family_version",
+                "claude-opus-4.5",
+                "claude-opus-4.6",
+                "claude-sonnet-4.6",
+                "claude-opus-4.8",
+                "claude-opus-4.6",
+            ),
+            (
+                "resolve_prefers_1m_when_requested",
+                "claude-sonnet-4.6",
+                "claude-sonnet-4.6-1m",
+                "claude-opus-4.6",
+                "claude-sonnet-4-6[1m]",
+                "claude-sonnet-4.6-1m",
+            ),
+        ] {
+            let models = vec![model(available_a), model(available_b), model(available_c)];
+            assert_eq!(
+                resolve_against_models(requested, &models),
+                Some(expected.to_string()),
+                "{case}"
+            );
+        }
     }
 
     #[test]
     fn resolve_returns_none_when_already_valid() {
         let models = vec![model("claude-sonnet-4.6")];
         assert_eq!(resolve_against_models("claude-sonnet-4.6", &models), None);
-    }
-
-    #[test]
-    fn resolve_falls_back_to_highest_family_version() {
-        // 用户请求 opus 4.8 但 Copilot 账号只有 opus 4.6
-        let models = vec![
-            model("claude-opus-4.5"),
-            model("claude-opus-4.6"),
-            model("claude-sonnet-4.6"),
-        ];
-        assert_eq!(
-            resolve_against_models("claude-opus-4.8", &models),
-            Some("claude-opus-4.6".to_string())
-        );
     }
 
     #[test]
@@ -733,19 +752,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn resolve_prefers_1m_when_requested() {
-        let models = vec![
-            model("claude-sonnet-4.6"),
-            model("claude-sonnet-4.6-1m"),
-            model("claude-opus-4.6"),
-        ];
-        assert_eq!(
-            resolve_against_models("claude-sonnet-4-6[1m]", &models),
-            Some("claude-sonnet-4.6-1m".to_string())
-        );
     }
 
     #[test]

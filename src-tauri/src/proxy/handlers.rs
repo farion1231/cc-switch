@@ -8,7 +8,10 @@
 //! - Claude 的格式转换逻辑保留在此文件（用于 OpenRouter 旧接口回退）
 
 use super::{
-    content_encoding::{decompress_body, get_content_encoding, is_supported_content_encoding},
+    content_encoding::{
+        decompress_body_with_limit, get_content_encoding, is_supported_content_encoding,
+        DecompressError,
+    },
     error_mapper::{get_error_message, map_proxy_error_to_status},
     forwarder::{ActiveConnectionGuard, CodexUpstreamFormat},
     handler_config::{
@@ -27,18 +30,16 @@ use super::{
         },
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
-        streaming_responses::{
-            create_anthropic_sse_stream_from_responses,
-            create_anthropic_sse_stream_from_responses_with_web_search_options,
-        },
+        streaming_responses::create_anthropic_sse_stream_from_responses_with_web_search_options,
         transform, transform_codex_anthropic, transform_codex_chat,
         transform_codex_responses_namespace, transform_codex_responses_xai_sanitize,
         transform_gemini, transform_responses,
     },
     response_processor::{
-        create_logged_passthrough_stream, create_usage_collector, process_response,
-        read_decoded_body, strip_entity_headers_for_rebuilt_body,
-        strip_hop_by_hop_response_headers, usage_logging_enabled, SseUsageCollector,
+        create_logged_passthrough_stream_with_terminal_hook, create_usage_collector,
+        process_response, read_decoded_body, strip_entity_headers_for_rebuilt_body,
+        strip_hop_by_hop_response_headers, terminal_value_response_succeeded,
+        usage_logging_enabled, SseUsageCollector,
     },
     server::ProxyState,
     sse::{strip_sse_field, SseBlocks},
@@ -52,9 +53,31 @@ use crate::provider_kind::ProviderKind;
 use axum::{extract::State, http::StatusCode, response::IntoResponse, Json};
 use bytes::Bytes;
 use futures::StreamExt;
+#[cfg(test)]
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
+
+/// 单次代理请求体上限（200 MiB），与路由层 `DefaultBodyLimit` 保持一致。
+/// 主 handler 接收原始 `axum::extract::Request` 时 Axum 不会自动检查 `DefaultBodyLimit`，
+/// 因此读体和解压都必须显式执行同一上限。
+pub(crate) const MAX_REQUEST_BODY_BYTES: usize = 200 * 1024 * 1024;
+
+async fn read_request_body_limited(
+    body: axum::body::Body,
+    limit: usize,
+) -> Result<Bytes, ProxyError> {
+    axum::body::to_bytes(body, limit).await.map_err(|e| {
+        let mut source = std::error::Error::source(&e);
+        while let Some(err) = source {
+            if err.is::<http_body_util::LengthLimitError>() {
+                return ProxyError::RequestBodyTooLarge(limit);
+            }
+            source = err.source();
+        }
+        ProxyError::Internal(format!("Failed to read request body: {e}"))
+    })
+}
 
 // ============================================================================
 // 健康检查和状态查询（简单端点）
@@ -343,14 +366,9 @@ async fn handle_messages_for_app(
     let uri = parts.uri;
     let headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(body, MAX_REQUEST_BODY_BYTES).await?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &app_type, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -380,6 +398,8 @@ async fn handle_messages_for_app(
         .and_then(|s| s.as_bool())
         .unwrap_or(false);
 
+    let response_context = ClaudeResponseContext::from_request(&body);
+
     // 转发请求
     let forwarder = ctx.create_forwarder(&state);
     let mut result = match forwarder
@@ -387,7 +407,7 @@ async fn handle_messages_for_app(
             &app_type,
             method,
             endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -434,15 +454,13 @@ async fn handle_messages_for_app(
             response,
             &ctx,
             &state,
-            &body,
+            response_context,
             is_stream,
             &api_format,
             connection_guard,
         )
         .await;
     }
-
-    drop(body);
 
     // 通用响应处理（透传模式）
     process_response(
@@ -623,15 +641,37 @@ fn spawn_claude_usage_log(
     });
 }
 
+/// Keep only the metadata needed to translate the response. In particular, resolve
+/// hosted search selection while `tool_choice` is still available, without cloning
+/// the conversation or complete tool schemas on the passthrough path.
+struct ClaudeResponseContext {
+    tool_schema_hints: Option<transform_gemini::AnthropicToolSchemaHints>,
+    hosted_web_search_name: Option<String>,
+    hosted_web_search_max_uses: Option<u64>,
+}
+
+impl ClaudeResponseContext {
+    fn from_request(body: &Value) -> Self {
+        let hints = transform_gemini::extract_anthropic_tool_schema_hints(body);
+        Self {
+            tool_schema_hints: (!hints.is_empty()).then_some(hints),
+            hosted_web_search_name: transform_responses::anthropic_web_search_tool_name(body)
+                .map(ToString::to_string),
+            hosted_web_search_max_uses: transform_responses::anthropic_web_search_max_uses(body),
+        }
+    }
+}
+
 async fn handle_claude_transform(
     response: super::hyper_client::ProxyResponse,
     ctx: &RequestContext,
     state: &ProxyState,
-    original_body: &Value,
+    response_context: ClaudeResponseContext,
     is_stream: bool,
     api_format: &str,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
     let is_codex_oauth = ProviderKind::declared(&ctx.provider) == Some(ProviderKind::CodexOAuth);
     // Claude 的模型验证要求非流式 JSON，并直接读取 usage.input_tokens。
@@ -641,30 +681,50 @@ async fn handle_claude_transform(
         !is_stream && api_format == "openai_responses" && (is_codex_oauth || response.is_sse());
     let use_streaming =
         should_use_claude_transform_streaming(is_stream, response.is_sse(), api_format);
-    let tool_schema_hints = transform_gemini::extract_anthropic_tool_schema_hints(original_body);
-    let tool_schema_hints = (!tool_schema_hints.is_empty()).then_some(tool_schema_hints);
-    let hosted_web_search_name =
-        transform_responses::anthropic_web_search_tool_name(original_body).map(ToString::to_string);
-    let hosted_web_search_max_uses =
-        transform_responses::anthropic_web_search_max_uses(original_body);
+    let ClaudeResponseContext {
+        tool_schema_hints,
+        hosted_web_search_name,
+        hosted_web_search_max_uses,
+    } = response_context;
 
     if use_streaming {
         // 根据 api_format 选择流式转换器
         let stream = response.bytes_stream();
+        let stream = if let Some(hook) = terminal_hook.take() {
+            let succeeded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let flag = succeeded.clone();
+            terminal_hook = Some(Box::new(move || {
+                Box::pin(async move {
+                    if succeeded.load(std::sync::atomic::Ordering::Relaxed) {
+                        hook().await;
+                    }
+                })
+            }));
+            Box::pin(create_logged_passthrough_stream_with_terminal_hook(
+                stream,
+                ctx.tag,
+                None,
+                ctx.streaming_timeout_config(),
+                None,
+                Some(Box::new(move || {
+                    Box::pin(async move {
+                        flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    })
+                })),
+            ))
+        } else {
+            stream
+        };
         let sse_stream: Box<
             dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send + Unpin,
         > = if api_format == "openai_responses" {
-            if hosted_web_search_name.is_none() && hosted_web_search_max_uses.is_none() {
-                Box::new(Box::pin(create_anthropic_sse_stream_from_responses(stream)))
-            } else {
-                Box::new(Box::pin(
-                    create_anthropic_sse_stream_from_responses_with_web_search_options(
-                        stream,
-                        hosted_web_search_name.clone(),
-                        hosted_web_search_max_uses,
-                    ),
-                ))
-            }
+            Box::new(Box::pin(
+                create_anthropic_sse_stream_from_responses_with_web_search_options(
+                    stream,
+                    hosted_web_search_name.clone(),
+                    hosted_web_search_max_uses,
+                ),
+            ))
         } else if api_format == "gemini_native" {
             Box::new(Box::pin(create_anthropic_sse_stream_from_gemini(
                 stream,
@@ -750,12 +810,13 @@ async fn handle_claude_transform(
         // 获取流式超时配置
         let timeout_config = ctx.streaming_timeout_config();
 
-        let logged_stream = create_logged_passthrough_stream(
+        let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
             sse_stream,
             "Claude/OpenRouter",
             usage_collector,
             timeout_config,
             connection_guard,
+            terminal_hook,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -865,6 +926,16 @@ async fn handle_claude_transform(
         })
     });
 
+    // Keep the original protocol's success signal before conversion. The generic
+    // Anthropic mapper intentionally treats unknown/incomplete upstream endings as
+    // `end_turn` for ordinary proxy compatibility, so that field cannot authorize
+    // clearing an Auto-compaction retry token by itself.
+    let successful_terminal = terminal_hook.is_some()
+        && upstream_response
+            .as_ref()
+            .or(direct_anthropic_response.as_ref())
+            .is_some_and(terminal_value_response_succeeded);
+
     // 根据 api_format 选择非流式转换器
     let transform_result = match (direct_anthropic_response, upstream_response) {
         (Some(response), _) => Ok(response),
@@ -905,6 +976,16 @@ async fn handle_claude_transform(
             return Err(error);
         }
     };
+    if anthropic_response
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        == Some("end_turn")
+        && successful_terminal
+    {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
 
     // 记录使用量
     // 全 0 usage 不落账（对齐 Codex 流式收集器的 skip）：SSE 聚合兜底救回的流
@@ -954,6 +1035,14 @@ fn decode_codex_request_body(
     headers: &mut axum::http::HeaderMap,
     body_bytes: Bytes,
 ) -> Result<Bytes, ProxyError> {
+    decode_codex_request_body_with_limit(headers, body_bytes, MAX_REQUEST_BODY_BYTES)
+}
+
+fn decode_codex_request_body_with_limit(
+    headers: &mut axum::http::HeaderMap,
+    body_bytes: Bytes,
+    max_decompressed_bytes: usize,
+) -> Result<Bytes, ProxyError> {
     let Some(encoding) = get_content_encoding(headers) else {
         return Ok(body_bytes);
     };
@@ -965,22 +1054,27 @@ fn decode_codex_request_body(
     }
 
     log::debug!("[Codex] 解压请求体: content-encoding={encoding}");
-    let decompressed = match decompress_body(&encoding, &body_bytes) {
-        Ok(Some(decompressed)) => decompressed,
-        // is_supported_content_encoding 已确保编码受支持，正常不会返回 None；
-        // 防御性兜底：宁可报错，也不能把压缩字节当 JSON 透传下去。
-        Ok(None) => {
-            return Err(ProxyError::InvalidRequest(format!(
-                "Unsupported request content-encoding: {encoding}"
-            )));
-        }
-        Err(e) => {
-            log::warn!("[Codex] 请求体解压失败 ({encoding}): {e}");
-            return Err(ProxyError::InvalidRequest(format!(
-                "Failed to decompress request body ({encoding}): {e}"
-            )));
-        }
-    };
+    let decompressed =
+        match decompress_body_with_limit(&encoding, &body_bytes, max_decompressed_bytes) {
+            Ok(Some(decompressed)) => decompressed,
+            // is_supported_content_encoding 已确保编码受支持，正常不会返回 None；
+            // 防御性兜底：宁可报错，也不能把压缩字节当 JSON 透传下去。
+            Ok(None) => {
+                return Err(ProxyError::InvalidRequest(format!(
+                    "Unsupported request content-encoding: {encoding}"
+                )));
+            }
+            Err(DecompressError::TooLarge { limit }) => {
+                log::warn!("[Codex] 请求体解压后超过大小上限 ({encoding}, limit={limit})");
+                return Err(ProxyError::RequestBodyTooLarge(limit));
+            }
+            Err(e) => {
+                log::warn!("[Codex] 请求体解压失败 ({encoding}): {e}");
+                return Err(ProxyError::InvalidRequest(format!(
+                    "Failed to decompress request body ({encoding}): {e}"
+                )));
+            }
+        };
 
     headers.remove(axum::http::header::CONTENT_ENCODING);
     headers.remove(axum::http::header::CONTENT_LENGTH);
@@ -1003,15 +1097,10 @@ pub async fn handle_chat_completions(
     let uri = parts.uri;
     let mut headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &AppType::Codex, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -1040,7 +1129,7 @@ pub async fn handle_chat_completions(
             &AppType::Codex,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1057,7 +1146,6 @@ pub async fn handle_chat_completions(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -1151,15 +1239,10 @@ async fn handle_responses_for_app(
     let uri = parts.uri;
     let mut headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
     let stack = match resolve_stack_target(&state, &app_type, &mut body) {
         Ok(stack) => stack,
         Err(rejected) => return Ok(*rejected),
@@ -1196,7 +1279,7 @@ async fn handle_responses_for_app(
             &app_type,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1213,7 +1296,6 @@ async fn handle_responses_for_app(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, is_stream);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     let codex_upstream_format = result.codex_upstream_format;
@@ -1346,18 +1428,20 @@ async fn handle_codex_native_compaction_response(
         .await;
     }
 
+    let (response, terminal_hook) = response.take_success_terminal_hook();
     let builder = rewritten_sse_response_builder(status, response.headers());
 
     let compaction_stream = super::providers::codex_compaction::create_native_compaction_sse_stream(
         codex_native_responses_stream(response, ctx),
     );
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
-    let logged_stream = create_logged_passthrough_stream(
+    let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
         compaction_stream,
         ctx.tag,
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        terminal_hook,
     );
 
     builder
@@ -1428,15 +1512,10 @@ async fn handle_codex_standalone_passthrough(
     let uri = parts.uri;
     let mut headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
     let body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
-    drop(body_bytes);
 
     let mut ctx = RequestContext::new(
         &state,
@@ -1456,7 +1535,7 @@ async fn handle_codex_standalone_passthrough(
             &AppType::Codex,
             method,
             &endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -1473,7 +1552,6 @@ async fn handle_codex_standalone_passthrough(
             return build_codex_proxy_error_response(&ctx, &endpoint, &err.error, false);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -1527,18 +1605,20 @@ async fn handle_codex_late_arguments_repair(
         .await;
     }
 
+    let (response, terminal_hook) = response.take_success_terminal_hook();
     let builder = rewritten_sse_response_builder(status, response.headers());
     let repair_stream =
         super::providers::responses_late_arguments::create_late_arguments_repair_stream(
             codex_native_responses_stream(response, ctx),
         );
     let usage_collector = create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
-    let logged_stream = create_logged_passthrough_stream(
+    let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
         repair_stream,
         ctx.tag,
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        terminal_hook,
     );
     builder
         .body(axum::body::Body::from_stream(logged_stream))
@@ -1579,6 +1659,8 @@ async fn handle_codex_xai_native_responses_rewrite(
         .await;
     }
 
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
+
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
@@ -1603,12 +1685,13 @@ async fn handle_codex_xai_native_responses_rewrite(
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
-        let logged_stream = create_logged_passthrough_stream(
+        let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
             restore_stream,
             ctx.tag,
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            terminal_hook,
         );
 
         let body = axum::body::Body::from_stream(logged_stream);
@@ -1629,6 +1712,11 @@ async fn handle_codex_xai_native_responses_rewrite(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
+    if crate::proxy::response_processor::terminal_json_response_succeeded(&body_bytes) {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     // Restore names when the body parses as JSON; otherwise pass the bytes
@@ -1723,6 +1811,7 @@ async fn handle_codex_chat_to_responses_transform(
     connection_guard: Option<ActiveConnectionGuard>,
     tool_context: transform_codex_chat::CodexToolContext,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
 
     if !status.is_success() {
@@ -1808,12 +1897,13 @@ async fn handle_codex_chat_to_responses_transform(
             None
         };
 
-        let logged_stream = create_logged_passthrough_stream(
+        let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
             sse_stream,
             ctx.tag,
             usage_collector,
             ctx.streaming_timeout_config(),
             connection_guard,
+            terminal_hook,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -1868,6 +1958,8 @@ async fn handle_codex_chat_to_responses_transform(
             ));
         }
     };
+    let successful_terminal =
+        terminal_hook.is_some() && terminal_value_response_succeeded(&chat_response);
     let responses_response = transform_codex_chat::chat_completion_to_response_with_context(
         chat_response,
         &tool_context,
@@ -1876,6 +1968,11 @@ async fn handle_codex_chat_to_responses_transform(
         log::error!("[Codex] Chat → Responses 响应转换失败: {e}");
         e
     })?;
+    if successful_terminal {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
     state
         .codex_chat_history
         .record_response(
@@ -1975,6 +2072,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     connection_guard: Option<ActiveConnectionGuard>,
     codex_tool_context: transform_codex_chat::CodexToolContext,
 ) -> Result<axum::response::Response, ProxyError> {
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
 
     if !status.is_success() {
@@ -1994,6 +2092,7 @@ async fn handle_codex_anthropic_to_responses_transform(
             state,
             status,
             connection_guard,
+            terminal_hook,
         );
     }
 
@@ -2042,10 +2141,13 @@ async fn handle_codex_anthropic_to_responses_transform(
             state,
             status,
             connection_guard,
+            terminal_hook,
         );
     }
 
     let _connection_guard = connection_guard;
+    let successful_terminal =
+        terminal_hook.is_some() && terminal_value_response_succeeded(&anthropic_response);
     let responses_response =
         transform_codex_anthropic::anthropic_response_to_responses_with_context(
             anthropic_response,
@@ -2055,6 +2157,12 @@ async fn handle_codex_anthropic_to_responses_transform(
             log::error!("[Codex] Failed to convert Anthropic response to Responses: {e}");
             e
         })?;
+
+    if successful_terminal {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
 
     if let Some(usage) = TokenUsage::from_codex_response_auto(&responses_response)
         .filter(TokenUsage::has_billable_tokens)
@@ -2131,6 +2239,7 @@ fn build_codex_anthropic_sse_response(
     state: &ProxyState,
     status: StatusCode,
     connection_guard: Option<ActiveConnectionGuard>,
+    terminal_hook: Option<super::hyper_client::SuccessTerminalHook>,
 ) -> Result<axum::response::Response, ProxyError> {
     let usage_collector = if usage_logging_enabled(state) {
         let state = state.clone();
@@ -2191,12 +2300,13 @@ fn build_codex_anthropic_sse_response(
         None
     };
 
-    let logged_stream = create_logged_passthrough_stream(
+    let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
         sse_stream,
         ctx.tag,
         usage_collector,
         ctx.streaming_timeout_config(),
         connection_guard,
+        terminal_hook,
     );
 
     let mut headers = axum::http::HeaderMap::new();
@@ -2515,6 +2625,7 @@ fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
         | ProxyError::BindFailed(_)
         | ProxyError::StopTimeout
         | ProxyError::StopFailed(_)
+        | ProxyError::RequestBodyTooLarge(_)
         | ProxyError::ResponseBodyTooLarge(_) => "cc_switch_proxy_error",
     }
 }
@@ -2548,11 +2659,7 @@ pub async fn handle_gemini(
     let method = parts.method.clone();
     let headers = parts.headers;
     let extensions = parts.extensions;
-    let body_bytes = req_body
-        .collect()
-        .await
-        .map_err(|e| ProxyError::Internal(format!("Failed to read request body: {e}")))?
-        .to_bytes();
+    let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     // GET 类只读端点（/v1beta/models、/v1beta/models/<model> 等）没有请求体，
     // 不能强制 parse 为 JSON —— 否则空 body 会被拒绝。
     let body: Value = if body_bytes.is_empty() {
@@ -2561,8 +2668,6 @@ pub async fn handle_gemini(
         serde_json::from_slice(&body_bytes)
             .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?
     };
-
-    drop(body_bytes);
 
     // Gemini 的模型名称在 URI 中
     let mut ctx = RequestContext::new(
@@ -2594,7 +2699,7 @@ pub async fn handle_gemini(
             &AppType::Gemini,
             method,
             endpoint,
-            &body,
+            super::forwarder::ForwardBody::from_parsed(body, body_bytes),
             headers,
             extensions,
             ctx.get_providers(),
@@ -2611,7 +2716,6 @@ pub async fn handle_gemini(
             return Err(err.error);
         }
     };
-    drop(body);
 
     let connection_guard = result.connection_guard.take();
     ctx.outbound_model = result.outbound_model.take();
@@ -2690,7 +2794,7 @@ async fn responses_sse_stream_to_anthropic_message(
 /// 复用 `proxy::sse` 的 `SseBlocks`/`strip_sse_field`：`SseBlocks` 支持
 /// `\n\n`、`\r\n\r\n`、`\n\r\n` 和 `\r\n\n` 四种分隔符；
 /// `strip_sse_field` 兼容带/不带空格的字段写法。
-fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
+pub(crate) fn responses_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     let mut sse_blocks = SseBlocks::new(body.trim_start_matches('\u{feff}'));
     let mut completed_response: Option<Value> = None;
     let mut output_items = Vec::new();
@@ -2925,7 +3029,7 @@ fn sse_block_parts(block: &str) -> Option<(String, String)> {
 /// reasoning / reasoning_details）经 codex_chat_common 公共提取器并入同一累加器；
 /// finish_reason 首个非 null 即锁定（kimi-k2.6 会在 tool_use 后再发带
 /// finish_reason 的尾块，见 streaming.rs）。
-fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
+pub(crate) fn chat_sse_to_response_value(body: &str) -> Result<Value, ProxyError> {
     // 剥 BOM：嗅探器接受 BOM 开头，但 strip_sse_field 按行首精确匹配，
     // 不剥会让首个 data 行静默丢失
     let mut sse_blocks = SseBlocks::new(body.trim_start_matches('\u{feff}'));
@@ -3343,10 +3447,7 @@ async fn log_usage(
     let outbound_model = outbound_model.to_string();
     let write = tokio::task::spawn_blocking(move || {
         let logger = UsageLogger::new(&db);
-        // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
-        // 在阻塞线程上 block_on 不会停转运行时
-        let pricing_model_source = tokio::runtime::Handle::current()
-            .block_on(logger.resolve_pricing_model_source(&app_type));
+        let pricing_model_source = logger.resolve_pricing_model_source(&app_type);
         let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
             outbound_model
         } else {
@@ -3681,28 +3782,32 @@ data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":
     }
 
     #[test]
-    fn responses_sse_to_response_value_handles_missing_trailing_blank_line() {
-        // 错标 SSE 兜底/非规范上游：最后的 response.completed 后没有空行分隔
-        let sse = "event: response.completed\n\
-data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tail\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n";
-
-        let response = responses_sse_to_response_value(sse).unwrap();
-
-        assert_eq!(response["id"], "resp_tail");
-    }
-
-    #[test]
-    fn responses_sse_to_response_value_ignores_truncated_trailing_block() {
-        // 截断的残余尾块不能破坏已聚合好的完整响应（codex_oauth 路径复用本函数）
-        let sse = "event: response.completed\n\
+    fn responses_sse_to_response_value_edge_cases() {
+        for (case, stream, id) in [
+            // 错标 SSE 兜底/非规范上游：最后的 response.completed 后没有空行分隔
+            ("responses_sse_to_response_value_handles_missing_trailing_blank_line", "event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_tail\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n", "resp_tail"),
+            // 截断的残余尾块不能破坏已聚合好的完整响应（codex_oauth 路径复用本函数）
+            ("responses_sse_to_response_value_ignores_truncated_trailing_block", "event: response.completed\n\
 data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[],\"usage\":{\"input_tokens\":3,\"output_tokens\":1}}}\n\
 \n\
 event: response.extra\n\
-data: {\"type\":\"resp";
+data: {\"type\":\"resp", "resp_ok"),
+            // C8：已拿到 response.completed 后，残余里的完整 response.failed 不得翻车
+            // （codex_oauth 聚合路径复用本函数，此前该尾块被忽略=成功）
+            ("responses_sse_completed_then_trailing_failed_keeps_success", "event: response.completed\n\
+data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[]}}\n\n\
+event: response.failed\n\
+data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"boom\"}}}\n", "resp_ok"),
+        ] {
 
-        let response = responses_sse_to_response_value(sse).unwrap();
+            let sse = stream;
 
-        assert_eq!(response["id"], "resp_ok");
+            let response = responses_sse_to_response_value(sse).unwrap();
+
+            assert_eq!(response["id"], id, "{case}");
+
+        }
     }
 
     #[test]
@@ -4073,19 +4178,6 @@ data: {\"id\":\"chatcmpl-real\",\"model\":\"m\",\"created\":42,\"choices\":[{\"i
     }
 
     #[test]
-    fn responses_sse_completed_then_trailing_failed_keeps_success() {
-        // C8：已拿到 response.completed 后，残余里的完整 response.failed 不得翻车
-        // （codex_oauth 聚合路径复用本函数，此前该尾块被忽略=成功）
-        let sse = "event: response.completed\n\
-data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_ok\",\"status\":\"completed\",\"model\":\"gpt-5.4\",\"output\":[]}}\n\n\
-event: response.failed\n\
-data: {\"type\":\"response.failed\",\"response\":{\"error\":{\"message\":\"boom\"}}}\n";
-
-        let response = responses_sse_to_response_value(sse).unwrap();
-        assert_eq!(response["id"], "resp_ok");
-    }
-
-    #[test]
     fn aggregated_chat_sse_round_trips_through_openai_to_anthropic() {
         // 全链路：错标 Content-Type 的 SSE 体 → 聚合 → 既有非流转换器 → Anthropic JSON
         let sse = "data: {\"id\":\"chatcmpl-9\",\"created\":1,\"model\":\"gpt-5.4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n\
@@ -4189,7 +4281,13 @@ data: [DONE]\n\n";
                     Bytes::from_static(sse.as_bytes()),
                 );
                 let response = super::handle_claude_transform(
-                    upstream, &ctx, &state, &request, false, api_format, None,
+                    upstream,
+                    &ctx,
+                    &state,
+                    super::ClaudeResponseContext::from_request(&request),
+                    false,
+                    api_format,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -4225,6 +4323,141 @@ data: [DONE]\n\n";
             true,
             "openai_responses",
         ));
+    }
+
+    #[tokio::test]
+    async fn forced_web_search_selection_survives_response_context_extraction() {
+        use crate::app_config::AppType;
+        use crate::mode::stack::StackTarget;
+        use crate::provider::Provider;
+        use crate::proxy::{
+            handler_context::RequestContext, hyper_client::ProxyResponse, server::ProxyState,
+        };
+        use serde_json::{json, Value};
+
+        let state = ProxyState::for_test(Arc::new(Database::memory().unwrap()));
+        state.config.write().await.enable_logging = false;
+        let request = json!({
+            "model": "test-model", "messages": [{"role": "user", "content": "Search twice"}],
+            "tools": [
+                {"type": "web_search_20250305", "name": "first_search", "max_uses": 1},
+                {"type": "web_search_20250305", "name": "chosen_search", "max_uses": 3},
+                {"name": "lookup", "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}
+            ],
+            "tool_choice": {"type": "tool", "name": "chosen_search"}
+        });
+        let ctx = RequestContext::new(
+            &state,
+            &request,
+            &HeaderMap::new(),
+            AppType::Claude,
+            "Claude",
+            "claude",
+            Some(StackTarget {
+                provider: Provider::with_id("search-test".into(), "Test".into(), json!({}), None),
+                upstream_model: "test-model".into(),
+                original_model: "test-model".into(),
+            }),
+        )
+        .await
+        .unwrap();
+        let output: Vec<Value> = (0..2)
+            .map(|index| {
+                json!({
+                    "id": format!("ws_{index}"), "type": "web_search_call", "status": "completed",
+                    "action": {"type": "search", "query": format!("query {index}")}
+                })
+            })
+            .collect();
+        let upstream_body = json!({"id": "resp_search", "model": "test-model", "status": "completed",
+            "output": output, "usage": {"input_tokens": 5, "output_tokens": 2}});
+        let mut events = vec![
+            json!({"type": "response.created", "response": {"id": "resp_search", "model": "test-model"}}),
+        ];
+        for (index, item) in output.iter().enumerate() {
+            let mut pending = item.clone();
+            pending["status"] = json!("in_progress");
+            events.push(json!({"type": "response.output_item.added", "output_index": index, "item": pending}));
+            events.push(
+                json!({"type": "response.output_item.done", "output_index": index, "item": item}),
+            );
+        }
+        events.push(json!({"type": "response.completed", "response": upstream_body}));
+        let sse = events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>();
+
+        for (stream, upstream_sse) in [(false, false), (false, true), (true, true)] {
+            let context = super::ClaudeResponseContext::from_request(&request);
+            assert_eq!(
+                context.hosted_web_search_name.as_deref(),
+                Some("chosen_search")
+            );
+            assert_eq!(context.hosted_web_search_max_uses, Some(3));
+            assert!(context
+                .tool_schema_hints
+                .as_ref()
+                .unwrap()
+                .contains_key("lookup"));
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                "content-type",
+                HeaderValue::from_static(if upstream_sse {
+                    "text/event-stream"
+                } else {
+                    "application/json"
+                }),
+            );
+            let upstream = ProxyResponse::buffered(
+                StatusCode::OK,
+                headers,
+                Bytes::from(if upstream_sse {
+                    sse.clone()
+                } else {
+                    upstream_body.to_string()
+                }),
+            );
+            let response = super::handle_claude_transform(
+                upstream,
+                &ctx,
+                &state,
+                context,
+                stream,
+                "openai_responses",
+                None,
+            )
+            .await
+            .unwrap();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let blocks = if stream {
+                std::str::from_utf8(&bytes)
+                    .unwrap()
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("data: "))
+                    .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+                    .filter_map(|event| event.get("content_block").cloned())
+                    .collect::<Vec<_>>()
+            } else {
+                serde_json::from_slice::<Value>(&bytes).unwrap()["content"]
+                    .as_array()
+                    .unwrap()
+                    .clone()
+            };
+            let names = blocks
+                .iter()
+                .filter(|block| block["type"] == "server_tool_use")
+                .map(|block| block["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names,
+                vec!["chosen_search", "chosen_search"],
+                "stream={stream}, upstream_sse={upstream_sse}"
+            );
+            assert!(!std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("max_uses_exceeded"));
+        }
     }
 
     #[tokio::test]
@@ -4724,6 +4957,87 @@ mod copilot_native_responses_tests {
         let (body, _) = body_and_events(response).await;
 
         assert_eq!(body.as_ref(), input.as_bytes());
+    }
+
+    #[tokio::test]
+    async fn copilot_auto_compaction_hook_requires_a_successful_summary_after_repair_or_conversion()
+    {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (state, ctx) = context(true).await;
+        for (chat, success) in [(true, true), (true, false), (false, true), (false, false)] {
+            let fired = Arc::new(AtomicBool::new(false));
+            let hook = fired.clone();
+            let wire = if chat {
+                let finish = if success { "stop" } else { "length" };
+                let event = json!({"id":"chat", "choices":[{"index":0,
+                    "delta":{"content":"A summary"}, "finish_reason":finish}]});
+                format!("data: {event}\n\ndata: [DONE]\n\n")
+            } else {
+                let status = if success { "completed" } else { "incomplete" };
+                let event = json!({"type":"response.completed", "response": {
+                    "id":"compact", "status":status, "output":[{"type":"compaction",
+                    "id":"cmp_1","encrypted_content":"opaque-summary"}]
+                }});
+                format!("data: {event}\n\n")
+            };
+            let upstream = upstream(&wire).with_success_terminal_hook(Box::new(move || {
+                Box::pin(async move { hook.store(true, Ordering::Relaxed) })
+            }));
+            let response = if chat {
+                let tools = transform_codex_chat::build_codex_tool_context_from_request(
+                    &json!({"input":[{"type":"compaction_trigger"}]}),
+                );
+                handle_codex_chat_to_responses_transform(upstream, &ctx, &state, true, None, tools)
+                    .await
+            } else {
+                handle_codex_late_arguments_repair(upstream, &ctx, &state, true, None).await
+            }
+            .unwrap();
+            let (_, events) = body_and_events(response).await;
+            assert!(!events.is_empty());
+            assert_eq!(
+                fired.load(Ordering::Relaxed),
+                success,
+                "chat={chat}, success={success}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn claude_chat_auto_compaction_requires_an_unfiltered_summary() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (state, ctx) = context(true).await;
+        for (finish, done) in [
+            ("stop", "data: [DONE]\n\n"),
+            ("content_filter", "data: [DONE]\n\n"),
+            ("stop", ""),
+        ] {
+            let fired = Arc::new(AtomicBool::new(false));
+            let flag = fired.clone();
+            let chunk = json!({"id":"chat", "model":"chat-model", "choices":[{"index":0,
+                "delta":{"role":"assistant", "content":"Partial summary"}, "finish_reason":finish}]});
+            let stream = upstream(&format!("data: {chunk}\n\n{done}")).with_success_terminal_hook(
+                Box::new(move || {
+                    Box::pin(async move {
+                        flag.store(true, Ordering::Relaxed);
+                    })
+                }),
+            );
+            let response = handle_claude_transform(
+                stream,
+                &ctx,
+                &state,
+                ClaudeResponseContext::from_request(&json!({})),
+                true,
+                "openai_chat",
+                None,
+            )
+            .await
+            .unwrap();
+            let (_, events) = body_and_events(response).await;
+            assert!(events.iter().any(|e| e["type"] == "message_stop"));
+            assert_eq!(fired.load(Ordering::Relaxed), finish == "stop");
+        }
     }
 
     #[tokio::test]
@@ -5555,5 +5869,41 @@ mod stack_tests {
         .expect("models");
         let (_, body) = json_of(response).await;
         assert_eq!(body, json!({ "data": [], "has_more": false }));
+    }
+
+    #[tokio::test]
+    async fn read_request_body_limited_rejects_oversized_body_with_413() {
+        let ok = read_request_body_limited(axum::body::Body::from(vec![b'a'; 1024]), 1024)
+            .await
+            .expect("body within limit succeeds");
+        assert_eq!(ok.len(), 1024);
+
+        let err = read_request_body_limited(axum::body::Body::from(vec![b'a'; 1025]), 1024)
+            .await
+            .expect_err("body exceeding limit must be rejected");
+        assert!(matches!(err, ProxyError::RequestBodyTooLarge(1024)));
+        assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn decode_codex_request_body_rejects_decompression_bomb_with_413() {
+        use std::io::Write;
+
+        let mut enc = zstd::stream::Encoder::new(Vec::new(), 3).unwrap();
+        enc.write_all(&vec![b'0'; 2 * 1024 * 1024]).unwrap();
+        let compressed = enc.finish().unwrap();
+        assert!(compressed.len() < 4096, "bomb payload should stay tiny");
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_ENCODING,
+            axum::http::HeaderValue::from_static("zstd"),
+        );
+
+        let err =
+            decode_codex_request_body_with_limit(&mut headers, Bytes::from(compressed), 64 * 1024)
+                .expect_err("decompression bomb must be rejected");
+        assert!(matches!(err, ProxyError::RequestBodyTooLarge(65536)));
+        assert_eq!(err.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
 }

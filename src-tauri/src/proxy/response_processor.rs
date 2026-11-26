@@ -20,6 +20,7 @@ use bytes::Bytes;
 use futures::stream::{Stream, StreamExt};
 use serde_json::Value;
 use std::{
+    collections::VecDeque,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, OnceLock,
@@ -165,6 +166,7 @@ pub async fn handle_streaming(
     parser_config: &UsageParserConfig,
     connection_guard: Option<ActiveConnectionGuard>,
 ) -> Response {
+    let (response, terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
     log::debug!(
         "[{}] 已接收上游流式响应: status={}, headers={}",
@@ -201,12 +203,13 @@ pub async fn handle_streaming(
     let timeout_config = ctx.streaming_timeout_config();
 
     // 创建带日志和超时的透传流
-    let logged_stream = create_logged_passthrough_stream(
+    let logged_stream = create_logged_passthrough_stream_with_terminal_hook(
         stream,
         ctx.tag,
         usage_collector,
         timeout_config,
         connection_guard,
+        terminal_hook,
     );
 
     let body = axum::body::Body::from_stream(logged_stream);
@@ -228,6 +231,7 @@ pub async fn handle_non_streaming(
     // guard 在函数 scope 内持有，整包响应读取完成后随函数返回一并 drop
     _connection_guard: Option<ActiveConnectionGuard>,
 ) -> Result<Response, ProxyError> {
+    let (response, mut terminal_hook) = response.take_success_terminal_hook();
     // 整包超时：仅在故障转移开启且配置值非零时生效
     let body_timeout =
         if ctx.app_config.auto_failover_enabled && ctx.app_config.non_streaming_timeout > 0 {
@@ -237,6 +241,14 @@ pub async fn handle_non_streaming(
         };
     let (mut response_headers, status, body_bytes) =
         read_decoded_body(response, ctx.tag, body_timeout).await?;
+    if terminal_hook.is_some()
+        && status.is_success()
+        && terminal_json_response_succeeded(&body_bytes)
+    {
+        if let Some(hook) = terminal_hook.take() {
+            hook().await;
+        }
+    }
     strip_hop_by_hop_response_headers(&mut response_headers);
 
     log::debug!(
@@ -352,7 +364,38 @@ pub async fn process_response(
 // SSE 使用量收集器
 // ============================================================================
 
+const MAX_HEAD_USAGE_EVENTS: usize = 32;
+const MAX_TAIL_USAGE_EVENTS: usize = 256;
+const MAX_PENDING_SSE_BYTES: usize = 64 * 1024 * 1024;
+
 type UsageCallbackWithTiming = Arc<dyn Fn(Vec<Value>, Option<u64>) + Send + Sync + 'static>;
+
+#[derive(Default)]
+struct CollectedSseEvents {
+    head: Vec<Value>,
+    tail: VecDeque<Value>,
+    dropped: usize,
+}
+
+impl CollectedSseEvents {
+    fn push(&mut self, event: Value) {
+        if self.head.len() < MAX_HEAD_USAGE_EVENTS {
+            self.head.push(event);
+            return;
+        }
+        if self.tail.len() == MAX_TAIL_USAGE_EVENTS {
+            self.tail.pop_front();
+            self.dropped += 1;
+        }
+        self.tail.push_back(event);
+    }
+
+    fn into_vec(self) -> Vec<Value> {
+        let mut events = self.head;
+        events.extend(self.tail);
+        events
+    }
+}
 
 /// SSE 使用量收集器
 #[derive(Clone)]
@@ -361,7 +404,7 @@ pub struct SseUsageCollector {
 }
 
 struct SseUsageCollectorInner {
-    events: Mutex<Vec<Value>>,
+    events: Mutex<CollectedSseEvents>,
     first_output_time: OnceLock<std::time::Instant>,
     start_time: std::time::Instant,
     on_complete: UsageCallbackWithTiming,
@@ -379,7 +422,7 @@ impl SseUsageCollector {
         let on_complete: UsageCallbackWithTiming = Arc::new(callback);
         Self {
             inner: Arc::new(SseUsageCollectorInner {
-                events: Mutex::new(Vec::new()),
+                events: Mutex::new(CollectedSseEvents::default()),
                 first_output_time: OnceLock::new(),
                 start_time,
                 on_complete,
@@ -422,10 +465,19 @@ impl SseUsageCollector {
             return;
         }
 
-        let events = {
+        let collected = {
             let mut guard = self.inner.events.lock().await;
             std::mem::take(&mut *guard)
         };
+        if collected.dropped > 0 {
+            log::debug!(
+                "SSE usage collector retained {} head + {} tail events (dropped {} middle events)",
+                collected.head.len(),
+                collected.tail.len(),
+                collected.dropped
+            );
+        }
+        let events = collected.into_vec();
 
         let first_token_ms = self
             .inner
@@ -699,10 +751,7 @@ async fn log_usage_internal(
     let outbound_model = outbound_model.to_string();
     let write = tokio::task::spawn_blocking(move || {
         let logger = UsageLogger::new(&db);
-        // 计费模式读取的 DAO 是伪 async（无真实挂起点、直接取阻塞锁），
-        // 在阻塞线程上 block_on 不会停转运行时
-        let pricing_model_source = tokio::runtime::Handle::current()
-            .block_on(logger.resolve_pricing_model_source(&app_type));
+        let pricing_model_source = logger.resolve_pricing_model_source(&app_type);
         let pricing_model = if pricing_model_source == PRICING_SOURCE_REQUEST {
             outbound_model
         } else {
@@ -734,21 +783,264 @@ async fn log_usage_internal(
     }
 }
 
+/// Observe semantic completion of a compaction stream alongside usage collection.
+#[derive(Default)]
+struct SuccessTerminalTracker {
+    failed: bool,
+    chat_success: bool,
+    anthropic_success: bool,
+    chat_has_text: bool,
+    chat_has_tools: bool,
+    anthropic_has_text: bool,
+    anthropic_has_tools: bool,
+    responses_has_summary: bool,
+    responses_has_tools: bool,
+}
+
+impl SuccessTerminalTracker {
+    fn observe(&mut self, event_name: Option<&str>, data: &str) -> bool {
+        if self.failed {
+            return false;
+        }
+        if data.trim() == "[DONE]" {
+            return std::mem::take(&mut self.chat_success);
+        }
+        let Ok(value) = serde_json::from_str::<Value>(data) else {
+            return false;
+        };
+        let event_name = event_name.or_else(|| value.get("type").and_then(Value::as_str));
+        if matches!(
+            event_name,
+            Some("error" | "response.failed" | "response.incomplete")
+        ) || value.get("error").is_some_and(|error| !error.is_null())
+        {
+            self.failed = true;
+            return false;
+        }
+        if matches!(
+            event_name,
+            Some("response.completed" | "response.compaction")
+        ) || value.get("object").and_then(Value::as_str) == Some("response.compaction")
+        {
+            let response = value.get("response").unwrap_or(&value);
+            return response_completed(response, true)
+                && (responses_have_summary(response)
+                    || (!self.responses_has_tools
+                        && self.responses_has_summary
+                        && !response
+                            .get("output")
+                            .and_then(Value::as_array)
+                            .is_some_and(|items| items.iter().any(is_response_tool_call))));
+        }
+        if event_name == Some("response.output_item.done") {
+            if let Some(item) = value.get("item") {
+                self.responses_has_tools |= is_response_tool_call(item);
+                self.responses_has_summary |=
+                    !crate::proxy::providers::codex_compaction::summary_from_output_items(
+                        std::iter::once(item),
+                    )
+                    .is_empty();
+            }
+        }
+        if event_name == Some("content_block_start") {
+            self.anthropic_has_tools |=
+                value.pointer("/content_block/type").and_then(Value::as_str) == Some("tool_use");
+            self.anthropic_has_text |= value
+                .pointer("/content_block/text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty());
+        }
+        if event_name == Some("content_block_delta")
+            && value.pointer("/delta/type").and_then(Value::as_str) == Some("text_delta")
+            && value
+                .pointer("/delta/text")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        {
+            self.anthropic_has_text = true;
+        }
+        if event_name == Some("message_start") {
+            self.anthropic_has_text = false;
+            self.anthropic_has_tools = false;
+            self.anthropic_success = false;
+        }
+        if event_name == Some("message_delta")
+            && value.pointer("/delta/stop_reason").and_then(Value::as_str) == Some("end_turn")
+        {
+            self.anthropic_success = self.anthropic_has_text && !self.anthropic_has_tools;
+        }
+        if event_name == Some("message_stop") {
+            return std::mem::take(&mut self.anthropic_success);
+        }
+        if let Some(choices) = value.get("choices").and_then(Value::as_array) {
+            for choice in choices {
+                let delta = choice.get("delta").unwrap_or(&Value::Null);
+                self.chat_has_text |= chat_has_text(delta);
+                if delta
+                    .get("tool_calls")
+                    .and_then(Value::as_array)
+                    .is_some_and(|tools| !tools.is_empty())
+                {
+                    self.chat_has_tools = true;
+                }
+            }
+            if !choices.is_empty()
+                && choices.iter().all(|choice| {
+                    choice.get("finish_reason").and_then(Value::as_str) == Some("stop")
+                })
+            {
+                self.chat_success = self.chat_has_text && !self.chat_has_tools;
+            }
+        }
+        false
+    }
+}
+
+pub(crate) fn terminal_json_response_succeeded(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<Value>(bytes)
+        .is_ok_and(|value| terminal_value_response_succeeded(&value))
+}
+
+pub(crate) fn terminal_value_response_succeeded(value: &Value) -> bool {
+    if value.get("error").is_some_and(|error| !error.is_null())
+        || value.get("type").and_then(Value::as_str) == Some("error")
+    {
+        return false;
+    }
+    if value.get("choices").is_some() {
+        return chat_value_has_summary(value);
+    }
+    if value.get("stop_reason").is_some() {
+        return value.get("stop_reason").and_then(Value::as_str) == Some("end_turn")
+            && anthropic_value_has_summary(value);
+    }
+    let is_compact_object =
+        value.get("object").and_then(Value::as_str) == Some("response.compaction");
+    response_completed(value, is_compact_object) && responses_have_summary(value)
+}
+
+fn chat_has_text(message: &Value) -> bool {
+    message.get("content").is_some_and(|content| match content {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(parts) => parts.iter().any(|part| {
+            part.get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|s| !s.trim().is_empty())
+        }),
+        _ => false,
+    })
+}
+
+fn chat_value_has_summary(value: &Value) -> bool {
+    value
+        .get("choices")
+        .and_then(Value::as_array)
+        .is_some_and(|choices| {
+            !choices.is_empty()
+                && choices.iter().all(|choice| {
+                    let message = choice.get("message").unwrap_or(&Value::Null);
+                    matches!(
+                        choice.get("finish_reason").and_then(Value::as_str),
+                        Some("stop" | "end_turn" | "stop_sequence")
+                    ) && chat_has_text(message)
+                        && message
+                            .get("tool_calls")
+                            .and_then(Value::as_array)
+                            .is_none_or(|calls| calls.is_empty())
+                })
+        })
+}
+
+fn anthropic_value_has_summary(value: &Value) -> bool {
+    value
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|blocks| {
+            !blocks
+                .iter()
+                .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+                && blocks.iter().any(|block| {
+                    block.get("type").and_then(Value::as_str) == Some("text")
+                        && block
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.trim().is_empty())
+                })
+        })
+}
+
+fn response_completed(value: &Value, allow_missing_status: bool) -> bool {
+    value.get("status").map_or(allow_missing_status, |status| {
+        status.as_str() == Some("completed")
+    }) && value.get("error").is_none_or(Value::is_null)
+}
+
+fn is_response_tool_call(item: &Value) -> bool {
+    matches!(
+        item.get("type").and_then(Value::as_str),
+        Some("function_call" | "custom_tool_call" | "tool_search_call")
+    )
+}
+
+fn responses_have_summary(value: &Value) -> bool {
+    let is_compact_object =
+        value.get("object").and_then(Value::as_str) == Some("response.compaction");
+    value
+        .get("output")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                crate::proxy::providers::codex_compaction::is_compaction_item(item)
+                    && item
+                        .get("encrypted_content")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| !s.trim().is_empty())
+            }) || (!is_compact_object
+                && !items.iter().any(is_response_tool_call)
+                && !crate::proxy::providers::codex_compaction::summary_from_output_items(items)
+                    .is_empty())
+        })
+}
+
 /// 创建带日志记录和超时控制的透传流
-pub fn create_logged_passthrough_stream(
+pub(crate) fn create_logged_passthrough_stream_with_terminal_hook(
     stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
     tag: &'static str,
     usage_collector: Option<SseUsageCollector>,
     timeout_config: StreamingTimeoutConfig,
     connection_guard: Option<ActiveConnectionGuard>,
+    terminal_hook: Option<crate::proxy::hyper_client::SuccessTerminalHook>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_logged_passthrough_stream_with_max_pending_bytes(
+        stream,
+        tag,
+        usage_collector,
+        timeout_config,
+        connection_guard,
+        terminal_hook,
+        MAX_PENDING_SSE_BYTES,
+    )
+}
+
+fn create_logged_passthrough_stream_with_max_pending_bytes(
+    stream: impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static,
+    tag: &'static str,
+    usage_collector: Option<SseUsageCollector>,
+    timeout_config: StreamingTimeoutConfig,
+    connection_guard: Option<ActiveConnectionGuard>,
+    terminal_hook: Option<crate::proxy::hyper_client::SuccessTerminalHook>,
+    max_pending_sse_bytes: usize,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let _conn_guard = connection_guard;
-        let mut sse = SseBuffer::new();
+        let mut sse = SseBuffer::with_max_pending_bytes(max_pending_sse_bytes);
         let mut collector = usage_collector;
+        let mut terminal_hook = terminal_hook;
+        let mut terminal_tracker = SuccessTerminalTracker::default();
         let mut finish_guard = collector.clone().map(SseUsageFinishGuard::new);
         let inspect_sse_events =
-            collector.is_some() || log::log_enabled!(log::Level::Debug);
+            collector.is_some() || terminal_hook.is_some() || log::log_enabled!(log::Level::Debug);
+        let mut sse_overflow_warned = false;
         let mut is_first_chunk = true;
 
         // 超时配置
@@ -801,6 +1093,12 @@ pub fn create_logged_passthrough_stream(
                     is_first_chunk = false;
                     if inspect_sse_events {
                         sse.push_bytes(&bytes);
+                        if sse.dropped_oversized_events() > 0 && !sse_overflow_warned {
+                            sse_overflow_warned = true;
+                            log::warn!(
+                                "[{tag}] SSE inspection buffer exceeded {max_pending_sse_bytes} bytes; skipping oversized event(s) and resuming at next delimiter"
+                            );
+                        }
 
                         // 尝试解析并记录完整的 SSE 事件
                         while let Some(event_text) = sse.next_block() {
@@ -808,6 +1106,16 @@ pub fn create_logged_passthrough_stream(
                                 let event_name = event_text
                                     .lines()
                                     .find_map(|line| strip_sse_field(line, "event"));
+                                if terminal_hook.is_some() {
+                                    let event_data = event_text.lines()
+                                        .filter_map(|line| strip_sse_field(line, "data"))
+                                        .collect::<Vec<_>>().join("\n");
+                                    if terminal_tracker.observe(event_name, &event_data) {
+                                        if let Some(hook) = terminal_hook.take() {
+                                            hook().await;
+                                        }
+                                    }
+                                }
                                 // 提取 data 部分；只有 usage collector 存在时才解析 JSON。
                                 for line in event_text.lines() {
                                     if let Some(data) = strip_sse_field(line, "data") {
@@ -848,6 +1156,32 @@ pub fn create_logged_passthrough_stream(
                     break;
                 }
                 None => {
+                    // The shared SSE parser also accepts a final event without a
+                    // trailing blank line. Only inspect this tail when a protocol
+                    // callback is present; the ordinary passthrough path stays lazy.
+                    if terminal_hook.is_some() {
+                        let tail = sse.take_tail();
+                        if !tail.trim().is_empty() {
+                            let event_name = tail.lines()
+                                .find_map(|line| strip_sse_field(line, "event"));
+                            let event_data = tail.lines()
+                                .filter_map(|line| strip_sse_field(line, "data"))
+                                .collect::<Vec<_>>().join("\n");
+                            if terminal_tracker.observe(event_name, &event_data)
+                                || (event_data.is_empty() && terminal_json_response_succeeded(tail.as_bytes()))
+                            {
+                                if let Some(hook) = terminal_hook.take() {
+                                    hook().await;
+                                }
+                            }
+                        }
+                    }
+                    // Chat gateways can close cleanly after finish_reason without [DONE].
+                    if terminal_tracker.chat_success && !terminal_tracker.failed {
+                        if let Some(hook) = terminal_hook.take() {
+                            hook().await;
+                        }
+                    }
                     // 流正常结束
                     break;
                 }
@@ -1041,7 +1375,7 @@ mod tests {
                 "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}}\n\n",
             ));
         };
-        let stream = create_logged_passthrough_stream(
+        let stream = create_logged_passthrough_stream_with_terminal_hook(
             upstream,
             "test",
             Some(collector),
@@ -1049,6 +1383,7 @@ mod tests {
                 first_byte_timeout: 0,
                 idle_timeout: 0,
             },
+            None,
             None,
         );
         futures::pin_mut!(stream);
@@ -1449,7 +1784,7 @@ mod tests {
             .await?;
 
         let logger = UsageLogger::new(&db);
-        let source = logger.resolve_pricing_model_source("claude-desktop").await;
+        let source = logger.resolve_pricing_model_source("claude-desktop");
 
         assert_eq!(source, "request");
         Ok(())
@@ -1567,7 +1902,7 @@ mod tests {
         let stream = futures::stream::iter(vec![Ok::<_, std::io::Error>(
             sse_body.as_bytes().to_vec().into(),
         )]);
-        let passthrough = create_logged_passthrough_stream(
+        let passthrough = create_logged_passthrough_stream_with_terminal_hook(
             stream,
             "test",
             Some(collector),
@@ -1575,6 +1910,7 @@ mod tests {
                 first_byte_timeout: 0,
                 idle_timeout: 0,
             },
+            None,
             None,
         );
         futures::pin_mut!(passthrough);
@@ -1595,5 +1931,165 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 160);
         assert_eq!(usage.model.as_deref(), Some("gemini-3.8-flash"));
         assert_eq!(usage.message_id.as_deref(), Some("resp_1"));
+    }
+
+    #[tokio::test]
+    async fn sse_usage_collector_bounds_events_and_preserves_head_and_tail() {
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(std::time::Instant::now(), None, {
+            let collected = collected.clone();
+            move |events, _| {
+                *collected.lock().unwrap() = events;
+            }
+        });
+
+        let total = 1200usize;
+        collector
+            .push(serde_json::json!({
+                "type": "message_start",
+                "index": 0,
+                "message": {
+                    "id": "msg_1",
+                    "model": "claude-sonnet-4-5",
+                    "usage": { "input_tokens": 123 }
+                }
+            }))
+            .await;
+        for i in 1..(total - 1) {
+            collector
+                .push(serde_json::json!({
+                    "type": "content_block_delta",
+                    "index": i
+                }))
+                .await;
+        }
+        collector
+            .push(serde_json::json!({
+                "type": "message_delta",
+                "index": total - 1,
+                "usage": { "output_tokens": 45 }
+            }))
+            .await;
+
+        collector.finish().await;
+
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), MAX_HEAD_USAGE_EVENTS + MAX_TAIL_USAGE_EVENTS);
+        let retained_indices: Vec<usize> = events
+            .iter()
+            .map(|e| e["index"].as_u64().unwrap() as usize)
+            .collect();
+        let expected_head: Vec<usize> = (0..MAX_HEAD_USAGE_EVENTS).collect();
+        let expected_tail: Vec<usize> = ((total - MAX_TAIL_USAGE_EVENTS)..total).collect();
+        assert_eq!(&retained_indices[..MAX_HEAD_USAGE_EVENTS], expected_head);
+        assert_eq!(&retained_indices[MAX_HEAD_USAGE_EVENTS..], expected_tail);
+
+        let usage = TokenUsage::from_claude_stream_events(&events).expect("usage parsed");
+        assert_eq!(usage.input_tokens, 123);
+        assert_eq!(usage.output_tokens, 45);
+        assert_eq!(usage.model.as_deref(), Some("claude-sonnet-4-5"));
+        assert_eq!(usage.message_id.as_deref(), Some("msg_1"));
+    }
+
+    #[tokio::test]
+    async fn logged_passthrough_stream_keeps_client_bytes_and_resumes_after_overflow() {
+        let head = Bytes::from("data: {\"type\":\"message_start\"}\n\n");
+        let blob = "a".repeat(2048);
+        let giant_event = Bytes::from(format!("data: {{\"blob\":\"{blob}\"}}\n\n"));
+        let tail = Bytes::from("data: {\"type\":\"message_delta\"}\n\n");
+        let done = Bytes::from("data: [DONE]\n\n");
+        let expected_len = head.len() + giant_event.len() + tail.len() + done.len();
+
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(std::time::Instant::now(), None, {
+            let collected = collected.clone();
+            move |events, _| {
+                *collected.lock().unwrap() = events;
+            }
+        });
+
+        let upstream = futures::stream::iter(vec![
+            Ok::<_, std::io::Error>(head),
+            Ok(giant_event),
+            Ok(tail),
+            Ok(done),
+        ]);
+        let passthrough = create_logged_passthrough_stream_with_max_pending_bytes(
+            upstream,
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+            None,
+            1024,
+        );
+        futures::pin_mut!(passthrough);
+        let mut client_bytes = 0usize;
+        while let Some(chunk) = passthrough.next().await {
+            client_bytes += chunk.expect("client passthrough chunk").len();
+        }
+
+        assert_eq!(client_bytes, expected_len);
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["type"], "message_start");
+        assert_eq!(events[1]["type"], "message_delta");
+    }
+
+    #[tokio::test]
+    async fn logged_passthrough_stream_collects_large_image_generation_completed_usage() {
+        use crate::proxy::handler_config::codex_stream_usage_event_filter;
+
+        let b64_image = "A".repeat(5 * 1024 * 1024);
+        let mut payload = String::with_capacity(5 * 1024 * 1024 + 256);
+        payload.push_str("event: image_generation.completed\n");
+        payload.push_str("data: {\"type\":\"image_generation.completed\",\"b64_json\":\"");
+        payload.push_str(&b64_image);
+        payload.push_str("\",\"usage\":{\"input_tokens\":120,\"output_tokens\":450}}\n\n");
+        let expected_len = payload.len();
+        let chunks: Vec<Result<Bytes, std::io::Error>> = payload
+            .as_bytes()
+            .chunks(64 * 1024)
+            .map(|chunk| Ok(Bytes::copy_from_slice(chunk)))
+            .collect();
+
+        let collected = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let collector = SseUsageCollector::new(
+            std::time::Instant::now(),
+            Some(codex_stream_usage_event_filter),
+            {
+                let collected = collected.clone();
+                move |events, _| {
+                    *collected.lock().unwrap() = events;
+                }
+            },
+        );
+
+        let passthrough = create_logged_passthrough_stream_with_terminal_hook(
+            futures::stream::iter(chunks),
+            "test",
+            Some(collector),
+            StreamingTimeoutConfig {
+                first_byte_timeout: 0,
+                idle_timeout: 0,
+            },
+            None,
+            None,
+        );
+        futures::pin_mut!(passthrough);
+        let mut client_bytes = 0usize;
+        while let Some(chunk) = passthrough.next().await {
+            client_bytes += chunk.expect("client passthrough chunk").len();
+        }
+
+        assert_eq!(client_bytes, expected_len);
+        let events = collected.lock().unwrap().clone();
+        assert_eq!(events.len(), 1);
+        let usage = TokenUsage::from_codex_stream_events_auto(&events).expect("usage parsed");
+        assert_eq!(usage.input_tokens, 120);
+        assert_eq!(usage.output_tokens, 450);
     }
 }

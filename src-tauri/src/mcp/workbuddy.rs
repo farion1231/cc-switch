@@ -1,6 +1,6 @@
 //! WorkBuddy 的用户级 MCP：`<data dir>/mcp.json`（默认 `~/.workbuddy/mcp.json`）。
 //!
-//! 格式与 CodeBuddy Code 相同：`{"mcpServers": {"<name>": {...}}}`。stdio 用
+//! 格式与 CodeBuddy 相同：`{"mcpServers": {"<name>": {...}}}`。stdio 用
 //! `command` / `args` / `env` / `cwd`，远程用 `url` / `headers`，`type` 取 `stdio` /
 //! `http` / `sse`（缺省时有 `command` 视为 stdio，有 `url` 视为 http）。WorkBuddy 桌面端
 //! 自己的 MCP 设置页读写的也是这个文件，单条用 `disabled: true` 停用；`managedBy:
@@ -107,7 +107,10 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
 
 pub fn import(state: &AppState) -> Result<usize, AppError> {
     let document = read(&config_path())?;
-    let mut existing = state.db.get_all_mcp_servers()?;
+    let (mut existing, unreadable) = state
+        .db
+        .get_mcp_server_rows()?
+        .into_readable_and_unreadable_ids();
     let mut count = 0;
     let mut skipped = Vec::new();
     for (id, native) in document
@@ -116,6 +119,10 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         .into_iter()
         .flatten()
     {
+        if unreadable.contains(id) {
+            skipped.push(format!("'{id}': stored server is unreadable"));
+            continue;
+        }
         if is_connector(native) {
             continue;
         }

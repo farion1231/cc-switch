@@ -52,8 +52,8 @@ pnpm dev
 | `pnpm build` | Production build and packaging |
 | `pnpm build:renderer` | Build the frontend only, output to `dist/` |
 | `pnpm typecheck` | TypeScript type checking (strict; unused imports or parameters are errors) |
-| `pnpm format` | Format `src/` with Prettier |
-| `pnpm format:check` | Check code formatting in `src/` |
+| `pnpm format` | Format `src/` and `tests/` with Prettier |
+| `pnpm format:check` | Check code formatting in `src/` and `tests/` |
 | `pnpm test:unit` | Run frontend unit tests |
 | `pnpm test:unit:watch` | Run frontend unit tests in watch mode |
 
@@ -62,7 +62,7 @@ Rust backend commands (run inside `src-tauri/`):
 ```bash
 cd src-tauri
 cargo fmt                     # Format Rust code
-cargo clippy -- -D warnings   # Clippy check (same as CI, warnings are errors)
+cargo clippy --all-targets -- -D warnings   # Clippy check (same as CI, warnings are errors)
 cargo test                    # Run all backend tests
 cargo test some_test_name     # Run tests matching a name
 ```
@@ -171,7 +171,7 @@ Backend (Tauri 2 + Rust)
 ## Code Style
 
 - **Frontend**: Prettier for formatting (`src/` only, default config), strict TypeScript (`pnpm typecheck`); the project does not use ESLint
-- **Backend**: `cargo fmt` for formatting, `cargo clippy -- -D warnings` for linting
+- **Backend**: `cargo fmt` for formatting, `cargo clippy --all-targets -- -D warnings` for linting
 - **Tauri 2 commands**: the command name is the Rust function name and stays snake_case; when calling `invoke` from the frontend, write argument names in camelCase (e.g., Rust `provider_id` becomes `providerId` on the frontend). Register new commands in `generate_handler!` in `src-tauri/src/lib.rs`, and put the frontend wrappers in `src/lib/api/`
 - **Rules the frontend mirrors from the backend** (constants, URL detection, app capabilities, languages): don't rely on a "keep in sync" comment. A Rust test writes the backend values to a JSON fixture in `tests/config/` and a vitest test compares the frontend copy with it, so changing one side alone fails a test. See `src-tauri/src/frontend_parity_tests.rs` and `tests/config/backendConstants.test.ts`; after an intended backend change, regenerate with `CC_SWITCH_UPDATE_GOLDEN=1 cargo test <test name>` and review the fixture diff
 
@@ -179,7 +179,7 @@ Run the same checks as CI before submitting:
 
 ```bash
 pnpm typecheck && pnpm format:check && pnpm test:unit && pnpm build:renderer
-cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 ## Pull Request Guidelines
@@ -195,7 +195,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 - [ ] `pnpm typecheck` passes
 - [ ] `pnpm format:check` passes
 - [ ] `pnpm test:unit` passes
-- [ ] If Rust code changed: `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` pass
+- [ ] If Rust code changed: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` pass
 - [ ] If user-facing text changed: all eight locale files are updated
 
 ### Commit Convention
@@ -309,8 +309,8 @@ pnpm dev
 | `pnpm build` | 构建生产版本并打包 |
 | `pnpm build:renderer` | 只构建前端，输出到 `dist/` |
 | `pnpm typecheck` | TypeScript 类型检查（strict，未使用的 import 或参数会报错） |
-| `pnpm format` | 用 Prettier 格式化 `src/` |
-| `pnpm format:check` | 检查 `src/` 的代码格式 |
+| `pnpm format` | 用 Prettier 格式化 `src/` 和 `tests/` |
+| `pnpm format:check` | 检查 `src/` 和 `tests/` 的代码格式 |
 | `pnpm test:unit` | 运行前端单元测试 |
 | `pnpm test:unit:watch` | 以监听模式运行前端单元测试 |
 
@@ -319,7 +319,7 @@ Rust 后端命令（在 `src-tauri/` 目录下执行）：
 ```bash
 cd src-tauri
 cargo fmt                     # 格式化 Rust 代码
-cargo clippy -- -D warnings   # Clippy 检查（与 CI 一致，警告视为错误）
+cargo clippy --all-targets -- -D warnings   # Clippy 检查（与 CI 一致，警告视为错误）
 cargo test                    # 运行所有后端测试
 cargo test some_test_name     # 按名称运行部分测试
 ```
@@ -428,7 +428,7 @@ Backend (Tauri 2 + Rust)
 ## 代码规范
 
 - **前端**：Prettier 格式化（仅 `src/`，使用默认配置）、严格 TypeScript（`pnpm typecheck`）；项目没有使用 ESLint
-- **后端**：`cargo fmt` 格式化，`cargo clippy -- -D warnings` 检查
+- **后端**：`cargo fmt` 格式化，`cargo clippy --all-targets -- -D warnings` 检查
 - **Tauri 2 命令**：命令名就是 Rust 函数名，保持 snake_case；前端 `invoke` 传参时，参数名要写成 camelCase（例如 Rust 的 `provider_id` 在前端写成 `providerId`）。新命令需要在 `src-tauri/src/lib.rs` 的 `generate_handler!` 中注册，前端封装放在 `src/lib/api/`
 - **前端照抄后端的规则**（常量、URL 识别、应用能力、语言列表）：不要只靠“改一边要改另一边”的注释。由 Rust 测试把后端的值写进 `tests/config/` 下的 JSON fixture，再由 vitest 测试把前端那份和它比对，只改一边测试就会失败。参考 `src-tauri/src/frontend_parity_tests.rs` 和 `tests/config/backendConstants.test.ts`；后端有意改动后，用 `CC_SWITCH_UPDATE_GOLDEN=1 cargo test <测试名>` 重新生成，再审 fixture 的 diff
 
@@ -436,7 +436,7 @@ Backend (Tauri 2 + Rust)
 
 ```bash
 pnpm typecheck && pnpm format:check && pnpm test:unit && pnpm build:renderer
-cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+cd src-tauri && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
 ## Pull Request 指南
@@ -452,7 +452,7 @@ cd src-tauri && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 - [ ] `pnpm typecheck` 通过
 - [ ] `pnpm format:check` 通过
 - [ ] `pnpm test:unit` 通过
-- [ ] 如修改了 Rust 代码：`cargo fmt --check`、`cargo clippy -- -D warnings`、`cargo test` 通过
+- [ ] 如修改了 Rust 代码：`cargo fmt --check`、`cargo clippy --all-targets -- -D warnings`、`cargo test` 通过
 - [ ] 如修改了用户可见文本，已同步更新八个语言文件
 
 ### 提交信息规范

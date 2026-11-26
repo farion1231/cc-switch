@@ -2,6 +2,7 @@
 //!
 //! 提供 MCP 服务器的 CRUD 操作。
 
+use super::{Rows, UnreadableEntry};
 use crate::app_config::{AppType, McpApps, McpServer};
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
@@ -9,16 +10,14 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_codebuddy FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
     let name: String = row.get(1)?;
-    let server_config_str: String = row.get(2)?;
     let description: Option<String> = row.get(3)?;
     let homepage: Option<String> = row.get(4)?;
     let docs: Option<String> = row.get(5)?;
-    let tags_str: String = row.get(6)?;
     let enabled_claude: bool = row.get(7)?;
     let enabled_codex: bool = row.get(8)?;
     let enabled_gemini: bool = row.get(9)?;
@@ -26,8 +25,9 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let enabled_opencode: bool = row.get(11)?;
     let enabled_hermes: bool = row.get(12)?;
 
-    let server = serde_json::from_str(&server_config_str).unwrap_or_default();
-    let tags = serde_json::from_str(&tags_str).unwrap_or_default();
+    let entry = format!("MCP 服务器 {id}");
+    let server = super::json_column(row, 2, &entry)?;
+    let tags = super::json_column(row, 6, &entry)?;
 
     Ok((
         id.clone(),
@@ -50,6 +50,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 dsh: row.get(18)?,
                 copilot: row.get(19)?,
                 workbuddy: row.get(20)?,
+                codebuddy: row.get(21)?,
             },
             description,
             homepage,
@@ -59,58 +60,109 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     ))
 }
 
+/// 应用对应的 `enabled_*` 列；Claude Desktop、OpenClaw 在库里没有 MCP 标志。
+fn mcp_flag_column(app: &AppType) -> Option<&'static str> {
+    match app {
+        AppType::Claude => Some("enabled_claude"),
+        AppType::Codex => Some("enabled_codex"),
+        AppType::Gemini => Some("enabled_gemini"),
+        AppType::GrokBuild => Some("enabled_grokbuild"),
+        AppType::OpenCode => Some("enabled_opencode"),
+        AppType::Hermes => Some("enabled_hermes"),
+        AppType::Mcode => Some("enabled_mcode"),
+        AppType::Kimi => Some("enabled_kimi"),
+        AppType::Dsh => Some("enabled_dsh"),
+        AppType::Copilot => Some("enabled_copilot"),
+        AppType::WorkBuddy => Some("enabled_workbuddy"),
+        AppType::Pi => Some("enabled_pi"),
+        AppType::Omp => Some("enabled_omp"),
+        AppType::Agy => Some("enabled_agy"),
+        AppType::Codebuddy => Some("enabled_codebuddy"),
+        AppType::ClaudeDesktop | AppType::OpenClaw => None,
+    }
+}
+
 impl Database {
-    /// 获取所有 MCP 服务器
+    /// 获取所有 MCP 服务器。一行读不出来就整体报错（见 [`super::Rows::into_strict`]）；
+    /// 只展示、不写的地方用 [`Self::get_mcp_server_rows`]。
     pub fn get_all_mcp_servers(&self) -> Result<IndexMap<String, McpServer>, AppError> {
+        self.get_mcp_server_rows()?.into_strict()
+    }
+
+    /// 能读的 MCP 服务器照常返回，读不出来的单独列出。
+    pub fn get_mcp_server_rows(&self) -> Result<Rows<McpServer>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare(&format!("{MCP_SERVER_SELECT} ORDER BY name ASC, id ASC"))
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let server_iter = stmt
-            .query_map([], row_to_mcp_server)
+            .query_map([], |row| super::read_row(row, row_to_mcp_server))
             .map_err(|e| AppError::Database(e.to_string()))?;
 
-        let mut servers = IndexMap::new();
+        let mut rows = Rows {
+            readable: IndexMap::new(),
+            unreadable: Vec::new(),
+        };
         for server_res in server_iter {
-            let (id, server) = server_res.map_err(|e| AppError::Database(e.to_string()))?;
-            servers.insert(id, server);
+            match server_res.map_err(|e| AppError::Database(e.to_string()))? {
+                Ok((id, server)) => {
+                    rows.readable.insert(id, server);
+                }
+                Err(entry) => rows.unreadable.push(entry),
+            }
         }
-        Ok(servers)
+        Ok(rows)
+    }
+
+    /// 这一行在库里、但存的 JSON 读不出来。
+    pub fn get_unreadable_mcp_server(&self, id: &str) -> Result<Option<UnreadableEntry>, AppError> {
+        let conn = lock_conn!(self.conn);
+        let result = conn
+            .query_row(
+                &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
+                params![id],
+                |row| super::read_row(row, row_to_mcp_server),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(result.and_then(Result::err))
+    }
+
+    /// 给某个应用开着的 MCP 服务器 id。只读布尔列、不解码 JSON，所以存坏的行也能判断归属。
+    pub fn mcp_server_ids_enabled_for(&self, app: &AppType) -> Result<Vec<String>, AppError> {
+        let Some(column) = mcp_flag_column(app) else {
+            return Ok(Vec::new());
+        };
+        let conn = lock_conn!(self.conn);
+        // `column` comes exclusively from the fixed allow-list in `mcp_flag_column`.
+        let mut stmt = conn
+            .prepare(&format!("SELECT id FROM mcp_servers WHERE {column} <> 0"))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(ids)
     }
 
     /// Atomically update one application's flag and return the authoritative row.
     ///
     /// The update and read share the same connection lock, so concurrent toggles
     /// for different applications cannot overwrite one another through a stale
-    /// whole-row snapshot.
+    /// whole-row snapshot. A row that can't be read back rolls the flag change back.
     pub fn update_mcp_server_app_enabled(
         &self,
         id: &str,
         app: &AppType,
         enabled: bool,
     ) -> Result<Option<McpServer>, AppError> {
-        let conn = lock_conn!(self.conn);
-        let column = match app {
-            AppType::Claude => Some("enabled_claude"),
-            AppType::Codex => Some("enabled_codex"),
-            AppType::Gemini => Some("enabled_gemini"),
-            AppType::GrokBuild => Some("enabled_grokbuild"),
-            AppType::OpenCode => Some("enabled_opencode"),
-            AppType::Hermes => Some("enabled_hermes"),
-            // These applications intentionally have no MCP flag in the SSOT.
-            AppType::Mcode => Some("enabled_mcode"),
-            AppType::Kimi => Some("enabled_kimi"),
-            AppType::Dsh => Some("enabled_dsh"),
-            AppType::Copilot => Some("enabled_copilot"),
-            AppType::WorkBuddy => Some("enabled_workbuddy"),
-            AppType::Pi => Some("enabled_pi"),
-            AppType::Omp => Some("enabled_omp"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
-            AppType::Agy => Some("enabled_agy"),
-        };
-
-        if let Some(column) = column {
+        let mut conn = lock_conn!(self.conn);
+        let conn = conn
+            .transaction()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        if let Some(column) = mcp_flag_column(app) {
             // `column` comes exclusively from the fixed allow-list above.
             let sql = format!("UPDATE mcp_servers SET {column} = ?1 WHERE id = ?2");
             let affected = conn
@@ -121,13 +173,17 @@ impl Database {
             }
         }
 
-        conn.query_row(
-            &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
-            params![id],
-            |row| row_to_mcp_server(row).map(|(_, server)| server),
-        )
-        .optional()
-        .map_err(|e| AppError::Database(e.to_string()))
+        let server = conn
+            .query_row(
+                &format!("{MCP_SERVER_SELECT} WHERE id = ?1"),
+                params![id],
+                |row| row_to_mcp_server(row).map(|(_, server)| server),
+            )
+            .optional()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.commit()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(server)
     }
 
     /// 保存 MCP 服务器
@@ -136,8 +192,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_codebuddy
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 server.id,
                 server.name,
@@ -163,6 +219,7 @@ impl Database {
                 server.apps.dsh,
                 server.apps.copilot,
                 server.apps.workbuddy,
+                server.apps.codebuddy,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -300,5 +357,38 @@ mod tests {
             .expect("server exists");
         assert!(returned.apps.pi);
         assert!(db.get_all_mcp_servers().unwrap()["shared-server"].apps.pi);
+    }
+
+    #[test]
+    fn unreadable_stored_server_config_is_reported_and_left_untouched() {
+        let db = Database::memory().unwrap();
+        db.save_mcp_server(&test_server()).unwrap();
+        let read_raw = |db: &Database| -> (String, String) {
+            db.conn
+                .lock()
+                .unwrap()
+                .query_row(
+                    "SELECT server_config, tags FROM mcp_servers WHERE id = 'shared-server'",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap()
+        };
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'shared-server'",
+                [],
+            )
+            .unwrap();
+        let stored = read_raw(&db);
+
+        let error = db.get_all_mcp_servers().unwrap_err().to_string();
+        assert!(
+            error.contains("shared-server") && error.contains("server_config"),
+            "{error}"
+        );
+        assert_eq!(read_raw(&db), stored);
     }
 }

@@ -42,6 +42,10 @@ impl ProviderRouter {
         }
     }
 
+    pub(crate) fn route_revision(&self, app_type: &AppType) -> u64 {
+        self.db.route_revision(app_type)
+    }
+
     /// 选择可用的供应商（支持故障转移）
     ///
     /// 返回按优先级排序的可用供应商列表：
@@ -49,7 +53,11 @@ impl ProviderRouter {
     /// - 故障转移开启时：仅使用故障转移队列，按队列顺序依次尝试（P1 → P2 → ...）
     pub async fn select_providers(&self, app_type: &AppType) -> Result<Vec<Provider>, AppError> {
         // 代理模式下路由到代理路由那家，和直连指针无关。
-        let current_provider = crate::mode::current::provider_in_use(&self.db, app_type)
+        let app = app_type.clone();
+        let current_provider = self
+            .db
+            .run_blocking(move |db| crate::mode::current::provider_in_use(db, &app))
+            .await
             .ok()
             .flatten();
         let auto_failover_enabled = match self.db.get_proxy_config_for_app(app_type).await {
@@ -89,7 +97,12 @@ impl ProviderRouter {
         } else if auto_failover_enabled {
             // 故障转移开启：仅按队列顺序依次尝试（P1 → P2 → ...）
             // 使用 DAO 返回的排序结果，确保和前端展示一致
-            for provider in self.db.get_failover_providers(app_type)? {
+            let app = app_type.clone();
+            let providers = self
+                .db
+                .run_blocking(move |db| db.get_failover_providers(&app))
+                .await?;
+            for provider in providers {
                 if !provider_supports_failover(app_type, &provider) {
                     continue;
                 }
@@ -201,6 +214,21 @@ impl ProviderRouter {
         for (key, breaker) in breakers.iter() {
             if key.starts_with(&prefix) {
                 breaker.update_config(config.clone()).await;
+            }
+        }
+    }
+
+    /// 丢掉熔断器状态（`provider_id` 为 `None` 时丢掉这个应用的全部）。DB 里的健康状态被清掉
+    /// 时调用：不丢的话卡片显示健康，路由却还在跳过它，直到熔断超时。
+    pub async fn forget(&self, app_type: &AppType, provider_id: Option<&str>) {
+        let mut breakers = self.circuit_breakers.write().await;
+        match provider_id {
+            Some(provider_id) => {
+                breakers.remove(&format!("{app_type}:{provider_id}"));
+            }
+            None => {
+                let prefix = format!("{app_type}:");
+                breakers.retain(|key, _| !key.starts_with(&prefix));
             }
         }
     }
@@ -368,6 +396,35 @@ mod tests {
         // 故障转移开启时：仅按队列顺序选择（忽略当前供应商）
         assert_eq!(providers[0].id, "b");
         assert_eq!(providers[1].id, "a");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn an_unreadable_queue_member_is_skipped_and_the_rest_still_serve() {
+        let _home = temp_home();
+        let db = Arc::new(Database::memory().unwrap());
+        for id in ["a", "b"] {
+            let provider = Provider::with_id(id.to_string(), id.to_string(), json!({}), None);
+            db.save_provider(&AppType::Claude, &provider).unwrap();
+            db.add_to_failover_queue(&AppType::Claude, id).unwrap();
+        }
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET meta = '{' WHERE app_type = 'claude' AND id = 'a'",
+                [],
+            )
+            .unwrap();
+        let mut config = db.get_proxy_config_for_app(&AppType::Claude).await.unwrap();
+        config.auto_failover_enabled = true;
+        db.update_proxy_config_for_app(config).await.unwrap();
+
+        let router = ProviderRouter::new(db.clone());
+        let providers = router.select_providers(&AppType::Claude).await.unwrap();
+
+        let ids: Vec<&str> = providers.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["b"]);
     }
 
     #[tokio::test]

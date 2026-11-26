@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 
 use crate::app_config::{AppType, McpServer, MultiAppConfig};
+use crate::database::UnreadableEntry;
 use crate::error::AppError;
 use crate::mcp;
 use crate::store::AppState;
@@ -30,20 +31,28 @@ fn commits_with_db(app: &AppType) -> bool {
             | AppType::Dsh
             | AppType::Omp
             | AppType::Copilot
+            | AppType::Codebuddy
             | AppType::WorkBuddy
     )
 }
 
 impl McpService {
     /// 获取所有 MCP 服务器（统一结构）
+    /// 读不出来的行不在这里，见 [`Self::list_unreadable`]。
     pub fn get_all_servers(state: &AppState) -> Result<IndexMap<String, McpServer>, AppError> {
-        state.db.get_all_mcp_servers()
+        Ok(state.db.get_mcp_server_rows()?.readable)
+    }
+
+    /// 库里读不出来的 MCP 服务器：界面单独列出，只能删除。
+    pub fn list_unreadable(state: &AppState) -> Result<Vec<UnreadableEntry>, AppError> {
+        Ok(state.db.get_mcp_server_rows()?.unreadable)
     }
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
-        // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）
-        let previous = state.db.get_all_mcp_servers()?.get(&server.id).cloned();
+        // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）。
+        // 别的服务器读不出来不影响；这个 id 本身读不出来就在写任何 live 之前拒绝。
+        let previous = state.db.get_mcp_server_rows()?.get(&server.id)?.cloned();
         let prev_apps = previous
             .as_ref()
             .map(|s| s.apps.clone())
@@ -97,15 +106,26 @@ impl McpService {
                 save_with_omp()
             }
         };
+        let save_with_codebuddy = || {
+            if server.apps.codebuddy || prev_apps.codebuddy {
+                mcp::codebuddy::sync_and_commit(
+                    &server.id,
+                    server.apps.codebuddy.then_some(&server.server),
+                    save_with_workbuddy,
+                )
+            } else {
+                save_with_workbuddy()
+            }
+        };
         let save_with_dsh = || {
             if server.apps.dsh || prev_apps.dsh {
                 mcp::dsh::sync_and_commit(
                     &server.id,
                     server.apps.dsh.then_some(&server.server),
-                    save_with_workbuddy,
+                    save_with_codebuddy,
                 )
             } else {
-                save_with_workbuddy()
+                save_with_codebuddy()
             }
         };
         let save_with_kimi = || {
@@ -167,7 +187,12 @@ impl McpService {
 
     /// 删除 MCP 服务器
     pub fn delete_server(state: &AppState, id: &str) -> Result<bool, AppError> {
-        let server = state.db.get_all_mcp_servers()?.shift_remove(id);
+        // 读不出来的行只删库里这一行：不知道它往各应用写过什么，不碰 live，也不写回任何东西。
+        if state.db.get_unreadable_mcp_server(id)?.is_some() {
+            state.db.delete_mcp_server(id)?;
+            return Ok(true);
+        }
+        let server = state.db.get_mcp_server_rows()?.readable.shift_remove(id);
 
         if let Some(server) = server {
             let delete_with_copilot = || {
@@ -184,11 +209,18 @@ impl McpService {
                     delete_with_copilot()
                 }
             };
-            let delete_with_dsh = || {
-                if server.apps.dsh {
-                    mcp::dsh::sync_and_commit(id, None, delete_with_workbuddy)
+            let delete_with_codebuddy = || {
+                if server.apps.codebuddy {
+                    mcp::codebuddy::sync_and_commit(id, None, delete_with_workbuddy)
                 } else {
                     delete_with_workbuddy()
+                }
+            };
+            let delete_with_dsh = || {
+                if server.apps.dsh {
+                    mcp::dsh::sync_and_commit(id, None, delete_with_codebuddy)
+                } else {
+                    delete_with_codebuddy()
                 }
             };
             let delete_with_kimi = || {
@@ -278,7 +310,7 @@ impl McpService {
         enabled: bool,
     ) -> Result<(), AppError> {
         if commits_with_db(&app) {
-            if let Some(server) = state.db.get_all_mcp_servers()?.get(server_id) {
+            if let Some(server) = state.db.get_mcp_server_rows()?.get(server_id)? {
                 let spec = enabled.then_some(&server.server);
                 let commit = || {
                     state
@@ -299,6 +331,8 @@ impl McpService {
                     mcp::copilot::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::WorkBuddy {
                     mcp::workbuddy::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::Codebuddy {
+                    mcp::codebuddy::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Omp {
@@ -387,6 +421,7 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
+            AppType::Codebuddy => mcp::codebuddy::sync(&server.id, Some(&server.server))?,
         }
         Ok(())
     }
@@ -435,6 +470,7 @@ impl McpService {
             AppType::Agy => mcp::agy::sync(id, None)?,
             AppType::Omp => mcp::remove_server_from_omp(id)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(id, None)?,
+            AppType::Codebuddy => mcp::codebuddy::sync(id, None)?,
         }
         Ok(())
     }
@@ -589,6 +625,7 @@ impl McpService {
             AppType::Pi => return mcp::pi::import(state),
             AppType::Omp => return mcp::omp::import(state),
             AppType::Copilot => return mcp::copilot::import(state),
+            AppType::Codebuddy => return mcp::codebuddy::import(state),
             AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(0),
         };
 
@@ -599,9 +636,20 @@ impl McpService {
         let Some(servers) = &temp_config.mcp.servers else {
             return Ok(0);
         };
-        let mut existing = state.db.get_all_mcp_servers()?;
+        let (mut existing, unreadable) = state
+            .db
+            .get_mcp_server_rows()?
+            .into_readable_and_unreadable_ids();
         let mut new_count = 0;
         for server in servers.values() {
+            if unreadable.contains(&server.id) {
+                log::warn!(
+                    "从 {} 导入 MCP 时跳过 '{}'：库里同名的这一行读不出来",
+                    app.as_str(),
+                    server.id
+                );
+                continue;
+            }
             let to_save = if let Some(existing_server) = existing.get(&server.id) {
                 let mut merged = existing_server.clone();
                 merged.apps.set_enabled_for(app, true);
@@ -635,6 +683,7 @@ impl McpService {
             AppType::Hermes,
             AppType::Mcode,
             AppType::Kimi,
+            AppType::Codebuddy,
             AppType::Dsh,
             AppType::WorkBuddy,
             AppType::Agy,
@@ -659,5 +708,194 @@ impl McpService {
                 failures.join("; ")
             )))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::McpApps;
+    use crate::database::Database;
+    use std::sync::Arc;
+
+    fn server(id: &str) -> McpServer {
+        McpServer {
+            id: id.into(),
+            name: format!("{id} name"),
+            server: serde_json::json!({"command": "npx"}),
+            apps: McpApps::default(),
+            description: None,
+            homepage: None,
+            docs: None,
+            tags: vec![],
+        }
+    }
+
+    fn stored(state: &AppState, id: &str) -> Option<String> {
+        use rusqlite::OptionalExtension;
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT server_config || '|' || tags || '|' || enabled_claude FROM mcp_servers WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_unreadable_server_is_listed_apart_left_untouched_and_can_only_be_deleted() {
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        for id in ["good", "broken"] {
+            state.db.save_mcp_server(&server(id)).unwrap();
+        }
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'broken'",
+                [],
+            )
+            .unwrap();
+        let bytes = stored(&state, "broken");
+
+        let listed = McpService::get_all_servers(&state).expect("list still loads");
+        assert_eq!(listed.keys().collect::<Vec<_>>(), ["good"]);
+        let unreadable = McpService::list_unreadable(&state).unwrap();
+        assert_eq!(unreadable.len(), 1);
+        assert_eq!(unreadable[0].id, "broken");
+        assert!(
+            unreadable[0].error.contains("server_config"),
+            "{}",
+            unreadable[0].error
+        );
+        // 切换启用会读整行，读不出来就报错，库里的字节不变。
+        assert!(McpService::toggle_app(&state, "broken", AppType::Claude, true).is_err());
+        assert_eq!(stored(&state, "broken"), bytes);
+
+        assert!(McpService::delete_server(&state, "broken").expect("delete is allowed"));
+        assert_eq!(stored(&state, "broken"), None);
+        assert!(McpService::list_unreadable(&state).unwrap().is_empty());
+        assert!(stored(&state, "good").is_some());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn an_unreadable_server_only_blocks_writes_to_its_own_id() {
+        let home = tempfile::tempdir().unwrap();
+        let _env = crate::test_support::EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", home.path())
+            .set("HOME", home.path());
+        crate::settings::reload_settings().unwrap();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        for id in ["good", "broken"] {
+            state.db.save_mcp_server(&server(id)).unwrap();
+        }
+        state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE mcp_servers SET server_config = '{\"command\":' WHERE id = 'broken'",
+                [],
+            )
+            .unwrap();
+        let bytes = stored(&state, "broken");
+        let agy_native = || {
+            std::fs::read_to_string(
+                crate::config::get_home_dir().join(".gemini/config/mcp_config.json"),
+            )
+            .unwrap_or_default()
+        };
+
+        // Other ids: add, edit, toggle and delete all work.
+        McpService::upsert_server(&state, server("new")).expect("add another server");
+        let mut edited = server("good");
+        edited.name = "renamed".into();
+        McpService::upsert_server(&state, edited).expect("edit another server");
+        McpService::toggle_app(&state, "good", AppType::Agy, true).expect("toggle another server");
+        assert!(agy_native().contains("\"good\""), "{}", agy_native());
+        let listed = McpService::get_all_servers(&state).unwrap();
+        assert_eq!(listed["good"].name, "renamed");
+        assert!(listed["good"].apps.agy);
+        assert!(McpService::delete_server(&state, "new").expect("delete another server"));
+
+        // The unreadable id itself: every write is refused and names it.
+        let error = McpService::upsert_server(&state, server("broken"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("broken"), "{error}");
+        let error = McpService::toggle_app(&state, "broken", AppType::Agy, true)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("broken"), "{error}");
+        assert!(!agy_native().contains("\"broken\""), "{}", agy_native());
+        assert_eq!(stored(&state, "broken"), bytes);
+
+        // Imports bring in the other ids and skip the unreadable one by name.
+        std::fs::write(
+            crate::config::get_home_dir().join(".gemini/config/mcp_config.json"),
+            r#"{"mcpServers":{"broken":{"command":"evil"},"fresh":{"command":"npx"}}}"#,
+        )
+        .unwrap();
+        let error = McpService::import_from_app(&state, &AppType::Agy)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("'broken'") && !error.contains("'fresh'"),
+            "{error}"
+        );
+        assert!(
+            McpService::get_all_servers(&state).unwrap()["fresh"]
+                .apps
+                .agy
+        );
+        std::fs::write(
+            crate::config::get_home_dir().join(".claude.json"),
+            r#"{"mcpServers":{"broken":{"command":"evil"},"fresh-claude":{"command":"npx"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            McpService::import_from_app(&state, &AppType::Claude).unwrap(),
+            1
+        );
+        assert!(
+            McpService::get_all_servers(&state).unwrap()["fresh-claude"]
+                .apps
+                .claude
+        );
+        assert_eq!(stored(&state, "broken"), bytes);
+
+        let config = base64::Engine::encode(
+            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+            r#"{"mcpServers":{"broken":{"command":"evil"},"linked":{"command":"npx"}}}"#,
+        );
+        let request = crate::deeplink::parse_deeplink_url(&format!(
+            "ccswitch://v1/import?resource=mcp&apps=claude&config={config}"
+        ))
+        .unwrap();
+        let result = crate::deeplink::import_mcp_from_deeplink(&state, request).unwrap();
+        assert_eq!(result.imported_ids, ["linked"]);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(result.failed[0].id, "broken");
+        assert_eq!(stored(&state, "broken"), bytes);
+
+        // A project snapshot and switch still go through, toggling only readable servers.
+        use crate::services::profile::{ProfileScope, ProfileService};
+        let profile = ProfileService::create(&state, "p", ProfileScope::Claude)
+            .expect("snapshot with an unreadable server");
+        McpService::toggle_app(&state, "good", AppType::Claude, true).unwrap();
+        ProfileService::apply(&state, &profile.id, ProfileScope::Claude)
+            .expect("switch with an unreadable server");
+        let listed = McpService::get_all_servers(&state).unwrap();
+        assert!(!listed["good"].apps.claude && listed["linked"].apps.claude);
+        assert_eq!(stored(&state, "broken"), bytes);
     }
 }

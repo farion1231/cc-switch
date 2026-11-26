@@ -68,9 +68,12 @@ import {
 import {
   PLUGIN_APP_FEATURES,
   PLUGIN_AUTH_REQUIRED,
+  PLUGIN_CLI_NAME,
   PLUGIN_CLI_NOT_INSTALLED,
+  PLUGIN_IN_USE,
   PLUGIN_LOGIN_COMMAND,
   PLUGIN_NEEDS_TERMINAL_CONFIRM,
+  PLUGIN_UPDATE_NEEDS_REINSTALL,
   pluginsApi,
   type PluginActionOutcome,
   type PluginApp,
@@ -157,6 +160,7 @@ export interface PluginsPageProps {
 
 type WriteMessages = {
   success: (outcome: PluginActionOutcome) => string;
+  successDescription?: (outcome: PluginActionOutcome) => string;
   failure: string;
   /** 后端返回已知错误码时换成的说明；没给或不认识时显示原始报错。 */
   describeError?: (error: string) => string | undefined;
@@ -268,7 +272,8 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     const result = await runWrite(write);
     if (result.ok && result.outcome) {
       toast.success(messages.success(result.outcome), {
-        description: restartNote,
+        description:
+          messages.successDescription?.(result.outcome) ?? restartNote,
         closeButton: true,
       });
     } else {
@@ -281,7 +286,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
                 app: appName,
                 command: PLUGIN_LOGIN_COMMAND[app] ?? `${app} login`,
               })
-            : error),
+            : error === PLUGIN_IN_USE
+              ? t("pluginsPage.toast.pluginInUse", {
+                  app: appName,
+                  cli: PLUGIN_CLI_NAME[app],
+                })
+              : error),
         closeButton: true,
       });
     }
@@ -301,12 +311,19 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         action: "install",
         task: () => pluginsApi.install(app, entry.id),
         // 安装要联网、可能失败，不先挪；装好立即放进已安装，版本等对账时补齐
-        onSuccess: pluginPatches.add(installedFromCatalog(app, entry)),
+        onSuccess: (outcome) =>
+          pluginPatches.add(
+            installedFromCatalog(app, entry, !outcome.needsConfiguration),
+          ),
         reconcile: ["installed"],
       },
       {
         success: () =>
           t("pluginsPage.toast.installed", { name: pluginLabel(entry) }),
+        successDescription: (outcome) =>
+          outcome.needsConfiguration
+            ? t("pluginsPage.toast.installedNeedsConfig", { app: appName })
+            : restartNote,
         failure: t("pluginsPage.toast.installFailed", {
           name: pluginLabel(entry),
         }),
@@ -364,6 +381,10 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         failure: t("pluginsPage.toast.updateFailed", {
           name: pluginLabel(entry),
         }),
+        describeError: (error) =>
+          error === PLUGIN_UPDATE_NEEDS_REINSTALL
+            ? t("pluginsPage.toast.updateNeedsReinstall")
+            : undefined,
       },
     );
 
@@ -579,7 +600,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
   );
 
   const renderBody = () => {
-    if (installedQuery.isPending) {
+    // 有上次的结果（本地缓存或之前读成功过）时，失败后重读查询仍是 error 状态、只有
+    // isFetching 变了：不换成加载中，点「重试」看着没反应
+    if (
+      installedQuery.isPending ||
+      (loadError !== null && !cliMissing && installedQuery.isFetching)
+    ) {
       return (
         <div className="flex items-center justify-center gap-2 py-12 text-body text-fg-2">
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -615,7 +641,7 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     }
     if (view === "marketplaces") return renderMarketplaces();
     if (view === "discover" && !catalogReady) {
-      return catalogQuery.isError ? (
+      return catalogQuery.isError && !catalogQuery.isFetching ? (
         <CenteredState
           title={t("pluginsPage.catalogLoadFailed")}
           detail={
@@ -749,7 +775,10 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
   };
 
   const renderMarketplaces = () => {
-    if (marketplaces.isLoading) {
+    if (
+      marketplaces.isLoading ||
+      (marketplaces.isError && marketplaces.isFetching)
+    ) {
       return (
         <div className="flex items-center justify-center gap-2 py-12 text-body text-fg-2">
           <Loader2 className="h-4 w-4 animate-spin" />
