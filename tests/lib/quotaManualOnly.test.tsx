@@ -11,7 +11,10 @@ import type { ReactNode } from "react";
 import { createInstance } from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { useClaudeAccountQuota } from "@/lib/query/subscription";
+import {
+  useClaudeAccountQuota,
+  useCodebuddyAccountQuota,
+} from "@/lib/query/subscription";
 import { useWorkBuddyAccountQuota } from "@/components/providers/workbuddyQuota";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { AutoQuotaToggle } from "@/components/settings/auth/AutoQuotaToggle";
@@ -21,6 +24,7 @@ import zh from "@/i18n/locales/zh.json";
 const mocks = vi.hoisted(() => ({
   getClaudeAccountQuota: vi.fn(),
   workbuddyAccountQuota: vi.fn(),
+  codebuddyAccountQuota: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
 }));
@@ -33,7 +37,10 @@ vi.mock("@/lib/api/settings", async (importOriginal) => ({
 }));
 vi.mock("@/lib/api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api")>()),
-  authApi: { workbuddyAccountQuota: mocks.workbuddyAccountQuota },
+  authApi: {
+    workbuddyAccountQuota: mocks.workbuddyAccountQuota,
+    codebuddyAccountQuota: mocks.codebuddyAccountQuota,
+  },
   settingsApi: { get: mocks.getSettings, save: mocks.saveSettings },
 }));
 
@@ -75,6 +82,9 @@ describe("manual-only official quota (#8990)", () => {
       snapshot: null,
       current: false,
       unavailable: "not_running",
+    });
+    mocks.codebuddyAccountQuota.mockReset().mockResolvedValue({
+      queriedAt: 1,
     });
     mocks.getSettings.mockReset();
     mocks.saveSettings.mockReset().mockResolvedValue(true);
@@ -218,6 +228,58 @@ describe("manual-only official quota (#8990)", () => {
     });
     expect(mocks.workbuddyAccountQuota).toHaveBeenCalledWith("wb-1", true);
     await waitFor(() => expect(result.current.manualIdle).toBe(false));
+  });
+
+  it("gates CodeBuddy account quota queries behind the manual-only policy", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    const { result } = renderHook(
+      () => useCodebuddyAccountQuota("cb-1", "zh"),
+      { wrapper: wrapperFor(newClient()) },
+    );
+    await waitFor(() => expect(result.current.manualIdle).toBe(true));
+    expect(mocks.codebuddyAccountQuota).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(mocks.codebuddyAccountQuota).toHaveBeenCalledWith(
+      "cb-1",
+      "zh",
+      true,
+    );
+    await waitFor(() => expect(result.current.manualIdle).toBe(false));
+  });
+
+  it("makes Refresh all skip the WorkBuddy and CodeBuddy backend caches", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    function Rows() {
+      const workbuddy = useWorkBuddyAccountQuota("wb-1");
+      const codebuddy = useCodebuddyAccountQuota("cb-1", "zh");
+      return (
+        <span>
+          {workbuddy.manualIdle || codebuddy.manualIdle ? "idle" : "loaded"}
+        </span>
+      );
+    }
+    render(
+      <>
+        <Rows />
+        <RefreshAllQuotaButton />
+      </>,
+      { wrapper: wrapperFor(newClient()) },
+    );
+    await screen.findByText("idle");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: zh.authCenter.quota.refreshAll }),
+    );
+    await screen.findByText("loaded");
+    expect(mocks.workbuddyAccountQuota).toHaveBeenCalledWith("wb-1", true);
+    expect(mocks.codebuddyAccountQuota).toHaveBeenCalledWith(
+      "cb-1",
+      "zh",
+      true,
+    );
   });
 
   it("saves the Auth Center switch into settings", async () => {

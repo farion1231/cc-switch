@@ -8,7 +8,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DSH_ACCOUNT_STATUS_KEY } from "@/components/providers/DshAccount";
-import { WORKBUDDY_QUOTA_KEY } from "@/components/providers/workbuddyQuota";
+import {
+  WORKBUDDY_QUOTA_KEY,
+  markWorkBuddyQuotaForceRefresh,
+} from "@/components/providers/workbuddyQuota";
 import { markCodebuddyQuotaForceRefresh } from "@/lib/query/subscription";
 
 /** 授权中心各组账号行的额度缓存：`[服务, "quota", 账号]` */
@@ -58,6 +61,7 @@ export function RefreshAllQuotaButton() {
       disabled={fetching}
       onClick={() => {
         markCodebuddyQuotaForceRefresh();
+        markWorkBuddyQuotaForceRefresh();
         void Promise.all(
           queryClient
             .getQueryCache()

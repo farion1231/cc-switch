@@ -615,6 +615,7 @@ export function CodebuddyAccountQuota({
     isError,
     error,
     refresh,
+    manualIdle,
   } = useCodebuddyAccountQuota(accountId, lang);
   const state: AccountQuotaState =
     !quota && isError
@@ -632,6 +633,7 @@ export function CodebuddyAccountQuota({
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
       onRefresh={() => void refresh()}
+      idle={manualIdle}
     />
   );
 }

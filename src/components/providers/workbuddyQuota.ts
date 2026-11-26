@@ -22,9 +22,16 @@ export const WORKBUDDY_QUOTA_KEY = ["workbuddy-account-quota"] as const;
 
 const REFETCH_INTERVAL = 5 * 60 * 1000;
 
+let workbuddyForceRefreshEpoch = 0;
+
+/** 授权中心「全部刷新」时调用：让下一次 WorkBuddy 额度重查同样跳过后端 5 分钟缓存。 */
+export function markWorkBuddyQuotaForceRefresh() {
+  workbuddyForceRefreshEpoch += 1;
+}
+
 /**
  * WorkBuddy 账号的套餐与积分。卡片、表单和授权中心共用一份缓存；后端 5 分钟内走缓存，
- * `refresh()` 跳过缓存重查（↻ 用）。只有 WorkBuddy 正在运行时当前账号才查得到新的；
+ * `refresh()` 与授权中心「全部刷新」跳过缓存重查。只有 WorkBuddy 正在运行时当前账号才查得到新的；
  * 查不到新的（没运行、不是当前号…）时后端立刻回上次结果，界面看着像没反应，所以弹一句原因。
  */
 export function useWorkBuddyAccountQuota(
@@ -33,13 +40,16 @@ export function useWorkBuddyAccountQuota(
 ) {
   const { t } = useTranslation();
   const force = useRef(false);
+  const seenForceEpoch = useRef(workbuddyForceRefreshEpoch);
   const policy = useQuotaPolicy();
   const autoAllowed = policy.autoAllowed;
   const query = useQuery({
     queryKey: [...WORKBUDDY_QUOTA_KEY, accountId],
     queryFn: () => {
-      const skipCache = force.current;
+      const skipCache =
+        force.current || seenForceEpoch.current !== workbuddyForceRefreshEpoch;
       force.current = false;
+      seenForceEpoch.current = workbuddyForceRefreshEpoch;
       return authApi.workbuddyAccountQuota(accountId!, skipCache);
     },
     enabled: autoAllowed && Boolean(accountId),

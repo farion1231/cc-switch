@@ -334,6 +334,7 @@ export function markCodebuddyQuotaForceRefresh() {
 export function useCodebuddyAccountQuota(accountId: string, lang: string) {
   const force = useRef(false);
   const seenForceEpoch = useRef(codebuddyForceRefreshEpoch);
+  const policy = useQuotaPolicy();
   const query = useQuery({
     queryKey: ["codebuddy_oauth", "quota", accountId, lang],
     queryFn: () => {
@@ -343,6 +344,7 @@ export function useCodebuddyAccountQuota(accountId: string, lang: string) {
       seenForceEpoch.current = codebuddyForceRefreshEpoch;
       return authApi.codebuddyAccountQuota(accountId, lang, skipCache);
     },
+    enabled: policy.autoAllowed,
     staleTime: REFETCH_INTERVAL,
     refetchOnWindowFocus: false,
     retry: 1,
@@ -351,7 +353,7 @@ export function useCodebuddyAccountQuota(accountId: string, lang: string) {
     force.current = true;
     return query.refetch();
   };
-  return { ...query, refresh };
+  return { ...query, refresh, manualIdle: isManualIdle(policy, query) };
 }
 
 /**
