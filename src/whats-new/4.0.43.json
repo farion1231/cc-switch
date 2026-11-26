@@ -1,0 +1,33 @@
+{
+  "version": "4.0.43",
+  "items": [
+    {
+      "type": "new",
+      "zh": "授权中心可关闭自动查询额度，只在点刷新时才查",
+      "zh-TW": "授權中心可關閉自動查詢額度，只在點重新整理時才查",
+      "en": "Accounts can stop querying quota automatically, so it is only queried when you click refresh",
+      "ja": "アカウントで残量の自動取得をオフにでき、更新をクリックしたときだけ取得"
+    },
+    {
+      "type": "new",
+      "zh": "托盘可切换 Antigravity 官方账号并显示各账号剩余额度",
+      "zh-TW": "系統匣可切換 Antigravity 官方帳號並顯示各帳號剩餘額度",
+      "en": "Switch Antigravity official accounts from the tray, with each account's remaining quota",
+      "ja": "トレイから Antigravity 公式アカウントを切り替え、各アカウントの残量も表示"
+    },
+    {
+      "type": "improve",
+      "zh": "「应用」页支持 OpenCode 2 的更新检查、升级和卸载",
+      "zh-TW": "「應用」頁支援 OpenCode 2 的更新檢查、升級和解除安裝",
+      "en": "The Apps page checks, upgrades and uninstalls OpenCode 2 correctly",
+      "ja": "「アプリ」ページで OpenCode 2 の更新確認、アップグレード、アンインストールに対応"
+    },
+    {
+      "type": "fix",
+      "zh": "修复直连模式下 Codex 会话切回官方 ChatGPT 后无法继续",
+      "zh-TW": "修正直連模式下 Codex 對話切回官方 ChatGPT 後無法繼續",
+      "en": "Fixed Codex threads that could not continue on official ChatGPT in direct mode",
+      "ja": "直接接続モードで Codex のスレッドを公式 ChatGPT に戻すと続行できない問題を修正"
+    }
+  ]
+}
