@@ -39,7 +39,7 @@ pub fn parse_env_file(content: &str) -> HashMap<String, String> {
         // 解析 KEY=VALUE
         if let Some((key, value)) = line.split_once('=') {
             let key = key.trim().to_string();
-            let value = value.trim().to_string();
+            let value = env_value(value).to_string();
 
             // 验证 key 是否有效（不为空，只包含字母、数字和下划线）
             if !key.is_empty() && key.chars().all(|c| c.is_alphanumeric() || c == '_') {
@@ -49,6 +49,34 @@ pub fn parse_env_file(content: &str) -> HashMap<String, String> {
     }
 
     map
+}
+
+/// The value dotenv reads from the text after `=`: an unquoted value ends at `#`, and a value in
+/// `"`, `'` or `` ` `` loses the quotes (a comment may follow it).
+///
+/// CC Switch writes values back as `KEY=value`, so a quoted value that dotenv would read
+/// differently without its quotes stays as written.
+fn env_value(raw: &str) -> &str {
+    let raw = raw.trim();
+    let Some(quote) = raw.chars().next().filter(|c| matches!(c, '"' | '\'' | '`')) else {
+        return raw.split('#').next().unwrap_or_default().trim_end();
+    };
+    let Some((inner, rest)) = raw[1..].split_once(quote) else {
+        return raw;
+    };
+    let rest = rest.trim_start();
+    let closed = rest.is_empty() || rest.starts_with('#');
+    let needs_quotes = inner.contains('#')
+        || inner != inner.trim()
+        || inner.starts_with(['"', '\'', '`'])
+        // `\"` may be an escaped quote, and dotenv expands `\n` and `\r` in double quotes
+        || inner.ends_with('\\')
+        || (quote == '"' && (inner.contains("\\n") || inner.contains("\\r")));
+    if closed && !needs_quotes {
+        inner
+    } else {
+        raw
+    }
 }
 
 /// 读取 Gemini .env 文件
@@ -305,6 +333,52 @@ export GEMINI_MODEL=gemini-2.5-pro
             Some(&"AIza-user-key".to_string())
         );
         assert_eq!(map.get("GEMINI_MODEL"), Some(&"gemini-2.5-pro".to_string()));
+    }
+
+    #[test]
+    fn test_parse_env_file_strips_quotes_and_inline_comments() {
+        let content = r#"GOOGLE_CLOUD_PROJECT="your-project-id"
+export GEMINI_API_KEY='AIza-user-key'
+GOOGLE_GEMINI_BASE_URL=`https://relay.example`
+GEMINI_MODEL=gemini-2.5-pro # default model
+GOOGLE_CLOUD_LOCATION="us-central1" # region
+GEMINI_SANDBOX=""
+"#;
+
+        let map = parse_env_file(content);
+
+        for (key, value) in [
+            ("GOOGLE_CLOUD_PROJECT", "your-project-id"),
+            ("GEMINI_API_KEY", "AIza-user-key"),
+            ("GOOGLE_GEMINI_BASE_URL", "https://relay.example"),
+            ("GEMINI_MODEL", "gemini-2.5-pro"),
+            ("GOOGLE_CLOUD_LOCATION", "us-central1"),
+            ("GEMINI_SANDBOX", ""),
+        ] {
+            assert_eq!(map.get(key).map(String::as_str), Some(value), "{key}");
+        }
+    }
+
+    #[test]
+    fn test_parse_env_file_keeps_values_that_need_their_quotes() {
+        // Values are written back as `KEY=value`, so one that dotenv would read
+        // differently without its quotes stays as written.
+        for value in [
+            r#""a#b""#,
+            r#"" padded ""#,
+            r#""line\nbreak""#,
+            r#""'x'""#,
+            r#""a\" # x""#,
+            r#""a" b"#,
+            r#""unterminated"#,
+            "'it''s'",
+        ] {
+            let map = parse_env_file(&format!("GEMINI_CLI_CUSTOM_HEADERS={value}\n"));
+            assert_eq!(
+                map.get("GEMINI_CLI_CUSTOM_HEADERS").map(String::as_str),
+                Some(value)
+            );
+        }
     }
 
     #[test]
