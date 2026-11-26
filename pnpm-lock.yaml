@@ -156,6 +156,9 @@ importers:
       '@types/node':
         specifier: ^20.0.0
         version: 20.19.9
+      '@types/picomatch':
+        specifier: ^2.3.4
+        version: 2.3.4
       '@types/react':
         specifier: ^18.2.0
         version: 18.3.23
@@ -183,6 +186,9 @@ importers:
       msw:
         specifier: ^2.11.6
         version: 2.11.6(@types/node@20.19.9)(typescript@5.9.2)
+      picomatch:
+        specifier: ^2.3.1
+        version: 2.3.1
       postcss:
         specifier: ^8.4.49
         version: 8.5.6
@@ -1779,6 +1785,9 @@ packages:
 
   '@types/node@20.19.9':
     resolution: {integrity: sha512-cuVNgarYWZqxRJDQHEB58GEONhOK79QVR/qYx4S7kcUObQvUwvFnYxJuuHUKm2aieN9X3yZB4LZsuYNU1Qphsw==}
+
+  '@types/picomatch@2.3.4':
+    resolution: {integrity: sha512-0so8lU8O5zatZS/2Fi4zrwks+vZv7e0dygrgEZXljODXBig97l4cPQD+9LabXfGJOWwoRkTVz6Q4edZvD12UOA==}
 
   '@types/prop-types@15.7.15':
     resolution: {integrity: sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==}
@@ -4708,6 +4717,8 @@ snapshots:
   '@types/node@20.19.9':
     dependencies:
       undici-types: 6.21.0
+
+  '@types/picomatch@2.3.4': {}
 
   '@types/prop-types@15.7.15': {}
 

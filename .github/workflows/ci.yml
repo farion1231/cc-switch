@@ -29,10 +29,9 @@ jobs:
       # readme / frontend_contracts 默认 false：定时或手动运行时 frontend 已是 true，
       # 会跑全量前端检查与测试，不需要再单独起轻量 job。
       frontend: ${{ steps.filter.outputs.frontend || 'true' }}
-      backend: ${{ steps.filter.outputs.backend || 'true' }}
-      wsl: ${{ steps.filter.outputs.wsl || 'true' }}
-      macos_full: ${{ (steps.filter.outputs.macos_full || 'true') == 'true' || steps.pr_meta.outputs.patch_touches_macos == 'true' }}
-      pr_labels: ${{ steps.pr_meta.outputs.labels || '' }}
+      backend: ${{ steps.scope.outputs.backend }}
+      wsl: ${{ steps.scope.outputs.wsl }}
+      macos_full: ${{ steps.scope.outputs.macos_full }}
       readme: ${{ steps.filter.outputs.readme || 'false' }}
       frontend_contracts: ${{ steps.filter.outputs.frontend_contracts || 'false' }}
     steps:
@@ -66,9 +65,8 @@ jobs:
             readme:
               - "README*.md"
             frontend_contracts:
-              - "src-tauri/src/lib.rs"
-              - "src-tauri/src/omp_config.rs"
-              - "src-tauri/src/services/usage_stats.rs"
+              # 纯 Rust PR 也检查 CI 路径覆盖，防止新增平台代码后静默漏检。
+              - "src-tauri/**/*.rs"
             backend:
               - "src-tauri/**"
               - "tests/config/*.json"
@@ -112,6 +110,8 @@ jobs:
               - "src-tauri/src/tray*.rs"
               - "src-tauri/src/tray/**"
               - "src-tauri/tests/**"
+              - "src-tauri/.config/nextest.toml"
+              - "tests/fixtures/**"
               - "src-tauri/Cargo.toml"
               - "src-tauri/Cargo.lock"
               - "src-tauri/build.rs"
@@ -124,24 +124,60 @@ jobs:
       # 3. 兜底扫描 diff 中的 target_os = "macos" / objc2，即使新文件不在静态列表里也会升级为 macOS 全量。
       - name: Fetch live PR labels and macOS diff guard
         id: pr_meta
-        if: github.event_name == 'pull_request' && steps.filter.outputs.backend == 'true'
+        if: github.event_name == 'pull_request'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BACKEND_CHANGED: ${{ steps.filter.outputs.backend }}
           MACOS_FULL_FILTER: ${{ steps.filter.outputs.macos_full }}
         run: |
-          labels=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '[.labels[].name] | join(",")')
+          set -euo pipefail
+          labels=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '[.labels[].name] | tojson')
           echo "labels=${labels}" >> "$GITHUB_OUTPUT"
 
           patch_touches_macos=false
-          if [ "$MACOS_FULL_FILTER" != "true" ]; then
-            if gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" --jq '.[].patch // empty' \
-                | grep -qE 'target_os[[:space:]]*=[[:space:]]*"macos"|objc2'; then
+          if [ "$BACKEND_CHANGED" = "true" ] && [ "$MACOS_FULL_FILTER" != "true" ]; then
+            # API 失败必须让 job 失败；先完整读取再匹配，避免 grep -q 提前关闭管道造成 SIGPIPE。
+            # GitHub 未提供 Rust 文件 patch（例如过大的 diff）时，保守升级为全量。
+            patches=$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" \
+              --jq '.[] | if (.filename | endswith(".rs")) and .patch == null then "CC_SWITCH_MISSING_RUST_PATCH" else .patch // empty end')
+            if grep -qE 'target_os[[:space:]]*=[[:space:]]*"macos"|objc2|CC_SWITCH_MISSING_RUST_PATCH' <<< "$patches"; then
               patch_touches_macos=true
             fi
           fi
           echo "patch_touches_macos=${patch_touches_macos}" >> "$GITHUB_OUTPUT"
+
+      # 在 job 路径门禁之前处理实时标签，backend 和所有 WSL 步骤使用同一份执行范围。
+      - name: Resolve backend check scope
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGED_AREAS: ${{ toJSON(steps.filter.outputs) }}
+          PR_LABELS: ${{ steps.pr_meta.outputs.labels || '[]' }}
+          PATCH_TOUCHES_MACOS: ${{ steps.pr_meta.outputs.patch_touches_macos || 'false' }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const changed = JSON.parse(process.env.CHANGED_AREAS || '{}') || {};
+          const labels = JSON.parse(process.env.PR_LABELS || '[]');
+          // 定时 / 手动未执行过滤时按全量处理，字符串 'false' 必须保留为 false。
+          const matches = area => changed[area] !== 'false';
+          const full = labels.includes('full-ci');
+          const macos = full || labels.includes('test:macos');
+          const windows = full || labels.includes('test:windows');
+          const nonPr = process.env.EVENT_NAME !== 'pull_request';
+          const scope = {
+            backend: matches('backend') || macos || windows,
+            macos_full: nonPr || matches('macos_full') || macos || process.env.PATCH_TOUCHES_MACOS === 'true',
+            wsl: nonPr || matches('wsl') || windows,
+          };
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,
+            Object.entries(scope).map(([key, value]) => `${key}=${value}\n`).join(''));
+          console.log('Backend check scope:', scope);
+          NODE
 
   frontend:
     name: Frontend Checks
@@ -275,7 +311,7 @@ jobs:
       - name: Run README parity test
         run: pnpm test:unit --project=node-unisolated tests/config/readmeParity.test.ts
 
-  # 只改前端契约测试直接解析的 Rust 源文件时，补跑对应 3 个跨端契约测试，避免静默漂移。
+  # 纯 Rust PR 补跑跨端契约和 CI 路径覆盖测试，避免配置与平台代码静默漂移。
   frontend-contracts:
     name: Frontend Contract Tests
     runs-on: ubuntu-latest
@@ -297,8 +333,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run frontend contract tests
-        run: pnpm test:unit --project=node-unisolated tests/lib/registeredCommands.test.ts tests/config/ompProviderPresets.test.ts tests/components/usageProviderLabel.test.ts
+      - name: Run frontend and CI contract tests
+        run: pnpm test:unit --project=node-unisolated tests/lib/registeredCommands.test.ts tests/config/ompProviderPresets.test.ts tests/components/usageProviderLabel.test.ts tests/config/ciWorkflow.test.ts
 
   backend:
     name: Backend Checks
@@ -321,30 +357,18 @@ jobs:
         id: scope
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
           RUNNER_OS: ${{ runner.os }}
           MACOS_FULL: ${{ needs.changes.outputs.macos_full }}
-          PR_LABELS: ${{ needs.changes.outputs.pr_labels }}
         run: |
           run_clippy=false
           run_tests=false
           run_check_only=false
 
-          has_label() {
-            case ",$PR_LABELS," in
-              *",$1,"*) return 0 ;;
-              *) return 1 ;;
-            esac
-          }
-
-          if [ "$EVENT_NAME" != "pull_request" ] || has_label "full-ci"; then
-            run_clippy=true
-            run_tests=true
-          elif [ "$RUNNER_OS" = "Linux" ] || [ "$RUNNER_OS" = "Windows" ]; then
+          if [ "$RUNNER_OS" = "Linux" ] || [ "$RUNNER_OS" = "Windows" ]; then
             run_clippy=true
             run_tests=true
           elif [ "$RUNNER_OS" = "macOS" ]; then
-            if [ "$MACOS_FULL" = "true" ] || has_label "test:macos"; then
+            if [ "$MACOS_FULL" = "true" ]; then
               run_clippy=true
               run_tests=true
             else
@@ -352,9 +376,11 @@ jobs:
             fi
           fi
 
-          echo "run_clippy=$run_clippy" >> "$GITHUB_OUTPUT"
-          echo "run_tests=$run_tests" >> "$GITHUB_OUTPUT"
-          echo "run_check_only=$run_check_only" >> "$GITHUB_OUTPUT"
+          {
+            echo "run_clippy=$run_clippy"
+            echo "run_tests=$run_tests"
+            echo "run_check_only=$run_check_only"
+          } >> "$GITHUB_OUTPUT"
           echo "Backend check scope ($RUNNER_OS): clippy=$run_clippy tests=$run_tests check_only=$run_check_only"
 
       - name: Checkout
@@ -449,9 +475,9 @@ jobs:
         run: cargo nextest run --manifest-path src-tauri/Cargo.toml --profile ci
 
       # WSL2 契约测试并入 Windows backend，直接复用 nextest 刚编好的 cc_switch_lib 测试二进制，
-      # 省掉独立 Windows VM、缓存恢复和重复编译；PR 仅在命中 wsl 闭包时触发，push/定时/手动必跑。
+      # PR 命中 wsl 路径或 full-ci/test:windows 标签时触发，push/定时/手动必跑。
       - name: Setup WSL2
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        if: runner.os == 'Windows' && needs.changes.outputs.wsl == 'true'
         uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7
         with:
           distribution: Ubuntu-24.04
@@ -462,7 +488,7 @@ jobs:
       # 直接定位 nextest 已编好的 cc_switch_lib-*.exe，不再调用 cargo test --lib --no-run，
       # 避免 tauri::generate_context! 共享 OUT_DIR 时间戳触发无谓重编与 UNC TEMP 下的 LNK1327。
       - name: Prepare WSL2-backed test environment & locate test binary
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        if: runner.os == 'Windows' && needs.changes.outputs.wsl == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -490,7 +516,7 @@ jobs:
           "CC_SWITCH_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows-to-WSL2 filesystem contract
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        if: runner.os == 'Windows' && needs.changes.outputs.wsl == 'true'
         # Run the test binary built by nextest directly. Invoking cargo here
         # with TEMP pointing at a WSL UNC path can re-link the crate, and
         # link.exe/mt.exe cannot create manifest temp files on \\wsl.localhost.
@@ -513,7 +539,7 @@ jobs:
           }
 
       - name: Run Hermes live WAL reads inside WSL2
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        if: runner.os == 'Windows' && needs.changes.outputs.wsl == 'true'
         env:
           CC_SWITCH_WSL_DISTRO: Ubuntu-24.04
         shell: pwsh

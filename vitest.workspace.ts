@@ -65,6 +65,7 @@ const NODE_UNISOLATED_INCLUDE = [
   "tests/config/appConfig.test.tsx",
   "tests/config/appSpecs.test.ts",
   "tests/config/backendConstants.test.ts",
+  "tests/config/ciWorkflow.test.ts",
   "tests/config/claudeDesktopProviderPresets.test.ts",
   "tests/config/claudePresetKeyFields.test.ts",
   "tests/config/claudeProviderPresets.test.ts",
