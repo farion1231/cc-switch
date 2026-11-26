@@ -44,6 +44,8 @@ let mockProjectedBase: Record<string, unknown> | null = null;
 // 投影成那份底的草稿（预设或模板）。
 let mockProjectedDraft: Record<string, unknown> | undefined;
 let submitReadyCallbacks: Array<(isReady: boolean) => void> = [];
+let submittingCallbacks: Array<(submitting: boolean) => void> = [];
+let stackLayoutCallbacks: Array<(stackLayout: boolean) => void> = [];
 // 对话框是否把「统一供应商」入口交给表单：只有 `showUniversalTab` 为真时才传。
 let universalProps: {
   onUniversalPresetSelect?: unknown;
@@ -54,6 +56,8 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   ProviderForm: ({
     onSubmit,
     onSubmitReadyChange,
+    onSubmittingChange,
+    onStackLayoutChange,
     onManageAuthAccounts,
     onEditorBaseChange,
     onUniversalPresetSelect,
@@ -61,6 +65,8 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
   }: {
     onSubmit: (values: ProviderFormValues) => void;
     onSubmitReadyChange?: (isReady: boolean) => void;
+    onSubmittingChange?: (submitting: boolean) => void;
+    onStackLayoutChange?: (stackLayout: boolean) => void;
     onManageAuthAccounts?: (target: "codex_oauth") => void;
     onEditorBaseChange?: (
       base: Record<string, unknown> | null,
@@ -81,6 +87,16 @@ vi.mock("@/components/providers/forms/ProviderForm", () => ({
         onSubmitReadyChange(mockFormReady);
       }
     }, [onSubmitReadyChange]);
+    useEffect(() => {
+      if (onSubmittingChange) {
+        submittingCallbacks.push(onSubmittingChange);
+      }
+    }, [onSubmittingChange]);
+    useEffect(() => {
+      if (onStackLayoutChange) {
+        stackLayoutCallbacks.push(onStackLayoutChange);
+      }
+    }, [onStackLayoutChange]);
     useEffect(() => {
       onEditorBaseChange?.(mockProjectedBase, mockProjectedDraft);
     }, [onEditorBaseChange]);
@@ -124,6 +140,8 @@ describe("AddProviderDialog", () => {
     mockProjectedBase = null;
     mockProjectedDraft = undefined;
     submitReadyCallbacks = [];
+    submittingCallbacks = [];
+    stackLayoutCallbacks = [];
     mockFormValues = {
       name: "Test Provider",
       websiteUrl: "https://provider.example.com",
@@ -627,5 +645,40 @@ context_window = 500000
       expect(universalProps.onUniversalPresetSelect).toBeTypeOf("function"),
     );
     expect(universalProps.onManageUniversalProviders).toBeTypeOf("function");
+  });
+
+  it("resets stackLayout and submitting state when switching appId or reopening", async () => {
+    const props = {
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+    };
+    const { rerender } = render(
+      <AddProviderDialog open appId="codex" {...props} />,
+    );
+
+    const addButton = await screen.findByRole("button", { name: "common.add" });
+    await waitFor(() => expect(stackLayoutCallbacks.length).toBeGreaterThan(0));
+
+    act(() => {
+      stackLayoutCallbacks.at(-1)?.(true);
+      submittingCallbacks.at(-1)?.(true);
+    });
+    expect(screen.getByText("Codex（聚合模式）")).toBeInTheDocument();
+    expect(addButton).toBeDisabled();
+
+    rerender(<AddProviderDialog open appId="gemini" {...props} />);
+    await waitFor(() =>
+      expect(screen.queryByText("Codex（聚合模式）")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "common.add" })).toBeEnabled();
+
+    act(() => submittingCallbacks.at(-1)?.(true));
+    expect(screen.getByRole("button", { name: "common.add" })).toBeDisabled();
+
+    rerender(<AddProviderDialog open={false} appId="gemini" {...props} />);
+    rerender(<AddProviderDialog open appId="gemini" {...props} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "common.add" })).toBeEnabled(),
+    );
   });
 });

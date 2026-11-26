@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { providersApi } from "@/lib/api/providers";
+import { CLAUDE_DESKTOP_STATUS_QUERY_KEY } from "@/lib/query/queries";
 
 /**
  * Claude Desktop 配置文件的检查结果（后端 `get_claude_desktop_status`）：平台不支持、profile 里
@@ -10,7 +11,7 @@ import { providersApi } from "@/lib/api/providers";
 export function useDesktopConfigMessages(enabled: boolean): string[] {
   const { t } = useTranslation();
   const { data: status } = useQuery({
-    queryKey: ["claudeDesktopStatus"],
+    queryKey: CLAUDE_DESKTOP_STATUS_QUERY_KEY,
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     refetchInterval: 5000,
     enabled,

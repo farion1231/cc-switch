@@ -75,8 +75,6 @@ export function EditProviderDialog({
   modeView,
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
-  // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
-  const [stackLayout, setStackLayout] = useState(false);
   const [authSettingsTarget, setAuthSettingsTarget] =
     useState<AuthCenterTarget | null>(null);
 
@@ -91,6 +89,21 @@ export function EditProviderDialog({
   );
   const currentFormSessionToken = useRef(formSessionToken);
   currentFormSessionToken.current = formSessionToken;
+  // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
+  const [stackLayoutState, setStackLayoutState] = useState({
+    token: formSessionToken,
+    stackLayout: false,
+  });
+  const stackLayout =
+    stackLayoutState.token === formSessionToken && stackLayoutState.stackLayout;
+  const handleStackLayoutChange = useCallback(
+    (next: boolean) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setStackLayoutState({ token: formSessionToken, stackLayout: next });
+      }
+    },
+    [formSessionToken],
+  );
   // The host stays mounted between edits. A pending save from a closed form
   // must neither disable the next editor nor clear its own pending submission.
   const [formSubmittingState, setFormSubmittingState] = useState({
@@ -126,16 +139,28 @@ export function EditProviderDialog({
   );
 
   // 默认使用传入的 provider.settingsConfig，若当前编辑对象是"当前生效供应商"，则尝试读取实时配置替换初始值
-  const [liveSettings, setLiveSettings] = useState<Record<
-    string,
-    unknown
-  > | null>(null);
+  // 与 formSessionToken 绑定，避免同窗口切换供应商或应用时残留上一个供应商的 liveSettings / editorView。
+  const [liveState, setLiveState] = useState<{
+    token: number;
+    loaded: boolean;
+    settings: Record<string, unknown> | null;
+    editorView: ProviderEditorView | null;
+  }>({
+    token: formSessionToken,
+    loaded: false,
+    settings: null,
+    editorView: null,
+  });
+  const isCurrentLiveState = liveState.token === formSessionToken;
+  const hasLoadedLive = isCurrentLiveState && liveState.loaded;
+  const liveSettings = isCurrentLiveState ? liveState.settings : null;
+  const editorView = isCurrentLiveState ? liveState.editorView : null;
+  const loadedSessionTokenRef = useRef<number | null>(null);
+  const tRef = useRef(t);
+  tRef.current = t;
+  const isProxyTakeoverRef = useRef(isProxyTakeover);
+  isProxyTakeoverRef.current = isProxyTakeover;
 
-  // 使用 ref 标记是否已经加载过，防止重复读取覆盖用户编辑
-  const [hasLoadedLive, setHasLoadedLive] = useState(false);
-
-  // Claude：底部 JSON 显示「切到这个供应商之后 settings.json 的样子」，保存时拿它做三方比较。
-  const [editorView, setEditorView] = useState<ProviderEditorView | null>(null);
   const { submitWithConflictRetry, conflictDialog } =
     useLiveEditConflict(formSessionToken);
 
@@ -154,16 +179,32 @@ export function EditProviderDialog({
 
   useEffect(() => {
     let cancelled = false;
+    const commitLiveState = (
+      loaded: boolean,
+      settings: Record<string, unknown> | null,
+      view: ProviderEditorView | null,
+    ) => {
+      if (!cancelled && currentFormSessionToken.current === formSessionToken) {
+        if (loaded) {
+          loadedSessionTokenRef.current = formSessionToken;
+        }
+        setLiveState({
+          token: formSessionToken,
+          loaded,
+          settings,
+          editorView: view,
+        });
+      }
+    };
     const load = async () => {
       if (!open || !provider) {
-        setLiveSettings(null);
-        setEditorView(null);
-        setHasLoadedLive(false);
+        loadedSessionTokenRef.current = null;
+        commitLiveState(false, null, null);
         return;
       }
 
-      // 关键修复：只在首次打开时加载一次
-      if (hasLoadedLive) {
+      // 关键修复：同一编辑会话只加载一次，避免编辑期间轮询或重渲染覆盖表单与三方基准
+      if (loadedSessionTokenRef.current === formSessionToken) {
         return;
       }
 
@@ -178,20 +219,15 @@ export function EditProviderDialog({
             provider.id,
             appId === "codex" ? provider.meta : undefined,
           );
-          if (!cancelled) {
-            setEditorView(view);
-            setLiveSettings(view.settings);
-          }
+          commitLiveState(true, view.settings, view);
         } catch (error) {
           // 读不了配置文件（比如手改坏了）：退回显示保存的供应商配置。
-          if (!cancelled) {
-            setEditorView(null);
-            setLiveSettings(null);
-            toastEditorViewFailed(t, error);
-          }
-        } finally {
-          if (!cancelled) {
-            setHasLoadedLive(true);
+          commitLiveState(true, null, null);
+          if (
+            !cancelled &&
+            currentFormSessionToken.current === formSessionToken
+          ) {
+            toastEditorViewFailed(tRef.current, error);
           }
         }
         return;
@@ -199,11 +235,8 @@ export function EditProviderDialog({
 
       // 代理接管模式：Live 配置已被代理改写，读取 live 会导致编辑界面展示代理地址/占位符等内容
       // 因此直接回退到 SSOT（数据库）配置，避免用户困惑与误保存
-      if (isProxyTakeover) {
-        if (!cancelled) {
-          setLiveSettings(null);
-          setHasLoadedLive(true);
-        }
+      if (isProxyTakeoverRef.current) {
+        commitLiveState(true, null, null);
         return;
       }
 
@@ -221,29 +254,20 @@ export function EditProviderDialog({
         appId === "workbuddy" ||
         appId === "codebuddy"
       ) {
-        if (!cancelled) {
-          setLiveSettings(null);
-          setHasLoadedLive(true);
-        }
+        commitLiveState(true, null, null);
         return;
       }
 
       if (appId === "openclaw") {
         try {
           const live = await openclawApi.getLiveProvider(provider.id);
-          if (!cancelled && live && typeof live === "object") {
-            setLiveSettings(live);
-          } else if (!cancelled) {
-            setLiveSettings(null);
-          }
+          commitLiveState(
+            true,
+            live && typeof live === "object" ? live : null,
+            null,
+          );
         } catch {
-          if (!cancelled) {
-            setLiveSettings(null);
-          }
-        } finally {
-          if (!cancelled) {
-            setHasLoadedLive(true);
-          }
+          commitLiveState(true, null, null);
         }
         return;
       }
@@ -255,32 +279,27 @@ export function EditProviderDialog({
             const live = (await vscodeApi.getLiveProviderSettings(
               appId,
             )) as Record<string, unknown>;
-            if (!cancelled && live && typeof live === "object") {
-              setLiveSettings(live);
-              setHasLoadedLive(true);
-            }
+            commitLiveState(
+              true,
+              live && typeof live === "object" ? live : null,
+              null,
+            );
           } catch {
             // 读取实时配置失败则回退到 SSOT（不打断编辑流程）
-            if (!cancelled) {
-              setLiveSettings(null);
-              setHasLoadedLive(true);
-            }
+            commitLiveState(true, null, null);
           }
         } else {
-          if (!cancelled) {
-            setLiveSettings(null);
-            setHasLoadedLive(true);
-          }
+          commitLiveState(true, null, null);
         }
-      } finally {
-        // no-op
+      } catch {
+        commitLiveState(true, null, null);
       }
     };
     void load();
     return () => {
       cancelled = true;
     };
-  }, [open, provider?.id, appId, hasLoadedLive, isProxyTakeover]); // 只依赖 provider.id，不依赖整个 provider 对象
+  }, [open, provider?.id, appId, formSessionToken]);
 
   const initialSettingsConfig = useMemo(
     () => liveSettings ?? asRecord(provider?.settingsConfig) ?? {},
@@ -447,7 +466,7 @@ export function EditProviderDialog({
           isProxyTakeover={isProxyTakeover}
           inactiveFields={editorView?.inactive}
           modeView={modeView}
-          onStackLayoutChange={setStackLayout}
+          onStackLayoutChange={handleStackLayoutChange}
         />
       )}
       {conflictDialog}

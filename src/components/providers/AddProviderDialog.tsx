@@ -99,16 +99,66 @@ export function AddProviderDialog({
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
     useState<UniversalProviderPreset | null>(null);
-  const [isFormSubmitting, setIsFormSubmitting] = useState(false);
+  const formSessionSequence = useRef(0);
+  const formSessionToken = useMemo(
+    () => ++formSessionSequence.current,
+    [appId, open],
+  );
+  const currentFormSessionToken = useRef(formSessionToken);
+  currentFormSessionToken.current = formSessionToken;
+  const [formSubmittingState, setFormSubmittingState] = useState({
+    token: formSessionToken,
+    submitting: false,
+  });
+  const isFormSubmitting =
+    formSubmittingState.token === formSessionToken &&
+    formSubmittingState.submitting;
+  const handleSubmittingChange = useCallback(
+    (submitting: boolean) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setFormSubmittingState({ token: formSessionToken, submitting });
+      }
+    },
+    [formSessionToken],
+  );
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
-  const [stackLayout, setStackLayout] = useState(false);
-  const [accountLogin, setAccountLogin] = useState(false);
+  const [stackLayoutState, setStackLayoutState] = useState({
+    token: formSessionToken,
+    stackLayout: false,
+  });
+  const stackLayout =
+    stackLayoutState.token === formSessionToken && stackLayoutState.stackLayout;
+  const handleStackLayoutChange = useCallback(
+    (next: boolean) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setStackLayoutState({ token: formSessionToken, stackLayout: next });
+      }
+    },
+    [formSessionToken],
+  );
+  const [accountLoginState, setAccountLoginState] = useState({
+    token: formSessionToken,
+    accountLogin: false,
+  });
+  const accountLogin =
+    accountLoginState.token === formSessionToken &&
+    accountLoginState.accountLogin;
+  const handleAccountLoginChange = useCallback(
+    (next: boolean) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setAccountLoginState({ token: formSessionToken, accountLogin: next });
+      }
+    },
+    [formSessionToken],
+  );
   const [authSettingsTarget, setAuthSettingsTarget] =
     useState<AuthCenterTarget | null>(null);
 
   useEffect(() => {
     setAuthSettingsTarget(null);
-    setAccountLogin(false);
+    setManageUniversalOpen(false);
+    setUniversalFormOpen(false);
+    setSelectedUniversalPreset(null);
   }, [appId, open]);
 
   // Claude：预设的关键字段套在当前 live 上显示（去掉当前供应商的关键字段），保存时
@@ -121,18 +171,32 @@ export function AddProviderDialog({
   // Codex、Gemini CLI、Grok Build：表单把预设投影到当前配置文件上显示，投影结果就是保存时
   // 三方比较的底（投影进行中或失败时为 null，保存只存供应商）。投影成它的草稿一起留着，
   // 后端按草稿分开预设带的字段和从 live 带进来的字段。
-  const [draftEditorBase, setDraftEditorBase] = useState<{
-    base: Record<string, unknown>;
-    draft?: Record<string, unknown>;
-  } | null>(null);
+  const [draftEditorBaseState, setDraftEditorBaseState] = useState<{
+    token: number;
+    value: {
+      base: Record<string, unknown>;
+      draft?: Record<string, unknown>;
+    } | null;
+  }>({ token: formSessionToken, value: null });
+  const draftEditorBase =
+    draftEditorBaseState.token === formSessionToken
+      ? draftEditorBaseState.value
+      : null;
   const handleDraftEditorBase = useCallback(
-    (base: Record<string, unknown> | null, draft?: Record<string, unknown>) =>
-      setDraftEditorBase(base ? { base, draft } : null),
-    [],
+    (base: Record<string, unknown> | null, draft?: Record<string, unknown>) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setDraftEditorBaseState({
+          token: formSessionToken,
+          value: base ? { base, draft } : null,
+        });
+      }
+    },
+    [formSessionToken],
   );
   // 新增时表单自己把预设投影到配置文件上的应用（Claude Code 在对话框里取底，见上）。
   const projectsDraft = appId !== "claude" && appHas(appId, "editorView");
-  const { submitWithConflictRetry, conflictDialog } = useLiveEditConflict();
+  const { submitWithConflictRetry, conflictDialog } =
+    useLiveEditConflict(formSessionToken);
 
   useEffect(() => {
     if (!open || appId !== "claude") {
@@ -164,9 +228,9 @@ export function AddProviderDialog({
   const closeDialog = useCallback(() => {
     setAuthSettingsTarget(null);
     // 表单每次打开都会重新投影；这里清掉，免得下次打开时先用上一次的底。
-    setDraftEditorBase(null);
+    setDraftEditorBaseState({ token: formSessionToken, value: null });
     onOpenChange(false);
-  }, [onOpenChange]);
+  }, [onOpenChange, formSessionToken]);
 
   const handlePanelClose = useCallback(() => {
     if (authSettingsTarget) {
@@ -180,27 +244,21 @@ export function AddProviderDialog({
     }
     closeDialog();
   }, [authSettingsTarget, closeDialog, step]);
-  const formReadyToken = useMemo(
-    () => Symbol("provider-form-ready"),
-    [appId, open],
-  );
-  const currentFormReadyToken = useRef(formReadyToken);
-  currentFormReadyToken.current = formReadyToken;
   const [formReadyState, setFormReadyState] = useState({
-    token: formReadyToken,
+    token: formSessionToken,
     ready: !appHas(appId, "piFamily"),
   });
   const isFormReady =
-    formReadyState.token === formReadyToken
+    formReadyState.token === formSessionToken
       ? formReadyState.ready
       : !appHas(appId, "piFamily");
   const handleSubmitReadyChange = useCallback(
     (ready: boolean) => {
-      if (currentFormReadyToken.current === formReadyToken) {
-        setFormReadyState({ token: formReadyToken, ready });
+      if (currentFormSessionToken.current === formSessionToken) {
+        setFormReadyState({ token: formSessionToken, ready });
       }
     },
-    [formReadyToken],
+    [formSessionToken],
   );
 
   const handleUniversalProviderSave = useCallback(
@@ -507,16 +565,17 @@ export function AddProviderDialog({
 
   const form = (
     <ProviderForm
+      key={formSessionToken}
       appId={appId}
       submitLabel={t("common.add")}
       modeView={modeView}
-      onStackLayoutChange={setStackLayout}
+      onStackLayoutChange={handleStackLayoutChange}
       onSubmit={handleSubmit}
       onCancel={closeDialog}
       onManageAuthAccounts={setAuthSettingsTarget}
-      onSubmittingChange={setIsFormSubmitting}
+      onSubmittingChange={handleSubmittingChange}
       onSubmitReadyChange={handleSubmitReadyChange}
-      onAccountLoginChange={setAccountLogin}
+      onAccountLoginChange={handleAccountLoginChange}
       showButtons={false}
       claudeLiveBase={
         appId === "claude" ? (claudeLiveBase ?? undefined) : undefined

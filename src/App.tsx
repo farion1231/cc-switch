@@ -355,6 +355,11 @@ function App() {
   // 新增页和编辑页共用的表单很大，启动后空闲时先拉好（编辑页在 EditProviderHost 里预取）
   useEffect(() => preloadOnIdle(loadAddProviderDialog), []);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [usageModalSession, setUsageModalSession] = useState(0);
+  const openUsageScriptModal = useCallback((provider: Provider) => {
+    setUsageModalSession((n) => n + 1);
+    setUsageProvider(provider);
+  }, []);
   const [confirmAction, setConfirmAction] = useState<{
     provider: Provider;
     action: "remove" | "delete";
@@ -1653,7 +1658,7 @@ function App() {
     onDelete: (provider: Provider) =>
       setConfirmAction({ provider, action: "delete" }),
     onDuplicate: handleDuplicateProvider,
-    onConfigureUsage: setUsageProvider,
+    onConfigureUsage: openUsageScriptModal,
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal:
       activeApp === "claude" ||
@@ -2010,7 +2015,7 @@ function App() {
 
         {effectiveUsageProvider && (
           <UsageScriptModal
-            key={effectiveUsageProvider.id}
+            key={`${activeApp}:${effectiveUsageProvider.id}:${usageModalSession}`}
             provider={effectiveUsageProvider}
             appId={activeApp}
             isOpen={Boolean(usageProvider)}

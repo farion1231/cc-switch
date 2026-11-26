@@ -8,7 +8,7 @@ import type { CodexLoginMethod, ManagedLoginMethod } from "@/lib/api/auth";
 import { deliverLoginLink, readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { copyText } from "@/lib/clipboard";
 import {
-  invalidateAgyLoginCaches,
+  invalidateManagedAuthQuotaCaches,
   subscriptionKeys,
 } from "@/lib/query/subscription";
 import type {
@@ -314,6 +314,9 @@ export function useManagedAuth(
           queryKey: subscriptionKeys.quota("grokbuild"),
         });
       }
+      await invalidateManagedAuthQuotaCaches(queryClient, authProvider, {
+        allAccounts: true,
+      });
     },
   });
 
@@ -338,7 +341,7 @@ export function useManagedAuth(
       // Account removal can succeed before provider unbinding fails.
       if (authProvider === "codex_oauth") await refetchStatus();
     },
-    onSettled: async () => {
+    onSettled: async (_, __, accountId) => {
       if (authProvider === "codex_oauth") {
         await queryClient.invalidateQueries({
           queryKey: ["providers", "codex"],
@@ -351,6 +354,9 @@ export function useManagedAuth(
           queryKey: subscriptionKeys.quota("grokbuild"),
         });
       }
+      await invalidateManagedAuthQuotaCaches(queryClient, authProvider, {
+        accountId,
+      });
     },
   });
 
@@ -388,9 +394,7 @@ export function useManagedAuth(
       }
     },
     onSettled: async () => {
-      if (authProvider === "agy_oauth") {
-        await invalidateAgyLoginCaches(queryClient);
-      }
+      await invalidateManagedAuthQuotaCaches(queryClient, authProvider);
     },
   });
 

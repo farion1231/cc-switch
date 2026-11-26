@@ -14,7 +14,7 @@ import type {
   ClaudeAccountPlan,
   SubscriptionQuota,
 } from "@/types/subscription";
-import type { ManagedAuthStatus } from "@/lib/api/auth";
+import type { ManagedAuthProvider, ManagedAuthStatus } from "@/lib/api/auth";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { appHas } from "@/config/appSpecs";
@@ -41,6 +41,87 @@ export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: agyAuthStatusQuery.queryKey }),
     queryClient.invalidateQueries({ queryKey: subscriptionKeys.quota("agy") }),
   ]);
+}
+
+/** Refresh Claude official auth accounts, default plan, and Claude quota caches. */
+export async function invalidateClaudeOfficialLoginCaches(
+  queryClient: QueryClient,
+) {
+  await Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: managedAuthStatusQueryKey("claude_official"),
+    }),
+    queryClient.invalidateQueries({
+      queryKey: ["claude_official", "default_plan"],
+    }),
+    queryClient.invalidateQueries({
+      queryKey: subscriptionKeys.quota("claude"),
+    }),
+  ]);
+}
+
+/**
+ * Refresh shared quota / default-plan caches when an Auth Center account is
+ * removed, logged out, or switched as default.
+ */
+export async function invalidateManagedAuthQuotaCaches(
+  queryClient: QueryClient,
+  authProvider: ManagedAuthProvider,
+  options?: { accountId?: string; allAccounts?: boolean },
+) {
+  const keys: Array<readonly unknown[]> = [];
+  const accountId = options?.accountId?.trim();
+  const allAccounts = options?.allAccounts === true;
+
+  if (authProvider === "agy_oauth") {
+    keys.push(agyAuthStatusQuery.queryKey, subscriptionKeys.quota("agy"));
+    if (allAccounts) {
+      keys.push(["agy_oauth", "quota"]);
+    } else if (accountId) {
+      keys.push(["agy_oauth", "quota", accountId]);
+    }
+  } else if (authProvider === "codex_oauth") {
+    keys.push(["codex_oauth", "quota", "default"]);
+    if (allAccounts) {
+      keys.push(["codex_oauth", "quota"]);
+    } else if (accountId) {
+      keys.push(["codex_oauth", "quota", accountId]);
+    }
+  } else if (authProvider === "github_copilot") {
+    keys.push(["copilot", "quota", "default"]);
+    if (allAccounts) {
+      keys.push(["copilot", "quota"]);
+    } else if (accountId) {
+      keys.push(["copilot", "quota", accountId]);
+    }
+  } else if (authProvider === "xai_oauth") {
+    keys.push(["xai_oauth", "quota", "default"]);
+    if (allAccounts) {
+      keys.push(["xai_oauth", "quota"]);
+    } else if (accountId) {
+      keys.push(["xai_oauth", "quota", accountId]);
+    }
+  } else if (authProvider === "claude_official") {
+    keys.push(
+      ["claude_official", "default_plan"],
+      subscriptionKeys.quota("claude"),
+    );
+    if (allAccounts) {
+      keys.push(["claude_official", "quota"]);
+    } else if (accountId) {
+      keys.push(["claude_official", "quota", accountId]);
+    }
+  } else if (authProvider === "codebuddy_oauth") {
+    if (allAccounts) {
+      keys.push(["codebuddy_oauth", "quota"]);
+    } else if (accountId) {
+      keys.push(["codebuddy_oauth", "quota", accountId]);
+    }
+  }
+
+  await Promise.all(
+    keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+  );
 }
 
 /**

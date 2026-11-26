@@ -770,4 +770,38 @@ describe("EditProviderDialog", () => {
     act(() => submitReadyCallbacks.at(-1)?.(true));
     await waitFor(() => expect(saveButton).toBeEnabled());
   });
+
+  it("does not reload editorView when isProxyTakeover changes mid-edit", async () => {
+    const provider: Provider = {
+      id: "claude-provider",
+      name: "Claude Provider",
+      settingsConfig: {
+        env: { ANTHROPIC_BASE_URL: "https://api.example.com" },
+      },
+    };
+    apiMocks.getEditorView.mockResolvedValue({
+      settings: { env: { ANTHROPIC_BASE_URL: "https://api.example.com" } },
+      inactive: [],
+    });
+
+    const props = {
+      provider,
+      onOpenChange: vi.fn(),
+      onSubmit: vi.fn(),
+      appId: "claude" as const,
+    };
+    const { rerender } = render(
+      <EditProviderDialog open {...props} isProxyTakeover={false} />,
+    );
+
+    await waitFor(() =>
+      expect(apiMocks.getEditorView).toHaveBeenCalledTimes(1),
+    );
+    await screen.findByRole("button", { name: "common.save" });
+
+    rerender(<EditProviderDialog open {...props} isProxyTakeover={true} />);
+    await act(async () => {});
+
+    expect(apiMocks.getEditorView).toHaveBeenCalledTimes(1);
+  });
 });
