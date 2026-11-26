@@ -284,7 +284,7 @@ static TOOLS: [ToolSpec; 15] = [
         .official_update("upgrade"),
     ToolSpec::npm("openclaw", "OpenClaw", "openclaw").official_update("update --yes"),
     ToolSpec::not_on_npm("hermes", "Hermes").official_update("update"),
-    ToolSpec::npm("pi", "Pi", "@earendil-works/pi-coding-agent"),
+    ToolSpec::npm("pi", "Pi", "@earendil-works/pi-coding-agent").official_update("update"),
     ToolSpec::npm("mcode", "MiniMax Code", "@minimax-ai/code").npm_install_args(
         " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
     ),
