@@ -109,6 +109,7 @@ import {
 import {
   OfficialAccountManagedInfo,
   OfficialAccountPresetPanel,
+  useClaudeOfficialAddBlockedByWsl,
   type DirectModeFormatNotice,
 } from "./shared";
 import {
@@ -1106,8 +1107,9 @@ function ProviderFormFull({
   }, [useStackLayout, onStackLayoutChange]);
   const requiresCodexOauthLogin = isClaudeCodexOauthProvider;
   const presetStep = usePresetStep();
+  const claudeBlockedByWsl = useClaudeOfficialAddBlockedByWsl(appId);
   const officialManagedAuthProvider: ManagedAuthProvider | null =
-    appId === "claude" && category === "official"
+    appId === "claude" && category === "official" && claudeBlockedByWsl !== true
       ? "claude_official"
       : appId === "codex" && isCodexOfficialProvider
         ? "codex_oauth"

@@ -533,7 +533,8 @@ export function AddProviderDialog({
       onStackLayoutChange={setStackLayout}
       onSubmit={handleSubmit}
       onCancel={closeDialog}
-      onManageAuthAccounts={handleOpenAuthCenter}
+      // 表单里的「管理账号」叠在上面打开，别关掉弹窗丢了已填的内容；只有选预设那步才整体跳到授权中心
+      onManageAuthAccounts={setAuthSettingsTarget}
       onSubmittingChange={setIsFormSubmitting}
       onSubmitReadyChange={handleSubmitReadyChange}
       onAccountLoginChange={setAccountLogin}

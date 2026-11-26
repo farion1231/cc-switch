@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
+import { authApi } from "@/lib/api";
 import type { AppId, AuthCenterTarget, ManagedAuthProvider } from "@/lib/api";
 import { canSwitchAgyAccount } from "@/lib/authBinding";
 import { managedAuthStatusQuery } from "@/lib/query/managedAuth";
@@ -20,17 +21,41 @@ const OFFICIAL_AUTH_TARGET_BY_APP: Partial<Record<AppId, AuthCenterTarget>> = {
 };
 
 /**
+ * Claude 配置目录在 WSL 里时授权中心不能登录 Claude 账号：官方预设不能跳过去，
+ * 只能照旧在表单里保存一张跟随 Claude Code 当前登录的官方卡。
+ */
+/** 返回 `undefined` 表示状态还没读到。 */
+export function useClaudeOfficialAddBlockedByWsl(
+  appId: AppId | undefined,
+): boolean | undefined {
+  const isClaude = appId === "claude";
+  // 与 ClaudeOfficialSection 共用同一缓存
+  const { data } = useQuery({
+    queryKey: ["claude-login-switch"],
+    queryFn: () => authApi.getClaudeLoginSwitch(),
+    staleTime: 30000,
+    enabled: isClaude,
+  });
+  if (!isClaude) return false;
+  return data && data.active === false && data.blocked === "wsl";
+}
+
+/**
  * 若某应用选择“官方登录”预设应直接前往授权中心统一配置，返回对应的授权中心分区；否则返回 null。
  */
 export function officialAuthTargetForPreset(
   appId: AppId | undefined,
   category: string | undefined,
+  claudeBlockedByWsl = false,
 ): AuthCenterTarget | null {
   if (!appId || category !== "official") {
     return null;
   }
   const target = OFFICIAL_AUTH_TARGET_BY_APP[appId] ?? null;
   if (target === "agy_oauth" && !canSwitchAgyAccount()) {
+    return null;
+  }
+  if (target === "claude_official" && claudeBlockedByWsl) {
     return null;
   }
   return target;

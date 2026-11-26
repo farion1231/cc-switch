@@ -106,8 +106,15 @@ describe("AddProviderDialog official presets route directly to Auth Center", () 
       const onOpenChange = vi.fn();
       const onSubmit = vi.fn();
       const onOpenAuthCenter = vi.fn();
+      const client = createTestQueryClient();
+      // Claude 只在确认配置目录不在 WSL 后才跳授权中心
+      client.setQueryData(["claude-login-switch"], {
+        active: true,
+        blocked: null,
+        live: null,
+      });
       render(
-        <QueryClientProvider client={createTestQueryClient()}>
+        <QueryClientProvider client={client}>
           <AddProviderDialog
             open
             appId={appId}
@@ -131,8 +138,14 @@ describe("AddProviderDialog official presets route directly to Auth Center", () 
 
   it("opens the embedded AuthSettingsPanel directly when onOpenAuthCenter is omitted", async () => {
     const onOpenChange = vi.fn();
+    const client = createTestQueryClient();
+    client.setQueryData(["claude-login-switch"], {
+      active: true,
+      blocked: null,
+      live: null,
+    });
     render(
-      <QueryClientProvider client={createTestQueryClient()}>
+      <QueryClientProvider client={client}>
         <AddProviderDialog
           open
           appId="claude"
@@ -151,5 +164,39 @@ describe("AddProviderDialog official presets route directly to Auth Center", () 
       "claude_official",
     );
     expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Claude Official preset in the form when Claude's config dir is in WSL", async () => {
+    const client = createTestQueryClient();
+    // 授权中心在 WSL 下不能登录 Claude，跳过去就无路可走
+    client.setQueryData(["claude-login-switch"], {
+      active: false,
+      blocked: "wsl",
+      live: null,
+    });
+    const onOpenChange = vi.fn();
+    const onOpenAuthCenter = vi.fn();
+    render(
+      <QueryClientProvider client={client}>
+        <AddProviderDialog
+          open
+          appId="claude"
+          onOpenChange={onOpenChange}
+          onSubmit={vi.fn()}
+          onOpenAuthCenter={onOpenAuthCenter}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Claude Official/ }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "common.add" }),
+    ).toBeInTheDocument();
+    expect(onOpenAuthCenter).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("auth-center-mock")).not.toBeInTheDocument();
   });
 });

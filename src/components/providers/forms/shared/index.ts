@@ -11,4 +11,5 @@ export {
   OfficialAccountManagedInfo,
   OfficialAccountPresetPanel,
   officialAuthTargetForPreset,
+  useClaudeOfficialAddBlockedByWsl,
 } from "./OfficialAccountManaged";

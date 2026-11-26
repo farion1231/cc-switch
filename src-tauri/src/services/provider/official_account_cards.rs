@@ -426,17 +426,50 @@ pub(crate) fn record_deleted_card(
             return None;
         }
     };
-    if !still_covered {
-        if let Err(error) = mark_dismissed(db, app_type, &account_id) {
-            log::warn!(
-                "[OfficialAccountCards] Failed to mark dismissed account {account_id} for {}: {error}",
-                app_type.as_str()
-            );
-        }
-        Some(account_id)
-    } else {
-        None
+    if still_covered {
+        return None;
     }
+    if let Err(error) = mark_dismissed(db, app_type, &account_id) {
+        log::warn!(
+            "[OfficialAccountCards] Failed to mark dismissed account {account_id} for {}: {error}",
+            app_type.as_str()
+        );
+    }
+    let auth_provider = auth_provider_for_app(app_type)?;
+    // These logins also back Claude/Codex/ClaudeDesktop providers (bound, or by the "first account"
+    // fallback), so deleting one app's card only hides it and never signs the account out.
+    if matches!(
+        auth_provider,
+        AUTH_PROVIDER_CODEX_OAUTH | AUTH_PROVIDER_GITHUB_COPILOT | AUTH_PROVIDER_XAI_OAUTH
+    ) || bound_in_other_apps(db, app_type, auth_provider, &account_id)
+    {
+        return None;
+    }
+    Some(account_id)
+}
+
+/// Whether a provider of another app is still bound to this Auth Center account.
+/// Fails closed: an unreadable app or row counts as still bound.
+fn bound_in_other_apps(
+    db: &Database,
+    app_type: &AppType,
+    auth_provider: &str,
+    account_id: &str,
+) -> bool {
+    AppType::all()
+        .filter(|other| other != app_type)
+        .any(|other| match db.get_provider_rows(&other) {
+            // A malformed row may still carry a binding we cannot see: keep the account.
+            Ok(rows) if !rows.unreadable.is_empty() => true,
+            Ok(rows) => rows.readable.values().any(|provider| {
+                provider
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.managed_account_id_for(auth_provider))
+                    .is_some_and(|id| id.trim() == account_id)
+            }),
+            Err(_) => true,
+        })
 }
 
 /// Cleans up auto-created cards (and clears dismissal flags) when accounts are removed/logged out
@@ -969,5 +1002,54 @@ mod tests {
             Some("acct-1")
         );
         assert!(load_dismissed(&state.db, &AppType::Claude).contains("acct-1"));
+    }
+
+    #[test]
+    #[serial]
+    fn record_deleted_card_keeps_accounts_other_apps_still_use() {
+        let (_home, _env, state) = test_state();
+        let bound = |id: &str, auth_provider: &str, account: &str| {
+            let mut provider = Provider::with_id(id.into(), id.into(), json!({ "env": {} }), None);
+            provider.category = Some("official".into());
+            provider.meta = Some(ProviderMeta {
+                auth_binding: Some(AuthBinding {
+                    source: AuthBindingSource::ManagedAccount,
+                    auth_provider: Some(auth_provider.into()),
+                    account_id: Some(account.into()),
+                }),
+                ..Default::default()
+            });
+            provider
+        };
+
+        // Codex OAuth logins also back Claude providers: deleting the Codex card only hides it.
+        let codex_card = bound("codex-card", AUTH_PROVIDER_CODEX_OAUTH, "acct-c");
+        assert_eq!(
+            record_deleted_card(&state.db, &AppType::Codex, &codex_card),
+            None
+        );
+        assert!(load_dismissed(&state.db, &AppType::Codex).contains("acct-c"));
+
+        // A Claude account still bound by another app's provider is kept too.
+        let claude_card = bound("claude-card", AUTH_PROVIDER_CLAUDE_OFFICIAL, "acct-1");
+        let desktop = bound("desktop-card", AUTH_PROVIDER_CLAUDE_OFFICIAL, "acct-1");
+        state
+            .db
+            .save_provider(&AppType::ClaudeDesktop, &desktop)
+            .unwrap();
+        assert_eq!(
+            record_deleted_card(&state.db, &AppType::Claude, &claude_card),
+            None
+        );
+        assert!(load_dismissed(&state.db, &AppType::Claude).contains("acct-1"));
+
+        state
+            .db
+            .delete_provider(&AppType::ClaudeDesktop, "desktop-card")
+            .unwrap();
+        assert_eq!(
+            record_deleted_card(&state.db, &AppType::Claude, &claude_card).as_deref(),
+            Some("acct-1")
+        );
     }
 }

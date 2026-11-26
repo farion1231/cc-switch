@@ -29,7 +29,10 @@ import {
 } from "@/config/universalProviderPresets";
 import { cn } from "@/lib/utils";
 import { usePresetStep } from "./presetStep";
-import { officialAuthTargetForPreset } from "./shared";
+import {
+  officialAuthTargetForPreset,
+  useClaudeOfficialAddBlockedByWsl,
+} from "./shared";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
@@ -161,11 +164,17 @@ export function ProviderPresetSelector({
   const step = usePresetStep();
   const registerSelector = step?.registerSelector;
   useEffect(() => registerSelector?.(), [registerSelector]);
+  const claudeBlockedByWsl = useClaudeOfficialAddBlockedByWsl(step?.appId);
 
   const pick = (id: string) => {
     const picked = presetEntries.find((item) => item.id === id);
     const authTarget = picked
-      ? officialAuthTargetForPreset(step?.appId, picked.preset.category)
+      ? officialAuthTargetForPreset(
+          step?.appId,
+          picked.preset.category,
+          // 状态还没读到时先进表单：表单里仍有前往授权中心的入口，WSL 下也不会走进死路
+          claudeBlockedByWsl !== false,
+        )
       : null;
     if (authTarget && step?.openAuthCenter) {
       step.openAuthCenter(authTarget);
