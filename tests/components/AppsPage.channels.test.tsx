@@ -13,6 +13,7 @@ import { createTestQueryClient } from "../utils/testQueryClient";
 import { waitForOverlayTransition } from "../utils/overlayTransition";
 import {
   mocks,
+  mockToolInstallations,
   deferred,
   report,
   uninstallPlan,
@@ -59,14 +60,7 @@ describe("AppsPage installation channels", () => {
         is_path_default: false,
         version: "1.0.0",
       });
-      mocks.getToolInstallationReports.mockImplementation(
-        async (tools: string[]) =>
-          tools.map((name) =>
-            report(name, {
-              installs: name === tool ? [desktop, standalone] : [],
-            }),
-          ),
-      );
+      mockToolInstallations(tool, [desktop, standalone]);
       mocks.getToolInstallationUpdates.mockImplementation(
         async (name: string) =>
           name === tool
@@ -105,12 +99,7 @@ describe("AppsPage installation channels", () => {
       path: "/qa/brew/bin/opencode",
       version: "2.0.0",
     });
-    mocks.getToolInstallationReports.mockImplementation(
-      async (tools: string[]) =>
-        tools.map((tool) =>
-          report(tool, { installs: tool === "opencode" ? [working] : [] }),
-        ),
-    );
+    mockToolInstallations("opencode", [working]);
     mocks.getPreferredToolInstallation.mockImplementation(async (tool) => ({
       supported: true,
       path: tool === "opencode" ? "/removed/npm/bin/opencode" : null,
@@ -279,12 +268,7 @@ describe("AppsPage installation channels", () => {
       version: "2.0.0",
       is_path_default: false,
     });
-    mocks.getToolInstallationReports.mockImplementation(
-      async (tools: string[]) =>
-        tools.map((tool) =>
-          report(tool, { installs: tool === "opencode" ? [brew, curl] : [] }),
-        ),
-    );
+    mockToolInstallations("opencode", [brew, curl]);
     mocks.getToolInstallationUpdates.mockImplementation(async (tool) =>
       tool === "opencode"
         ? [
@@ -787,12 +771,7 @@ describe("AppsPage installation channels", () => {
           : tool,
       ),
     );
-    mocks.getToolInstallationReports.mockImplementation(
-      async (tools: string[]) =>
-        tools.map((tool) =>
-          report(tool, { installs: tool === "codex" ? [curl] : [] }),
-        ),
-    );
+    mockToolInstallations("codex", [curl]);
     const updatePlan = {
       tool: "codex",
       path: curl.path,
@@ -916,14 +895,7 @@ describe("AppsPage installation channels", () => {
       source: "curl",
       command: "update reviewed secondary installation",
     };
-    mocks.getToolInstallationReports.mockImplementation(
-      async (tools: string[]) =>
-        tools.map((tool) =>
-          report(tool, {
-            installs: tool === "opencode" ? [primary, secondary] : [],
-          }),
-        ),
-    );
+    mockToolInstallations("opencode", [primary, secondary]);
     mocks.getToolInstallationUpdates.mockImplementation(
       async (tool, _path, includeLatest) =>
         tool === "opencode" && includeLatest
@@ -989,14 +961,7 @@ describe("AppsPage installation channels", () => {
       version: "1.1.0",
       is_path_default: false,
     });
-    mocks.getToolInstallationReports.mockImplementation(
-      async (tools: string[]) =>
-        tools.map((tool) =>
-          report(tool, {
-            installs: tool === "codex" ? [brewInstall, npmInstall] : [],
-          }),
-        ),
-    );
+    mockToolInstallations("codex", [brewInstall, npmInstall]);
     const updates = [brewInstall, npmInstall].map((installation) => ({
       installation,
       real_path: installation.plan!.real_path,

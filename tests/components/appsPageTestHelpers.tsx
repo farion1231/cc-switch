@@ -101,6 +101,29 @@ export function report(
   };
 }
 
+export function mockToolInstallations(
+  tool: string,
+  installs: ToolInstallationReport["installs"],
+) {
+  mocks.getToolInstallationReports.mockImplementation(async (tools: string[]) =>
+    tools.map((name) =>
+      report(name, { installs: name === tool ? installs : [] }),
+    ),
+  );
+}
+
+export async function openInstallCommands(
+  user: ReturnType<typeof userEvent.setup>,
+) {
+  await user.click(
+    screen.getByRole("button", { name: "appsPage.moreActions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "appsPage.manualCommands" }),
+  );
+  return within(screen.getByRole("dialog"));
+}
+
 export function uninstallPlan(tool: string): ToolUninstallPlan {
   return {
     tool,

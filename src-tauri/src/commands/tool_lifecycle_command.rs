@@ -2015,16 +2015,9 @@ pub(super) fn npm_prerelease_requires_manual_update(
     )
 }
 
-/// Build a preview only when the updater and its installation root are known.
-pub(super) fn plan_selected_tool_update(
-    tool: &str,
-    install: &ToolInstallation,
-) -> Option<ToolUpdatePlan> {
-    #[cfg(target_os = "windows")]
-    if wsl_distro_for_tool(tool).is_some() {
-        return None;
-    }
-    if (tool == "opencode" && install.source == "desktop")
+/// Shared eligibility for default and explicitly selected installation updates.
+fn installation_update_is_manual(tool: &str, install: &ToolInstallation) -> bool {
+    (tool == "opencode" && install.source == "desktop")
         || desktop_managed_codex_cli(tool, &install.real)
         || npm_prerelease_requires_manual_update(
             tool,
@@ -2039,7 +2032,18 @@ pub(super) fn plan_selected_tool_update(
                 std::env::consts::OS,
                 Some((Path::new(&install.path), &install.real)),
             ))
-    {
+}
+
+/// Build a preview only when the updater and its installation root are known.
+pub(super) fn plan_selected_tool_update(
+    tool: &str,
+    install: &ToolInstallation,
+) -> Option<ToolUpdatePlan> {
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return None;
+    }
+    if installation_update_is_manual(tool, install) {
         return None;
     }
     let launcher = Path::new(&install.path);
@@ -2293,48 +2297,20 @@ fn render_volta_update_command(package: &str, manager: &Path, root: &Path) -> Op
 }
 
 pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
-    // OpenCode Desktop 自己更新它带的命令行；npm 升级只会另装一份。
-    if tool == "opencode" && default_install(installs).is_some_and(|inst| inst.source == "desktop")
-    {
-        return UpdateCommand::Unmanaged;
-    }
-    if default_install(installs).is_some_and(|install| {
-        npm_prerelease_requires_manual_update(
-            tool,
-            Path::new(&install.path),
-            &install.real,
-            install.version.as_deref(),
-        )
-    }) {
-        return UpdateCommand::Unmanaged;
-    }
-    if tool == "opencode"
-        && default_install(installs).is_some_and(|install| {
-            tool_version::npm_package_for_version(tool, install.version.as_deref())
-                == Some(OPENCODE_V2_NPM_PACKAGE)
-                && opencode_update_is_manual(
-                    std::env::consts::OS,
-                    Some((Path::new(&install.path), &install.real)),
-                )
-        })
-    {
-        return UpdateCommand::Unmanaged;
-    }
-    if default_install(installs)
-        .is_some_and(|install| desktop_managed_codex_cli(tool, &install.real))
-    {
+    let default = default_install(installs);
+    if default.is_some_and(|install| installation_update_is_manual(tool, install)) {
         return UpdateCommand::Unmanaged;
     }
     #[cfg(target_os = "macos")]
     if tool == "codex"
-        && default_install(installs).is_none()
+        && default.is_none()
         && crate::codex_config::codex_macos_desktop_installation().is_some()
     {
         return UpdateCommand::Unmanaged;
     }
     // Volta's shim may live in Homebrew's Cellar. Update the selected npm
     // package, never the formula that supplied the manager/template.
-    if let Some(install) = default_install(installs) {
+    if let Some(install) = default {
         if let Some(manager) = verified_volta_manager(Path::new(&install.path)) {
             return volta_owned_update_command(tool, &manager, install.version.as_deref())
                 .map(UpdateCommand::Anchored)
@@ -2342,8 +2318,8 @@ pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) 
         }
     }
     #[cfg(not(target_os = "windows"))]
-    if let Some(install) = default_install(installs)
-        .filter(|install| install.real.to_str().is_some_and(is_brew_managed_path))
+    if let Some(install) =
+        default.filter(|install| install.real.to_str().is_some_and(is_brew_managed_path))
     {
         return plan_selected_tool_update(tool, install)
             .map(|plan| UpdateCommand::Anchored(plan.command))
@@ -2351,13 +2327,13 @@ pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) 
     }
     // A native Copilot binary has no verified self-updater here. A sibling npm
     // must not make installing a second copy look like updating this one.
-    if tool == "copilot" && default_install(installs).is_some_and(is_unmanaged_native_install) {
+    if tool == "copilot" && default.is_some_and(is_unmanaged_native_install) {
         return UpdateCommand::Unmanaged;
     }
     // These managers have independent global stores. Never let an app's generic
     // self-updater or an npm fallback guess which installation to replace.
-    if let Some(install) = default_install(installs)
-        .filter(|install| tool == "pi" || matches!(install.source.as_str(), "yarn" | "vite"))
+    if let Some(install) =
+        default.filter(|install| tool == "pi" || matches!(install.source.as_str(), "yarn" | "vite"))
     {
         return plan_selected_tool_update(tool, install)
             .map(|plan| UpdateCommand::Anchored(plan.command))
@@ -2366,7 +2342,7 @@ pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) 
     if let Some(command) = installs_anchored_command(tool, installs) {
         return UpdateCommand::Anchored(command);
     }
-    if installs.len() >= 2 || default_install(installs).is_some_and(is_unmanaged_native_install) {
+    if installs.len() >= 2 || default.is_some_and(is_unmanaged_native_install) {
         return UpdateCommand::Unmanaged;
     }
     UpdateCommand::Static(static_fallback_command(tool))

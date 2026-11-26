@@ -3,8 +3,9 @@ import { act, screen, within, waitFor } from "@testing-library/react";
 import { waitForOverlayTransition } from "../utils/overlayTransition";
 import {
   mocks,
+  openInstallCommands,
+  mockToolInstallations,
   deferred,
-  report,
   candidate,
   missing,
   card,
@@ -74,12 +75,7 @@ describe("AppsPage install commands", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await waitForOverlayTransition();
-    await user.click(
-      screen.getByRole("button", { name: "appsPage.moreActions" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "appsPage.manualCommands" }),
-    );
+    await openInstallCommands(user);
     expect(
       within(screen.getByRole("dialog")).getByRole("heading", {
         name: "appsPage.manualCommands",
@@ -311,28 +307,18 @@ describe("AppsPage install commands", () => {
             : result,
         ),
       );
-      mocks.getToolInstallationReports.mockImplementation(
-        async (tools: string[]) =>
-          tools.map((tool) =>
-            report(tool, {
-              installs:
-                tool === "dsh"
-                  ? [
-                      candidate(null, {
-                        source: "npm",
-                        path: "/qa/bin/dsh",
-                        version: "0.2.2-rc.5",
-                      }),
-                      candidate(null, {
-                        source: "npm",
-                        path: "/qa/alternate/bin/dsh",
-                        version: "0.2.1",
-                      }),
-                    ]
-                  : [],
-            }),
-          ),
-      );
+      mockToolInstallations("dsh", [
+        candidate(null, {
+          source: "npm",
+          path: "/qa/bin/dsh",
+          version: "0.2.2-rc.5",
+        }),
+        candidate(null, {
+          source: "npm",
+          path: "/qa/alternate/bin/dsh",
+          version: "0.2.1",
+        }),
+      ]);
       await renderApps();
       const user = userEvent.setup();
       const row = card("DeepSeek Harness");
@@ -350,14 +336,7 @@ describe("AppsPage install commands", () => {
       expect(
         row.queryByRole("button", { name: "appsPage.manualUpdateGuide" }),
       ).toBeNull();
-      await user.click(
-        screen.getByRole("button", { name: "appsPage.moreActions" }),
-      );
-      await user.click(
-        await screen.findByRole("menuitem", {
-          name: "appsPage.manualCommands",
-        }),
-      );
+      await openInstallCommands(user);
       const dialog = within(screen.getByRole("dialog"));
       await user.click(
         dialog.getByRole("button", { name: "DeepSeek Harness" }),
@@ -415,36 +394,19 @@ describe("AppsPage install commands", () => {
             env_type: envType,
           })),
         );
-        mocks.getToolInstallationReports.mockImplementation(
-          async (tools: string[]) =>
-            tools.map((tool) =>
-              report(tool, {
-                installs:
-                  tool === "codebuddy"
-                    ? [
-                        candidate(null, {
-                          source: "npm",
-                          path:
-                            envType === "windows"
-                              ? "C:/qa/old-prefix/codebuddy.cmd"
-                              : "/qa/old-prefix/bin/codebuddy",
-                          version: "1.0.0",
-                        }),
-                      ]
-                    : [],
-              }),
-            ),
-        );
+        mockToolInstallations("codebuddy", [
+          candidate(null, {
+            source: "npm",
+            path:
+              envType === "windows"
+                ? "C:/qa/old-prefix/codebuddy.cmd"
+                : "/qa/old-prefix/bin/codebuddy",
+            version: "1.0.0",
+          }),
+        ]);
         await renderApps();
         const user = userEvent.setup();
-        await user.click(
-          screen.getByRole("button", { name: "appsPage.moreActions" }),
-        );
-        await user.click(
-          await screen.findByRole("menuitem", {
-            name: "appsPage.manualCommands",
-          }),
-        );
+        await openInstallCommands(user);
         const dialog = within(screen.getByRole("dialog"));
         await user.click(dialog.getByRole("button", { name: "CodeBuddy" }));
         expect(
@@ -472,12 +434,7 @@ describe("AppsPage install commands", () => {
     });
     await renderApps();
     const user = userEvent.setup();
-    await user.click(
-      screen.getByRole("button", { name: "appsPage.moreActions" }),
-    );
-    await user.click(
-      await screen.findByRole("menuitem", { name: "appsPage.manualCommands" }),
-    );
+    await openInstallCommands(user);
     const dialog = within(screen.getByRole("dialog"));
     await user.click(dialog.getByRole("button", { name: "CodeBuddy" }));
     await waitFor(() =>
@@ -548,14 +505,7 @@ describe("AppsPage install commands", () => {
       const user = userEvent.setup();
       const { AppsPage } = await import("@/components/apps/AppsPage");
       mountApps(AppsPage);
-      await user.click(
-        screen.getByRole("button", { name: "appsPage.moreActions" }),
-      );
-      await user.click(
-        await screen.findByRole("menuitem", {
-          name: "appsPage.manualCommands",
-        }),
-      );
+      await openInstallCommands(user);
       const dialog = within(screen.getByRole("dialog"));
       expect(dialog.getByRole("status")).toHaveTextContent(
         "appsPage.installEnvironmentPending",
@@ -629,14 +579,7 @@ describe("AppsPage install commands", () => {
         }
         const user = userEvent.setup();
         await renderApps();
-        await user.click(
-          screen.getByRole("button", { name: "appsPage.moreActions" }),
-        );
-        await user.click(
-          await screen.findByRole("menuitem", {
-            name: "appsPage.manualCommands",
-          }),
-        );
+        await openInstallCommands(user);
         const dialog = within(screen.getByRole("dialog"));
         if (userAgent.startsWith("Windows")) {
           expect(

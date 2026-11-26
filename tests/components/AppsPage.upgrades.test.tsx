@@ -11,6 +11,7 @@ import type { ToolInstallationReport } from "@/lib/api/settings";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import {
   mocks,
+  openInstallCommands,
   deferred,
   report,
   candidate,
@@ -1031,14 +1032,7 @@ describe("AppsPage concurrent CLI upgrades", () => {
         await renderApps();
         if (withDesktop) {
           const user = userEvent.setup();
-          await user.click(
-            screen.getByRole("button", { name: "appsPage.moreActions" }),
-          );
-          await user.click(
-            await screen.findByRole("menuitem", {
-              name: "appsPage.manualCommands",
-            }),
-          );
+          await openInstallCommands(user);
           await user.click(
             within(screen.getByRole("dialog")).getByRole("button", {
               name: "Codex",

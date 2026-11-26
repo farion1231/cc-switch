@@ -2097,71 +2097,49 @@ pub struct OfficialDesktopInstallation {
     version: Option<String>,
 }
 
-#[cfg(target_os = "macos")]
-fn official_desktop_installation(
-    name: &str,
-    identifier: &str,
-    team: &str,
+async fn official_desktop_installation(
+    name: &'static str,
+    identifier: &'static str,
+    team: &'static str,
 ) -> Option<OfficialDesktopInstallation> {
-    let paths = std::iter::once(PathBuf::from("/Applications").join(name))
-        .chain(dirs::home_dir().map(|home| home.join("Applications").join(name)));
-    for path in paths.filter(|path| path.is_dir()) {
-        if !crate::config::macos_has_developer_signature(&path, identifier, team) {
-            continue;
-        }
-        let version = plist::Value::from_file(path.join("Contents/Info.plist"))
-            .ok()
-            .and_then(|info| {
-                info.as_dictionary()?
-                    .get("CFBundleShortVersionString")?
-                    .as_string()
-                    .map(str::to_owned)
-            });
-        return Some(OfficialDesktopInstallation { path, version });
+    #[cfg(target_os = "macos")]
+    {
+        tokio::task::spawn_blocking(move || {
+            let paths = std::iter::once(PathBuf::from("/Applications").join(name))
+                .chain(dirs::home_dir().map(|home| home.join("Applications").join(name)));
+            let path = paths.filter(|path| path.is_dir()).find(|path| {
+                crate::config::macos_has_developer_signature(path, identifier, team)
+            })?;
+            let version = plist::Value::from_file(path.join("Contents/Info.plist"))
+                .ok()
+                .and_then(|info| {
+                    info.as_dictionary()?
+                        .get("CFBundleShortVersionString")?
+                        .as_string()
+                        .map(str::to_owned)
+                });
+            Some(OfficialDesktopInstallation { path, version })
+        })
+        .await
+        .ok()
+        .flatten()
     }
-    None
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (name, identifier, team);
+        None
+    }
 }
 
 #[tauri::command]
 pub async fn get_official_claude_desktop_installation() -> Option<OfficialDesktopInstallation> {
-    #[cfg(target_os = "macos")]
-    {
-        tokio::task::spawn_blocking(|| {
-            official_desktop_installation(
-                "Claude.app",
-                "com.anthropic.claudefordesktop",
-                "Q6L2SF6YDW",
-            )
-        })
+    official_desktop_installation("Claude.app", "com.anthropic.claudefordesktop", "Q6L2SF6YDW")
         .await
-        .ok()
-        .flatten()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
 }
 
 #[tauri::command]
 pub async fn get_official_workbuddy_installation() -> Option<OfficialDesktopInstallation> {
-    #[cfg(target_os = "macos")]
-    {
-        tokio::task::spawn_blocking(|| {
-            official_desktop_installation(
-                "WorkBuddy.app",
-                "com.tencent.workbuddy.mac",
-                "FN2V63AD2J",
-            )
-        })
-        .await
-        .ok()
-        .flatten()
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        None
-    }
+    official_desktop_installation("WorkBuddy.app", "com.tencent.workbuddy.mac", "FN2V63AD2J").await
 }
 
 /// 这个工具的配置目录是不是指向 WSL（只有 Windows 上会是）。
