@@ -31,6 +31,14 @@ use super::{
 const DISMISSED_SETTING_PREFIX: &str = "official_account_cards_dismissed:";
 const OFFICIAL_ACCOUNT_CARD_INFIX: &str = "-official-acct-";
 
+pub(crate) const AUTH_PROVIDER_CLAUDE_OFFICIAL: &str = "claude_official";
+pub(crate) const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
+pub(crate) const AUTH_PROVIDER_XAI_OAUTH: &str = "xai_oauth";
+pub(crate) const AUTH_PROVIDER_AGY_OAUTH: &str = "agy_oauth";
+pub(crate) const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
+pub(crate) const AUTH_PROVIDER_WORKBUDDY_ACCOUNT: &str = "workbuddy_account";
+pub(crate) const AUTH_PROVIDER_CODEBUDDY_OAUTH: &str = "codebuddy_oauth";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OfficialAccountEntry {
     pub id: String,
@@ -40,13 +48,13 @@ pub(crate) struct OfficialAccountEntry {
 /// Maps an app type to the Auth Center provider whose saved accounts appear as cards on its page.
 pub(crate) fn auth_provider_for_app(app_type: &AppType) -> Option<&'static str> {
     match app_type {
-        AppType::Claude => Some("claude_official"),
-        AppType::Codex => Some("codex_oauth"),
-        AppType::GrokBuild => Some("xai_oauth"),
-        AppType::Agy => Some("agy_oauth"),
-        AppType::Copilot => Some("github_copilot"),
-        AppType::WorkBuddy => Some("workbuddy_account"),
-        AppType::Codebuddy => Some("codebuddy_oauth"),
+        AppType::Claude => Some(AUTH_PROVIDER_CLAUDE_OFFICIAL),
+        AppType::Codex => Some(AUTH_PROVIDER_CODEX_OAUTH),
+        AppType::GrokBuild => Some(AUTH_PROVIDER_XAI_OAUTH),
+        AppType::Agy => Some(AUTH_PROVIDER_AGY_OAUTH),
+        AppType::Copilot => Some(AUTH_PROVIDER_GITHUB_COPILOT),
+        AppType::WorkBuddy => Some(AUTH_PROVIDER_WORKBUDDY_ACCOUNT),
+        AppType::Codebuddy => Some(AUTH_PROVIDER_CODEBUDDY_OAUTH),
         _ => None,
     }
 }
@@ -54,13 +62,13 @@ pub(crate) fn auth_provider_for_app(app_type: &AppType) -> Option<&'static str> 
 /// Inverse of [`auth_provider_for_app`].
 pub(crate) fn app_for_auth_provider(auth_provider: &str) -> Option<AppType> {
     match auth_provider {
-        "claude_official" => Some(AppType::Claude),
-        "codex_oauth" => Some(AppType::Codex),
-        "xai_oauth" => Some(AppType::GrokBuild),
-        "agy_oauth" => Some(AppType::Agy),
-        "github_copilot" => Some(AppType::Copilot),
-        "workbuddy_account" => Some(AppType::WorkBuddy),
-        "codebuddy_oauth" => Some(AppType::Codebuddy),
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => Some(AppType::Claude),
+        AUTH_PROVIDER_CODEX_OAUTH => Some(AppType::Codex),
+        AUTH_PROVIDER_XAI_OAUTH => Some(AppType::GrokBuild),
+        AUTH_PROVIDER_AGY_OAUTH => Some(AppType::Agy),
+        AUTH_PROVIDER_GITHUB_COPILOT => Some(AppType::Copilot),
+        AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Some(AppType::WorkBuddy),
+        AUTH_PROVIDER_CODEBUDDY_OAUTH => Some(AppType::Codebuddy),
         _ => None,
     }
 }

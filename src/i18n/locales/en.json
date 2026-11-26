@@ -274,6 +274,15 @@
         "manage": "Add or manage xAI accounts",
         "help": "When you switch to this card, Grok CLI's sign-in (~/.grok/auth.json) changes to the selected account. The account signed in before is saved to the auth center first and comes back when you switch to the \"Follow Grok CLI sign-in\" card.",
         "xaiAccount": "xAI account"
+      },
+      "officialManaged": {
+        "addDescription": "Official accounts are configured and managed centrally in the Auth Center. Each added account automatically appears as an individual card on the provider page for quick switching.",
+        "manageAccounts": "Go to Auth Center to manage accounts",
+        "accountLabel": "Official account",
+        "unboundAccount": "No official account linked",
+        "openAuthCenter": "Open Auth Center",
+        "editBoundHelp": "This card is pinned to this official account and cannot switch accounts inside the card. To use another account, switch directly to its card or manage accounts in the Auth Center.",
+        "editUnboundHelp": "Each official account appears as its own individual card and cannot switch accounts inside the card. Please sign in or manage official accounts in the Auth Center."
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",
@@ -1277,7 +1286,9 @@
       "quitFirst": "Quit WorkBuddy before switching accounts",
       "quitFirstBody": "Quit WorkBuddy completely (including the menu bar / tray), then switch again, or it will write its current sign-in back.",
       "switched": "Switched to \"{{name}}\". WorkBuddy will use this account the next time it opens.",
-      "switchFailed": "Couldn't switch the WorkBuddy account"
+      "switchFailed": "Couldn't switch the WorkBuddy account",
+      "accountRemoved": "This account has been removed from the Auth Center",
+      "unboundManaged": "No official account linked. Please sign in from the Auth Center"
     },
     "quota": {
       "title": "Quota",
@@ -5488,7 +5499,9 @@
       "addFailed": "Couldn't add: {{error}}",
       "switched": "CodeBuddy is now signed in to {{name}}. A running CodeBuddy switches automatically, and new sessions use it too.",
       "switchFailed": "Couldn't switch: {{error}}",
-      "removeHint": "CodeBuddy can only be signed in to one account at a time. Add another official card to switch."
+      "removeHint": "CodeBuddy can only be signed in to one account at a time. Add another official card to switch.",
+      "accountRemoved": "This account has been removed from the Auth Center",
+      "unboundManaged": "No official account linked. Please sign in from the Auth Center"
     },
     "login": {
       "confirmTitle": "Sign in to another CodeBuddy account",

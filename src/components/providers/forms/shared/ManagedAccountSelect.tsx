@@ -8,11 +8,6 @@ import {
 } from "@/lib/query/managedAuth";
 import type { ManagedAuthAccount, ManagedAuthProvider } from "@/lib/api/auth";
 
-/** 授权中心里某一类账号（和授权中心、各官方卡共用同一个查询缓存） */
-export function useManagedAccounts(authProvider: ManagedAuthProvider) {
-  return useQuery(managedAuthStatusQuery(authProvider));
-}
-
 interface ManagedBoundAccountLineProps {
   authProvider: ManagedAuthProvider;
   accountId: string;

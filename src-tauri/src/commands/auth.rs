@@ -16,16 +16,13 @@ use crate::proxy::providers::xai_oauth_auth::{XaiOAuthAccount, XaiOAuthError};
 use crate::services::agy_account::AgyAccount;
 use crate::services::claude_account::ClaudeAccount;
 use crate::services::codebuddy_account::CodebuddyAccount;
+use crate::services::provider::official_account_cards::{
+    AUTH_PROVIDER_AGY_OAUTH, AUTH_PROVIDER_CLAUDE_OFFICIAL, AUTH_PROVIDER_CODEBUDDY_OAUTH,
+    AUTH_PROVIDER_CODEX_OAUTH, AUTH_PROVIDER_GITHUB_COPILOT, AUTH_PROVIDER_WORKBUDDY_ACCOUNT,
+    AUTH_PROVIDER_XAI_OAUTH,
+};
 use crate::services::workbuddy_account::WorkBuddyAccount;
 use crate::store::AppState;
-
-const AUTH_PROVIDER_GITHUB_COPILOT: &str = "github_copilot";
-const AUTH_PROVIDER_CODEX_OAUTH: &str = "codex_oauth";
-const AUTH_PROVIDER_XAI_OAUTH: &str = "xai_oauth";
-const AUTH_PROVIDER_AGY_OAUTH: &str = "agy_oauth";
-const AUTH_PROVIDER_WORKBUDDY_ACCOUNT: &str = "workbuddy_account";
-const AUTH_PROVIDER_CODEBUDDY_OAUTH: &str = "codebuddy_oauth";
-const AUTH_PROVIDER_CLAUDE_OFFICIAL: &str = "claude_official";
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ManagedAuthAccount {

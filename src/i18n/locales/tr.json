@@ -274,6 +274,15 @@
         "manage": "xAI hesaplarını ekle veya yönet",
         "help": "Bu karta geçtiğinizde Grok CLI'nin oturumu (~/.grok/auth.json) seçilen hesaba geçer. Önceden oturum açılmış hesap önce Kimlik Doğrulama Merkezi'ne kaydedilir ve \"Grok CLI oturumunu kullan\" kartına geri döndüğünüzde geri yüklenir.",
         "xaiAccount": "xAI hesabı"
+      },
+      "officialManaged": {
+        "addDescription": "Resmi hesaplar Auth Center üzerinden merkezi olarak yapılandırılır ve yönetilir. Eklenen her hesap hızlı geçiş için sağlayıcı sayfasında ayrı bir kart olarak otomatik görünür.",
+        "manageAccounts": "Hesapları yönetmek için Auth Center'a git",
+        "accountLabel": "Resmi hesap",
+        "unboundAccount": "Bağlı resmi hesap yok",
+        "openAuthCenter": "Auth Center'ı Aç",
+        "editBoundHelp": "Bu kart bu resmi hesaba sabitlenmiştir ve kart içinde hesap değişimini desteklemez. Başka bir hesap kullanmak için doğrudan onun kartına geçin veya Auth Center üzerinden yönetin.",
+        "editUnboundHelp": "Her resmi hesap ayrı bir kart olarak gösterilir ve kart içinde hesap değişimini desteklemez. Lütfen Auth Center üzerinden giriş yapın veya resmi hesapları yönetin."
       }
     },
     "duplicateLiveIdsLoadFailed": "Sağlayıcı tanımlayıcıları yapılandırmadan okunamadı. Lütfen yapılandırmayı düzeltip tekrar deneyin.",
@@ -5417,7 +5426,9 @@
       "addFailed": "Eklenemedi: {{error}}",
       "switched": "CodeBuddy artık {{name}} ile oturum açtı; çalışan CodeBuddy otomatik geçiş yapar, yeni oturumlar da bunu kullanır.",
       "switchFailed": "Geçiş yapılamadı: {{error}}",
-      "removeHint": "CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin."
+      "removeHint": "CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin.",
+      "accountRemoved": "Bu hesap Auth Center'dan kaldırıldı",
+      "unboundManaged": "Bağlı resmi hesap yok. Lütfen Auth Center üzerinden giriş yapın"
     },
     "login": {
       "confirmTitle": "Başka bir CodeBuddy hesabıyla oturum aç",
@@ -5506,7 +5517,9 @@
       "quitFirst": "Hesap değiştirmeden önce WorkBuddy'den çıkın",
       "quitFirstBody": "WorkBuddy'den tamamen çıkın (menü çubuğu / tepsi dahil), sonra yeniden deneyin; aksi halde mevcut oturumu geri yazar.",
       "switched": "\"{{name}}\" hesabına geçildi. WorkBuddy bir sonraki açılışta bu hesabı kullanacak.",
-      "switchFailed": "WorkBuddy hesabı değiştirilemedi"
+      "switchFailed": "WorkBuddy hesabı değiştirilemedi",
+      "accountRemoved": "Bu hesap Auth Center'dan kaldırıldı",
+      "unboundManaged": "Bağlı resmi hesap yok. Lütfen Auth Center üzerinden giriş yapın"
     },
     "quota": {
       "title": "Kota",

@@ -197,6 +197,7 @@ describe("Kimi official account login", () => {
     expect(screen.getByRole("button", { name: "添加账号" })).toBeEnabled();
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: ["providers", "kimi"],
+      refetchType: "all",
     });
     expect(invalidate).toHaveBeenCalledWith({
       queryKey: ["kimi-oauth-status"],
