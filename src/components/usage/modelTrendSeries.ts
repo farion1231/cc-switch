@@ -2,6 +2,13 @@ import type { ModelTrendStats } from "@/types/usage";
 
 type ModelTrendMetric = keyof Omit<ModelTrendStats, "model">;
 
+export const modelTrendMetric = {
+  cost: "totalCost",
+  requests: "requestCount",
+  tokens: "totalTokens",
+  hitRate: undefined,
+} as const;
+
 const MODEL_PALETTE = [
   "var(--heat-app-omp)",
   "var(--chart-2)",

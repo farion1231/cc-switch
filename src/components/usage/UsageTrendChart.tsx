@@ -21,7 +21,6 @@ import {
 } from "recharts";
 import { useUsageTrends } from "@/lib/query/usage";
 import { Loader2 } from "lucide-react";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   fmtInt,
   formatHitRatePercent,
@@ -39,7 +38,11 @@ import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useSettingsQuery } from "@/lib/query";
 import type { UsageMetric } from "./rememberedChoice";
 import { runtimeColor, runtimeName } from "./runtimePalette";
-import { buildModelTrendSeries } from "./modelTrendSeries";
+import { buildModelTrendSeries, modelTrendMetric } from "./modelTrendSeries";
+import {
+  UsageBreakdownControl,
+  type UsageBreakdown,
+} from "./UsageBreakdownControl";
 
 interface UsageTrendChartProps {
   range: UsageRangeSelection;
@@ -386,14 +389,8 @@ export function UsageTrendChart({
   const { data: settings } = useSettingsQuery();
   const chartType = resolveTrendChartType(settings?.usageDisplay);
   const { startDate, endDate } = resolveUsageRange(range);
-  const [breakdown, setBreakdown] = useState<"total" | "model" | "app">("app");
-  const modelMetric = {
-    cost: "totalCost",
-    requests: "requestCount",
-    tokens: "totalTokens",
-    hitRate: undefined,
-  } as const;
-  const selectedModelMetric = modelMetric[metric];
+  const [breakdown, setBreakdown] = useState<UsageBreakdown>("app");
+  const selectedModelMetric = modelTrendMetric[metric];
   const mode =
     breakdown === "model" && !selectedModelMetric ? "total" : breakdown;
   const {
@@ -571,20 +568,10 @@ export function UsageTrendChart({
               : t("usage.trend.daily"),
           })}
         </h2>
-        <SegmentedControl
-          aria-label={t("usage.trend.breakdown")}
-          size="sm"
-          items={[
-            { value: "total", label: t("common.all") },
-            {
-              value: "model",
-              label: t("usage.trend.byModel"),
-              disabled: !selectedModelMetric,
-            },
-            { value: "app", label: t("usage.trend.byApp") },
-          ]}
+        <UsageBreakdownControl
           value={mode}
           onValueChange={setBreakdown}
+          canBreakDownByModel={selectedModelMetric != null}
         />
       </div>
 

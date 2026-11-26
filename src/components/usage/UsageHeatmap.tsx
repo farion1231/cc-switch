@@ -27,6 +27,16 @@ import { UsageTooltipCard } from "./UsageTooltipCard";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { UsageMetric } from "./rememberedChoice";
 import { runtimeColor, runtimeName } from "./runtimePalette";
+import { buildModelTrendSeries, modelTrendMetric } from "./modelTrendSeries";
+import {
+  UsageBreakdownControl,
+  type UsageBreakdown,
+} from "./UsageBreakdownControl";
+
+type HeatModel = ReturnType<typeof buildModelTrendSeries>[number] & {
+  label: string;
+};
+type BreakdownRow = { label: string; color: string; value: number | null };
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -53,8 +63,9 @@ interface DayCell {
   requests: number;
   cost: number;
   future: boolean;
-  dominantApp?: string;
+  color?: string;
   runtimeStats: RuntimeTrendStats[];
+  models: BreakdownRow[];
 }
 
 /** 一段 53 周：最新一段右端是今天，更早的段首尾相接往前排 */
@@ -68,7 +79,7 @@ interface SpanGrid {
 }
 
 interface HoverState {
-  cell: DayCell;
+  day: string;
   /** Viewport coordinates of the cell. */
   x: number;
   top: number;
@@ -178,10 +189,6 @@ function heatFillStyle(level: number, color?: string): CSSProperties {
   } as CSSProperties;
 }
 
-function cellStyle(level: number, app?: string): CSSProperties {
-  return heatFillStyle(level, app ? runtimeColor(app) : undefined);
-}
-
 /**
  * 从最早一段的起点到现在的按天数据。先查最早日期算出要几段，再查趋势；
  * 起点按周取整，同一周内查询键不变。
@@ -189,6 +196,7 @@ function cellStyle(level: number, app?: string): CSSProperties {
 function useAllSpansDailyTrends(
   filters: { appType?: string; providerName?: string; model?: string },
   refreshIntervalMs: number,
+  includeModels: boolean,
 ) {
   const refetchInterval = refreshIntervalMs > 0 ? refreshIntervalMs : false;
   const firstDateQuery = useUsageFirstDate(filters, { refetchInterval });
@@ -211,12 +219,16 @@ function useAllSpansDailyTrends(
   );
   const trendsQuery = useUsageTrends(selection, filters, {
     enabled: spanCount != null,
+    includeModels,
     refetchInterval,
   });
   return {
     spanCount: spanCount ?? 1,
-    trends: trendsQuery.data,
-    isLoading: firstDateQuery.isPending || trendsQuery.isLoading,
+    trends: trendsQuery.isPlaceholderData ? undefined : trendsQuery.data,
+    isLoading:
+      firstDateQuery.isPending ||
+      trendsQuery.isLoading ||
+      trendsQuery.isPlaceholderData,
   };
 }
 
@@ -226,6 +238,8 @@ function buildSpan(
   byDay: Map<string, DailyStats>,
   metric: UsageMetric,
   today: Date,
+  mode: UsageBreakdown,
+  models: HeatModel[],
 ): SpanGrid {
   const start = spanStart(today, index);
   const end = index === 0 ? today : addDays(spanStart(today, index - 1), -1);
@@ -235,12 +249,33 @@ function buildSpan(
     const column: DayCell[] = [];
     for (let d = 0; d < 7; d++) {
       const date = addDays(start, w * 7 + d);
-      const stat = byDay.get(dayKey(date));
+      const key = dayKey(date);
+      const stat = byDay.get(key);
       const metrics = stat ? trendMetricsOf(stat) : undefined;
       const value = metrics?.[metric] ?? null;
-      const runtimeStats = stat?.runtimeStats ?? [];
+      const runtimeStats = mode === "app" ? (stat?.runtimeStats ?? []) : [];
+      const app = dominantRuntime(runtimeStats, metric);
+      let color = app ? runtimeColor(app) : undefined;
+      const modelRows: BreakdownRow[] = [];
+      let largestModelValue = 0;
+      if (stat?.modelStats?.length) {
+        const point = { xKey: key, modelStats: stat.modelStats };
+        for (const model of models) {
+          const amount = model.value(point);
+          if (amount === 0) continue;
+          modelRows.push({
+            label: model.label,
+            color: model.color,
+            value: amount,
+          });
+          if (amount > largestModelValue) {
+            largestModelValue = amount;
+            color = model.color;
+          }
+        }
+      }
       const cell: DayCell = {
-        key: dayKey(date),
+        key,
         date,
         // Zero is a real cache hit rate, but an empty usage bucket.
         value:
@@ -250,8 +285,9 @@ function buildSpan(
         requests: metrics?.requests ?? 0,
         cost: metrics?.cost ?? 0,
         future: date.getTime() > today.getTime(),
-        dominantApp: dominantRuntime(runtimeStats, metric),
+        color,
         runtimeStats,
+        models: modelRows,
       };
       totals.tokens += cell.tokens;
       totals.requests += cell.requests;
@@ -282,13 +318,17 @@ export function UsageHeatmap({
   const { money } = useMoneyFormat();
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [breakdownMode, setBreakdownMode] = useState<UsageBreakdown>("app");
+  const selectedModelMetric = modelTrendMetric[metric];
+  const mode =
+    breakdownMode === "model" && !selectedModelMetric ? "total" : breakdownMode;
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
   const [showEarlier, setShowEarlier] = useState(false);
 
   const showTooltip = (cell: DayCell, target: HTMLElement) => {
     const rect = target.getBoundingClientRect();
     setHover({
-      cell,
+      day: cell.key,
       x: rect.left + rect.width / 2,
       top: rect.top,
       bottom: rect.bottom,
@@ -325,6 +365,7 @@ export function UsageHeatmap({
   const { spanCount, trends, isLoading } = useAllSpansDailyTrends(
     { appType, providerName, model },
     refreshIntervalMs,
+    mode === "model",
   );
 
   const heat = useMemo(() => {
@@ -332,10 +373,26 @@ export function UsageHeatmap({
     for (const stat of trends ?? []) {
       byDay.set(dayKey(new Date(stat.date)), stat);
     }
+    const models: HeatModel[] =
+      mode === "model" && selectedModelMetric
+        ? buildModelTrendSeries(
+            Array.from(byDay, ([xKey, { modelStats }]) => ({
+              xKey,
+              modelStats,
+            })),
+            selectedModelMetric,
+          ).map((series) => ({
+            ...series,
+            label:
+              series.model === null
+                ? t("usage.trend.otherModels")
+                : series.model || t("usage.trend.unknownModel"),
+          }))
+        : [];
     const today = startOfDay(new Date());
     // 最新的一段在上
     const spans = Array.from({ length: spanCount }, (_, index) =>
-      buildSpan(index, byDay, metric, today),
+      buildSpan(index, byDay, metric, today, mode, models),
     );
     // 深浅按所有段一起分档，上下几段才能直接比
     const days = spans
@@ -343,8 +400,8 @@ export function UsageHeatmap({
       .filter((cell) => !cell.future);
     const thresholds = buildThresholds(days.map((cell) => cell.value));
 
-    return { spans, thresholds };
-  }, [trends, metric, spanCount]);
+    return { spans, thresholds, models };
+  }, [trends, metric, spanCount, mode, selectedModelMetric, t]);
 
   const earlierCount = heat.spans.length - 1;
   const visibleSpans = showEarlier ? heat.spans : heat.spans.slice(0, 1);
@@ -361,6 +418,14 @@ export function UsageHeatmap({
       ),
     ),
   ).sort();
+  const legend =
+    mode === "model"
+      ? heat.models
+      : visibleApps.map((app) => ({
+          key: app,
+          label: runtimeName(app),
+          color: runtimeColor(app),
+        }));
   const { format: formatDay } = useMemo(
     () =>
       new Intl.DateTimeFormat(locale, {
@@ -380,49 +445,69 @@ export function UsageHeatmap({
     );
   }, [locale]);
 
-  const breakdown = hover?.cell.runtimeStats.map((runtime) => {
-    const value = trendMetricsOf(runtime)[metric];
-    return {
-      label: runtimeName(runtime.appType),
-      color: runtimeColor(runtime.appType),
-      value:
-        value == null
-          ? "—"
-          : metric === "cost"
-            ? money(value, 4)
-            : metric === "hitRate"
-              ? formatHitRatePercent(value)
-              : formatTokensShort(value, language),
-    };
-  });
+  const activeCell =
+    !isLoading && hover
+      ? visibleSpans
+          .flatMap((span) => span.weeks)
+          .flat()
+          .find((cell) => cell.key === hover.day)
+      : undefined;
+  const rows =
+    mode === "model"
+      ? activeCell?.models
+      : activeCell?.runtimeStats.map((runtime) => ({
+          label: runtimeName(runtime.appType),
+          color: runtimeColor(runtime.appType),
+          value: trendMetricsOf(runtime)[metric],
+        }));
+  const breakdown = rows?.map(({ label, color, value }) => ({
+    label,
+    color,
+    value:
+      value == null
+        ? "—"
+        : metric === "cost"
+          ? money(value, 4)
+          : metric === "hitRate"
+            ? formatHitRatePercent(value)
+            : formatTokensShort(value, language),
+  }));
 
   return (
     <section
       aria-labelledby="usage-heatmap-title"
       className="relative px-4 pb-3 pt-5"
     >
-      <div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <h2
           id="usage-heatmap-title"
           className="m-0 text-body font-semibold text-fg-1"
         >
           {t("usage.heatmap.title")}
         </h2>
-        {!isLoading && visibleApps.length > 0 && (
-          <ul className="mb-0 mt-1 flex flex-wrap gap-x-3 gap-y-1 p-0 text-badge text-fg-3">
-            {visibleApps.map((app) => (
-              <li key={app} className="flex items-center gap-1.5">
-                <span
-                  aria-hidden="true"
-                  className="usage-heat-fill h-2.5 w-2.5 rounded-[2px]"
-                  style={cellStyle(4, app)}
-                />
-                {runtimeName(app)}
-              </li>
-            ))}
-          </ul>
-        )}
+        <UsageBreakdownControl
+          value={mode}
+          onValueChange={(next) => {
+            setHover(null);
+            setBreakdownMode(next);
+          }}
+          canBreakDownByModel={selectedModelMetric != null}
+        />
       </div>
+      {!isLoading && legend.length > 0 && (
+        <ul className="mb-0 mt-1 flex flex-wrap gap-x-3 gap-y-1 p-0 text-badge text-fg-3">
+          {legend.map(({ key, label, color }) => (
+            <li key={key} className="flex min-w-0 items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="usage-heat-fill h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                style={heatFillStyle(4, color)}
+              />
+              <span className="min-w-0 break-words">{label}</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {isLoading ? (
         <div className="flex h-[150px] items-center justify-center">
@@ -475,14 +560,21 @@ export function UsageHeatmap({
                   {span.weeks.map((column) => {
                     const cell = column[d];
                     const level = levelOf(cell.value, heat.thresholds);
-                    const apps = cell.future ? [] : cell.runtimeStats;
+                    const labels =
+                      mode === "model"
+                        ? cell.models.map(({ label }) => label)
+                        : cell.runtimeStats.map(({ appType }) =>
+                            runtimeName(appType),
+                          );
+                    const hasUsage =
+                      !cell.future && (level > 0 || labels.length > 0);
                     return (
                       <div
                         key={cell.key}
-                        role={apps.length ? "img" : undefined}
+                        role={hasUsage ? "img" : undefined}
                         aria-label={
-                          apps.length
-                            ? `${formatDay(cell.date)} · ${apps.map(({ appType }) => runtimeName(appType)).join(" · ")}`
+                          hasUsage
+                            ? [formatDay(cell.date), ...labels].join(" · ")
                             : undefined
                         }
                         onMouseEnter={
@@ -500,7 +592,7 @@ export function UsageHeatmap({
                           <span
                             aria-hidden="true"
                             className="usage-heat-fill flex-1"
-                            style={cellStyle(level, cell.dominantApp)}
+                            style={heatFillStyle(level, cell.color)}
                           />
                         )}
                       </div>
@@ -514,6 +606,7 @@ export function UsageHeatmap({
       )}
 
       {hover &&
+        activeCell &&
         createPortal(
           <div
             ref={tooltipRef}
@@ -521,16 +614,16 @@ export function UsageHeatmap({
             className="pointer-events-none fixed z-20"
           >
             <UsageTooltipCard
-              heading={hover.cell.date.toLocaleDateString(locale, {
+              heading={activeCell.date.toLocaleDateString(locale, {
                 year: "numeric",
                 month: "long",
                 day: "numeric",
                 weekday: "short",
               })}
-              tokens={hover.cell.tokens}
-              requests={hover.cell.requests}
-              cost={hover.cell.cost}
-              hitRate={metric === "hitRate" ? hover.cell.hitRate : undefined}
+              tokens={activeCell.tokens}
+              requests={activeCell.requests}
+              cost={activeCell.cost}
+              hitRate={metric === "hitRate" ? activeCell.hitRate : undefined}
               breakdown={breakdown}
             />
           </div>,
