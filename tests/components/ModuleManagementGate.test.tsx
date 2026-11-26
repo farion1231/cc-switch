@@ -90,27 +90,27 @@ describe("ModuleManagementGate", () => {
     const heldSave = new Promise<void>((resolve) => {
       releaseSave = resolve;
     });
-    const originalSave = settingsApi.save;
+    const originalSave = settingsApi.setModuleManagement;
     const saveSpy = vi
-      .spyOn(settingsApi, "save")
-      .mockImplementationOnce(async (settings) => {
+      .spyOn(settingsApi, "setModuleManagement")
+      .mockImplementationOnce(async (module, enabled) => {
         await heldSave;
-        return originalSave(settings);
+        return originalSave(module, enabled);
       });
     try {
       await act(async () => {
         const first = result.current.mcp.setEnabled(true);
         await waitFor(() => expect(saveSpy).toHaveBeenCalledTimes(1));
         const second = result.current.skills.setEnabled(true);
-        // Let the second toggle reach the save boundary before releasing the
-        // first: it must read settings only after the first has been committed.
-        await new Promise((resolve) => setTimeout(resolve, 50));
+        await second;
+        setSettings({ currentProviderClaude: "from-tray" });
         releaseSave();
-        await Promise.all([first, second]);
+        await first;
       });
       const saved = await settingsApi.get();
       expect(saved.manageMcp).toBe(true);
       expect(saved.manageSkills).toBe(true);
+      expect(saved.currentProviderClaude).toBe("from-tray");
     } finally {
       releaseSave();
       saveSpy.mockRestore();

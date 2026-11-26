@@ -1167,6 +1167,20 @@ pub fn get_settings() -> AppSettings {
     read_settings().clone()
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ManagedModule {
+    Mcp,
+    Skills,
+}
+
+pub fn set_module_management(module: ManagedModule, enabled: bool) -> Result<(), AppError> {
+    mutate_settings(|settings| match module {
+        ManagedModule::Mcp => settings.manage_mcp = enabled,
+        ManagedModule::Skills => settings.manage_skills = enabled,
+    })
+}
+
 pub fn is_mcp_management_enabled() -> bool {
     read_settings().manage_mcp
 }
@@ -1219,6 +1233,16 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     save_settings_file(&new_settings)?;
     *guard = new_settings;
     Ok(())
+}
+
+/// Page switches own these fields. An unrelated settings form may still hold their old values.
+pub(crate) fn save_frontend_settings(mut incoming: AppSettings) -> Result<(), AppError> {
+    incoming.codex_quota_protection.validate()?;
+    mutate_settings(|current| {
+        incoming.manage_mcp = current.manage_mcp;
+        incoming.manage_skills = current.manage_skills;
+        *current = incoming;
+    })
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
@@ -2185,6 +2209,23 @@ mod tests {
                 "{json}"
             );
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn selective_management_preserves_provider_selection_and_survives_stale_form_saves() {
+        let _home = crate::test_support::TestHome::new();
+        let stale_form = get_settings();
+        set_current_provider(&AppType::Claude, Some("from-tray")).unwrap();
+        set_module_management(ManagedModule::Mcp, true).unwrap();
+        assert_eq!(
+            get_settings().current_provider_claude.as_deref(),
+            Some("from-tray")
+        );
+        set_module_management(ManagedModule::Skills, true).unwrap();
+        save_frontend_settings(stale_form).unwrap();
+        reload_settings().unwrap();
+        assert!(is_mcp_management_enabled() && is_skills_management_enabled());
     }
 
     #[test]

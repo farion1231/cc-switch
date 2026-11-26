@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Power } from "lucide-react";
 import { settingsApi } from "@/lib/api";
 import { useSettingsQuery } from "@/lib/query";
@@ -37,22 +37,6 @@ export function useModuleManagement(
 
   const field = SETTING_FIELD[module];
   const enabled = Boolean(settings?.[field]);
-  const { mutateAsync: saveManagement } = useMutation({
-    // Each save reads and writes the full settings object. Queue both modules
-    // together so a quick toggle/undo cannot overwrite the other module's choice.
-    scope: { id: "module-management" },
-    mutationFn: async (next: boolean) => {
-      const current = await settingsApi.get();
-      const updated: Settings = { ...current, [field]: next };
-      await settingsApi.save(updated);
-      return updated;
-    },
-    onSuccess: (updated) => {
-      queryClient.setQueryData(["settings"], updated);
-      void queryClient.invalidateQueries({ queryKey: ["settings"] });
-    },
-  });
-
   const setEnabled = useCallback(
     async (next: boolean, options?: { fromUndo?: boolean }) => {
       // Toast callbacks outlive the render that created them; consult the latest
@@ -61,7 +45,11 @@ export function useModuleManagement(
       pendingRef.current = true;
       setIsPending(true);
       try {
-        await saveManagement(next);
+        await settingsApi.setModuleManagement(module, next);
+        queryClient.setQueryData<Settings>(["settings"], (current) =>
+          current ? { ...current, [field]: next } : current,
+        );
+        await queryClient.invalidateQueries({ queryKey: ["settings"] });
 
         const message = next
           ? t(`moduleManagement.${module}.toastEnabled`)
@@ -90,7 +78,7 @@ export function useModuleManagement(
         setIsPending(false);
       }
     },
-    [module, saveManagement, t],
+    [module, field, queryClient, t],
   );
 
   return { enabled, isPending, setEnabled };

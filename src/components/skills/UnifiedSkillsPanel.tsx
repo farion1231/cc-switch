@@ -141,7 +141,8 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
   const appIds = useVisibleAppIds(APP_IDS_WITH.skills);
-  const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
+  const { targets, setTargets, installTo, isInstalling } =
+    useSkillInstallTargets(appIds);
 
   const [view, setView] = useState<SkillsView>(initialView);
   // 「发现」段第一次打开后就一直挂着（隐藏而不卸载），来回切不再重新加载仓库列表
@@ -225,6 +226,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     importMutation.isPending ||
     installFromZipMutation.isPending ||
     updateSkillMutation.isPending ||
+    isInstalling ||
     isUpdatingMany;
   const dialogOpen =
     importOpen || restoreOpen || confirm !== null || repoManagerOpen;
@@ -1386,6 +1388,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               installTargets={targets}
               onInstallTargetsChange={setTargets}
               installTo={installTo}
+              managementPending={managementPending}
               onShowInstalled={showInstalled}
               onOpenRepoManager={() => setRepoManagerOpen(true)}
               onEnableFailures={recordEnableFailures}

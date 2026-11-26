@@ -979,18 +979,23 @@ fn save_paths_and_commit<T>(
 /// startup to restore it. Profiles, credentials and the receipt are committed together.
 pub(crate) fn initialize_profiles(
     providers: &IndexMap<String, Value>,
-    servers: &IndexMap<String, Value>,
+    servers: Option<&IndexMap<String, Value>>,
 ) -> Result<(), AppError> {
     initialize_profiles_and_commit(providers, servers, || Ok(()))
 }
 
-/// Whether some target profile has not been seeded yet. Lets a caller that can't build the full
-/// seed (an unreadable managed row) defer only when there is a profile it would actually miss.
-pub(crate) fn has_uninitialized_profiles() -> Result<bool, AppError> {
+fn profile_seeded(receipt: &[String], name: &str, include_mcp: bool) -> bool {
+    // Existing bare names record a full seed. A partial receipt only covers providers.
+    receipt.iter().any(|entry| {
+        entry == name || (!include_mcp && entry.strip_suffix(":providers") == Some(name))
+    })
+}
+
+pub(crate) fn has_uninitialized_profiles(include_mcp: bool) -> Result<bool, AppError> {
     let initialized = parse_profile_receipt(&read_text(&profile_receipt_path())?)?;
     Ok(target_paths()
         .iter()
-        .any(|path| !initialized.contains(&profile_name(path))))
+        .any(|path| !profile_seeded(&initialized, &profile_name(path), include_mcp)))
 }
 
 fn profile_receipt_path() -> PathBuf {
@@ -1008,9 +1013,12 @@ fn parse_profile_receipt(text: &str) -> Result<Vec<String>, AppError> {
 
 fn initialize_profiles_and_commit<T>(
     providers: &IndexMap<String, Value>,
-    servers: &IndexMap<String, Value>,
+    servers: Option<&IndexMap<String, Value>>,
     commit: impl FnOnce() -> Result<T, AppError>,
 ) -> Result<T, AppError> {
+    let include_mcp = servers.is_some();
+    let empty = IndexMap::new();
+    let servers = servers.unwrap_or(&empty);
     if providers.is_empty() && servers.is_empty() {
         return commit();
     }
@@ -1020,7 +1028,7 @@ fn initialize_profiles_and_commit<T>(
     let initialized = parse_receipt(&read_text(&receipt)?)?;
     if profiles
         .iter()
-        .all(|path| initialized.contains(&profile_name(path)))
+        .all(|path| profile_seeded(&initialized, &profile_name(path), include_mcp))
     {
         return commit();
     }
@@ -1035,13 +1043,14 @@ fn initialize_profiles_and_commit<T>(
             let mut next = texts.to_vec();
             for (index, path) in profiles.iter().enumerate() {
                 let name = profile_name(path);
-                if initialized.contains(&name) {
+                if profile_seeded(&initialized, &name, include_mcp) {
                     continue;
                 }
                 let text = &texts[index + 1];
-                let has_providers = providers.keys().try_fold(false, |found, id| {
-                    Ok::<_, AppError>(found || existing_provider_node(text, id)?.is_some())
-                })?;
+                let has_providers = profile_seeded(&initialized, &name, false)
+                    || providers.keys().try_fold(false, |found, id| {
+                        Ok::<_, AppError>(found || existing_provider_node(text, id)?.is_some())
+                    })?;
                 let has_servers = servers.keys().try_fold(false, |found, id| {
                     Ok::<_, AppError>(found || existing_mcp_entry(text, id)?.is_some())
                 })?;
@@ -1098,7 +1107,13 @@ fn initialize_profiles_and_commit<T>(
                         };
                     }
                 }
-                initialized.push(name);
+                let partial = format!("{name}:providers");
+                if include_mcp {
+                    initialized.retain(|entry| entry != &partial);
+                    initialized.push(name);
+                } else {
+                    initialized.push(partial);
+                }
             }
             next[profiles.len() + 1] = serde_json::to_string(&initialized)
                 .map_err(|error| AppError::Config(error.to_string()))?;
@@ -2641,7 +2656,7 @@ mod tests {
         // Seeding is one-time: going ahead without the row would leave it out for good.
         assert!(initialize_dsh_profiles(&state).is_err());
         assert_eq!(read_text(&web).unwrap(), before);
-        assert!(has_uninitialized_profiles().unwrap());
+        assert!(has_uninitialized_profiles(true).unwrap());
 
         // Once the bad row is gone, the deferred profile is seeded on the next attempt.
         state.db.delete_mcp_server("broken").unwrap();
@@ -2649,7 +2664,7 @@ mod tests {
         assert!(existing_mcp_entry(&read_text(&web).unwrap(), "fetch")
             .unwrap()
             .is_some());
-        assert!(!has_uninitialized_profiles().unwrap());
+        assert!(!has_uninitialized_profiles(true).unwrap());
 
         // With nothing waiting, a bad DSH row no longer fails later syncs.
         state
@@ -2667,12 +2682,50 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
+    fn enabling_mcp_completes_only_the_missing_part_of_a_profile_seed() {
+        use crate::services::provider::initialize_dsh_profiles;
+        let home = DshHome::new();
+        let _settings_home = crate::test_support::TestHome::new();
+        init_profiles(home.dir.path(), &["web", "desktop"]);
+        let state = seed_rows_with_one_unreadable_mcp(false);
+        let web = profile_path("web");
+        let desktop = profile_path("desktop");
+        // A receipt from older releases already covers both modules.
+        fs::write(profile_receipt_path(), r#"["desktop"]"#).unwrap();
+        let old_desktop = read_text(&desktop).unwrap();
+        initialize_dsh_profiles(&state).unwrap();
+        assert!(get_providers_from(&web, &credentials_path())
+            .unwrap()
+            .contains_key("gateway"));
+        assert!(existing_mcp_entry(&read_text(&web).unwrap(), "fetch")
+            .unwrap()
+            .is_none());
+        fs::write(&web, "[]").unwrap(); // user removed the seeded provider
+        initialize_dsh_profiles(&state).unwrap();
+        assert_eq!(read_text(&web).unwrap(), "[]");
+
+        crate::settings::set_module_management(crate::settings::ManagedModule::Mcp, true).unwrap();
+        initialize_dsh_profiles(&state).unwrap();
+        assert!(existing_mcp_entry(&read_text(&web).unwrap(), "fetch")
+            .unwrap()
+            .is_some());
+        assert!(!get_providers_from(&web, &credentials_path())
+            .unwrap()
+            .contains_key("gateway"));
+        assert_eq!(read_text(&desktop).unwrap(), old_desktop);
+        fs::write(&web, "[]").unwrap();
+        initialize_dsh_profiles(&state).unwrap();
+        assert_eq!(read_text(&web).unwrap(), "[]");
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn profile_initialization_rolls_back_its_receipt_and_can_retry() {
         let _home = DshHome::new();
         let providers = IndexMap::from([("gateway".into(), editor_config())]);
         let servers = IndexMap::from([("fetch".into(), json!({"command":"node"}))]);
         let receipt = data_dir().join(".cc-switch-profile-sync.json");
-        let result = initialize_profiles_and_commit(&providers, &servers, || {
+        let result = initialize_profiles_and_commit(&providers, Some(&servers), || {
             Err::<(), _>(AppError::Database("injected".into()))
         });
         assert!(result.is_err());
@@ -2681,7 +2734,7 @@ mod tests {
         for name in ["web", "desktop"] {
             assert!(!profile_path(name).exists());
         }
-        initialize_profiles(&providers, &servers).unwrap();
+        initialize_profiles(&providers, Some(&servers)).unwrap();
         for name in ["web", "desktop"] {
             assert!(get_providers_from(&profile_path(name), &credentials_path())
                 .unwrap()
@@ -2695,7 +2748,7 @@ mod tests {
         }
         let _guard = FileLock::acquire(&profile_path("desktop")).unwrap();
         // A completed import needs no native writes or locks on subsequent startup.
-        initialize_profiles(&providers, &servers).unwrap();
+        initialize_profiles(&providers, Some(&servers)).unwrap();
     }
 
     #[test]
@@ -2709,7 +2762,7 @@ mod tests {
         )
         .unwrap();
         let providers = IndexMap::from([("gateway".into(), editor_config())]);
-        initialize_profiles(&providers, &IndexMap::new()).unwrap();
+        initialize_profiles(&providers, Some(&IndexMap::new())).unwrap();
         assert!(data_dir().join(".cc-switch-profile-sync.json").exists());
         for name in ["web", "desktop"] {
             assert!(get_providers_from(&profile_path(name), &credentials_path())
@@ -2997,7 +3050,7 @@ mod tests {
         let root = home.dir.path();
         init_profiles(root, &["headless"]);
         let providers = IndexMap::from([("gateway".into(), editor_config())]);
-        initialize_profiles(&providers, &IndexMap::new()).unwrap();
+        initialize_profiles(&providers, Some(&IndexMap::new())).unwrap();
         assert_eq!(
             credentials_rows(&profile_text(root, "headless").unwrap()).len(),
             1

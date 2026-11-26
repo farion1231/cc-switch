@@ -35,6 +35,7 @@ export function useSkillInstallTargets(visibleAppIds: readonly AppId[]) {
   const [stored, setStored] = useState<AppId[]>(
     () => readStored() ?? DEFAULT_TARGETS,
   );
+  const [pendingInstalls, setPendingInstalls] = useState(0);
   const toggleMutation = useToggleSkillApp();
 
   // 只算看得见的应用；一个都不剩时退回第一个可见应用
@@ -57,24 +58,34 @@ export function useSkillInstallTargets(visibleAppIds: readonly AppId[]) {
     install: (firstApp: AppId) => Promise<T[]>,
     apps: AppId[] = effective,
   ) => {
-    const [first, ...rest] = apps;
-    const installed = await install(first ?? "claude");
-    const failures: Array<{ id: string; app: AppId; error: unknown }> = [];
-    for (const skill of installed) {
-      for (const app of rest) {
-        try {
-          await toggleMutation.mutateAsync({
-            id: skill.id,
-            app,
-            enabled: true,
-          });
-        } catch (error) {
-          failures.push({ id: skill.id, app, error });
+    setPendingInstalls((count) => count + 1);
+    try {
+      const [first, ...rest] = apps;
+      const installed = await install(first ?? "claude");
+      const failures: Array<{ id: string; app: AppId; error: unknown }> = [];
+      for (const skill of installed) {
+        for (const app of rest) {
+          try {
+            await toggleMutation.mutateAsync({
+              id: skill.id,
+              app,
+              enabled: true,
+            });
+          } catch (error) {
+            failures.push({ id: skill.id, app, error });
+          }
         }
       }
+      return { installed, failures };
+    } finally {
+      setPendingInstalls((count) => count - 1);
     }
-    return { installed, failures };
   };
 
-  return { targets: effective, setTargets, installTo };
+  return {
+    targets: effective,
+    setTargets,
+    installTo,
+    isInstalling: pendingInstalls > 0,
+  };
 }

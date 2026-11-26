@@ -72,6 +72,19 @@ pub async fn get_settings() -> Result<crate::settings::AppSettings, String> {
 }
 
 #[tauri::command]
+pub async fn set_module_management(
+    module: crate::settings::ManagedModule,
+    enabled: bool,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::settings::set_module_management(module, enabled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn save_settings(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::store::AppState>,
@@ -102,7 +115,7 @@ pub async fn save_settings(
         crate::copilot_config::save_vscode_settings(
             &previous_copilot_vscode,
             &next_copilot_vscode,
-            || crate::settings::update_settings(merged),
+            || crate::settings::save_frontend_settings(merged),
         )
     })
     .await
@@ -128,7 +141,7 @@ pub async fn save_settings(
             rollback.codex_stack_subagent_reasoning_effort =
                 existing.codex_stack_subagent_reasoning_effort.clone();
             rollback.codex_stack_auto_review_model = existing.codex_stack_auto_review_model.clone();
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+            if let Err(rollback_err) = crate::settings::save_frontend_settings(rollback) {
                 log::error!("回滚 Codex 聚合设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -144,7 +157,7 @@ pub async fn save_settings(
             let mut rollback = crate::settings::get_settings();
             rollback.codex_proxy_without_official_login =
                 existing.codex_proxy_without_official_login;
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+            if let Err(rollback_err) = crate::settings::save_frontend_settings(rollback) {
                 log::error!("回滚「暂停使用官方登录」设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -163,7 +176,7 @@ pub async fn save_settings(
             let mut rollback = crate::settings::get_settings();
             rollback.preserve_codex_official_auth_on_switch =
                 existing.preserve_codex_official_auth_on_switch;
-            if let Err(rollback_err) = crate::settings::update_settings(rollback) {
+            if let Err(rollback_err) = crate::settings::save_frontend_settings(rollback) {
                 log::error!("回滚「非接管切换时保留官方登录」设置失败: {rollback_err}");
             }
             return Err(format!(
@@ -184,7 +197,7 @@ pub async fn save_settings(
             crate::services::provider::reapply_current_codex_official_live(state.inner())
         {
             log::warn!("统一 Codex 会话历史开关变更后重写 live 配置失败，回滚设置: {err}");
-            if let Err(rollback_err) = crate::settings::update_settings(existing) {
+            if let Err(rollback_err) = crate::settings::save_frontend_settings(existing) {
                 log::error!("回滚统一会话开关设置失败: {rollback_err}");
             }
             return Err(format!(

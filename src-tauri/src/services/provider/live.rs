@@ -964,17 +964,19 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
     } else {
         (None, Default::default())
     };
-    let blocking = provider_rows.unreadable.iter().chain(
-        server_rows
-            .iter()
-            .flat_map(|rows| rows.unreadable.iter())
-            .filter(|entry| dsh_server_ids.contains(&entry.id)),
-    );
-    if let Some(entry) = blocking.into_iter().next() {
-        if crate::dsh_config::has_uninitialized_profiles()? {
+    if let Some(entry) = provider_rows.unreadable.first() {
+        if crate::dsh_config::has_uninitialized_profiles(false)? {
             return Err(AppError::Database(entry.error.clone()));
         }
-        return Ok(());
+    }
+    if let Some(entry) = server_rows
+        .iter()
+        .flat_map(|rows| rows.unreadable.iter())
+        .find(|entry| dsh_server_ids.contains(&entry.id))
+    {
+        if crate::dsh_config::has_uninitialized_profiles(true)? {
+            return Err(AppError::Database(entry.error.clone()));
+        }
     }
 
     let providers = provider_rows
@@ -989,16 +991,14 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
         })
         .map(|(id, provider)| (id, provider.settings_config))
         .collect();
-    let servers = server_rows
-        .map(|rows| {
-            rows.readable
-                .into_iter()
-                .filter(|(_, server)| server.apps.dsh)
-                .map(|(id, server)| (id, server.server))
-                .collect()
-        })
-        .unwrap_or_default();
-    crate::dsh_config::initialize_profiles(&providers, &servers)
+    let servers = server_rows.map(|rows| {
+        rows.readable
+            .into_iter()
+            .filter(|(_, server)| server.apps.dsh)
+            .map(|(id, server)| (id, server.server))
+            .collect()
+    });
+    crate::dsh_config::initialize_profiles(&providers, servers.as_ref())
 }
 
 /// Sync current provider to live configuration
