@@ -88,7 +88,45 @@ pub(crate) fn sync_opencode_usage(
     db: &Database,
     cursors: &crate::services::session_usage::SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
-    sync_opencode_usage_from_path_with_cursors(db, &get_opencode_db_path(), cursors)
+    let db_path = get_opencode_db_path();
+    let read_db = match opencode_read_db_path(&db_path) {
+        Ok(path) => path,
+        Err(error) => {
+            #[cfg(windows)]
+            let wsl = crate::config::is_wsl_path(&db_path);
+            #[cfg(not(windows))]
+            let wsl = false;
+            if wsl {
+                log::warn!("OpenCode WSL usage sync skipped: {error}");
+            } else {
+                log::debug!("OpenCode usage sync skipped: {error}");
+            }
+            return Ok(empty_sync_result());
+        }
+    };
+    sync_opencode_usage_from_paths(db, &db_path, &read_db, cursors)
+}
+
+fn empty_sync_result() -> SessionSyncResult {
+    SessionSyncResult {
+        imported: 0,
+        skipped: 0,
+        files_scanned: 0,
+        suspected_duplicates: 0,
+        deferred_files: 0,
+        errors: vec![],
+    }
+}
+
+fn opencode_read_db_path(db_path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    #[cfg(windows)]
+    {
+        crate::services::opencode_wsl_snapshot::read_db_path(db_path)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(db_path.to_path_buf())
+    }
 }
 
 #[cfg(test)]
@@ -96,27 +134,22 @@ fn sync_opencode_usage_from_path(
     db: &Database,
     db_path: &std::path::Path,
 ) -> Result<SessionSyncResult, AppError> {
-    sync_opencode_usage_from_path_with_cursors(
+    sync_opencode_usage_from_paths(
         db,
+        db_path,
         db_path,
         &crate::services::session_usage::load_sync_cursors(db)?,
     )
 }
 
-fn sync_opencode_usage_from_path_with_cursors(
+fn sync_opencode_usage_from_paths(
     db: &Database,
     db_path: &std::path::Path,
+    read_db_path: &std::path::Path,
     cursors: &crate::services::session_usage::SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
-    if !db_path.exists() {
-        return Ok(SessionSyncResult {
-            imported: 0,
-            skipped: 0,
-            files_scanned: 0,
-            suspected_duplicates: 0,
-            deferred_files: 0,
-            errors: vec![],
-        });
+    if !read_db_path.exists() {
+        return Ok(empty_sync_result());
     }
 
     let db_path_str = db_path.to_string_lossy().to_string();
@@ -125,19 +158,28 @@ fn sync_opencode_usage_from_path_with_cursors(
     // opencode 的数据库运行在 WAL 模式：新提交先落在 -wal 文件里，
     // 主库文件只有在 checkpoint 时才更新。因此必须同时考虑 -wal 的
     // mtime，否则会在 checkpoint 之前漏掉刚写入的会话。
-    let metadata = fs::metadata(db_path)
+    //
+    // WSL 的读路径是本地快照；文件级状态仍按真实数据库路径作为 key，
+    // 这样刷新快照不会把同一批会话当成新库重扫。
+    let metadata = fs::metadata(read_db_path)
         .map_err(|e| AppError::Config(format!("无法读取 opencode.db 元数据: {e}")))?;
     let mut file_modified = metadata_modified_nanos(&metadata);
 
-    let wal_path = db_path.with_extension("db-wal");
+    let wal_path = {
+        let mut path = read_db_path.as_os_str().to_os_string();
+        path.push("-wal");
+        std::path::PathBuf::from(path)
+    };
     if let Ok(wal_meta) = fs::metadata(&wal_path) {
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
     }
 
     // 打开 opencode 的 SQLite 数据库（只读）
-    let opencode_conn =
-        rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
-            .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
+    let opencode_conn = rusqlite::Connection::open_with_flags(
+        read_db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
     let schema = detect_schema(&opencode_conn)?;
 
     // 混合布局只统计起点之后更新的消息（毫秒，与 time_updated 同单位）：
@@ -620,6 +662,8 @@ fn insert_opencode_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use crate::test_support::EnvVars;
 
     fn mixed_database() -> rusqlite::Connection {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -1380,5 +1424,83 @@ mod tests {
         assert_eq!(result.messages[0].1.model_id, "deepseek-v4.1-flash");
         assert_eq!(result.messages[1].1.input_tokens, 300);
         assert!(result.has_incomplete_usage);
+    }
+
+    /// Diagnostic reference only: requires a real Windows host and WSL2 distro.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    #[serial_test::serial]
+    fn wsl2_live_usage_snapshot_reference() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::{Command, Stdio};
+
+        let distro = std::env::var("CC_SWITCH_WSL_DISTRO").expect("WSL distro");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let native_path = format!(
+            "/tmp/ccswitch-opencode-usage-snapshot-{}-{unique}.db",
+            std::process::id()
+        );
+        let mut writer = Command::new("wsl.exe")
+            .args(["--distribution", &distro, "--exec", "python3", "-u", "-c"])
+            .arg(
+                r#"import sqlite3,sys,os
+p=sys.argv[1]
+c=sqlite3.connect(p,isolation_level=None)
+c.execute('PRAGMA journal_mode=WAL')
+c.execute('PRAGMA wal_autocheckpoint=0')
+c.execute('CREATE TABLE session_v2 (id TEXT PRIMARY KEY,title TEXT,directory TEXT,time_created INTEGER,time_updated INTEGER)')
+c.execute('CREATE TABLE session_message (id TEXT PRIMARY KEY,session_id TEXT,type TEXT,seq INTEGER,time_created INTEGER,time_updated INTEGER,data TEXT)')
+c.execute("INSERT INTO session_v2 VALUES('ses_wsl','WSL usage','/tmp/project',100,200)")
+c.execute("INSERT INTO session_message VALUES('msg_wsl','ses_wsl','assistant',1,100,200,?)",('{"tokens":{"input":100,"output":20},"model":{"id":"wsl-model"},"time":{"created":100,"completed":200},"content":[{"type":"text","text":"wsl usage answer"}]}',))
+print('ready',flush=True)
+for action in sys.stdin:
+    action=action.strip()
+    if action=='exit': break
+    print(action,flush=True)
+c.close()
+for suffix in ('','-wal','-shm'):
+    try: os.unlink(p+suffix)
+    except FileNotFoundError: pass
+"#,
+            )
+            .arg(&native_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("WSL Python writer");
+        let mut output = BufReader::new(writer.stdout.take().unwrap());
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "ready");
+
+        let local_home = tempfile::tempdir().expect("local snapshot cache home");
+        let unc = std::path::PathBuf::from(format!(
+            r"\\wsl.localhost\{}{}",
+            distro,
+            native_path.replace('/', "\\")
+        ));
+        let _env = EnvVars::new()
+            .set("CC_SWITCH_TEST_HOME", local_home.path())
+            .set("OPENCODE_DB", &unc);
+        let db = Database::memory().unwrap();
+        let cursors = crate::services::session_usage::load_sync_cursors(&db).unwrap();
+        let result = sync_opencode_usage(&db, &cursors).unwrap();
+        assert_eq!(result.imported, 1);
+        assert!(result.errors.is_empty());
+        assert_eq!(
+            imported_request_ids(&db),
+            vec!["opencode_session:ses_wsl:msg_wsl"]
+        );
+
+        let cursors = crate::services::session_usage::load_sync_cursors(&db).unwrap();
+        assert_eq!(sync_opencode_usage(&db, &cursors).unwrap().imported, 0);
+
+        writeln!(writer.stdin.as_mut().unwrap(), "exit").unwrap();
+        assert!(writer.wait().unwrap().success());
     }
 }
