@@ -40,9 +40,11 @@ struct OpenCodeMessageData {
     model_id: String,
     timestamp_ms: i64,
     /// 耗时终点优先取 time.streamed（流式结束，不含工具执行），缺失或异常时
-    /// 退回 time.completed；离线回填只有整条消息的起止时间，没有首字时间，
-    /// 所以 latency 有值而 first_token_ms 恒为空
+    /// 退回 time.completed。
     latency_ms: i64,
+    /// 首字耗时 = `time.firstToken - time.created`（毫秒）。OpenCode 把流式首字的
+    /// 时刻直接写进消息体；缺失、时钟倒挂或晚于耗时终点时记为 None，表示“没有计时”。
+    first_token_ms: Option<i64>,
 }
 
 struct OpenCodeMessageQueryResult {
@@ -139,6 +141,24 @@ fn sync_opencode_usage_from_path_with_cursors(
         rusqlite::Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| AppError::Database(format!("无法打开 opencode.db: {e}")))?;
     let schema = detect_schema(&opencode_conn)?;
+
+    // 旧版本导入的行没有首字耗时。升级后做一次只补空值的回填，标记写入后不再重复。
+    // 回填不插入任何行，因此不受 `rollup_and_prune` 的影响。
+    let backfill_key = format!("{db_path_str}:first-token-backfill-v1");
+    if !cursors.contains_key(&backfill_key) {
+        match backfill_first_token_ms(db, &opencode_conn, schema) {
+            Ok(updated) => {
+                if updated > 0 {
+                    log::info!("[OPENCODE-SYNC] 回填首字耗时 {updated} 条");
+                }
+                update_sync_state(db, &backfill_key, 0, 0)?;
+            }
+            Err(e) => {
+                // 不写标记，下次扫描重试。
+                log::warn!("[OPENCODE-SYNC] 回填首字耗时失败: {e}");
+            }
+        }
+    }
 
     // 混合布局只统计起点之后更新的消息（毫秒，与 time_updated 同单位）：
     // 不回填旧版本漏算的历史，也避免明细已汇总删除的旧消息被重新导入而重复计数。
@@ -495,6 +515,17 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         _ => 0,
     };
 
+    // OpenCode 把流式首字的时刻写在 `time.firstToken`（毫秒时间戳），这是它自己
+    // 测到的真实值，不是按日志写盘时间推算的。created 缺失（timestamp_ms=0）、
+    // 时钟倒挂、或首字晚于耗时终点时按缺失处理，避免给出无意义的负值/超长值。
+    let first_token_ms = time
+        .and_then(|t| t.get("firstToken"))
+        .and_then(|v| v.as_i64())
+        .filter(|&first| {
+            timestamp_ms > 0 && first >= timestamp_ms && end_ms.is_none_or(|end| first <= end)
+        })
+        .map(|first| first - timestamp_ms);
+
     Some(OpenCodeMessageData {
         input_tokens,
         output_tokens,
@@ -505,7 +536,59 @@ fn parse_message_data(value: &serde_json::Value) -> Option<OpenCodeMessageData> 
         model_id,
         timestamp_ms,
         latency_ms,
+        first_token_ms,
     })
+}
+
+/// 补齐旧版本导入时 `first_token_ms` 为空的 OpenCode 记录。
+///
+/// v4.0.x 及更早没有读取 `message.data.time.firstToken`，因此导入的行该列恒为
+/// NULL。这里**只做 UPDATE**：不插入新行、不改 token 与成本，所以不会把已被
+/// `rollup_and_prune` 清理的明细重新计进汇总，也不影响 request_id 去重。
+fn backfill_first_token_ms(
+    db: &Database,
+    conn: &rusqlite::Connection,
+    schema: OpenCodeSchema,
+) -> Result<u64, AppError> {
+    // 先在只读连接上收集完，再一次性写库，避免长时间持写锁拖慢 UI。
+    let mut pending: Vec<(String, i64)> = Vec::new();
+    for (session_id, _) in query_sessions(conn, schema)? {
+        let query_result = query_assistant_messages(conn, schema, &session_id, 0)?;
+        for (message_id, msg) in query_result.messages {
+            if let Some(first_token_ms) = msg.first_token_ms {
+                pending.push((
+                    format!("opencode_session:{session_id}:{message_id}"),
+                    first_token_ms,
+                ));
+            }
+        }
+    }
+    if pending.is_empty() {
+        return Ok(0);
+    }
+
+    let mut db_conn = lock_conn!(db.conn);
+    let tx = db_conn
+        .transaction()
+        .map_err(|e| AppError::Database(format!("开启 OpenCode 首字回填事务失败: {e}")))?;
+    let mut updated = 0u64;
+    {
+        let mut stmt = tx
+            .prepare_cached(
+                "UPDATE proxy_request_logs SET first_token_ms = ?2 \
+                 WHERE request_id = ?1 AND first_token_ms IS NULL",
+            )
+            .map_err(|e| AppError::Database(format!("准备 OpenCode 首字回填失败: {e}")))?;
+        for (request_id, first_token_ms) in pending {
+            updated += stmt
+                .execute(rusqlite::params![request_id, first_token_ms])
+                .map_err(|e| AppError::Database(format!("回填 OpenCode 首字耗时失败: {e}")))?
+                as u64;
+        }
+    }
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交 OpenCode 首字回填失败: {e}")))?;
+    Ok(updated)
 }
 
 /// 插入单条 OpenCode 消息记录到 proxy_request_logs
@@ -600,8 +683,7 @@ fn insert_opencode_message(
             cache_creation_cost,
             total_cost,
             msg.latency_ms,
-            // opencode.db 里没有首字时间字段，离线回填无法测量 first_token_ms
-            Option::<i64>::None,   // first_token_ms
+            msg.first_token_ms,
             200i64,                // status_code
             Option::<String>::None,// error_message
             Some(session_id.to_string()),
@@ -812,6 +894,207 @@ mod tests {
             .unwrap()
             .get(&key)
             .map(|c| c.last_modified)
+    }
+
+    /// V2 消息体，带 OpenCode 记录的真实首字时刻。
+    fn timed_v2_message(created: i64, first_token: Option<i64>, streamed: i64) -> String {
+        // `completed` 是导入判定的终态标记；缺了它消息会被当成“仍在流式中”跳过。
+        let mut time = serde_json::json!({
+            "created": created,
+            "streamed": streamed,
+            "completed": streamed
+        });
+        if let Some(first_token) = first_token {
+            time["firstToken"] = serde_json::json!(first_token);
+        }
+        serde_json::json!({
+            "model": { "id": "deepseek-flash", "providerID": "lzy", "variant": "high" },
+            "cost": 0.01,
+            "tokens": { "input": 100, "output": 20, "reasoning": 0,
+                        "cache": { "read": 900, "write": 0 } },
+            "time": time
+        })
+        .to_string()
+    }
+
+    fn first_token_of(db: &Database, request_id: &str) -> Option<i64> {
+        let conn = db.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT first_token_ms FROM proxy_request_logs WHERE request_id = ?1",
+            [request_id],
+            |row| row.get::<_, Option<i64>>(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_sync_writes_opencode_first_token() {
+        // 首次导入就应该把 time.firstToken 落进 first_token_ms，而不是留空。
+        let source = mixed_database();
+        source
+            .execute_batch(
+                "CREATE TABLE session (id TEXT PRIMARY KEY, time_updated INTEGER);
+                            INSERT INTO session VALUES ('s1', 500);",
+            )
+            .ok();
+        source
+            .execute("INSERT INTO session_v2 VALUES ('s1', 500)", [])
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO session_message VALUES ('m1', 's1', 'assistant', 1000, 500, ?1)",
+                rusqlite::params![timed_v2_message(1_000, Some(1_500), 3_000)],
+            )
+            .unwrap();
+
+        let (_dir, path) = write_database(&source);
+        let db = Database::memory().unwrap();
+
+        let result = sync_opencode_usage_from_path(&db, &path).unwrap();
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.imported, 1);
+
+        // firstToken(1500) - created(1000) = 500ms；latency 取 streamed - created。
+        assert_eq!(
+            first_token_of(&db, "opencode_session:s1:m1"),
+            Some(500),
+            "首次导入应写入真实首字耗时"
+        );
+    }
+
+    #[test]
+    fn test_sync_backfills_first_token_for_existing_rows() {
+        // 模拟 v4.0.42 之前导入的行：明细已在库中，但 first_token_ms 为 NULL。
+        let source = mixed_database();
+        source
+            .execute("INSERT INTO session_v2 VALUES ('s1', 500)", [])
+            .unwrap();
+        source
+            .execute(
+                "INSERT INTO session_message VALUES ('m1', 's1', 'assistant', 1000, 500, ?1)",
+                rusqlite::params![timed_v2_message(1_000, Some(1_500), 3_000)],
+            )
+            .unwrap();
+
+        let (_dir, path) = write_database(&source);
+        let db = Database::memory().unwrap();
+        let request_id = "opencode_session:s1:m1";
+
+        // 先手工插入一条“旧版本导入”的等价行：first_token_ms = NULL。
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    input_cost_usd, output_cost_usd, cache_read_cost_usd,
+                    cache_creation_cost_usd, total_cost_usd, latency_ms, first_token_ms,
+                    status_code, session_id, provider_type, is_streaming, cost_multiplier,
+                    created_at, data_source
+                 ) VALUES (?1,'_opencode_session','opencode','deepseek-flash','deepseek-flash',
+                    100,20,900,0,'0','0','0','0','0.01',2000,NULL,200,'s1',
+                    'opencode_session',1,'1.0',1,'opencode_session')",
+                [request_id],
+            )
+            .unwrap();
+        }
+        assert_eq!(first_token_of(&db, request_id), None);
+
+        let result = sync_opencode_usage_from_path(&db, &path).unwrap();
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+
+        // 回填只补空值，不新增行。
+        assert_eq!(first_token_of(&db, request_id), Some(500));
+        assert_eq!(imported_request_ids(&db), vec![request_id.to_string()]);
+
+        // 回填标记写入后不再重复执行。
+        let marker = format!("{}:first-token-backfill-v1", path.to_string_lossy());
+        assert!(crate::services::session_usage::load_sync_cursors(&db)
+            .unwrap()
+            .contains_key(&marker));
+    }
+
+    /// 对真实 OpenCode 数据目录跑一遍完整同步，用于人工核验（默认忽略）。
+    ///
+    /// ```bash
+    /// CC_SWITCH_OPENCODE_DB="$HOME/.local/share/opencode/opencode.db" \
+    ///   cargo test --lib test_real_opencode_database -- --ignored --nocapture
+    /// ```
+    #[test]
+    #[ignore = "requires a real OpenCode database; set CC_SWITCH_OPENCODE_DB"]
+    fn test_real_opencode_database_first_token_coverage() {
+        let Ok(source) = std::env::var("CC_SWITCH_OPENCODE_DB") else {
+            panic!("set CC_SWITCH_OPENCODE_DB to a copy of opencode.db");
+        };
+        let db = Database::memory().unwrap();
+
+        // 诊断用：确认布局识别与文件可见性，避免只读打开 WAL 库时静默读到空表。
+        {
+            let probe = rusqlite::Connection::open_with_flags(
+                &source,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .expect("open real db read-only");
+            let schema = detect_schema(&probe).expect("detect schema");
+            println!("schema={schema:?}");
+            let sessions = query_sessions(&probe, schema).expect("query sessions");
+            println!("sessions={}", sessions.len());
+            let (db_mtime, wal_mtime) = (
+                fs::metadata(&source)
+                    .map(|m| metadata_modified_nanos(&m))
+                    .unwrap_or(0),
+                fs::metadata(format!("{source}-wal"))
+                    .map(|m| metadata_modified_nanos(&m))
+                    .unwrap_or(0),
+            );
+            println!("db_mtime={db_mtime} wal_mtime={wal_mtime}");
+        }
+
+        let result = sync_opencode_usage_from_path(&db, std::path::Path::new(&source)).unwrap();
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        println!(
+            "imported={} skipped={} errors={}",
+            result.imported,
+            result.skipped,
+            result.errors.len()
+        );
+
+        let conn = db.conn.lock().unwrap();
+        let (total, with_first): (i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), SUM(CASE WHEN first_token_ms IS NOT NULL THEN 1 ELSE 0 END)
+                 FROM proxy_request_logs WHERE app_type='opencode'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        let mut samples: Vec<i64> = conn
+            .prepare(
+                "SELECT first_token_ms FROM proxy_request_logs
+                 WHERE app_type='opencode' AND first_token_ms IS NOT NULL",
+            )
+            .unwrap()
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        samples.sort_unstable();
+        let p50 = samples.get(samples.len() / 2).copied().unwrap_or(0);
+        let p90 = samples.get(samples.len() * 9 / 10).copied().unwrap_or(0);
+
+        println!(
+            "opencode rows={total} with_first_token={with_first} ({:.1}%) p50={p50}ms p90={p90}ms",
+            if total == 0 {
+                0.0
+            } else {
+                with_first as f64 / total as f64 * 100.0
+            }
+        );
+        assert!(total > 0, "真实库没有导入任何 OpenCode 行");
+        assert!(
+            with_first as f64 / total as f64 > 0.9,
+            "首字覆盖率过低: {with_first}/{total}"
+        );
     }
 
     #[test]
@@ -1380,5 +1663,50 @@ mod tests {
         assert_eq!(result.messages[0].1.model_id, "deepseek-v4.1-flash");
         assert_eq!(result.messages[1].1.input_tokens, 300);
         assert!(result.has_incomplete_usage);
+    }
+
+    #[test]
+    fn test_parse_message_data_reads_v2_first_token() {
+        // OpenCode V2 把流式首字时刻写在 time.firstToken 里。
+        let value = serde_json::json!({
+            "model": { "id": "deepseek-flash", "providerID": "lzy", "variant": "high" },
+            "tokens": { "input": 100, "output": 20, "reasoning": 5,
+                        "cache": { "read": 900, "write": 0 } },
+            "time": { "created": 1_000, "firstToken": 1_500,
+                      "streamed": 3_000, "completed": 3_500 }
+        });
+
+        let parsed = parse_message_data(&value).expect("assistant message with usage");
+        assert_eq!(parsed.timestamp_ms, 1_000);
+        assert_eq!(parsed.latency_ms, 2_000); // streamed - created
+        assert_eq!(parsed.first_token_ms, Some(500)); // firstToken - created
+        assert_eq!(parsed.model_id, "deepseek-flash");
+    }
+
+    #[test]
+    fn test_parse_message_data_without_first_token_stays_none() {
+        let value = serde_json::json!({
+            "modelID": "test-model",
+            "tokens": { "input": 10, "output": 2 },
+            "time": { "created": 1_000, "completed": 2_000 }
+        });
+
+        let parsed = parse_message_data(&value).expect("assistant message with usage");
+        assert_eq!(parsed.latency_ms, 1_000);
+        assert_eq!(parsed.first_token_ms, None);
+    }
+
+    #[test]
+    fn test_parse_message_data_rejects_impossible_first_token() {
+        // 时钟倒挂（首字早于发起）与首字晚于耗时终点都不应被当成有效首字。
+        for first_token in [900_i64, 4_000] {
+            let value = serde_json::json!({
+                "tokens": { "input": 10, "output": 2 },
+                "time": { "created": 1_000, "firstToken": first_token,
+                          "streamed": 3_000, "completed": 3_500 }
+            });
+            let parsed = parse_message_data(&value).expect("assistant message with usage");
+            assert_eq!(parsed.first_token_ms, None, "firstToken={first_token}");
+        }
     }
 }
