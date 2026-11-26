@@ -4194,9 +4194,14 @@ wire_api = "responses"
                 .unwrap();
             ProviderService::switch(&restarted, AppType::Codex, &target.id).unwrap();
             runtime.block_on(async {
-                crate::mode::controller::enter(&restarted, &AppType::Codex, false)
-                    .await
-                    .unwrap();
+                crate::mode::controller::enter_with_route(
+                    &restarted,
+                    &AppType::Codex,
+                    false,
+                    Some(&target.id),
+                )
+                .await
+                .unwrap();
                 assert!(
                     restarted
                         .db
