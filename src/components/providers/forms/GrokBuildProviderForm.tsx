@@ -108,9 +108,9 @@ export function GrokBuildProviderForm({
     initialData?.category ?? "custom",
   );
   // 官方卡绑定的授权中心 xAI 账号（null = 跟随 Grok CLI 登录）
-  const [selectedXaiAccountId] = useState<string | null>(() =>
-    resolveManagedAccountId(initialData?.meta, "xai_oauth"),
-  );
+  const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
+    string | null
+  >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
   const step = usePresetStep();
   const isOfficialAccountAdd = !initialData && category === "official";
   const showOfficialAccountAdd =
@@ -537,6 +537,12 @@ export function GrokBuildProviderForm({
             authProvider="xai_oauth"
             accountId={selectedXaiAccountId}
             onManageAuthAccounts={onManageAuthAccounts}
+            onBind={
+              initialData &&
+              !resolveManagedAccountId(initialData.meta, "xai_oauth")
+                ? setSelectedXaiAccountId
+                : undefined
+            }
           />
         )}
 

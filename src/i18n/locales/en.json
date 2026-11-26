@@ -282,7 +282,9 @@
         "unboundAccount": "No official account linked",
         "openAuthCenter": "Open Auth Center",
         "editBoundHelp": "This card is pinned to this official account and cannot switch accounts inside the card. To use another account, switch directly to its card or manage accounts in the Auth Center.",
-        "editUnboundHelp": "Each official account appears as its own individual card and cannot switch accounts inside the card. Please sign in or manage official accounts in the Auth Center."
+        "editUnboundHelp": "Each official account appears as its own individual card and cannot switch accounts inside the card. Please sign in or manage official accounts in the Auth Center.",
+        "bindOnce": "Bind to an Auth Center account",
+        "bindOnceHelp": "This card predates the upgrade and has no bound account. You can bind it to an Auth Center account once; after saving it can't be changed. The card auto-created for the same account can then be deleted."
       }
     },
     "duplicateLiveIdsLoadFailed": "Failed to read provider identifiers from config, please fix the config and try again",

@@ -6,6 +6,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkBuddyProviderForm } from "@/components/providers/forms/WorkBuddyProviderForm";
 import { setProviders, setWorkBuddyModelOwners } from "../msw/state";
@@ -177,6 +178,51 @@ describe("WorkBuddyProviderForm", () => {
       presetCategory: "official",
       meta: { authBinding: { accountId: "u-2" } },
     });
+  });
+
+  it("binds an official card left unbound from before the upgrade once", async () => {
+    Element.prototype.scrollIntoView ??= vi.fn();
+    const user = userEvent.setup();
+    const submit = vi.fn();
+    const unbound = { ...officialCard("u-1"), meta: {} };
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        providerId="workbuddy-official"
+        initialData={unbound}
+        submitLabel="Save"
+        onSubmit={submit}
+        onCancel={() => {}}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("combobox", { name: "绑定到授权中心账号" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "Bob" }));
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    expect(submit.mock.calls[0][0]).toMatchObject({
+      meta: { authBinding: { accountId: "u-2" } },
+    });
+  });
+
+  it("offers no account picker once an official card is bound", async () => {
+    render(
+      <WorkBuddyProviderForm
+        appId="workbuddy"
+        providerId="workbuddy-official"
+        initialData={officialCard("u-2")}
+        submitLabel="Save"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+      />,
+    );
+    expect(await screen.findByText("Bob")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "绑定到授权中心账号" }),
+    ).toBeNull();
   });
 
   it("shows missing-account status while allowing metadata edits on an official card", async () => {

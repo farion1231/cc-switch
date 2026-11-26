@@ -282,7 +282,9 @@
         "unboundAccount": "Bağlı resmi hesap yok",
         "openAuthCenter": "Auth Center'ı Aç",
         "editBoundHelp": "Bu kart bu resmi hesaba sabitlenmiştir ve kart içinde hesap değişimini desteklemez. Başka bir hesap kullanmak için doğrudan onun kartına geçin veya Auth Center üzerinden yönetin.",
-        "editUnboundHelp": "Her resmi hesap ayrı bir kart olarak gösterilir ve kart içinde hesap değişimini desteklemez. Lütfen Auth Center üzerinden giriş yapın veya resmi hesapları yönetin."
+        "editUnboundHelp": "Her resmi hesap ayrı bir kart olarak gösterilir ve kart içinde hesap değişimini desteklemez. Lütfen Auth Center üzerinden giriş yapın veya resmi hesapları yönetin.",
+        "bindOnce": "Yetkilendirme Merkezi hesabına bağla",
+        "bindOnceHelp": "Bu kart güncellemeden önce oluşturuldu ve bağlı bir hesabı yok. Bir kez Yetkilendirme Merkezi hesabına bağlayabilirsiniz; kaydettikten sonra değiştirilemez. Aynı hesap için otomatik oluşturulan kart daha sonra silinebilir."
       }
     },
     "duplicateLiveIdsLoadFailed": "Sağlayıcı tanımlayıcıları yapılandırmadan okunamadı. Lütfen yapılandırmayı düzeltip tekrar deneyin.",

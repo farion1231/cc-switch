@@ -3067,6 +3067,13 @@ function ProviderFormFull({
               onManageAuthAccounts={
                 canSwitchAgyAccount() ? onManageAuthAccounts : undefined
               }
+              onBind={
+                initialData &&
+                canSwitchAgyAccount() &&
+                !resolveManagedAccountId(initialData.meta, "agy_oauth")
+                  ? setSelectedAgyAccountId
+                  : undefined
+              }
             />
           )}
 

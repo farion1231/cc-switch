@@ -409,6 +409,15 @@ export function CodebuddyProviderForm({
               authProvider={CODEBUDDY_OFFICIAL_AUTH_PROVIDER}
               accountId={officialAccountId}
               onManageAuthAccounts={onManageAuthAccounts}
+              onBind={
+                initialData &&
+                !resolveManagedAccountId(
+                  initialData.meta,
+                  CODEBUDDY_OFFICIAL_AUTH_PROVIDER,
+                )?.trim()
+                  ? setOfficialAccountId
+                  : undefined
+              }
             />
           </fieldset>
         ) : (

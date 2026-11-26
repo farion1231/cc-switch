@@ -567,6 +567,15 @@ export function WorkBuddyProviderForm({
               authProvider={WORKBUDDY_ACCOUNT_AUTH_PROVIDER}
               accountId={accountId}
               onManageAuthAccounts={onManageAuthAccounts}
+              onBind={
+                initialData &&
+                !resolveManagedAccountId(
+                  initialData.meta,
+                  WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
+                )?.trim()
+                  ? setAccountId
+                  : undefined
+              }
             />
           ) : (
             <>

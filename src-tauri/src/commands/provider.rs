@@ -251,7 +251,8 @@ pub async fn update_provider<R: tauri::Runtime>(
                             &app_type,
                             &provider,
                         );
-                    if existing_bound != incoming_bound {
+                    // 升级前留下的未绑定官方卡可以绑定一次（并掉重复卡），绑定后不能再改或解绑。
+                    if existing_bound.is_some() && existing_bound != incoming_bound {
                         return Err(
                             "官方登录卡片不支持切换账号，请在授权中心管理账号".to_string()
                         );
@@ -1736,16 +1737,20 @@ mod delete_official_account_tests {
         ))
         .unwrap();
 
+        let switched_meta = |account: &str| {
+            Some(ProviderMeta {
+                auth_binding: Some(AuthBinding {
+                    source: AuthBindingSource::ManagedAccount,
+                    auth_provider: Some("claude_official".into()),
+                    account_id: Some(account.into()),
+                }),
+                ..Default::default()
+            })
+        };
+
         // Switching the card's bound account to another account is rejected.
         let mut switched = card_1.clone();
-        switched.meta = Some(ProviderMeta {
-            auth_binding: Some(AuthBinding {
-                source: AuthBindingSource::ManagedAccount,
-                auth_provider: Some("claude_official".into()),
-                account_id: Some("acc-2".into()),
-            }),
-            ..Default::default()
-        });
+        switched.meta = switched_meta("acc-2");
         let err = tauri::async_runtime::block_on(super::update_provider(
             app.handle().clone(),
             "claude".into(),
@@ -1756,7 +1761,7 @@ mod delete_official_account_tests {
         .unwrap_err();
         assert!(err.contains("不支持切换账号"));
 
-        // Switching an unbound official card onto a bound account is also rejected.
+        // An unbound official card left from before the upgrade may be bound once...
         let mut bind_unbound = unbound_official.clone();
         bind_unbound.meta = Some(ProviderMeta {
             auth_binding: Some(AuthBinding {
@@ -1766,10 +1771,33 @@ mod delete_official_account_tests {
             }),
             ..Default::default()
         });
+        tauri::async_runtime::block_on(super::update_provider(
+            app.handle().clone(),
+            "claude".into(),
+            bind_unbound.clone(),
+            None,
+            None,
+        ))
+        .unwrap();
+
+        // ...after which it can neither be moved to another account nor unbound.
+        let mut rebind = bind_unbound.clone();
+        rebind.meta = switched_meta("acc-2");
         let err = tauri::async_runtime::block_on(super::update_provider(
             app.handle().clone(),
             "claude".into(),
-            bind_unbound,
+            rebind,
+            None,
+            None,
+        ))
+        .unwrap_err();
+        assert!(err.contains("不支持切换账号"));
+        let mut unbind = bind_unbound;
+        unbind.meta = None;
+        let err = tauri::async_runtime::block_on(super::update_provider(
+            app.handle().clone(),
+            "claude".into(),
+            unbind,
             None,
             None,
         ))

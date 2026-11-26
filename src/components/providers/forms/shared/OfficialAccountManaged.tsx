@@ -7,6 +7,13 @@ import { canSwitchAgyAccount } from "@/lib/authBinding";
 import { managedAuthStatusQuery } from "@/lib/query/managedAuth";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const OFFICIAL_AUTH_TARGET_BY_APP: Partial<Record<AppId, AuthCenterTarget>> = {
   claude: "claude_official",
@@ -108,6 +115,11 @@ export interface OfficialAccountManagedInfoProps {
   authProvider: ManagedAuthProvider;
   accountId: string | null;
   onManageAuthAccounts?: (target: AuthCenterTarget) => void;
+  /**
+   * 编辑升级前留下的未绑定官方卡时传入：可以选一次授权中心账号（与自动生成的账号卡合并），
+   * 保存后绑定固定，不能再改。
+   */
+  onBind?: (accountId: string) => void;
 }
 
 /**
@@ -117,10 +129,11 @@ export function OfficialAccountManagedInfo({
   authProvider,
   accountId,
   onManageAuthAccounts,
+  onBind,
 }: OfficialAccountManagedInfoProps) {
   const { t } = useTranslation();
   const normalizedId = accountId?.trim() || null;
-  const enabled = Boolean(normalizedId);
+  const enabled = Boolean(normalizedId) || Boolean(onBind);
   const statusQuery = useQuery({
     ...managedAuthStatusQuery(authProvider),
     enabled,
@@ -191,16 +204,47 @@ export function OfficialAccountManagedInfo({
             </Button>
           )}
         </div>
-        <p className="text-caption text-fg-2">
-          {normalizedId
-            ? t("provider.form.officialManaged.editBoundHelp", {
-                defaultValue:
-                  "该卡片固定绑定此官方账号，不支持在卡片内切换账号。如需使用其他账号，请直接切换对应账号卡片或在授权中心管理。",
-              })
-            : t("provider.form.officialManaged.editUnboundHelp", {
-                defaultValue:
-                  "每个官方账号均独立显示为一张卡片，不支持在卡片内切换账号。请前往授权中心登录或管理官方账号。",
+        {onBind && (
+          <Select value={normalizedId ?? undefined} onValueChange={onBind}>
+            <SelectTrigger
+              aria-label={t("provider.form.officialManaged.bindOnce", {
+                defaultValue: "绑定到授权中心账号",
               })}
+            >
+              <SelectValue
+                placeholder={t("provider.form.officialManaged.bindOnce", {
+                  defaultValue: "绑定到授权中心账号",
+                })}
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {(data?.accounts ?? []).map((item) => (
+                <SelectItem
+                  key={item.id}
+                  value={item.id}
+                  disabled={item.requires_reauth}
+                >
+                  {item.login}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        <p className="text-caption text-fg-2">
+          {onBind
+            ? t("provider.form.officialManaged.bindOnceHelp", {
+                defaultValue:
+                  "这张卡来自升级前，还没绑定账号。可以绑定一次授权中心账号，保存后不能再改；同一账号自动生成的卡片可以随后删除。",
+              })
+            : normalizedId
+              ? t("provider.form.officialManaged.editBoundHelp", {
+                  defaultValue:
+                    "该卡片固定绑定此官方账号，不支持在卡片内切换账号。如需使用其他账号，请直接切换对应账号卡片或在授权中心管理。",
+                })
+              : t("provider.form.officialManaged.editUnboundHelp", {
+                  defaultValue:
+                    "每个官方账号均独立显示为一张卡片，不支持在卡片内切换账号。请前往授权中心登录或管理官方账号。",
+                })}
         </p>
       </div>
     </div>

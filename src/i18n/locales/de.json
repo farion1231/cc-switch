@@ -282,7 +282,9 @@
         "unboundAccount": "Kein offizielles Konto verknüpft",
         "openAuthCenter": "Auth-Center öffnen",
         "editBoundHelp": "Diese Karte ist fest mit diesem offiziellen Konto verknüpft; ein Kontowechsel innerhalb der Karte wird nicht unterstützt. Wechsle direkt zur jeweiligen Kontokarte oder verwalte Konten im Auth-Center.",
-        "editUnboundHelp": "Jedes offizielle Konto wird als eigene Karte angezeigt; ein Kontowechsel innerhalb der Karte wird nicht unterstützt. Bitte melde dich im Auth-Center an oder verwalte dort deine Konten."
+        "editUnboundHelp": "Jedes offizielle Konto wird als eigene Karte angezeigt; ein Kontowechsel innerhalb der Karte wird nicht unterstützt. Bitte melde dich im Auth-Center an oder verwalte dort deine Konten.",
+        "bindOnce": "Mit einem Konto aus dem Auth Center verknüpfen",
+        "bindOnceHelp": "Diese Karte stammt aus der Zeit vor dem Update und ist mit keinem Konto verknüpft. Sie können sie einmalig mit einem Konto aus dem Auth Center verknüpfen; nach dem Speichern ist das nicht mehr änderbar. Die automatisch erstellte Karte für dasselbe Konto kann danach gelöscht werden."
       }
     },
     "duplicateLiveIdsLoadFailed": "Anbieterkennungen konnten nicht aus der Konfiguration gelesen werden. Bitte beheben Sie die Konfiguration und versuchen Sie es erneut",

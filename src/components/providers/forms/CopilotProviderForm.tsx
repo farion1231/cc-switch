@@ -345,7 +345,7 @@ export function CopilotProviderForm({
   const textId = (isEdit ? providerId : cardId) || "custom";
   const [text, setText] = useState(() => toNativeText(connection, textId));
   const [textError, setTextError] = useState<NativeError | null>(null);
-  const [accountId] = useState<string | null>(() =>
+  const [accountId, setAccountId] = useState<string | null>(() =>
     resolveManagedAccountId(initialData?.meta, "github_copilot"),
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -955,6 +955,12 @@ export function CopilotProviderForm({
                 authProvider="github_copilot"
                 accountId={accountId}
                 onManageAuthAccounts={onManageAuthAccounts}
+                onBind={
+                  initialData &&
+                  !resolveManagedAccountId(initialData.meta, "github_copilot")
+                    ? setAccountId
+                    : undefined
+                }
               />
               <div className="space-y-2">
                 <div className="flex items-center gap-0.5">
