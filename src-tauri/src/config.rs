@@ -438,6 +438,41 @@ pub fn write_text_file_private(path: &Path, data: &str) -> Result<(), AppError> 
     atomic_write_private(path, data.as_bytes())
 }
 
+/// 读 CC Switch 自己的 JSON 数据文件（账号表这类）。没有文件时是默认值；读不了或
+/// 解析不了时先把它改名成 `<文件名>.unreadable-<毫秒时间戳>` 留着，再按默认值继续——
+/// 否则下一次保存会用空表把里面的数据整份覆盖掉。
+pub(crate) fn load_json_or_set_aside<T: serde::de::DeserializeOwned + Default>(
+    path: &Path,
+    tag: &str,
+) -> T {
+    let error = match fs::read(path) {
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(value) => return value,
+            Err(error) => error.to_string(),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return T::default(),
+        Err(error) => error.to_string(),
+    };
+    let mut aside = path.as_os_str().to_owned();
+    aside.push(format!(
+        ".unreadable-{}",
+        chrono::Utc::now().timestamp_millis()
+    ));
+    let aside = PathBuf::from(aside);
+    match fs::rename(path, &aside) {
+        Ok(()) => log::warn!(
+            "[{tag}] {} 读不了（{error}），已改名为 {} 保留，按空表继续",
+            path.display(),
+            aside.display()
+        ),
+        Err(rename_error) => log::warn!(
+            "[{tag}] {} 读不了（{error}），改名保留也失败（{rename_error}），按空表继续",
+            path.display()
+        ),
+    }
+    T::default()
+}
+
 /// 原子写入：写入临时文件后 rename 替换，避免半写状态
 pub fn atomic_write(path: &Path, data: &[u8]) -> Result<(), AppError> {
     atomic_write_with_unix_mode(path, data, None)
