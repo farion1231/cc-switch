@@ -2726,6 +2726,11 @@
       "cost": "Стоимость",
       "requestsLegend": "Запросы",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "Разбивка динамики",
+      "byModel": "По моделям",
+      "unknownModel": "Неизвестная модель",
+      "otherModels": "Другие модели",
+      "byApp": "По приложению",
       "hourly": "по часам",
       "daily": "по дням"
     },

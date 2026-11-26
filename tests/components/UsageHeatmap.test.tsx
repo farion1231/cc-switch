@@ -129,6 +129,71 @@ describe("UsageHeatmap runtime colors", () => {
     expect(rows[2]).toHaveTextContent(/Gemini CLI\s*\$0\.00/);
   });
 
+  it("switches between the dominant app, dominant model and daily total", () => {
+    trends.mockReturnValue({
+      data: [
+        {
+          ...day(3, [
+            ["claude", 8],
+            ["codex", 2],
+          ]),
+          modelStats: [
+            {
+              model: "claude-sonnet-4-6",
+              requestCount: 8,
+              totalCost: 0,
+              totalTokens: 80,
+            },
+            {
+              model: "gpt-5.4",
+              requestCount: 2,
+              totalCost: 0,
+              totalTokens: 20,
+            },
+          ],
+        },
+      ],
+    });
+    render(<UsageHeatmap metric="requests" refreshIntervalMs={0} />);
+    expect(trends).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ includeModels: false }),
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.trend.byModel" }),
+    );
+    expect(trends).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ includeModels: true }),
+    );
+    const modelCell = screen.getByRole("img", {
+      name: /claude-sonnet-4-6.*gpt-5.4/,
+    });
+    const modelSwatch = screen.getByText("claude-sonnet-4-6")
+      .previousElementSibling as HTMLElement;
+    expect(fills(modelCell)).toEqual([
+      modelSwatch.style
+        .getPropertyValue("--heat-fill")
+        .replace("--heat-strength-4", "--heat-strength-1"),
+    ]);
+    fireEvent.mouseEnter(modelCell);
+    expect(
+      within(screen.getByRole("tooltip")).getByText("claude-sonnet-4-6"),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "common.all" }));
+    expect(fills(screen.getByRole("img"))).toEqual(["var(--heat-1)"]);
+    expect(screen.queryByText("claude-sonnet-4-6")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "usage.trend.byApp" }));
+    expect(
+      fills(screen.getByRole("img", { name: /Claude Code.*Codex/ })),
+    ).toEqual([expect.stringContaining("var(--agent-claude)")]);
+  });
+
   it("keeps the selected runtime, provider and model filters on the trend query", () => {
     trends.mockReturnValue({ data: [day(2, [["codex", 1]])] });
     render(

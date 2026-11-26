@@ -81,6 +81,7 @@ pub async fn get_usage_trends(
     app_type: Option<String>,
     provider_name: Option<String>,
     model: Option<String>,
+    include_models: Option<bool>,
 ) -> Result<Vec<DailyStats>, AppError> {
     run_db_query(&state, move |db| {
         db.get_daily_trends(
@@ -89,6 +90,7 @@ pub async fn get_usage_trends(
             app_type.as_deref(),
             provider_name.as_deref(),
             model.as_deref(),
+            include_models.unwrap_or_default(),
         )
     })
     .await

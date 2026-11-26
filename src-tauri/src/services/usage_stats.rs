@@ -115,6 +115,8 @@ pub struct DailyStats {
     /// Usage by display app type; omitted for empty buckets.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runtime_stats: Vec<TrendRuntimeStats>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_stats: Vec<TrendModelStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +129,15 @@ pub struct TrendRuntimeStats {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendModelStats {
+    pub model: String,
+    pub request_count: u64,
+    pub total_cost: f64,
+    pub total_tokens: u64,
 }
 
 #[derive(Default)]
@@ -150,13 +161,14 @@ impl TrendTotals {
     }
 }
 
-/// Trend queries return one aggregate per (bucket, display app type).
+/// Trend queries return one aggregate per (bucket, display app type, optional model).
 fn trend_row<K: rusqlite::types::FromSql>(
     row: &rusqlite::Row<'_>,
-) -> rusqlite::Result<(K, String, TrendTotals)> {
+) -> rusqlite::Result<(K, String, Option<String>, TrendTotals)> {
     Ok((
         row.get(0)?,
         row.get(1)?,
+        row.get(8)?,
         TrendTotals {
             request_count: row.get::<_, i64>(2)? as u64,
             cost: row.get(3)?,
@@ -169,17 +181,23 @@ fn trend_row<K: rusqlite::types::FromSql>(
 }
 
 #[derive(Default)]
-struct TrendBucket(BTreeMap<String, TrendTotals>);
+struct TrendBucket {
+    runtimes: BTreeMap<String, TrendTotals>,
+    models: BTreeMap<String, TrendTotals>,
+}
 
 impl TrendBucket {
-    fn add(&mut self, app_type: String, totals: TrendTotals) {
-        self.0.entry(app_type).or_default().add(&totals);
+    fn add(&mut self, app_type: String, model: Option<String>, totals: TrendTotals) {
+        self.runtimes.entry(app_type).or_default().add(&totals);
+        if let Some(model) = model {
+            self.models.entry(model).or_default().add(&totals);
+        }
     }
 
     fn into_stats(self, date: String) -> DailyStats {
         let mut totals = TrendTotals::default();
-        let mut runtime_stats = Vec::with_capacity(self.0.len());
-        for (app_type, runtime) in self.0 {
+        let mut runtime_stats = Vec::with_capacity(self.runtimes.len());
+        for (app_type, runtime) in self.runtimes {
             totals.add(&runtime);
             runtime_stats.push(TrendRuntimeStats {
                 app_type,
@@ -201,6 +219,19 @@ impl TrendBucket {
             total_cache_creation_tokens: totals.cache_creation,
             total_cache_read_tokens: totals.cache_read,
             runtime_stats,
+            model_stats: self
+                .models
+                .into_iter()
+                .map(|(model, stats)| TrendModelStats {
+                    model,
+                    request_count: stats.request_count,
+                    total_cost: stats.cost,
+                    total_tokens: stats.input
+                        + stats.output
+                        + stats.cache_creation
+                        + stats.cache_read,
+                })
+                .collect(),
         }
     }
 }
@@ -1559,6 +1590,7 @@ impl Database {
         app_type: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        include_models: bool,
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
         let filter = UsageFilter {
@@ -1599,7 +1631,28 @@ impl Database {
         let effective_filter =
             effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
         let fresh_input = fresh_input_sql("l");
+        let trend_model_sql = |alias| {
+            if include_models {
+                effective_model_sql(alias)
+            } else {
+                "NULL".to_string()
+            }
+        };
+        // Reuse the model table's merge rules across detail and rollup rows.
+        let mut model_names: HashMap<String, String> = HashMap::new();
+        let mut display_model = |raw: Option<String>| -> Result<Option<String>, AppError> {
+            raw.map(|raw| match model_names.entry(raw) {
+                std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.get().clone()),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let name = statistics_model_with(filter.pricing(&conn)?, entry.key())?;
+                    entry.insert(name.clone());
+                    Ok(name)
+                }
+            })
+            .transpose()
+        };
         let detail_app_type = folded_app_type_sql("l.app_type");
+        let detail_model = trend_model_sql("l");
         let detail_sql = format!(
             "SELECT
                 {bucket_expr} as bucket,
@@ -1609,11 +1662,12 @@ impl Database {
                 COALESCE(SUM({fresh_input}), 0),
                 COALESCE(SUM(l.output_tokens), 0),
                 COALESCE(SUM(l.cache_creation_tokens), 0),
-                COALESCE(SUM(l.cache_read_tokens), 0)
+                COALESCE(SUM(l.cache_read_tokens), 0),
+                {detail_model} AS trend_model
              FROM proxy_request_logs l {detail_join}
              WHERE l.created_at >= ?1 AND l.created_at <= ?2
                AND {effective_filter} {extra_filter}
-             GROUP BY bucket, display_app"
+             GROUP BY bucket, display_app, trend_model"
         );
         let mut detail_stmt = conn.prepare(&detail_sql)?;
         let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> =
@@ -1626,8 +1680,11 @@ impl Database {
             let mut buckets: HashMap<i64, TrendBucket> = HashMap::new();
             let rows = detail_stmt.query_map(detail_refs.as_slice(), trend_row::<i64>)?;
             for row in rows {
-                let (bucket, app_type, totals) = row?;
-                buckets.entry(bucket).or_default().add(app_type, totals);
+                let (bucket, app_type, model, totals) = row?;
+                buckets
+                    .entry(bucket)
+                    .or_default()
+                    .add(app_type, display_model(model)?, totals);
             }
 
             let mut stats = Vec::with_capacity(hourly_bucket_count as usize);
@@ -1649,11 +1706,12 @@ impl Database {
         let mut buckets: HashMap<NaiveDate, TrendBucket> = HashMap::new();
         let detail_rows = detail_stmt.query_map(detail_refs.as_slice(), trend_row::<String>)?;
         for row in detail_rows {
-            let (bucket, app_type, totals) = row?;
-            buckets
-                .entry(parse_bucket_date(&bucket)?)
-                .or_default()
-                .add(app_type, totals);
+            let (bucket, app_type, model, totals) = row?;
+            buckets.entry(parse_bucket_date(&bucket)?).or_default().add(
+                app_type,
+                display_model(model)?,
+                totals,
+            );
         }
 
         let rollup_bounds = compute_rollup_date_bounds(Some(start_ts), Some(end_ts))?;
@@ -1662,6 +1720,7 @@ impl Database {
         let rollup_join = filter.join("r", "p2");
         let fresh_input_rollup = fresh_input_sql("r");
         let rollup_app_type = folded_app_type_sql("r.app_type");
+        let rollup_model = trend_model_sql("r");
         let rollup_sql = format!(
             "SELECT
                 r.date,
@@ -1671,21 +1730,23 @@ impl Database {
                 COALESCE(SUM({fresh_input_rollup}), 0),
                 COALESCE(SUM(r.output_tokens), 0),
                 COALESCE(SUM(r.cache_creation_tokens), 0),
-                COALESCE(SUM(r.cache_read_tokens), 0)
+                COALESCE(SUM(r.cache_read_tokens), 0),
+                {rollup_model} AS trend_model
              FROM usage_daily_rollups r {rollup_join}
              {rollup_where}
-             GROUP BY r.date, display_app"
+             GROUP BY r.date, display_app, trend_model"
         );
         let mut rollup_stmt = conn.prepare(&rollup_sql)?;
         let rollup_refs: Vec<&dyn rusqlite::ToSql> =
             rollup_params.iter().map(|param| param.as_ref()).collect();
         let rollup_rows = rollup_stmt.query_map(rollup_refs.as_slice(), trend_row::<String>)?;
         for row in rollup_rows {
-            let (bucket, app_type, totals) = row?;
-            buckets
-                .entry(parse_bucket_date(&bucket)?)
-                .or_default()
-                .add(app_type, totals);
+            let (bucket, app_type, model, totals) = row?;
+            buckets.entry(parse_bucket_date(&bucket)?).or_default().add(
+                app_type,
+                display_model(model)?,
+                totals,
+            );
         }
 
         let mut stats = Vec::with_capacity(bucket_count);

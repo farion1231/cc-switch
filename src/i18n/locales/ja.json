@@ -2727,6 +2727,11 @@
       "cost": "コスト",
       "requestsLegend": "リクエスト数",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "トレンドの内訳",
+      "byModel": "モデル別",
+      "unknownModel": "不明なモデル",
+      "otherModels": "その他のモデル",
+      "byApp": "アプリ別",
       "hourly": "1 時間ごと",
       "daily": "1 日ごと"
     },

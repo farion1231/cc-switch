@@ -99,9 +99,17 @@ export interface RuntimeTrendStats {
   totalCacheReadTokens: number;
 }
 
+export interface ModelTrendStats {
+  model: string;
+  requestCount: number;
+  totalCost: number;
+  totalTokens: number;
+}
+
 export interface DailyStats extends Omit<RuntimeTrendStats, "appType"> {
   date: string;
   runtimeStats?: RuntimeTrendStats[];
+  modelStats?: ModelTrendStats[];
   totalTokens: number;
 }
 

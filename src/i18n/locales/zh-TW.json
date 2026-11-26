@@ -2727,6 +2727,11 @@
       "cost": "成本",
       "requestsLegend": "請求數",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "趨勢拆分",
+      "byModel": "按模型",
+      "unknownModel": "未知模型",
+      "otherModels": "其他模型",
+      "byApp": "按應用",
       "hourly": "按小時",
       "daily": "按天"
     },
