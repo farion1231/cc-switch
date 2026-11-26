@@ -1811,6 +1811,28 @@ fn chat_response_to_responses_extracts_reasoning_details() {
 }
 
 #[test]
+fn chat_completion_reasoning_item_id_avoids_official_lookup_shape() {
+    // #9054：`rs_resp_<32 位十六进制>` 会被官方 store:false 下按 id 回查 404，带序号就不会。
+    let input = json!({
+        "id": "dba7d7f2a5431337cbcef8bcb6e27b76",
+        "model": "glm-5",
+        "choices": [{
+            "message": {"role": "assistant", "reasoning_content": "Think.", "content": "Done"},
+            "finish_reason": "stop"
+        }]
+    });
+
+    let result =
+        chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
+
+    assert_eq!(result["output"][0]["type"], "reasoning");
+    assert_eq!(
+        result["output"][0]["id"],
+        "rs_resp_dba7d7f2a5431337cbcef8bcb6e27b76_0"
+    );
+}
+
+#[test]
 fn chat_completion_to_response_reads_mistral_thinking_chunks() {
     // #9902：Mistral 开思考后 content 是 thinking / text 分段数组
     let input = json!({
