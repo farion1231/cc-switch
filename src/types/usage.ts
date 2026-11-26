@@ -122,10 +122,6 @@ export interface ProviderStats {
   estSpeedOutputTokens?: number;
   /** 估算速度分母：同一批请求的估算耗时（含首字等待）之和，毫秒 */
   estSpeedDurationMs?: number;
-  /** 速度中位数（tok/s）：满足条件的路由明细请求逐条速度的中位数；没有时为 null */
-  speedMedianTps?: number | null;
-  /** 估算速度中位数（tok/s）：会话日志导入的明细请求逐条估算速度的中位数；没有时为 null */
-  estSpeedMedianTps?: number | null;
   /** 首字时间中位数（毫秒）：经路由服务、成功的流式明细请求；没有时为 null */
   firstTokenMedianMs?: number | null;
   /** 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的请求；没有精确值时才显示，带 ≈ */
@@ -149,9 +145,6 @@ export interface ModelStats {
   speedGenerationMs?: number;
   estSpeedOutputTokens?: number;
   estSpeedDurationMs?: number;
-  /** 速度中位数（tok/s），口径同 ProviderStats 的那两个字段 */
-  speedMedianTps?: number | null;
-  estSpeedMedianTps?: number | null;
   /** 首字时间中位数，口径同 ProviderStats 的那两个字段 */
   firstTokenMedianMs?: number | null;
   estFirstTokenMedianMs?: number | null;

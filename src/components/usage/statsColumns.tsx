@@ -6,7 +6,6 @@ import {
   formatFirstTokenSeconds,
   formatTokensPerSecond,
   getAggregateTokensPerSecond,
-  parseFiniteNumber,
 } from "./format";
 import { usageTable } from "./usageTable";
 import { formatHitPercent } from "./RequestLogTable";
@@ -61,38 +60,28 @@ export function CacheHitRateCell({
   );
 }
 
-/** 供应商 / 模型统计行共有的速度统计与首字中位数（后端只统计满足条件的明细请求）。 */
+/** 供应商 / 模型统计行共有的速度分子分母与首字中位数（后端只统计满足条件的明细请求）。 */
 export interface SpeedTotals {
   speedOutputTokens?: number;
   speedGenerationMs?: number;
   estSpeedOutputTokens?: number;
   estSpeedDurationMs?: number;
-  speedMedianTps?: number | null;
-  estSpeedMedianTps?: number | null;
   firstTokenMedianMs?: number | null;
   estFirstTokenMedianMs?: number | null;
 }
 
-/** 一行的汇总速度：优先取后端逐条速度的中位数，旧数据回落 Σ输出 ÷ Σ生成时间。 */
+/** 一行的汇总速度：Σ输出 ÷ Σ生成时间。 */
 export function getStatsSpeed(stat: SpeedTotals): string | null {
-  const median = parseFiniteNumber(stat.speedMedianTps);
-  if (median != null && median > 0) {
-    return formatTokensPerSecond(median);
-  }
   return formatTokensPerSecond(
     getAggregateTokensPerSecond(stat.speedOutputTokens, stat.speedGenerationMs),
   );
 }
 
 /**
- * 会话日志导入的请求的汇总估算速度：优先取逐条估算速度的中位数，旧数据回落 Σ输出 ÷ Σ估算耗时（含首字等待）。
+ * 会话日志导入的请求的汇总估算速度：Σ输出 ÷ Σ估算耗时（含首字等待）。
  * 没有精确速度时才拿它顶上，显示时前面带 ≈。
  */
 export function getStatsEstimatedSpeed(stat: SpeedTotals): string | null {
-  const median = parseFiniteNumber(stat.estSpeedMedianTps);
-  if (median != null && median > 0) {
-    return formatTokensPerSecond(median);
-  }
   return formatTokensPerSecond(
     getAggregateTokensPerSecond(
       stat.estSpeedOutputTokens,
