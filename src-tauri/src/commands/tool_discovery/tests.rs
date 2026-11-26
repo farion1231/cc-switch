@@ -1,11 +1,103 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn disabled_cli_is_skipped_even_when_a_symlink_points_to_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let dirs: Vec<_> = ["default", "alias", "other"]
+        .iter()
+        .map(|name| temp.path().join(name))
+        .collect();
+    for dir in &dirs {
+        std::fs::create_dir(dir).unwrap();
+    }
+    let default = dirs[0].join("codex");
+    let other = dirs[2].join("codex");
+    std::fs::write(&default, b"default").unwrap();
+    std::fs::write(&other, b"other").unwrap();
+    std::os::unix::fs::symlink(&default, dirs[1].join("codex")).unwrap();
+    let real_default = std::fs::canonicalize(&default).unwrap();
+    let entry = ResolvedPathDefault {
+        launcher: default.clone(),
+        real: real_default.clone(),
+    };
+    let real_other = std::fs::canonicalize(&other).unwrap();
+    assert_eq!(
+        locate_enabled_tool_in(
+            "codex",
+            None,
+            std::slice::from_ref(&real_default),
+            Some(entry.clone()),
+            &dirs,
+            |_| true,
+        )
+        .unwrap(),
+        other
+    );
+    use std::os::unix::fs::PermissionsExt;
+    for (path, script) in [
+        (&default, "#!/bin/sh\nexit 1\n"),
+        (&other, "#!/bin/sh\nprintf '2.0.0\\n'\n"),
+    ] {
+        std::fs::write(path, script).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    assert_eq!(
+        locate_enabled_tool_in("codex", None, &[], Some(entry.clone()), &dirs, |path| {
+            cli_installation_is_runnable(path, None)
+        },)
+        .unwrap(),
+        other
+    );
+    assert!(matches!(
+        locate_enabled_tool_in(
+            "codex",
+            None,
+            std::slice::from_ref(&real_default),
+            None,
+            &dirs,
+            |_| false,
+        ),
+        Err(CliLookupError::Unrunnable)
+    ));
+    assert!(matches!(
+        locate_enabled_tool_in(
+            "codex",
+            None,
+            std::slice::from_ref(&real_default),
+            None,
+            &[],
+            |_| true,
+        ),
+        Err(CliLookupError::Missing)
+    ));
+    assert!(matches!(
+        locate_enabled_tool_in("codex", None, &[], None, &dirs, |_| true),
+        Err(CliLookupError::Ambiguous)
+    ));
+    assert!(matches!(
+        locate_enabled_tool_in(
+            "codex",
+            None,
+            &[real_default.clone(), real_other],
+            Some(entry),
+            &dirs,
+            |_| true,
+        ),
+        Err(CliLookupError::Disabled)
+    ));
+}
+
 /// 探测 helper 正常路径：spawn（含 pre_exec setsid）能启动、输出能捕获。
 #[cfg(not(target_os = "windows"))]
 #[test]
 fn probe_version_command_captures_healthy_tool_output() {
-    let out = run_probe_version_command(Path::new("/bin/echo"), std::ffi::OsStr::new(""))
-        .expect("probe of /bin/echo should succeed");
+    let out = run_probe_version_command(
+        Path::new("/bin/echo"),
+        std::ffi::OsStr::new(""),
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .expect("probe of /bin/echo should succeed");
     assert!(out.status.success());
 }
 
@@ -119,7 +211,10 @@ mod unmanaged_native_update {
 
         let a = installed(&dir, "a/bin/gemini", &MACH_O_64, false);
         let b = installed(&dir, "b/bin/gemini", &MACH_O_64, false);
-        assert_eq!(resolve_update_command("gemini", &[a, b]), expected_static);
+        assert_eq!(
+            resolve_update_command("gemini", &[a, b]),
+            UpdateCommand::Unmanaged
+        );
     }
 
     #[test]
@@ -165,6 +260,7 @@ fn infer_install_source_classifies_channels() {
     // nvm shim 仍按 launcher 归类，不能被真身路径抢走。
     assert_eq!(
         infer_install_source_for_install(
+            "codex",
             Path::new("/usr/local/bin/codex"),
             Path::new("/usr/local/Caskroom/codex/0.146.0/bin/codex"),
         ),
@@ -172,6 +268,7 @@ fn infer_install_source_classifies_channels() {
     );
     assert_eq!(
         infer_install_source_for_install(
+            "codex",
             Path::new("/Users/me/.nvm/versions/node/v22.0.0/bin/codex"),
             Path::new(
                 "/Users/me/.nvm/versions/node/v22.0.0/lib/node_modules/@openai/codex/bin/codex.js"
@@ -185,6 +282,133 @@ fn infer_install_source_classifies_channels() {
 mod anchored_upgrade {
     use super::super::*;
     use std::path::Path;
+
+    #[cfg(unix)]
+    #[test]
+    fn labels_kimi_installer_and_hermes_nix_installations() {
+        let home = dirs::home_dir().unwrap();
+        let kimi = kimi_install_dir(Some(&home)).unwrap().join("bin/kimi");
+        assert_eq!(
+            infer_install_source_for_install("kimi", &kimi, &kimi),
+            "curl"
+        );
+
+        let nix_profile = home.join(".nix-profile/bin/hermes");
+        let nix_store = Path::new("/nix/store/abc-hermes-agent/bin/hermes");
+        assert_eq!(
+            infer_install_source_for_install("hermes", &nix_profile, nix_store),
+            "nix"
+        );
+        assert_eq!(
+            infer_install_source_for_install("hermes", &nix_profile, &nix_profile),
+            "nix"
+        );
+        let other = home.join("other/bin/hermes");
+        assert_eq!(
+            infer_install_source_for_install("hermes", &other, &other),
+            "system"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn global_npm_tools_under_the_homebrew_prefix_are_not_brew_packages() {
+        let root = tempfile::tempdir().unwrap();
+        let prefix = root.path().join("opt/homebrew");
+        for (tool, expected_version) in [
+            ("codex", "0.170.0"),
+            ("dsh", "0.2.2-rc.5"),
+            ("claude", "2.1.318"),
+        ] {
+            let package_name = tool_spec(tool).npm_package.unwrap();
+            let package = prefix.join("lib/node_modules").join(package_name);
+            std::fs::create_dir_all(&package).unwrap();
+            std::fs::write(
+                package.join("package.json"),
+                serde_json::json!({"name":package_name,"version":expected_version}).to_string(),
+            )
+            .unwrap();
+            let entry = package.join("entry.js");
+            std::fs::write(&entry, "").unwrap();
+            let real = entry.canonicalize().unwrap();
+            let launcher = prefix.join("bin").join(tool);
+            assert_eq!(
+                global_node_package_version(tool, &launcher, &real).as_deref(),
+                Some(expected_version)
+            );
+            assert_eq!(
+                infer_install_source_for_install(tool, &launcher, &real),
+                "npm"
+            );
+            assert_eq!(
+                infer_install_source_for_install(tool, &launcher, &prefix.join("wrapper")),
+                "system"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mise_native_install_and_mise_managed_npm_have_distinct_sources() {
+        let root = tempfile::tempdir().unwrap();
+        let native = root
+            .path()
+            .join("mise/installs/opencode/2.3.2/bin/opencode");
+        assert_eq!(
+            infer_install_source_for_install("opencode", &native, &native),
+            "mise"
+        );
+
+        let prefix = root.path().join("mise/installs/node/24");
+        let launcher = prefix.join("bin/opencode");
+        let package = prefix.join("lib/node_modules/@opencode/cli");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"@opencode/cli","version":"2.3.2"}"#,
+        )
+        .unwrap();
+        let real = package.join("entry.js");
+        std::fs::write(&real, "").unwrap();
+        assert_eq!(
+            infer_install_source_for_install("opencode", &launcher, &real.canonicalize().unwrap()),
+            "npm"
+        );
+    }
+
+    #[test]
+    fn npm_prerelease_cannot_be_replaced_by_stable_update_plans() {
+        let root = tempfile::tempdir().unwrap();
+        let launcher = root.path().join("bin/claude");
+        let package = root
+            .path()
+            .join("lib/node_modules/@anthropic-ai/claude-code");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"@anthropic-ai/claude-code","version":"2.1.0-alpha.1"}"#,
+        )
+        .unwrap();
+        let entry = package.join("cli.js");
+        std::fs::write(&entry, "").unwrap();
+        std::os::unix::fs::symlink(&entry, &launcher).unwrap();
+        let install = ToolInstallation {
+            path: launcher.to_string_lossy().into_owned(),
+            real: entry.canonicalize().unwrap(),
+            source: "npm".into(),
+            version: Some("2.1.0-alpha.1".into()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            is_path_default: true,
+        };
+        assert!(plan_selected_tool_update("claude", &install).is_none());
+        assert!(matches!(
+            resolve_update_command("claude", &[install]),
+            UpdateCommand::Unmanaged
+        ));
+    }
 
     fn inst(path: &str, is_default: bool) -> ToolInstallation {
         ToolInstallation {
@@ -778,14 +1002,16 @@ mod anchored_upgrade {
         assert_ne!(launcher, real);
 
         // 原始入口不在 search_paths 里时，也必须返回未展开软链的 launcher，保留 argv[0] = pi
-        let resolved = locate_default_tool_in(
+        let resolved = locate_enabled_tool_in(
             "pi",
+            None,
+            &[],
             Some(ResolvedPathDefault {
                 launcher: launcher.clone(),
                 real,
             }),
             &[],
-            None,
+            |_| true,
         )
         .unwrap();
         assert_eq!(resolved, launcher);
@@ -793,19 +1019,46 @@ mod anchored_upgrade {
 
     #[cfg(not(target_os = "windows"))]
     #[test]
+    fn login_shell_volta_home_preserves_non_unicode_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let mut raw = LOGIN_ENV_MARKER.as_bytes().to_vec();
+        raw.extend_from_slice(
+            b"VOLTA_HOME=/tmp/volta-\xff\0PATH=/bad-\xff:/usr/bin:/toolchain/bin\0",
+        );
+        let env = parse_login_shell_env_output(&raw).unwrap();
+        assert_eq!(
+            env.volta_home.as_ref().unwrap().as_bytes(),
+            b"/tmp/volta-\xff"
+        );
+        assert!(!env.vars.iter().any(|(key, _)| key == "VOLTA_HOME"));
+        assert_eq!(
+            env.path.as_deref(),
+            Some("/bad-\u{fffd}:/usr/bin:/toolchain/bin")
+        );
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
     fn parse_login_shell_env_extracts_toolchain_vars_after_marker() {
         let raw = format!(
             "PATH=/stale/bin\nVP_HOME=/stale\n{LOGIN_ENV_MARKER}\
-             PATH=/usr/bin\0VP_HOME=/Users/me/.vite-plus\0XDG_DATA_HOME=relative\0\
+             PATH=/usr/bin\0VP_HOME=/Users/me/.vite-plus\0PNPM_HOME=/Users/me/.local/share/pnpm\0VOLTA_HOME=/Users/me/custom-volta\0XDG_DATA_HOME=relative\0\
              OTHER=value\nVP_HOME=/wrong/home\0NPM_CONFIG_REGISTRY=https://example.org\0"
         );
-        let parsed = parse_login_shell_env_output(&raw).unwrap();
+        let parsed = parse_login_shell_env_output(raw.as_bytes()).unwrap();
         assert_eq!(parsed.path.as_deref(), Some("/usr/bin"));
         assert_eq!(
             parsed.vars,
-            [("VP_HOME".to_owned(), "/Users/me/.vite-plus".to_owned())]
+            [
+                ("VP_HOME".to_owned(), "/Users/me/.vite-plus".to_owned()),
+                (
+                    "PNPM_HOME".to_owned(),
+                    "/Users/me/.local/share/pnpm".to_owned()
+                ),
+                ("VOLTA_HOME".to_owned(), "/Users/me/custom-volta".to_owned())
+            ]
         );
-        assert!(parse_login_shell_env_output("PATH=/stale/bin").is_none());
+        assert!(parse_login_shell_env_output(b"PATH=/stale/bin").is_none());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -912,7 +1165,12 @@ fn install_probe_finds_interpreter_through_login_path() {
     let inherited = std::ffi::OsStr::new("/usr/bin:/bin:/usr/sbin:/sbin");
     let without_login =
         prepend_search_dir_to_path(&npm_bin, &install_probe_base_path(None, inherited));
-    let out = run_probe_version_command(&launcher, &without_login).expect("spawn");
+    let out = run_probe_version_command(
+        &launcher,
+        &without_login,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .expect("spawn");
     assert!(!out.status.success());
 
     let login_path = node_bin.to_string_lossy().into_owned();
@@ -920,7 +1178,12 @@ fn install_probe_finds_interpreter_through_login_path() {
         &npm_bin,
         &install_probe_base_path(Some(&login_path), inherited),
     );
-    let out = run_probe_version_command(&launcher, &with_login).expect("spawn");
+    let out = run_probe_version_command(
+        &launcher,
+        &with_login,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .expect("spawn");
     assert!(out.status.success());
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
@@ -1342,4 +1605,324 @@ fn opencode_desktop_sidecar_needs_the_gui_layout() {
         infer_install_source_for_tool("opencode", &unrelated, &unrelated),
         "system"
     );
+}
+
+#[test]
+fn yarn_global_ownership_requires_matching_global_root_and_package() {
+    let temp = tempfile::tempdir().unwrap();
+    let global = temp.path().join("yarn/global");
+    let package = global.join("node_modules/@opencode/cli");
+    std::fs::create_dir_all(package.join("bin")).unwrap();
+    std::fs::write(global.join("yarn.lock"), "# yarn lockfile v1").unwrap();
+    std::fs::write(
+        global.join("package.json"),
+        r#"{"dependencies":{"@opencode/cli":"2.4.2"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("package.json"),
+        r#"{"name":"@opencode/cli","version":"2.4.2"}"#,
+    )
+    .unwrap();
+    let real = package.join("bin/opencode");
+    std::fs::write(&real, "cli").unwrap();
+    let real = real.canonicalize().unwrap();
+    assert_eq!(
+        yarn_global_manifest("opencode", &real, &real, &global).unwrap()["version"],
+        "2.4.2"
+    );
+    assert!(yarn_global_manifest("codebuddy", &real, &real, &global).is_none());
+    assert!(yarn_global_manifest("opencode", &real, &real, temp.path()).is_none());
+    assert!(
+        yarn_global_manifest("opencode", &real, &temp.path().join("unrelated"), &global).is_none()
+    );
+    std::fs::write(package.join("package.json"), r#"{"name":"unrelated"}"#).unwrap();
+    assert!(yarn_global_manifest("opencode", &real, &real, &global).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn vite_shims_require_matching_receipt_and_package_not_just_vp_target() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    for dir in [
+        "bin",
+        "bins",
+        "packages/@opencode/cli/release/lib/node_modules/@opencode/cli",
+    ] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    std::fs::write(root.join(".vp-owned"), "").unwrap();
+    let vp = root.join("bin/vp");
+    std::fs::write(&vp, "manager").unwrap();
+    let launcher = root.join("bin/opencode");
+    std::os::unix::fs::symlink(&vp, &launcher).unwrap();
+    let real = vp.canonicalize().unwrap();
+    assert!(
+        vite_global_manifest_at("opencode", &launcher, &real, &root.join("bin"), root).is_none()
+    );
+    let receipt = root.join("bins/opencode.json");
+    std::fs::write(
+        &receipt,
+        r#"{"name":"opencode","source":"vp","package":"@opencode/cli","version":"2.4.2"}"#,
+    )
+    .unwrap();
+    assert!(
+        vite_global_manifest_at("opencode", &launcher, &real, &root.join("bin"), root).is_none()
+    );
+    let manifest =
+        root.join("packages/@opencode/cli/release/lib/node_modules/@opencode/cli/package.json");
+    std::fs::write(&manifest, r#"{"name":"@opencode/cli","version":"2.4.2"}"#).unwrap();
+    assert_eq!(
+        vite_global_manifest_at("opencode", &launcher, &real, &root.join("bin"), root).unwrap()
+            ["name"],
+        "@opencode/cli"
+    );
+    std::fs::write(
+        &receipt,
+        r#"{"name":"opencode","source":"vp","package":"../../outside","version":"2.4.2"}"#,
+    )
+    .unwrap();
+    assert!(
+        vite_global_manifest_at("opencode", &launcher, &real, &root.join("bin"), root).is_none()
+    );
+    std::fs::write(
+        &receipt,
+        r#"{"name":"opencode","source":"vp","package":"@opencode/cli","version":"2.4.3"}"#,
+    )
+    .unwrap();
+    assert!(
+        vite_global_manifest_at("opencode", &launcher, &real, &root.join("bin"), root).is_none()
+    );
+}
+
+#[test]
+fn installer_receipt_size_is_bounded() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("package.json");
+    std::fs::write(&path, vec![b' '; 128 * 1024 + 1]).unwrap();
+    assert!(install_json(&path).is_none());
+    std::fs::write(&path, b"not json").unwrap();
+    assert!(install_json(&path).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn script_sources_require_installer_layout_not_arbitrary_local_bin_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().canonicalize().unwrap();
+    let bin = home.join(".local/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for tool in ["pi", "grok", "codebuddy", "mcode", "agy", "copilot"] {
+        let launcher = bin.join(tool);
+        std::fs::write(&launcher, b"\x7fELF").unwrap();
+        assert!(
+            !additional_script_install_at(tool, &launcher, &launcher, &home),
+            "{tool}"
+        );
+    }
+    let root = home.join(".grok");
+    std::fs::create_dir_all(root.join("downloads")).unwrap();
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    let target = root.join("downloads/grok-macos-aarch64");
+    std::fs::write(&target, b"\x7fELF").unwrap();
+    let launcher = root.join("bin/grok");
+    std::os::unix::fs::symlink(&target, &launcher).unwrap();
+    assert!(additional_script_install_at(
+        "grok", &launcher, &target, &home
+    ));
+    std::fs::remove_file(&launcher).unwrap();
+    let npm_payload = root.join("bin/grok-1.0.92");
+    std::fs::write(&npm_payload, b"\x7fELF").unwrap();
+    std::os::unix::fs::symlink(&npm_payload, &launcher).unwrap();
+    assert!(!additional_script_install_at(
+        "grok",
+        &launcher,
+        &npm_payload,
+        &home
+    ));
+}
+
+#[test]
+fn yarn_global_defaults_follow_the_manager_on_unix_and_windows() {
+    let home = Path::new("/home/me");
+    assert_eq!(
+        yarn_default_global_dir(home, false, None, None),
+        home.join(".config/yarn/global")
+    );
+    assert_eq!(
+        yarn_default_global_dir(home, false, None, Some(home.join("data"))),
+        home.join("data/yarn/global")
+    );
+    assert_eq!(
+        yarn_default_global_dir(home, true, Some(home.join("AppData/Local")), None),
+        home.join("AppData/Local/Yarn/Data/global")
+    );
+    assert_eq!(
+        yarn_default_global_dir(home, true, None, None),
+        home.join(".config/yarn/global")
+    );
+}
+
+#[test]
+fn alternate_managers_never_fall_back_to_another_global_store_for_updates() {
+    let temp = tempfile::tempdir().unwrap();
+    let launcher = temp.path().join("opencode");
+    std::fs::write(&launcher, "#!/bin/sh\n").unwrap();
+    for (tool, source) in [
+        ("opencode", "yarn"),
+        ("opencode", "vite"),
+        ("pi", "curl"),
+        ("pi", "system"),
+    ] {
+        let install = ToolInstallation {
+            path: launcher.to_string_lossy().into_owned(),
+            real: launcher.clone(),
+            source: source.into(),
+            version: Some("2.4.2".into()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            is_path_default: true,
+        };
+        assert!(matches!(
+            resolve_update_command(tool, &[install]),
+            UpdateCommand::Unmanaged
+        ));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn pi_managed_launcher_supports_custom_agent_roots_and_requires_marker() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().canonicalize().unwrap();
+    let root = home.join("custom-agent-data");
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    let launcher = root.join("bin/pi");
+    std::fs::write(&launcher, "#!/bin/sh\n").unwrap();
+    std::fs::write(root.join("bin/pi-launcher.js"), "// official launcher").unwrap();
+    assert!(!additional_script_install_at(
+        "pi", &launcher, &launcher, &home
+    ));
+    let marker = root.join("install/managed-install.json");
+    std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+    std::fs::write(
+        &marker,
+        r#"{"kind":"pi-managed-install","schemaVersion":1,"layout":"releases-v1"}"#,
+    )
+    .unwrap();
+    assert!(additional_script_install_at(
+        "pi", &launcher, &launcher, &home
+    ));
+    std::fs::write(&marker, vec![b' '; 128 * 1024 + 1]).unwrap();
+    assert!(!additional_script_install_at(
+        "pi", &launcher, &launcher, &home
+    ));
+    std::fs::remove_file(marker).unwrap();
+    assert!(!additional_script_install_at(
+        "pi", &launcher, &launcher, &home
+    ));
+}
+
+#[test]
+fn yarn_windows_cmd_requires_the_declared_bin_in_the_configured_global_store() {
+    let temp = tempfile::tempdir().unwrap();
+    let global = temp.path().join("custom-yarn-data");
+    let package = global.join("node_modules/@opencode/cli");
+    let shims = global.join("node_modules/.bin");
+    std::fs::create_dir_all(package.join("bin")).unwrap();
+    std::fs::create_dir_all(&shims).unwrap();
+    std::fs::write(global.join("yarn.lock"), "# yarn lockfile v1").unwrap();
+    std::fs::write(
+        global.join("package.json"),
+        r#"{"dependencies":{"@opencode/cli":"2.4.2"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("package.json"),
+        r#"{"name":"@opencode/cli","version":"2.4.2","bin":{"opencode":"bin/opencode.js"}}"#,
+    )
+    .unwrap();
+    std::fs::write(package.join("bin/opencode.js"), "cli").unwrap();
+    let launcher = shims.join("opencode.cmd");
+    for prefix in [r"%~dp0\", r"%dp0%\"] {
+        std::fs::write(
+            &launcher,
+            format!("@echo off\r\nnode \"{prefix}..\\@opencode\\cli\\bin\\opencode.js\" %*\r\n"),
+        )
+        .unwrap();
+        let real = launcher.canonicalize().unwrap();
+        assert_eq!(
+            yarn_global_manifest("opencode", &launcher, &real, &global).unwrap()["version"],
+            "2.4.2"
+        );
+        assert!(yarn_global_manifest("codex", &launcher, &real, &global).is_none());
+    }
+    std::fs::write(package.join("bin/other.js"), "other").unwrap();
+    std::fs::write(
+        &launcher,
+        r#"node "%~dp0\..\@opencode\cli\bin\other.js" %*"#,
+    )
+    .unwrap();
+    assert!(yarn_global_manifest("opencode", &launcher, &launcher, &global).is_none());
+    std::fs::write(global.join("package.json"), r#"{"dependencies":{}}"#).unwrap();
+    std::fs::write(
+        &launcher,
+        r#"node "%~dp0\..\@opencode\cli\bin\opencode.js" %*"#,
+    )
+    .unwrap();
+    assert!(yarn_global_manifest("opencode", &launcher, &launcher, &global).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn vite_supports_separate_bin_and_data_directories() {
+    let temp = tempfile::tempdir().unwrap();
+    let bin = temp.path().join("executables");
+    let data = temp.path().join("global-data");
+    let package = data.join("packages/@opencode/cli/release/lib/node_modules/@opencode/cli");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(data.join("bins")).unwrap();
+    std::fs::create_dir_all(&package).unwrap();
+    let vp = bin.join("vp");
+    std::fs::write(&vp, "manager").unwrap();
+    let launcher = bin.join("opencode");
+    std::os::unix::fs::symlink(&vp, &launcher).unwrap();
+    std::fs::write(
+        data.join("bins/opencode.json"),
+        r#"{"name":"opencode","source":"vp","package":"@opencode/cli","version":"2.4.2"}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("package.json"),
+        r#"{"name":"@opencode/cli","version":"2.4.2"}"#,
+    )
+    .unwrap();
+    let real = vp.canonicalize().unwrap();
+    assert_eq!(
+        vite_global_manifest_at("opencode", &launcher, &real, &bin, &data).unwrap()["version"],
+        "2.4.2"
+    );
+    assert!(vite_global_manifest_at("opencode", &launcher, &real, &data, &bin).is_none());
+    assert!(vite_global_manifest_at("codex", &launcher, &real, &bin, &data).is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn grok_custom_bin_does_not_require_the_default_launcher() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().canonicalize().unwrap();
+    let downloads = home.join(".grok/downloads");
+    let bin = home.join("custom-executables");
+    std::fs::create_dir_all(&downloads).unwrap();
+    std::fs::create_dir_all(&bin).unwrap();
+    let target = downloads.join("grok-macos-aarch64");
+    std::fs::write(&target, b"\x7fELF").unwrap();
+    let launcher = bin.join("grok");
+    std::os::unix::fs::symlink(&target, &launcher).unwrap();
+    assert!(!home.join(".grok/bin/grok").exists());
+    assert!(additional_script_install_at(
+        "grok", &launcher, &target, &home
+    ));
 }

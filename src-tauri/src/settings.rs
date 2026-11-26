@@ -635,6 +635,10 @@ pub struct AppSettings {
     /// 应用页和侧栏的应用顺序（应用 ID）。缺的应用由前端按默认顺序插回，不认识的忽略
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_order: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub preferred_cli_paths: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub disabled_cli_paths: std::collections::BTreeMap<String, Vec<String>>,
 
     // ===== 设备级目录覆盖 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -803,6 +807,8 @@ impl Default for AppSettings {
             official_quota_manual_only: false,
             visible_apps: None,
             app_order: None,
+            preferred_cli_paths: Default::default(),
+            disabled_cli_paths: Default::default(),
             claude_config_dir: None,
             codex_config_dir: None,
             gemini_config_dir: None,
@@ -1158,6 +1164,8 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     new_settings.normalize_paths();
     // 写文件也在写锁内，并发保存时文件和内存的先后顺序一致。
     let mut guard = write_settings();
+    new_settings.preferred_cli_paths = guard.preferred_cli_paths.clone();
+    new_settings.disabled_cli_paths = guard.disabled_cli_paths.clone();
     save_settings_file(&new_settings)?;
     *guard = new_settings;
     Ok(())
@@ -1174,6 +1182,88 @@ where
     save_settings_file(&next)?;
     *guard = next;
     Ok(())
+}
+
+pub(crate) fn cli_installation_policy(tool: &str) -> (Option<String>, Vec<String>) {
+    let settings = read_settings();
+    (
+        settings.preferred_cli_paths.get(tool).cloned(),
+        settings
+            .disabled_cli_paths
+            .get(tool)
+            .cloned()
+            .unwrap_or_default(),
+    )
+}
+
+pub(crate) fn matches_cli_installation(
+    saved: &str,
+    launcher: &std::path::Path,
+    real: Option<&std::path::Path>,
+) -> bool {
+    let saved = std::path::Path::new(saved);
+    saved == launcher
+        || real.is_some_and(|real| {
+            saved.is_absolute()
+                && (saved == real || saved.canonicalize().is_ok_and(|path| path == real))
+        })
+}
+
+pub(crate) fn clear_cli_preference_if_unchanged(
+    tool: &str,
+    expected: &str,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        if settings
+            .preferred_cli_paths
+            .get(tool)
+            .is_some_and(|saved| saved == expected)
+        {
+            settings.preferred_cli_paths.remove(tool);
+        }
+    })
+}
+
+pub(crate) fn set_cli_installation_policy(
+    tool: String,
+    path: Option<String>,
+    enabled: Option<bool>,
+) -> Result<(), AppError> {
+    mutate_settings(|settings| {
+        if let Some(path) = path {
+            let launcher = std::path::Path::new(&path);
+            let real = launcher
+                .is_absolute()
+                .then(|| launcher.canonicalize().ok())
+                .flatten();
+            let matches = |saved: &str| matches_cli_installation(saved, launcher, real.as_deref());
+            if enabled == Some(false) {
+                if settings
+                    .preferred_cli_paths
+                    .get(&tool)
+                    .is_some_and(|saved| matches(saved))
+                {
+                    settings.preferred_cli_paths.remove(&tool);
+                }
+                let disabled = settings.disabled_cli_paths.entry(tool).or_default();
+                if !disabled.iter().any(|saved| matches(saved)) {
+                    disabled.push(path);
+                }
+            } else {
+                if let Some(disabled) = settings.disabled_cli_paths.get_mut(&tool) {
+                    disabled.retain(|entry| !matches(entry));
+                    if disabled.is_empty() {
+                        settings.disabled_cli_paths.remove(&tool);
+                    }
+                }
+                if enabled.is_none() {
+                    settings.preferred_cli_paths.insert(tool, path);
+                }
+            }
+        } else {
+            settings.preferred_cli_paths.remove(&tool);
+        }
+    })
 }
 
 pub fn is_codex_third_party_history_provider_bucket_migrated() -> bool {
@@ -1576,6 +1666,30 @@ pub fn update_s3_sync_status(status: WebDavSyncStatus) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn installation_matches_alias_and_real_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let binary = directory.path().join("opencode");
+        let alias = directory.path().join("alias");
+        std::fs::write(&binary, []).unwrap();
+        std::os::unix::fs::symlink(&binary, &alias).unwrap();
+        let real = binary.canonicalize().unwrap();
+
+        assert!(matches_cli_installation(
+            alias.to_str().unwrap(),
+            &binary,
+            Some(&real)
+        ));
+        assert!(matches_cli_installation(
+            binary.to_str().unwrap(),
+            &alias,
+            Some(&real)
+        ));
+        assert!(!matches_cli_installation("bundled", &alias, Some(&real)));
+    }
+
     use crate::app_config::AppType;
 
     #[test]

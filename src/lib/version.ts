@@ -38,6 +38,13 @@ function parseVersion(v: string): ParsedVersion | null {
   };
 }
 
+/** Classify the release channel independently of build metadata or ordering. */
+export function isPrereleaseVersion(
+  version: string | null | undefined,
+): boolean {
+  return Boolean(version && parseVersion(version)?.pre.length);
+}
+
 /**
  * local version 段是否为开发构建形态:git describe(`238.g<sha>`)或常见开发
  * 通道标识(canary / nightly / dev / dirty / snapshot)。普通 semver build

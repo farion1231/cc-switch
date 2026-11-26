@@ -30,6 +30,19 @@ pub fn get_home_dir() -> PathBuf {
     })
 }
 
+/// Match a sealed application bundle against a known Apple Developer ID.
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_has_developer_signature(bundle: &Path, identifier: &str, team: &str) -> bool {
+    let requirement = format!(
+        r#"=anchor apple generic and identifier "{identifier}" and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "{team}""#
+    );
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["--verify", "--strict", "-R", &requirement])
+        .arg(bundle)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 /// 检测路径是否为 WSL 网络路径（如 \\wsl$\Ubuntu\... 或 \\wsl.localhost\Ubuntu\...）
 /// 注意：仅检测直接 UNC 路径，映射磁盘符（如 Z: -> \\wsl$\...）无法检测
 #[cfg(windows)]

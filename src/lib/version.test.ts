@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { compareVersions, isUpdateAvailable } from "./version";
+import {
+  compareVersions,
+  isUpdateAvailable,
+  isPrereleaseVersion,
+} from "./version";
 
 describe("compareVersions", () => {
   it("按主版本三段比较大小", () => {
@@ -74,4 +78,20 @@ describe("isUpdateAvailable", () => {
     expect(isUpdateAvailable("1.0.0+linux.1", "1.0.1")).toBe(true);
     expect(isUpdateAvailable("1.0.0+linux.1", "1.0.0")).toBe(false);
   });
+});
+
+describe("isPrereleaseVersion", () => {
+  it.each([
+    ["2.3.2+linux-x64", false],
+    ["2.3.2+glibc.2.31.0-x64", false],
+    ["2.3.2-next.1+nightly", true],
+    ["2.3.2--preview.1+local", true],
+    ["2.3.2", false],
+    [null, false],
+  ])(
+    "classifies %s without treating build metadata as the channel",
+    (version, expected) => {
+      expect(isPrereleaseVersion(version)).toBe(expected);
+    },
+  );
 });

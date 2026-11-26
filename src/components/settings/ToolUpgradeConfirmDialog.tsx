@@ -13,19 +13,24 @@ import { useTranslation } from "react-i18next";
 import type { ToolInstallationReport } from "@/lib/api/settings";
 import { ToolInstallRow } from "./ToolInstallRow";
 
+export type ToolUpgradePreview = Pick<
+  ToolInstallationReport,
+  | "tool"
+  | "installs"
+  | "command"
+  | "anchored"
+  | "update_plan"
+  | "confirmation_token"
+> & { target_version?: string | null };
+
 interface ToolUpgradeConfirmDialogProps {
   isOpen: boolean;
-  plans: ToolInstallationReport[];
+  plans: ToolUpgradePreview[];
   displayName: (tool: string) => string;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-/**
- * 升级前的「多处安装确认」。仅当某工具检测到 ≥2 处安装时弹出：展示命令行实际命中
- * 哪处（标「默认」= 升级目标）、各处版本，以及锚定后将执行的命令，让用户在
- * 「升级只动其中一处、其余不动」这件事上知情后再确认。单处安装不会走到这里。
- */
 export function ToolUpgradeConfirmDialog({
   isOpen,
   plans,
@@ -73,7 +78,7 @@ export function ToolUpgradeConfirmDialog({
         <div className="max-h-[50vh] space-y-3 overflow-y-auto">
           {plans.map((plan) => (
             <div
-              key={plan.tool}
+              key={`${plan.tool}:${plan.update_plan?.path ?? ""}`}
               className="space-y-1.5 rounded-lg border border-transparent bg-warning-soft p-2.5"
             >
               <div className="text-xs font-medium">
@@ -87,21 +92,30 @@ export function ToolUpgradeConfirmDialog({
               <ul className="space-y-1">
                 {plan.installs.map((inst) => (
                   <li key={inst.path}>
-                    <ToolInstallRow inst={inst} />
+                    <ToolInstallRow
+                      inst={inst}
+                      updateTarget={
+                        plan.update_plan
+                          ? plan.update_plan.path === inst.path
+                          : plan.anchored && inst.is_path_default
+                      }
+                    />
                   </li>
                 ))}
               </ul>
-              <div className="space-y-0.5">
-                <div className="text-badge text-fg-2">
-                  {t("settings.toolUpgradeWillRun")}
+              {plan.command && (
+                <div className="space-y-0.5">
+                  <div className="text-badge text-fg-2">
+                    {t("settings.toolUpgradeWillRun")}
+                  </div>
+                  <code
+                    className="block truncate rounded bg-surface px-1.5 py-0.5 font-mono text-badge text-fg-1"
+                    title={plan.command}
+                  >
+                    {plan.command}
+                  </code>
                 </div>
-                <code
-                  className="block truncate rounded bg-surface px-1.5 py-0.5 font-mono text-badge text-fg-1"
-                  title={plan.command}
-                >
-                  {plan.command}
-                </code>
-              </div>
+              )}
             </div>
           ))}
         </div>

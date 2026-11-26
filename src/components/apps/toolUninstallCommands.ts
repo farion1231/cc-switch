@@ -5,6 +5,8 @@ import type { ToolName } from "./useToolManagement";
 export const UNINSTALL_METHODS = {
   npm: "npm",
   pnpm: "pnpm",
+  yarn: "Yarn",
+  vite: "Vite+",
   bun: "bun",
   "brew-formula": "Homebrew (formula)",
   "brew-cask": "Homebrew (cask)",
@@ -31,12 +33,12 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     {
       tool: "opencode",
       command: "npm uninstall -g opencode-ai",
-      variant: "1.x",
+      variant: "opencode-ai",
     },
     {
       tool: "opencode",
       command: "npm uninstall -g @opencode/cli",
-      variant: "2.x",
+      variant: "@opencode/cli",
     },
     { tool: "openclaw", command: "npm uninstall -g openclaw" },
     { tool: "pi", command: "npm uninstall -g @earendil-works/pi-coding-agent" },
@@ -49,35 +51,69 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
     },
   ],
   pnpm: [
-    { tool: "opencode", command: "pnpm remove -g opencode-ai", variant: "1.x" },
+    { tool: "codebuddy", command: "pnpm remove -g @tencent-ai/codebuddy-code" },
+    {
+      tool: "opencode",
+      command: "pnpm remove -g opencode-ai",
+      variant: "opencode-ai",
+    },
     {
       tool: "opencode",
       command: "pnpm remove -g @opencode/cli",
-      variant: "2.x",
+      variant: "@opencode/cli",
     },
     { tool: "openclaw", command: "pnpm remove -g openclaw" },
   ],
+  yarn: [
+    {
+      tool: "opencode",
+      command: "yarn global remove @opencode/cli",
+    },
+    {
+      tool: "codebuddy",
+      command: "yarn global remove @tencent-ai/codebuddy-code",
+    },
+  ],
+  vite: [
+    {
+      tool: "opencode",
+      command: "vp remove -g @opencode/cli",
+      environments: ["macos", "linux"],
+    },
+  ],
   bun: [
+    { tool: "codebuddy", command: "bun remove -g @tencent-ai/codebuddy-code" },
     {
       tool: "opencode",
       command: "bun remove -g opencode-ai",
       environments: ["macos", "linux"],
-      variant: "1.x",
+      variant: "opencode-ai",
     },
     {
       tool: "opencode",
       command: "bun remove -g @opencode/cli",
       environments: ["macos", "linux"],
-      variant: "2.x",
+      variant: "@opencode/cli",
     },
     { tool: "openclaw", command: "bun remove -g openclaw" },
     { tool: "omp", command: "bun remove -g @oh-my-pi/pi-coding-agent" },
   ],
   "brew-formula": [
     {
+      tool: "codebuddy",
+      command: "brew uninstall --formula Tencent-CodeBuddy/tap/codebuddy-code",
+      environments: ["macos", "linux"],
+    },
+    {
       tool: "gemini",
       command: "brew uninstall --formula gemini-cli",
       environments: ["macos", "linux"],
+    },
+    {
+      tool: "opencode",
+      command: "brew uninstall --formula anomalyco/tap/opencode-v2",
+      environments: ["macos", "linux"],
+      variant: "opencode-v2",
     },
     {
       tool: "opencode",
@@ -90,12 +126,6 @@ const COMMANDS: Record<UninstallMethod, UninstallCommand[]> = {
       command: "brew uninstall --formula opencode",
       environments: ["macos", "linux"],
       variant: "homebrew/core",
-    },
-    {
-      tool: "opencode",
-      command: "brew uninstall --formula anomalyco/tap/opencode-v2",
-      environments: ["macos", "linux"],
-      variant: "2.x",
     },
   ],
   "brew-cask": [

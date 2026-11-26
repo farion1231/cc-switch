@@ -3214,6 +3214,34 @@ fn create_cli_candidate(path: &Path) {
     std::fs::write(path, "").expect("create candidate");
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn codex_desktop_version_is_separate_from_its_bundled_cli() {
+    let dir = tempfile::tempdir().unwrap();
+    let bundle = dir.path().join("ChatGPT.app");
+    let cli = desktop_cli(dir.path(), "ChatGPT.app", CODEX_DESKTOP_CLI_IN_BUNDLE[0]);
+    create_cli_candidate(&cli);
+    let info = bundle.join("Contents/Info.plist");
+    let mut metadata = plist::Dictionary::new();
+    metadata.insert("CFBundleIdentifier".into(), "com.openai.codex".into());
+    metadata.insert("CFBundleShortVersionString".into(), "26.1117.31558".into());
+    plist::to_file_binary(info, &metadata).unwrap();
+    fs::write(
+        bundle.join(CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE),
+        r#"{"version":"0.171.0-alpha.13"}"#,
+    )
+    .unwrap();
+
+    let installed = codex_macos_desktop_for_cli(&cli).unwrap();
+    assert_eq!(installed.path, bundle);
+    assert_eq!(installed.version.as_deref(), Some("26.1117.31558"));
+    assert_eq!(
+        installed.bundled_cli_version.as_deref(),
+        Some("0.171.0-alpha.13")
+    );
+    assert!(codex_macos_desktop_for_cli(&dir.path().join("bin/codex")).is_none());
+}
+
 fn desktop_cli(applications: &Path, bundle: &str, layout: &str) -> PathBuf {
     applications.join(bundle).join(layout)
 }

@@ -1623,6 +1623,91 @@ const CODEX_DESKTOP_CLI_IN_BUNDLE: &[&str] = &[
 /// 新结构的 bundle 里，自带 CLI 的包描述（`version` 字段就是它的版本）。旧结构没有。
 const CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE: &str = "Contents/Resources/codex-cli/codex-package.json";
 
+#[derive(serde::Serialize)]
+pub(crate) struct CodexDesktopInstallation {
+    pub(crate) path: PathBuf,
+    pub(crate) version: Option<String>,
+    pub(crate) bundled_cli_version: Option<String>,
+}
+
+#[cfg(target_os = "macos")]
+fn codex_macos_bundle_installation(bundle: &Path) -> Option<CodexDesktopInstallation> {
+    #[derive(serde::Deserialize)]
+    struct BundleInfo {
+        #[serde(rename = "CFBundleIdentifier")]
+        id: String,
+        #[serde(rename = "CFBundleShortVersionString")]
+        version: Option<String>,
+    }
+
+    let info: BundleInfo = plist::from_file(bundle.join("Contents/Info.plist")).ok()?;
+    if info.id != "com.openai.codex"
+        || !CODEX_DESKTOP_CLI_IN_BUNDLE
+            .iter()
+            .any(|layout| bundle.join(layout).is_file())
+    {
+        return None;
+    }
+
+    Some(CodexDesktopInstallation {
+        path: bundle.to_owned(),
+        version: info.version,
+        bundled_cli_version: codex_bundled_cli_version(bundle),
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn codex_macos_desktop_installation() -> Option<CodexDesktopInstallation> {
+    codex_macos_desktop_candidates().next()
+}
+
+#[cfg(target_os = "macos")]
+fn codex_macos_desktop_candidates() -> impl Iterator<Item = CodexDesktopInstallation> {
+    let system_apps = PathBuf::from("/Applications");
+    let user_apps = dirs::home_dir().map(|home| home.join("Applications"));
+    CODEX_DESKTOP_APP_BUNDLES
+        .iter()
+        .flat_map(move |name| {
+            [
+                Some(system_apps.join(name)),
+                user_apps.as_ref().map(|root| root.join(name)),
+            ]
+            .into_iter()
+            .flatten()
+        })
+        .filter_map(|path| codex_macos_bundle_installation(&path))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn codex_macos_official_installation() -> Option<CodexDesktopInstallation> {
+    codex_macos_desktop_candidates().find(|install| {
+        crate::config::macos_has_developer_signature(
+            &install.path,
+            "com.openai.codex",
+            "2DC432GLL2",
+        )
+    })
+}
+
+/// Keep the launcher within the verified desktop bundle.
+#[cfg(target_os = "macos")]
+pub(crate) fn codex_macos_official_bundled_cli() -> Option<PathBuf> {
+    let desktop = codex_macos_official_installation()?;
+    let bundle = fs::canonicalize(desktop.path).ok()?;
+    CODEX_DESKTOP_CLI_IN_BUNDLE.iter().find_map(|layout| {
+        let launcher = bundle.join(layout);
+        let real = fs::canonicalize(&launcher).ok()?;
+        (real.starts_with(&bundle) && real.is_file()).then_some(launcher)
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn codex_macos_desktop_for_cli(path: &Path) -> Option<CodexDesktopInstallation> {
+    path.ancestors()
+        .filter(|ancestor| ancestor.extension().is_some_and(|ext| ext == "app"))
+        .find_map(codex_macos_bundle_installation)
+}
+
 /// 桌面版自带的 Codex CLI 的版本，读文件、不跑子进程：
 ///
 /// - macOS：ChatGPT.app / Codex.app 里 `codex-cli/codex-package.json` 的 `version`；
@@ -1634,18 +1719,17 @@ pub(crate) fn codex_desktop_cli_versions() -> Vec<String> {
     codex_desktop_cli_versions_in(&get_home_dir())
 }
 
+fn codex_bundled_cli_version(bundle: &Path) -> Option<String> {
+    let bytes = fs::read(bundle.join(CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE)).ok()?;
+    let package: Value = serde_json::from_slice(&bytes).ok()?;
+    package.get("version")?.as_str().map(str::to_owned)
+}
+
 fn codex_desktop_cli_versions_in(home: &Path) -> Vec<String> {
     let mut versions = Vec::new();
     for bundle in CODEX_DESKTOP_APP_BUNDLES {
         for applications in [PathBuf::from("/Applications"), home.join("Applications")] {
-            let package = applications
-                .join(bundle)
-                .join(CODEX_DESKTOP_CLI_PACKAGE_IN_BUNDLE);
-            let version = fs::read(&package)
-                .ok()
-                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-                .and_then(|package| package.get("version")?.as_str().map(str::to_string));
-            versions.extend(version);
+            versions.extend(codex_bundled_cli_version(&applications.join(bundle)));
         }
     }
 
@@ -1833,10 +1917,12 @@ fn codex_cli_candidates() -> Vec<PathBuf> {
 
 /// 桌面版自带的 Codex CLI 里先用的那个（macOS 新 bundle 优先，Windows 取最新的版本目录），
 /// 没装桌面版时为 `None`。给找不到独立 CLI 时的运行时命令兜底（#9850）。
+#[cfg(target_os = "windows")]
 pub(crate) fn codex_desktop_cli() -> Option<PathBuf> {
     codex_desktop_cli_in(&get_home_dir())
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn codex_desktop_cli_in(home: &Path) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     push_desktop_codex_cli_candidates(&mut candidates, &mut HashSet::new(), home);

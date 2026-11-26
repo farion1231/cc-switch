@@ -27,12 +27,14 @@ import {
 
 export function ToolUninstallConfirmDialog({
   tool,
+  targetPath,
   wslShellByTool,
   onConfirm,
   onCancel,
   onManualUninstall,
 }: {
   tool: ToolName;
+  targetPath?: string;
   wslShellByTool: Record<string, WslShellPreference>;
   onConfirm: (plan: ToolUninstallPlan) => void;
   onCancel: () => void;
@@ -53,10 +55,13 @@ export function ToolUninstallConfirmDialog({
     void settingsApi.prepareToolUninstall(tool, wslShellByTool).then(
       (result) => {
         if (cancelled) return;
-        setCandidates(result);
+        const matching = targetPath
+          ? result.filter((candidate) => candidate.path === targetPath)
+          : result;
+        setCandidates(matching);
         // 多处安装时不预选：「错装的那处」不一定是非默认那处，让用户自己挑。
-        if (result.length === 1 && result[0].plan) {
-          setSelectedPath(result[0].path);
+        if (matching.length === 1 && matching[0].plan) {
+          setSelectedPath(matching[0].path);
         }
       },
       (reason) => {
@@ -66,14 +71,40 @@ export function ToolUninstallConfirmDialog({
     return () => {
       cancelled = true;
     };
-  }, [tool, wslShellByTool]);
+  }, [tool, targetPath, wslShellByTool]);
 
   const plan =
     candidates?.find((candidate) => candidate.path === selectedPath)?.plan ??
     null;
   const anyPlan = Boolean(candidates?.some((candidate) => candidate.plan));
   const needsManual =
-    error !== null || Boolean(candidates?.some((candidate) => !candidate.plan));
+    error !== null ||
+    (candidates !== null &&
+      (!anyPlan || candidates.some((candidate) => !candidate.plan)));
+
+  const candidateDetails = (candidate: ToolUninstallCandidate) => (
+    <div className="min-w-0 flex-1 space-y-1">
+      <ToolInstallRow inst={candidate} hidePath={Boolean(targetPath)} />
+      {targetPath && (
+        <p className="break-all font-mono text-caption text-fg-2">
+          {candidate.path}
+        </p>
+      )}
+      {candidate.unavailable_reason && (
+        <p className="break-words text-caption text-fg-2">
+          {candidate.unavailable_reason}
+        </p>
+      )}
+      {candidate.reinstalled_by_updater && (
+        <p className="text-caption text-warning-text">
+          {t("settings.toolUninstallReinstalledByUpdater", {
+            tool: toolDisplayName(tool),
+          })}
+        </p>
+      )}
+    </div>
+  );
+  const target = targetPath ? candidates?.[0] : undefined;
 
   return (
     <Dialog open onOpenChange={(open) => !open && onCancel()}>
@@ -99,44 +130,43 @@ export function ToolUninstallConfirmDialog({
               {!anyPlan && (
                 <p role="alert" className="text-body">
                   {t("settings.toolUninstallManualRequired")}
+                  {targetPath && candidates.length === 0 && (
+                    <span className="mt-1 block break-all font-mono text-caption text-fg-2">
+                      {targetPath}
+                    </span>
+                  )}
                 </p>
               )}
-              <fieldset className="m-0 min-w-0 space-y-2 border-0 p-0">
-                <legend className="sr-only">
-                  {t("settings.toolUninstallChooseInstall")}
-                </legend>
-                {candidates.map((candidate) => (
-                  <label
-                    key={candidate.path}
-                    className="flex cursor-pointer items-start gap-2.5 rounded-control border border-border p-2.5 has-[:checked]:border-primary/50 has-[:checked]:bg-primary/5 has-[:disabled]:cursor-not-allowed"
-                  >
-                    <input
-                      type="radio"
-                      name="tool-uninstall-target"
-                      className={`${RADIO_CLASS} mt-0.5 shrink-0`}
-                      aria-label={candidate.path}
-                      checked={selectedPath === candidate.path}
-                      disabled={!candidate.plan}
-                      onChange={() => setSelectedPath(candidate.path)}
-                    />
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <ToolInstallRow inst={candidate} />
-                      {candidate.unavailable_reason && (
-                        <p className="break-words text-caption text-fg-2">
-                          {candidate.unavailable_reason}
-                        </p>
-                      )}
-                      {candidate.reinstalled_by_updater && (
-                        <p className="text-caption text-warning-text">
-                          {t("settings.toolUninstallReinstalledByUpdater", {
-                            tool: toolDisplayName(tool),
-                          })}
-                        </p>
-                      )}
-                    </div>
-                  </label>
-                ))}
-              </fieldset>
+              {targetPath ? (
+                target && (
+                  <div className="rounded-control border border-border bg-subtle p-3">
+                    {candidateDetails(target)}
+                  </div>
+                )
+              ) : (
+                <fieldset className="m-0 min-w-0 space-y-2 border-0 p-0">
+                  <legend className="sr-only">
+                    {t("settings.toolUninstallChooseInstall")}
+                  </legend>
+                  {candidates.map((candidate) => (
+                    <label
+                      key={candidate.path}
+                      className="flex cursor-pointer items-start gap-2.5 rounded-control border border-border p-2.5 has-[:checked]:border-primary/50 has-[:checked]:bg-primary/5 has-[:disabled]:cursor-not-allowed"
+                    >
+                      <input
+                        type="radio"
+                        name="tool-uninstall-target"
+                        className={`${RADIO_CLASS} mt-0.5 shrink-0`}
+                        aria-label={candidate.path}
+                        checked={selectedPath === candidate.path}
+                        disabled={!candidate.plan}
+                        onChange={() => setSelectedPath(candidate.path)}
+                      />
+                      {candidateDetails(candidate)}
+                    </label>
+                  ))}
+                </fieldset>
+              )}
               {plan && (
                 <>
                   {plan.wsl_distro && (
