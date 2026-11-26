@@ -71,7 +71,8 @@ fn resolve_config_path(dir: &Path) -> Result<PathBuf, AppError> {
 }
 
 /// 获取 OpenCode SQLite 数据库路径
-/// 优先级: OPENCODE_DB 环境变量 > XDG_DATA_HOME > ~/.local/share/opencode
+/// 优先级: OPENCODE_DB 环境变量 > 数据目录/opencode.db
+/// 数据目录见 [`get_opencode_data_dir`]（含 WSL 配置目录推导）。
 pub fn get_opencode_db_path() -> PathBuf {
     // 支持 OPENCODE_DB 环境变量覆盖（忽略空字符串）
     if let Ok(custom_path) = std::env::var("OPENCODE_DB") {
@@ -88,7 +89,43 @@ pub fn get_opencode_db_path() -> PathBuf {
     get_opencode_data_dir().join("opencode.db")
 }
 
-fn get_opencode_data_dir() -> PathBuf {
+/// 配置目录指向 WSL 时，从 WSL home 推出 OpenCode 的数据目录。
+///
+/// OpenCode 的配置目录和数据目录是两棵独立的树：配置在
+/// `~/.config/opencode`，会话/数据库在 XDG data dir。Windows 侧配置目录
+/// 可以覆盖成 `\\wsl.localhost\<distro>\home\<user>\.config\opencode`，
+/// 但数据目录若继续用 Windows 家目录就会读错位置。这里复用
+/// [`crate::config::derive_wsl_home_dir`]，只接受 WSL home 下的路径；
+/// `/opt` 这类无法安全推导的位置返回 `None`，回退到默认数据目录；
+/// 数据库文件仍可用 `OPENCODE_DB` 指定。
+#[cfg(windows)]
+fn derive_wsl_data_dir(config_dir: &Path) -> Option<PathBuf> {
+    let home = crate::config::derive_wsl_home_dir(config_dir)?;
+    Some(home.join(".local").join("share").join("opencode"))
+}
+
+#[cfg(not(windows))]
+fn derive_wsl_data_dir(_config_dir: &Path) -> Option<PathBuf> {
+    None
+}
+
+/// OpenCode 的会话、SQLite 数据库和旧版 JSON storage 所在的数据目录。
+///
+/// 优先级：
+/// 1. 配置目录是 WSL 家目录下的路径 → 从 WSL home 推导；
+/// 2. `XDG_DATA_HOME`（按 XDG 规范，空字符串视为未设置）；
+/// 3. `~/.local/share/opencode`。
+///
+/// 数据库文件本身仍可由 `OPENCODE_DB` 覆盖，见 [`get_opencode_db_path`]。
+pub fn get_opencode_data_dir() -> PathBuf {
+    if let Some(config_dir) = get_override_dir(&crate::app_config::AppType::OpenCode) {
+        // WSL 配置目录下，宿主的 XDG_DATA_HOME 不适用于发行版内的进程，
+        // 因此 WSL 推导优先于宿主环境变量。
+        if let Some(data_dir) = derive_wsl_data_dir(&config_dir) {
+            return data_dir;
+        }
+    }
+
     // 尊重 XDG_DATA_HOME（按 XDG 规范，空字符串视为未设置）
     if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
         if !xdg_data.is_empty() {
@@ -765,6 +802,86 @@ mod tests {
         let dir = home.join(".config").join("opencode");
         std::fs::create_dir_all(&dir).expect("create config dir");
         std::fs::write(dir.join("opencode.json"), content).expect("write config");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn derive_wsl_data_dir_uses_wsl_home() {
+        for (config_dir, expected) in [
+            (
+                r"\\wsl.localhost\Ubuntu-26.04\home\travis\.config\opencode",
+                r"\\wsl.localhost\Ubuntu-26.04\home\travis\.local\share\opencode",
+            ),
+            (
+                r"\\wsl$\Ubuntu\root\.config\opencode",
+                r"\\wsl$\Ubuntu\root\.local\share\opencode",
+            ),
+            (
+                r"\\?\UNC\wsl.localhost\Ubuntu\home\jane\.config\opencode",
+                r"\\?\UNC\wsl.localhost\Ubuntu\home\jane\.local\share\opencode",
+            ),
+        ] {
+            assert_eq!(
+                derive_wsl_data_dir(Path::new(config_dir)),
+                Some(PathBuf::from(expected)),
+                "{config_dir}"
+            );
+        }
+
+        for config_dir in [
+            r"\\wsl$\Ubuntu\opt\opencode",
+            r"\\wsl$\Ubuntu\etc\opencode",
+            r"C:\Users\travis\.config\opencode",
+        ] {
+            assert_eq!(
+                derive_wsl_data_dir(Path::new(config_dir)),
+                None,
+                "{config_dir}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[serial_test::serial]
+    fn get_opencode_data_dir_prefers_wsl_home_over_host_xdg() {
+        let temp = tempfile::tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let _env = EnvVars::new().set("XDG_DATA_HOME", temp.path().join("host-xdg"));
+        let _db_env = EnvVars::new().remove("OPENCODE_DB");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            opencode_config_dir: Some(
+                r"\\wsl.localhost\Ubuntu\home\travis\.config\opencode".to_string(),
+            ),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(
+            get_opencode_data_dir(),
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\travis\.local\share\opencode")
+        );
+        assert_eq!(
+            get_opencode_db_path(),
+            PathBuf::from(r"\\wsl.localhost\Ubuntu\home\travis\.local\share\opencode\opencode.db")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn get_opencode_data_dir_keeps_host_xdg_for_non_wsl_config() {
+        let temp = tempfile::tempdir().unwrap();
+        let _home = TestHomeGuard::set(temp.path());
+        let xdg = temp.path().join("custom-xdg");
+        let _env = EnvVars::new().set("XDG_DATA_HOME", xdg.as_os_str());
+        let config_dir = temp.path().join("custom-opencode");
+        crate::settings::update_settings(crate::settings::AppSettings {
+            opencode_config_dir: Some(config_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(get_opencode_data_dir(), xdg.join("opencode"));
     }
 
     #[test]

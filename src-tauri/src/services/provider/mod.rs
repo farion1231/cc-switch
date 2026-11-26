@@ -298,18 +298,30 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(())).lock_recover()
     }
 
+    /// Restore the previous settings while the test home is still active.
+    struct RestoreSettings(crate::settings::AppSettings);
+
+    impl Drop for RestoreSettings {
+        fn drop(&mut self) {
+            let _ = crate::settings::update_settings(self.0.clone());
+        }
+    }
+
     fn with_test_home<T>(test: impl FnOnce(&AppState, &Path) -> T) -> T {
         let _guard = test_guard();
         let temp = tempfile::tempdir().expect("tempdir");
-        let env = EnvVars::new()
+        let _env = EnvVars::new()
             .set("CC_SWITCH_TEST_HOME", temp.path())
             .set("HOME", temp.path());
+        // Settings are process-global and may contain a real developer's
+        // directory overrides. Reset them for the test home, then restore the
+        // cache before the environment guard removes that home.
+        let _restore = RestoreSettings(crate::settings::get_settings());
+        crate::settings::update_settings(Default::default()).expect("reset test settings");
 
         let db = Arc::new(Database::memory().expect("in-memory database"));
         let state = AppState::new(db);
-        let result = test(&state, temp.path());
-        drop(env);
-        result
+        test(&state, temp.path())
     }
 
     fn codex_settings(base_url: &str, api_key: &str) -> Value {
