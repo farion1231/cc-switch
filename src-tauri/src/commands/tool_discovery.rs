@@ -1189,7 +1189,7 @@ pub(super) fn login_shell_env(deadline: Option<CommandDeadline>) -> Option<Login
         // ENVIRON includes exported variables and preserves fish's colon-separated PATH.
         // NUL separates records even on macOS versions without env -0.
         .arg(
-            r#"exec /usr/bin/awk 'BEGIN {
+            r#"exec /usr/bin/env awk 'BEGIN {
             printf "%c__CC_SWITCH_ENV__%c", 0, 0
             for (key in ENVIRON) printf "%s=%s%c", key, ENVIRON[key], 0
         }'"#,
