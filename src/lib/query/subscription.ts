@@ -1,6 +1,5 @@
 import { useRef } from "react";
 import {
-  queryOptions,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -19,6 +18,10 @@ import type { ManagedAuthStatus } from "@/lib/api/auth";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { appHas } from "@/config/appSpecs";
+import {
+  managedAuthStatusQuery,
+  managedAuthStatusQueryKey,
+} from "./managedAuth";
 import { resolveDisplayUsage, type LastGoodSnapshot } from "./queries";
 import { isManualIdle, useQuotaPolicy, type QuotaPolicy } from "./quotaPolicy";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -30,11 +33,7 @@ export const subscriptionKeys = {
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
 };
 
-export const agyAuthStatusQuery = queryOptions({
-  queryKey: ["managed-auth-status", "agy_oauth"],
-  queryFn: () => authApi.authGetStatus("agy_oauth"),
-  staleTime: 30_000,
-});
+export const agyAuthStatusQuery = managedAuthStatusQuery("agy_oauth");
 
 /** Refresh the actual agy login and the quota shown on cards that follow it. */
 export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
@@ -52,7 +51,7 @@ export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
  */
 export async function invalidateGrokCliLoginCaches(queryClient: QueryClient) {
   await queryClient.invalidateQueries({
-    queryKey: ["managed-auth-status", "xai_oauth"],
+    queryKey: managedAuthStatusQueryKey("xai_oauth"),
   });
   await queryClient.invalidateQueries({
     queryKey: subscriptionKeys.quota("grokbuild"),
