@@ -12,6 +12,21 @@ use tokio::sync::RwLock;
 
 pub struct XaiOAuthState(pub Arc<RwLock<XaiOAuthManager>>);
 
+/// 要用的账号：显式指定的 > 默认账号 > 没有
+async fn resolve_account_id(
+    manager: &XaiOAuthManager,
+    account_id: Option<String>,
+) -> Option<String> {
+    match account_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        Some(id) => Some(id.to_string()),
+        None => manager.default_account_id().await,
+    }
+}
+
 /// 查询 xAI OAuth (SuperGrok 反代) 订阅额度的共享核心
 ///
 /// 与 `get_codex_oauth_quota` 平行：数据走 cc-switch 自管的 xAI OAuth token，
@@ -34,16 +49,7 @@ pub(crate) async fn query_xai_oauth_quota_for(
 ) -> Result<SubscriptionQuota, String> {
     let manager = state.0.read().await;
 
-    // 解析最终使用的账号 ID：显式 > 默认账号 > 无账号 (not_found)
-    let resolved = match account_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        Some(id) => Some(id.to_string()),
-        None => manager.default_account_id().await,
-    };
-    let Some(id) = resolved else {
+    let Some(id) = resolve_account_id(&manager, account_id).await else {
         return Ok(SubscriptionQuota::not_found("xai_oauth"));
     };
 
@@ -64,24 +70,72 @@ pub(crate) async fn query_xai_oauth_quota_for(
         }
     };
 
-    // 套餐（SuperGrok / Heavy）另问 Grok CLI 的设置接口，和额度并行；问不到只是不显示
-    let (quota, plan) = tokio::join!(
-        crate::services::subscription_grok::query_grok_quota(
-            &token,
-            "xai_oauth",
-            "Please re-login via cc-switch.",
-        ),
-        async {
-            if with_plan {
-                crate::services::subscription_grok::query_grok_plan(&token).await
-            } else {
-                None
-            }
-        },
-    );
-    let mut quota = quota?;
-    if quota.success {
-        quota.plan_name = plan;
+    crate::services::subscription_grok::query_grok_quota_with_plan(
+        &token,
+        "xai_oauth",
+        "Please re-login via cc-switch.",
+        with_plan,
+    )
+    .await
+}
+
+/// Grok Build 官方卡的订阅额度：先读 Grok CLI 凭据，查不到时用授权中心的同一账号兜底
+///
+/// Grok CLI 只在自己运行时刷新 ~/.grok/auth.json 的访问令牌（约 6 小时过期），
+/// 几天不用 Grok 卡片就会一直「令牌待刷新」。授权中心的 xAI 账号与 Grok CLI 是
+/// 同一个 OAuth client，令牌由 cc-switch 自己刷新；只要账号 id 与 Grok CLI 登录的
+/// `user_id` 一致，查到的就是同一份订阅额度。不切换 Grok CLI 登录的账号；只有兜底刷新
+/// 轮换了两边共用的 refresh token 时，才把新令牌写回 `auth.json`（`sync_grok_cli_after_refresh`），
+/// 让 Grok CLI 保持登录。
+/// 瞬时失败（`Err`）不兜底，保持前端 retry + 保留上次成功值的语义。
+pub(crate) async fn query_grokbuild_quota_with_managed_fallback(
+    state: Option<&XaiOAuthState>,
+    with_plan: bool,
+) -> Result<SubscriptionQuota, String> {
+    let primary =
+        crate::services::subscription_grok::get_grok_subscription_quota_with_plan(with_plan)
+            .await?;
+    if primary.success {
+        return Ok(primary);
+    }
+    let (Some(state), Some(live)) = (state, crate::grok_auth::read_live_login_from_disk()) else {
+        return Ok(primary);
+    };
+    let managed = query_xai_oauth_quota_for(state, Some(live.user_id), with_plan).await;
+    pick_grokbuild_quota(primary, managed)
+}
+
+/// 兜底查询的取舍：授权中心查到了就用它；没有这个号或要重新登录（`Ok` 但不成功）时回到
+/// Grok CLI 凭据的结果；兜底时网络 / 刷新端点暂时失败（`Err`）照样往上传，前端 retry
+/// 并保留上次成功值，不用 Grok CLI 那份「令牌过期」盖掉。
+fn pick_grokbuild_quota(
+    primary: SubscriptionQuota,
+    managed: Result<SubscriptionQuota, String>,
+) -> Result<SubscriptionQuota, String> {
+    match managed? {
+        mut quota if quota.success => {
+            quota.tool = "grokbuild".to_string();
+            Ok(quota)
+        }
+        _ => Ok(primary),
+    }
+}
+
+/// 查一个账号的额度，按账号存进托盘缓存（绑了账号的 Grok 官方卡在托盘上读它）
+pub(crate) async fn query_and_cache_xai_account(
+    app: &tauri::AppHandle,
+    app_state: &crate::store::AppState,
+    state: &XaiOAuthState,
+    account_id: Option<String>,
+    with_plan: bool,
+) -> Result<SubscriptionQuota, String> {
+    let resolved = resolve_account_id(&*state.0.read().await, account_id).await;
+    let quota = query_xai_oauth_quota_for(state, resolved.clone(), with_plan).await?;
+    if let Some(account_id) = resolved {
+        app_state
+            .usage_cache
+            .put_xai_account(account_id, quota.clone());
+        crate::tray::schedule_tray_refresh(app);
     }
     Ok(quota)
 }
@@ -89,10 +143,12 @@ pub(crate) async fn query_xai_oauth_quota_for(
 /// 查询 xAI OAuth (SuperGrok 反代) 订阅额度
 #[tauri::command(rename_all = "camelCase")]
 pub async fn get_xai_oauth_quota(
+    app: tauri::AppHandle,
+    app_state: State<'_, crate::store::AppState>,
     account_id: Option<String>,
     state: State<'_, XaiOAuthState>,
 ) -> Result<SubscriptionQuota, String> {
-    query_xai_oauth_quota_for(&state, account_id, true).await
+    query_and_cache_xai_account(&app, &app_state, &state, account_id, true).await
 }
 
 #[derive(Debug, Deserialize)]
@@ -114,15 +170,9 @@ pub async fn get_xai_oauth_models(
     state: State<'_, XaiOAuthState>,
 ) -> Result<Vec<FetchedModel>, String> {
     let manager = state.0.read().await;
-    let resolved = match account_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty())
-    {
-        Some(id) => Some(id.to_string()),
-        None => manager.default_account_id().await,
-    };
-    let account_id = resolved.ok_or_else(|| "No usable xAI account available".to_string())?;
+    let account_id = resolve_account_id(&manager, account_id)
+        .await
+        .ok_or_else(|| "No usable xAI account available".to_string())?;
     let token = manager
         .get_valid_token_for_account(&account_id)
         .await
@@ -156,13 +206,7 @@ pub async fn get_xai_oauth_models(
 }
 
 fn is_transient_token_error(error: &XaiOAuthError) -> bool {
-    matches!(
-        error,
-        XaiOAuthError::NetworkError(_)
-            | XaiOAuthError::TokenFetchFailed(_)
-            | XaiOAuthError::ParseError(_)
-            | XaiOAuthError::IoError(_)
-    )
+    error.is_transient()
 }
 
 #[cfg(test)]
@@ -196,34 +240,41 @@ mod tests {
     }
 
     #[test]
-    fn transient_token_errors_are_classified_separately_from_auth_failures() {
-        assert!(is_transient_token_error(&XaiOAuthError::NetworkError(
-            "timeout".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::TokenFetchFailed(
-            "HTTP 503 Service Unavailable".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::ParseError(
-            "OAuth 响应不是有效 JSON".to_string()
-        )));
-        assert!(is_transient_token_error(&XaiOAuthError::IoError(
-            "disk full".to_string()
-        )));
+    fn grokbuild_fallback_propagates_transient_errors_and_keeps_cli_result_otherwise() {
+        let primary = || {
+            SubscriptionQuota::error(
+                "grokbuild",
+                CredentialStatus::Expired,
+                "cli token expired".to_string(),
+            )
+        };
 
-        assert!(!is_transient_token_error(
-            &XaiOAuthError::RefreshTokenInvalid
-        ));
-        assert!(!is_transient_token_error(&XaiOAuthError::ReauthRequired(
-            "acct-1".to_string()
-        )));
-        assert!(!is_transient_token_error(&XaiOAuthError::AccountNotFound(
-            "acct-1".to_string()
-        )));
-        assert!(!is_transient_token_error(&XaiOAuthError::AccessDenied));
-        assert!(!is_transient_token_error(&XaiOAuthError::ExpiredToken));
-        assert!(!is_transient_token_error(
-            &XaiOAuthError::AuthorizationPending
-        ));
+        let err = pick_grokbuild_quota(
+            primary(),
+            Err("xAI OAuth token unavailable: timeout".into()),
+        )
+        .expect_err("transient managed failure must propagate");
+        assert!(err.contains("timeout"));
+
+        let kept = pick_grokbuild_quota(
+            primary(),
+            Ok(SubscriptionQuota::error(
+                "xai_oauth",
+                CredentialStatus::Expired,
+                "reauth".to_string(),
+            )),
+        )
+        .unwrap();
+        assert_eq!(kept.tool, "grokbuild");
+        assert_eq!(kept.error.as_deref(), Some("cli token expired"));
+
+        let mut managed = SubscriptionQuota::not_found("xai_oauth");
+        managed.success = true;
+        managed.plan_name = Some("SuperGrok Heavy".to_string());
+        let used = pick_grokbuild_quota(primary(), Ok(managed)).unwrap();
+        assert!(used.success);
+        assert_eq!(used.tool, "grokbuild");
+        assert_eq!(used.plan_name.as_deref(), Some("SuperGrok Heavy"));
     }
 
     #[tokio::test]

@@ -46,6 +46,10 @@ pub async fn dsh_codex_bind(
     state: tauri::State<'_, crate::commands::CodexOAuthState>,
     app_state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
+    let _mutation = app_state
+        .proxy_service
+        .lock_switch_for_app(AppType::Dsh.as_str())
+        .await;
     let mut provider = provider;
     if let Some(provider) = provider.as_mut() {
         if provider.id != "openai-codex" || provider.name.trim().is_empty() {
@@ -63,7 +67,7 @@ pub async fn dsh_codex_bind(
         }
         provider.name = provider.name.trim().to_owned();
         provider.settings_config["name"] = serde_json::json!(provider.name);
-        crate::dsh_config::validate_provider(&provider.id, &provider.settings_config)
+        crate::dsh_config::validate_codex_binding(&provider.settings_config)
             .map_err(|e| e.to_string())?;
         // Preserve quota preferences and other local metadata when editing the native route.
         if let Some(saved) = app_state
@@ -75,6 +79,16 @@ pub async fn dsh_codex_bind(
             provider.created_at = saved.created_at;
             provider.sort_index = saved.sort_index;
         }
+    }
+    if let Some(provider) = provider.as_mut() {
+        provider
+            .meta
+            .get_or_insert_with(Default::default)
+            .auth_binding = Some(crate::provider::AuthBinding {
+            source: crate::provider::AuthBindingSource::ManagedAccount,
+            auth_provider: Some("codex_oauth".into()),
+            account_id: Some(account_id.clone()),
+        });
     }
     state
         .0
@@ -94,21 +108,25 @@ pub async fn dsh_codex_bind(
 
 /// Save quota preferences only; an OAuth route must not pass API-key validation.
 #[tauri::command(rename_all = "camelCase")]
-pub fn dsh_codex_usage_update(
+pub async fn dsh_codex_usage_update(
     enabled: bool,
     auto_query_interval: u64,
     state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<(), String> {
+    let _mutation = state
+        .proxy_service
+        .lock_switch_for_app(AppType::Dsh.as_str())
+        .await;
     if crate::dsh_config::codex_binding()
         .map_err(|_| "Cannot read DSH Codex binding")?
         .is_none()
     {
         return Err("Select a DSH Codex account first".into());
     }
-    let mut providers =
-        crate::services::ProviderService::list(&state, AppType::Dsh).map_err(|e| e.to_string())?;
-    let provider = providers
-        .get_mut("openai-codex")
+    let mut provider = state
+        .db
+        .get_provider_by_id("openai-codex", &AppType::Dsh)
+        .map_err(|e| e.to_string())?
         .ok_or("DSH Codex provider is missing")?;
     let script = serde_json::from_value(serde_json::json!({"enabled":enabled,"language":"javascript","code":"","templateType":"official_subscription","autoQueryInterval":auto_query_interval.min(1440)})).map_err(|_| "Invalid quota settings")?;
     provider
@@ -117,6 +135,6 @@ pub fn dsh_codex_usage_update(
         .usage_script = Some(script);
     state
         .db
-        .save_provider(&AppType::Dsh, provider)
+        .save_provider(&AppType::Dsh, &provider)
         .map_err(|e| e.to_string())
 }

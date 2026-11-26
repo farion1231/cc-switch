@@ -24,21 +24,17 @@ import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import type { SubscriptionQuota } from "@/types/subscription";
-import {
-  providersQueryOptions,
-  proxyKeys,
-  useProvidersQuery,
-  useSettingsQuery,
-} from "@/lib/query";
-import {
-  piApi,
-  providersApi,
-  settingsApi,
-  type AppId,
-  type ProviderSwitchEvent,
-} from "@/lib/api";
+import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
+import { providersQueryOptions, useProvidersQuery } from "@/lib/query/queries";
+import { useSettingsQuery } from "@/lib/query/settings";
+import { proxyKeys } from "@/lib/query/proxy";
+import { piApi } from "@/lib/api/pi";
+import { providersApi } from "@/lib/api/providers";
+import { settingsApi } from "@/lib/api/settings";
+import type { AppId, ProviderSwitchEvent } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
+import { useCopilotVscodeSyncNotifications } from "@/hooks/useCopilotVscodeSyncStatus";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
@@ -133,6 +129,7 @@ import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { EditProviderHost } from "@/components/providers/EditProviderHost";
 import { preloadOnIdle } from "@/lib/preloadOnIdle";
+import { isDshCodexOAuthRoute } from "@/lib/authBinding";
 import { useCreateEditProviderStore } from "@/components/providers/editProviderStore";
 import {
   APP_IDS,
@@ -286,6 +283,7 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  useCopilotVscodeSyncNotifications(settingsData?.copilotVscode);
   // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
     isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));
@@ -536,6 +534,10 @@ function App() {
               await queryClient.invalidateQueries({
                 queryKey: ["managed-auth-status", "claude_official"],
               });
+            }
+            if (event.appType === "grokbuild") {
+              // 托盘切卡同样可能把 Grok CLI 原登录收成新账号、换成绑定的号
+              await invalidateGrokCliLoginCaches(queryClient);
             }
             // 切换会顺带刷新托管 ChatGPT 账号的令牌（托盘切换也一样）：
             // 重查停在失败上的账号额度，免得主界面一直显示旧的「登录过期」
@@ -889,7 +891,8 @@ function App() {
           activeApp === "kimi" ||
           activeApp === "agy" ||
           activeApp === "copilot" ||
-          activeApp === "workbuddy"
+          activeApp === "workbuddy" ||
+          activeApp === "codebuddy"
         )
           return;
         const conflicts = await checkEnvConflicts(activeApp);
@@ -1109,7 +1112,6 @@ function App() {
     editorSave?: ProviderEditorSave;
   }) => {
     await updateProvider(provider, originalId, editorSave);
-    editProviderStore.close();
   };
 
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
@@ -1141,7 +1143,8 @@ function App() {
       app === "dsh" ||
       app === "kimi" ||
       app === "copilot" ||
-      app === "workbuddy"
+      app === "workbuddy" ||
+      app === "codebuddy"
     ) {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
@@ -1211,6 +1214,10 @@ function App() {
   };
 
   const handleDuplicateProvider = async (provider: Provider) => {
+    // CodeBuddy's provider key is the model id sent upstream and is locked in
+    // the editor, so a "-copy" key would be an unusable model. Cards hide the
+    // action; this guards any other caller.
+    if (activeApp === "codebuddy") return;
     if (
       activeApp === "opencode" &&
       provider.category !== "omo" &&
@@ -1342,6 +1349,9 @@ function App() {
         provider.id,
         Object.keys(providers),
       );
+      duplicatedProvider.addToLive = false;
+    } else if (activeApp === "agy") {
+      // Copy the launch profile without switching the global agy login.
       duplicatedProvider.addToLive = false;
     } else if (activeApp === "copilot") {
       // 自带模型卡的 id 就是 providers.json 里的供应商名，副本另起一个；官方卡仍用随机 id。
@@ -1704,13 +1714,23 @@ function App() {
             currentProviderId={currentProviderId}
             appId={activeApp}
             isLoading={isLoading}
-            onSwitch={(provider) =>
+            onSwitch={(provider) => {
+              if (
+                isDshCodexOAuthRoute(
+                  activeApp,
+                  provider.id,
+                  provider.settingsConfig,
+                )
+              ) {
+                listCallbacks.onEdit(provider);
+                return;
+              }
               void (appHas(activeApp, "piFamily")
                 ? handleEnablePiProvider(provider, activeApp)
                 : activeApp === "kimi" || activeApp === "copilot"
                   ? handleAddNativeProvider(provider, activeApp)
-                  : switchProvider(provider))
-            }
+                  : switchProvider(provider));
+            }}
             onRemoveFromConfig={
               appHas(activeApp, "additive")
                 ? (provider) => setConfirmAction({ provider, action: "remove" })

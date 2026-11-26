@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/copilot";
 import { isCopilotByok } from "@/config/copilotConfig";
 import { useSettingsQuery } from "@/lib/query";
+import { codexOauthQuotaKey } from "@/lib/query/subscription";
 import {
   resolveManagedAccountId,
   resolveDshCodexAccountId,
@@ -22,7 +23,7 @@ import { useDarkMode } from "@/hooks/useDarkMode";
 import {
   extractCodexBaseUrl,
   extractCodexExperimentalBearerToken,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { parseGrokBuildConfig } from "@/utils/grokBuildConfig";
 import JsonEditor from "./JsonEditor";
 import * as prettier from "prettier/standalone";
@@ -44,6 +45,7 @@ import {
   CODING_PLAN_PROVIDERS,
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
+import { detectBalanceProvider } from "@/config/balanceProviders";
 import { formatUsageDataSummary } from "@/utils/usageDisplay";
 import { appHas } from "@/config/appSpecs";
 
@@ -188,25 +190,6 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
   [TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION]:
     "usageScript.templateOfficialSubscription",
 };
-
-/** 官方余额查询供应商检测 */
-const BALANCE_PROVIDERS = [
-  { id: "deepseek", label: "DeepSeek", pattern: /api\.deepseek\.com/i },
-  { id: "stepfun", label: "StepFun", pattern: /api\.stepfun\.(ai|com)/i },
-  {
-    id: "siliconflow",
-    label: "SiliconFlow",
-    pattern: /api\.siliconflow\.(cn|com)/i,
-  },
-  { id: "openrouter", label: "OpenRouter", pattern: /openrouter\.ai/i },
-  { id: "novita", label: "Novita AI", pattern: /api\.novita\.ai/i },
-] as const;
-
-/** 根据 Base URL 自动检测余额查询供应商 */
-function detectBalanceProvider(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return false;
-  return BALANCE_PROVIDERS.some((bp) => bp.pattern.test(baseUrl));
-}
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
   if (resolveDshCodexAccountId(appId, provider)) return true;
@@ -365,6 +348,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               ?.replace(/\/+$/, "")
               .replace(/\/chat\/completions$/, ""),
           };
+        } else if (appId === "codebuddy") {
+          // CodeBuddy models.json entry: url is the full chat/completions endpoint,
+          // same trim as the backend resolver.
+          const root = config as any;
+          const url: string | undefined = root.url;
+          return {
+            apiKey: root.apiKey,
+            baseUrl: url
+              ?.replace(/\/+$/, "")
+              .replace(/\/chat\/completions$/, ""),
+          };
         } else if (appId === "openclaw") {
           // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
           return {
@@ -396,9 +390,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
   };
 
   const providerCredentials = getProviderCredentials();
+  const balanceProvider = detectBalanceProvider(providerCredentials.baseUrl);
+  const dshCodexAccountId = resolveDshCodexAccountId(appId, provider);
   const usesManagedCodexQuota =
     resolveCodexOfficialIdentity(appId, provider) === "managed_account" ||
-    Boolean(resolveDshCodexAccountId(appId, provider));
+    Boolean(dshCodexAccountId);
   const isOfficialSubscription = isOfficialSubscriptionProvider(
     provider,
     appId,
@@ -417,9 +413,19 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       ? resolveManagedAccountId(provider.meta, "claude_official")?.trim() ||
         null
       : null;
+  // 绑了授权中心 xAI 账号的 Grok 官方卡：额度按这个号查（同 ProviderCard 的 grokBoundAccountId）
+  const grokBoundAccountId =
+    appId === "grokbuild" && isOfficialSubscription
+      ? resolveManagedAccountId(
+          provider.meta,
+          PROVIDER_TYPES.XAI_OAUTH,
+        )?.trim() || null
+      : null;
   // 绑了账号的官方卡没保存过开关时默认开（卡片和托盘同一规则）
   const defaultsToEnabled =
-    usesManagedCodexQuota || Boolean(claudeBoundAccountId);
+    usesManagedCodexQuota ||
+    Boolean(claudeBoundAccountId) ||
+    Boolean(grokBoundAccountId);
 
   const [script, setScript] = useState<UsageScript>(() => {
     const savedScript = provider.meta?.usage_script;
@@ -631,11 +637,23 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               PROVIDER_TYPES.CODEX_OAUTH,
             ) ?? null)
           : null;
-        const quota = usesManagedCodexQuota
-          ? await subscriptionApi.getCodexOauthQuota(accountId)
-          : claudeBoundAccountId
-            ? await subscriptionApi.getClaudeAccountQuota(claudeBoundAccountId)
-            : await subscriptionApi.getQuota(appId);
+        const quota = dshCodexAccountId
+          ? await subscriptionApi.getDshCodexQuota(dshCodexAccountId)
+          : usesManagedCodexQuota
+            ? await subscriptionApi.getCodexOauthQuota(accountId)
+            : claudeBoundAccountId
+              ? await subscriptionApi.getClaudeAccountQuota(
+                  claudeBoundAccountId,
+                )
+              : grokBoundAccountId
+                ? await subscriptionApi.getXaiOauthQuota(grokBoundAccountId)
+                : await subscriptionApi.getQuota(appId);
+        if (dshCodexAccountId) {
+          queryClient.setQueryData(
+            codexOauthQuotaKey(dshCodexAccountId, true),
+            quota,
+          );
+        }
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -644,14 +662,18 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             duration: 3000,
             closeButton: true,
           });
-          queryClient.setQueryData(
-            usesManagedCodexQuota
-              ? ["codex_oauth", "quota", accountId ?? "default"]
-              : claudeBoundAccountId
-                ? ["claude_official", "quota", claudeBoundAccountId]
-                : ["subscription", "quota", appId],
-            quota,
-          );
+          if (!dshCodexAccountId) {
+            queryClient.setQueryData(
+              usesManagedCodexQuota
+                ? codexOauthQuotaKey(accountId)
+                : claudeBoundAccountId
+                  ? ["claude_official", "quota", claudeBoundAccountId]
+                  : grokBoundAccountId
+                    ? ["xai_oauth", "quota", grokBoundAccountId]
+                    : ["subscription", "quota", appId],
+              quota,
+            );
+          }
         } else {
           toast.error(
             `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,
@@ -1153,16 +1175,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                   {t("usageScript.balanceHint")}
                 </p>
                 <div className="flex gap-2 flex-wrap">
-                  {BALANCE_PROVIDERS.filter((bp) =>
-                    bp.pattern.test(providerCredentials.baseUrl || ""),
-                  ).map((bp) => (
-                    <span
-                      key={bp.id}
-                      className="inline-flex items-center px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium"
-                    >
-                      {bp.label}
+                  {balanceProvider && (
+                    <span className="inline-flex items-center px-2.5 py-1 rounded-md bg-primary/10 text-primary text-xs font-medium">
+                      {balanceProvider.label}
                     </span>
-                  ))}
+                  )}
                 </div>
               </div>
             )}
@@ -1392,7 +1409,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
                             onChange={(e) =>
                               setScript({ ...script, baseUrl: e.target.value })
                             }
-                            placeholder="https://api.zenmux.com/v1/..."
+                            placeholder="https://zenmux.ai/api/v1/..."
                             autoComplete="off"
                             className="border-white/10"
                           />

@@ -403,6 +403,7 @@
   --h-nav-row: 28px;
   --h-card: 58px;
   --card-py: 10px;
+  --w-sidebar-rail-item: 36px;
 }
 
 html[data-density="comfortable"] {
@@ -428,6 +429,7 @@ html[data-density="comfortable"] {
   --h-nav-row: 34px;
   --h-card: 68px;
   --card-py: 14px;
+  --w-sidebar-rail-item: 40px;
 }
 
 * {
@@ -695,8 +697,13 @@ html[data-density="comfortable"] .auth-quota-col {
   display: none;
 }
 
+/* 放得下中日文最长的「45 分钟前」+ ↻（12px 约 80）；刷新中不换文字，宽度只随时间档位变 */
 .auth-quota-refresh {
-  min-width: 68px;
+  min-width: 84px;
+}
+
+html[data-density="comfortable"] .auth-quota-refresh {
+  min-width: 88px;
 }
 
 @container (min-width: 800px) {
@@ -726,7 +733,8 @@ html[data-density="comfortable"] .auth-quota-col {
     flex: 1 1 auto;
   }
 
-  .auth-quota-refresh {
+  .auth-quota-refresh,
+  html[data-density="comfortable"] .auth-quota-refresh {
     min-width: 0;
   }
 }

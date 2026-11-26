@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useId, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Form } from "@/components/ui/form";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { fetchCodexOauthModels } from "@/lib/api/model-fetch";
+import { providersApi } from "@/lib/api";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { OpenCodeModel } from "@/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
@@ -18,15 +19,77 @@ import { CodexOAuthSection } from "./forms/CodexOAuthSection";
 const noop = () => {};
 type ModelConfig = { models: Record<string, OpenCodeModel> };
 
-export function DshCodexAccount({
-  initialData,
-  onManageAccounts,
-  onApplied,
-}: {
+type DshCodexAccountProps = {
   initialData?: ProviderFormProps["initialData"];
   onManageAccounts: () => void;
   onApplied: () => void;
-}) {
+};
+
+export function DshCodexAccount(props: DshCodexAccountProps) {
+  const { t } = useTranslation();
+  const session = useId();
+  const existing = useQuery({
+    queryKey: ["dsh-codex-editor-provider", session],
+    queryFn: async () =>
+      (await providersApi.getAll("dsh"))["openai-codex"] ?? null,
+    enabled: !props.initialData,
+    gcTime: 0,
+    staleTime: Infinity,
+  });
+
+  const provider = existing.data;
+  const initialData =
+    props.initialData ??
+    (provider
+      ? {
+          name: provider.name,
+          notes: provider.notes,
+          websiteUrl: provider.websiteUrl,
+          settingsConfig: provider.settingsConfig,
+          icon: provider.icon,
+          iconColor: provider.iconColor,
+        }
+      : undefined);
+  const canInitialize = props.initialData || provider !== undefined;
+  return (
+    <>
+      {canInitialize && (
+        <DshCodexAccountForm
+          {...props}
+          initialData={initialData}
+          savingDisabled={
+            !props.initialData && (existing.isError || existing.isFetching)
+          }
+        />
+      )}
+      {!props.initialData && existing.isError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 text-danger-text"
+        >
+          <span>{t("dsh.codex.loadProvidersFailed")}</span>
+          <Button
+            type="button"
+            variant="neutral"
+            onClick={() => void existing.refetch()}
+          >
+            {t("common.retry")}
+          </Button>
+        </div>
+      )}
+      {!canInitialize && !existing.isError && (
+        <p role="status">{t("common.loading")}</p>
+      )}
+    </>
+  );
+}
+
+function DshCodexAccountForm({
+  initialData,
+  savingDisabled,
+  onManageAccounts,
+  onApplied,
+}: DshCodexAccountProps & { savingDisabled: boolean }) {
   const { t } = useTranslation();
   const client = useQueryClient();
   const status = useQuery({
@@ -58,7 +121,9 @@ export function DshCodexAccount({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const name = form.watch("name");
-  const ready = Boolean(accountId && name.trim() && !status.error);
+  const ready = Boolean(
+    accountId && name.trim() && !status.error && !savingDisabled,
+  );
   const apply = async () => {
     if (!ready || busy) return;
     setBusy(true);
@@ -146,7 +211,11 @@ export function DshCodexAccount({
           variant="info"
           onConfirm={apply}
           title={t("common.save")}
-          message={t("dsh.codex.confirm")}
+          message={
+            status.data && status.data !== accountId
+              ? t("dsh.codex.confirmSwitch")
+              : t("dsh.codex.confirm")
+          }
         />
       </form>
     </Form>

@@ -24,6 +24,7 @@ use std::time::Instant;
 use crate::app_config::AppType;
 use crate::error::AppError;
 use crate::provider::Provider;
+use crate::proxy::error::NetworkErrorKind;
 use crate::proxy::providers::{get_adapter, ClaudeAdapter, GeminiAdapter, ProviderAdapter};
 
 /// Google Gemini 默认端点（agy 未配置自定义端点时使用）。
@@ -73,6 +74,16 @@ pub struct StreamCheckResult {
     pub http_status: Option<u16>,
     pub tested_at: i64,
     pub retry_count: u32,
+    /// 连不上时的原因分类，前端据此挑提示；连上了或不是网络错误时为空
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<NetworkErrorKind>,
+}
+
+/// 一次探测没拿到 HTTP 响应
+#[derive(Debug)]
+struct ProbeFailure {
+    message: String,
+    kind: Option<NetworkErrorKind>,
 }
 
 /// 连通性检查服务
@@ -104,7 +115,7 @@ impl StreamCheckService {
             }
 
             // 仅超时 / abort 类网络抖动值得重试；连接被拒、DNS 失败等立即返回。
-            if Self::should_retry(&result.message) && attempt < config.max_retries {
+            if Self::should_retry(&result) && attempt < config.max_retries {
                 last_result = Some(result);
                 continue;
             }
@@ -122,6 +133,7 @@ impl StreamCheckService {
             http_status: None,
             tested_at: chrono::Utc::now().timestamp(),
             retry_count: config.max_retries,
+            error_kind: None,
         }))
     }
 
@@ -239,10 +251,13 @@ impl StreamCheckService {
         base_url: &str,
         timeout: std::time::Duration,
         custom_ua: Option<HeaderValue>,
-    ) -> Result<u16, AppError> {
+    ) -> Result<u16, ProbeFailure> {
         let url = base_url.trim();
         if url.is_empty() {
-            return Err(AppError::Message("base_url 为空".to_string()));
+            return Err(ProbeFailure {
+                message: "base_url 为空".to_string(),
+                kind: None,
+            });
         }
 
         let mut req = client
@@ -263,7 +278,7 @@ impl StreamCheckService {
 
     /// 将探测原始结果包装成 `StreamCheckResult`。
     fn build_result(
-        result: Result<u16, AppError>,
+        result: Result<u16, ProbeFailure>,
         response_time: u64,
         degraded_threshold_ms: u64,
     ) -> StreamCheckResult {
@@ -277,15 +292,17 @@ impl StreamCheckService {
                 http_status: Some(status),
                 tested_at,
                 retry_count: 0,
+                error_kind: None,
             },
-            Err(e) => StreamCheckResult {
+            Err(failure) => StreamCheckResult {
                 status: HealthStatus::Failed,
                 success: false,
-                message: e.to_string(),
+                message: failure.message,
                 response_time_ms: Some(response_time),
                 http_status: None,
                 tested_at,
                 retry_count: 0,
+                error_kind: failure.kind,
             },
         }
     }
@@ -298,18 +315,33 @@ impl StreamCheckService {
         }
     }
 
-    fn should_retry(msg: &str) -> bool {
+    fn should_retry(result: &StreamCheckResult) -> bool {
+        result.error_kind == Some(NetworkErrorKind::Timeout)
+            || Self::is_timeout_message(&result.message)
+    }
+
+    fn is_timeout_message(msg: &str) -> bool {
         let lower = msg.to_lowercase();
         lower.contains("timeout") || lower.contains("abort") || lower.contains("timed out")
     }
 
-    fn map_request_error(e: reqwest::Error) -> AppError {
-        if e.is_timeout() {
-            AppError::Message("Request timeout".to_string())
+    /// 消息带上原因链（「error sending request」本身看不出是被拦、被拒还是解析失败），
+    /// 并去掉 URL（查询参数里可能有 Key）。
+    fn map_request_error(e: reqwest::Error) -> ProbeFailure {
+        let kind = crate::proxy::error::classify_reqwest_error(&e);
+        let message = if e.is_timeout() {
+            "Request timeout".to_string()
         } else if e.is_connect() {
-            AppError::Message(format!("Connection failed: {e}"))
+            format!(
+                "Connection failed: {}",
+                crate::proxy::error::describe_reqwest_error(e)
+            )
         } else {
-            AppError::Message(e.to_string())
+            crate::proxy::error::describe_reqwest_error(e)
+        };
+        ProbeFailure {
+            message,
+            kind: Some(kind),
         }
     }
 
@@ -460,14 +492,28 @@ mod tests {
 
     #[test]
     fn test_should_retry_only_on_timeout_like_errors() {
-        assert!(StreamCheckService::should_retry("Request timeout"));
-        assert!(StreamCheckService::should_retry("request timed out"));
-        assert!(StreamCheckService::should_retry("connection abort"));
+        assert!(StreamCheckService::is_timeout_message("Request timeout"));
+        assert!(StreamCheckService::is_timeout_message("request timed out"));
+        assert!(StreamCheckService::is_timeout_message("connection abort"));
         // 连接被拒 / DNS 失败不重试
-        assert!(!StreamCheckService::should_retry(
+        assert!(!StreamCheckService::is_timeout_message(
             "Connection failed: dns error"
         ));
-        assert!(!StreamCheckService::should_retry("Reachable"));
+        assert!(!StreamCheckService::is_timeout_message("Reachable"));
+    }
+
+    #[test]
+    fn test_should_retry_os_timeout_with_localized_text() {
+        // 中文 Windows 上连接超时的系统文本不含 timeout 字样，靠分类重试
+        let r = StreamCheckService::build_result(
+            Err(ProbeFailure {
+                message: "Connection failed: 由于连接方在一段时间后没有正确答复".to_string(),
+                kind: Some(NetworkErrorKind::Timeout),
+            }),
+            8000,
+            1500,
+        );
+        assert!(StreamCheckService::should_retry(&r));
     }
 
     #[test]
@@ -484,13 +530,17 @@ mod tests {
     #[test]
     fn test_build_result_network_error_is_unreachable() {
         let r = StreamCheckService::build_result(
-            Err(AppError::Message("Connection failed: refused".to_string())),
+            Err(ProbeFailure {
+                message: "Connection failed: refused".to_string(),
+                kind: Some(NetworkErrorKind::Refused),
+            }),
             5,
             1500,
         );
         assert!(!r.success);
         assert_eq!(r.status, HealthStatus::Failed);
         assert!(r.http_status.is_none());
+        assert_eq!(r.error_kind, Some(NetworkErrorKind::Refused));
     }
 
     #[test]

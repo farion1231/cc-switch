@@ -8,6 +8,7 @@ import { ImeSafeInput } from "@/components/ui/ime-safe-input";
 import { Label } from "@/components/ui/label";
 import JsonEditor from "@/components/JsonEditor";
 import { useDarkMode } from "@/hooks/useDarkMode";
+import { isDshCodexOAuthRoute } from "@/lib/authBinding";
 import { useProvidersQuery } from "@/lib/query/queries";
 import type { ProviderFormData } from "@/lib/schemas/provider";
 import type { OpenCodeModel, OpenCodeProviderOptions } from "@/types";
@@ -137,7 +138,8 @@ export function McodeProviderForm({
   const step = usePresetStep();
   const isCodexLogin =
     appId === "dsh" &&
-    (presetId === DSH_CODEX_PRESET_ID || providerId === "openai-codex");
+    (presetId === DSH_CODEX_PRESET_ID ||
+      isDshCodexOAuthRoute(appId, providerId, initialData?.settingsConfig));
   const isAccountLogin =
     isCodexLogin || (!initialData && presetId === DSH_ACCOUNT_PRESET_ID);
   const showAccountLogin = isAccountLogin && (!step || step.step === "form");

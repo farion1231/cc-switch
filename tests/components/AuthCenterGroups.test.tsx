@@ -414,4 +414,40 @@ describe("AccountQuotaColumn", () => {
     );
     expect(valueCell).not.toHaveClass("truncate");
   });
+
+  it("keeps the last-updated text while refreshing so the quota bar does not shift", async () => {
+    const { QuotaRefreshCell } = await import(
+      "@/components/settings/auth/AccountQuota"
+    );
+    const queriedAt = Date.now() - 11 * 24 * 60 * 60 * 1000;
+    const { container, rerender } = render(
+      <QuotaRefreshCell
+        login="me@example.com"
+        queriedAt={queriedAt}
+        loading={false}
+        onRefresh={vi.fn()}
+      />,
+    );
+    const cell = container.querySelector(".auth-quota-refresh");
+    const before = cell?.textContent;
+    expect(before).toBe("usage.daysAgo");
+
+    rerender(
+      <QuotaRefreshCell
+        login="me@example.com"
+        queriedAt={queriedAt}
+        loading
+        onRefresh={vi.fn()}
+      />,
+    );
+    // 刷新中只转圈，文字不换成「更新中…」，格子宽度不变
+    expect(container.querySelector(".auth-quota-refresh")?.textContent).toBe(
+      before,
+    );
+    const button = screen.getByRole("button", {
+      name: "刷新 me@example.com 的额度",
+    });
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveAttribute("aria-disabled", "true");
+  });
 });

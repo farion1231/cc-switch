@@ -9,7 +9,9 @@
 //!
 //! 这里只发 WorkBuddy 自己刷新额度时就会发的只读查询：`POST /billing/meter/get-user-resource-summary`
 //! （空 body，总量），再按汇总里有哪类套餐查 free / paid 两个套餐明细（各个资源包的到期时间，
-//! 请求体照抄 WorkBuddy 的 `fetchUserResources`）。规矩：
+//! 请求体照抄 WorkBuddy 的 `fetchUserResources`）。企业号（`.info` 带 `enterpriseId`）个人接口里
+//! 什么都没有，改查 `POST /v2/billing/meter/get-enterprise-user-usage`（空 body，本周期限额与已用，
+//! 同 WorkBuddy 的 `getEnterpriseUsage`；它要的 `X-Enterprise-Id` 头 WBIPC 不放行，后端按登录身份推得出）。规矩：
 //! - 只在 WorkBuddy 正在运行、且要查的正是它当前登着的号时查；别的号只给上次缓存的结果；
 //! - 不读 token、keyblob，不调用任何写操作 / 登出 / 续期接口；`ticket` 不进日志、不出这个模块；
 //! - 结果（套餐名、积分数和到期时间，不敏感）缓存进 CC Switch 自己的账号表，WorkBuddy 没运行时显示上次结果。
@@ -40,6 +42,7 @@ const PROTOCOL: u32 = 1;
 const PIPE: &str = "wb.request";
 const METHOD: &str = "http.fetch";
 pub(super) const SUMMARY_PATH: &str = "/billing/meter/get-user-resource-summary";
+pub(super) const ENTERPRISE_USAGE_PATH: &str = "/v2/billing/meter/get-enterprise-user-usage";
 pub(super) const FREE_PACKAGES_PATH: &str = "/billing/meter/get-user-resource-free-packages";
 pub(super) const PAID_PACKAGES_PATH: &str = "/billing/meter/get-user-resource-paid-packages";
 /// WorkBuddy 按套餐代码把资源分两个接口查，各自只认自己那组（它的 `Is` / `Fs` 两个列表）。
@@ -93,6 +96,9 @@ pub struct WorkBuddyQuotaSnapshot {
     pub total: f64,
     pub remaining: f64,
     pub used: f64,
+    /// 企业号的限额是「不限」（`limitNum = -1`）：这时 `total` / `remaining` 没有意义，只看 `used`
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unlimited: bool,
     /// 查询时刻（毫秒）
     pub queried_at: i64,
     /// 还有剩余的各个资源包各自什么时候到期，按到期先后排（不会过期的在最后）；
@@ -142,6 +148,8 @@ pub(super) struct QuotaContext {
     pub cached: Option<WorkBuddyQuotaSnapshot>,
     pub current: bool,
     pub running: bool,
+    /// 当前登录是企业号
+    pub enterprise: bool,
     pub discovery: PathBuf,
 }
 
@@ -195,7 +203,7 @@ pub async fn account_quota(
         ));
     }
 
-    match fetch_summary(&ctx.discovery).await {
+    match fetch_summary(&ctx.discovery, ctx.enterprise).await {
         Ok(snapshot) => {
             let saved = blocking(&manager, {
                 let id = account_id.clone();
@@ -286,12 +294,15 @@ fn read_discovery(path: &Path) -> Result<Discovery, FetchError> {
     }
 }
 
-/// 经 WBIPC 查一次额度汇总。
-pub(super) async fn fetch_summary(discovery: &Path) -> Result<WorkBuddyQuotaSnapshot, FetchError> {
+/// 经 WBIPC 查一次额度汇总（企业号查企业限额）。
+pub(super) async fn fetch_summary(
+    discovery: &Path,
+    enterprise: bool,
+) -> Result<WorkBuddyQuotaSnapshot, FetchError> {
     let discovery = read_discovery(discovery)?;
     tokio::time::timeout(SESSION_TIMEOUT, async {
         let stream = connect(&discovery.endpoint).await?;
-        session(stream, &discovery).await
+        session(stream, &discovery, enterprise).await
     })
     .await
     .map_err(|_| FetchError::Failed("WorkBuddy 本地接口超时".into()))?
@@ -429,6 +440,7 @@ async fn response<R: AsyncRead + Unpin>(
 async fn session<S: AsyncRead + AsyncWrite + Unpin>(
     stream: S,
     discovery: &Discovery,
+    enterprise: bool,
 ) -> Result<WorkBuddyQuotaSnapshot, FetchError> {
     let (read_half, mut writer) = tokio::io::split(stream);
     let mut reader = BufReader::new(read_half);
@@ -526,6 +538,20 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
     }
 
     let now = chrono::Utc::now().timestamp_millis();
+    if enterprise {
+        // 企业号没有资源包：一次查完，到期时间就是本周期结束
+        let usage = fetch(
+            &mut writer,
+            &mut reader,
+            &channel,
+            2,
+            ENTERPRISE_USAGE_PATH,
+            json!({}),
+        )
+        .await?;
+        let _ = writer.shutdown().await;
+        return parse_enterprise_usage(&usage, now);
+    }
     let summary = fetch(
         &mut writer,
         &mut reader,
@@ -592,39 +618,68 @@ async fn fetch<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         .ok_or_else(|| FetchError::Failed("额度接口回包为空".into()))
 }
 
-/// 汇总里出现了哪类套餐，就查哪个明细接口（WorkBuddy 对只有免费套餐的号也不查 paid）。
+/// 查各资源包到期时间要发的套餐明细请求。
 async fn fetch_expiries<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
     reader: &mut BufReader<R>,
     channel: &str,
     summary: &[u8],
 ) -> Result<Vec<WorkBuddyCreditExpiry>, FetchError> {
-    let codes = summary_package_codes(summary);
-    let has_any = |group: &[&str]| codes.iter().any(|code| group.contains(&code.as_str()));
     let mut bodies = Vec::new();
-    if has_any(FREE_PACKAGE_CODES) {
-        let (start, end) = slice_period(chrono::Local::now().naive_local().date());
-        let body = json!({
-            "PageNumber": 1,
-            "PageSize": PACKAGES_PAGE_SIZE,
-            "PackageCodes": FREE_PACKAGE_CODES,
-            "Status": PACKAGE_STATUSES,
-            "SlicePeriodStartTime": start,
-            "SlicePeriodEndTime": end,
-        });
-        bodies.push(fetch(writer, reader, channel, 3, FREE_PACKAGES_PATH, body).await?);
-    }
-    if has_any(PAID_PACKAGE_CODES) {
-        let body = json!({
-            "PageNumber": 1,
-            "PageSize": PACKAGES_PAGE_SIZE,
-            "PackageCodes": PAID_PACKAGE_CODES,
-            "Status": PACKAGE_STATUSES,
-            "NeedRenewInfo": true,
-        });
-        bodies.push(fetch(writer, reader, channel, 4, PAID_PACKAGES_PATH, body).await?);
+    let requests = package_detail_requests(summary, chrono::Local::now().naive_local().date());
+    for (id, (path, body)) in (3..).zip(requests) {
+        bodies.push(fetch(writer, reader, channel, id, path, body).await?);
     }
     parse_packages(&bodies, chrono::Utc::now().timestamp_millis())
+}
+
+/// 汇总里出现了哪类套餐，就查哪个明细接口（WorkBuddy 对只有免费套餐的号也不查 paid），
+/// 返回要 POST 的路径和请求体。CodeBuddy 账号和 WorkBuddy 共用这套计费后端，也用它查到期时间。
+pub(crate) fn package_detail_requests(
+    summary: &[u8],
+    today: chrono::NaiveDate,
+) -> Vec<(&'static str, Value)> {
+    let codes = summary_package_codes(summary);
+    let has_any = |group: &[&str]| codes.iter().any(|code| group.contains(&code.as_str()));
+    let mut requests = Vec::new();
+    if has_any(FREE_PACKAGE_CODES) {
+        let (start, end) = slice_period(today);
+        requests.push((
+            FREE_PACKAGES_PATH,
+            json!({
+                "PageNumber": 1,
+                "PageSize": PACKAGES_PAGE_SIZE,
+                "PackageCodes": FREE_PACKAGE_CODES,
+                "Status": PACKAGE_STATUSES,
+                "SlicePeriodStartTime": start,
+                "SlicePeriodEndTime": end,
+            }),
+        ));
+    }
+    if has_any(PAID_PACKAGE_CODES) {
+        requests.push((
+            PAID_PACKAGES_PATH,
+            json!({
+                "PageNumber": 1,
+                "PageSize": PACKAGES_PAGE_SIZE,
+                "PackageCodes": PAID_PACKAGE_CODES,
+                "Status": PACKAGE_STATUSES,
+                "NeedRenewInfo": true,
+            }),
+        ));
+    }
+    requests
+}
+
+/// [`parse_packages`] 给别的模块用：错误换成一句话。
+pub(crate) fn parse_package_expiries(
+    bodies: &[Vec<u8>],
+    now: i64,
+) -> Result<Vec<WorkBuddyCreditExpiry>, String> {
+    parse_packages(bodies, now).map_err(|error| match error {
+        FetchError::Failed(message) => message,
+        other => format!("{other:?}"),
+    })
 }
 
 /// 当天 0 点到 23:59:59（本地时间，同 WorkBuddy 的 `buildSlicePeriodRange`）。
@@ -677,9 +732,67 @@ pub(super) fn parse_summary(
         total,
         remaining,
         used,
+        unlimited: false,
         queried_at,
         expiries: None,
     })
+}
+
+/// 企业号本周期的限额（`limitNum`，-1 为不限）和已用（`credit`），同 WorkBuddy `getEnterpriseUsage`；
+/// 它另一处读的是 `limit_num` / `used_num`，两种拼法都认。剩余的限额到本周期结束（`cycleEndTime`）作废，
+/// 和按月发放的资源包一样记成一笔到期。
+pub(super) fn parse_enterprise_usage(
+    body: &[u8],
+    queried_at: i64,
+) -> Result<WorkBuddyQuotaSnapshot, FetchError> {
+    let doc: Value = serde_json::from_slice(body)
+        .map_err(|_| FetchError::Failed("额度接口回了看不懂的数据".into()))?;
+    let data = business_data(&doc)?;
+    let field = |names: [&str; 2]| names.into_iter().find_map(|name| data.get(name));
+    let limit = match field(["limitNum", "limit_num"]) {
+        Some(Value::Number(number)) => number.as_f64(),
+        Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+    .filter(|limit| limit.is_finite())
+    .ok_or_else(|| FetchError::Failed("企业额度接口没给限额".into()))?;
+    let used = count(field(["credit", "used_num"]));
+    let unlimited = limit < 0.0;
+    let (total, remaining) = if unlimited {
+        (0.0, 0.0)
+    } else {
+        (limit, (limit - used).max(0.0))
+    };
+    let expiries = enterprise_cycle_expiry(data, remaining, unlimited, queried_at);
+    Ok(WorkBuddyQuotaSnapshot {
+        plan_name: None,
+        is_paid: true,
+        total,
+        remaining,
+        used,
+        unlimited,
+        queried_at,
+        expiries: Some(expiries.into_iter().collect()),
+    })
+}
+
+/// 企业号剩余的限额到本周期结束（`cycleEndTime`）作废，记成一笔到期；不限额、没剩余时没有。
+/// CodeBuddy 的企业号查的是同一个接口，也用它。
+pub(crate) fn enterprise_cycle_expiry(
+    data: &Value,
+    remaining: f64,
+    unlimited: bool,
+    queried_at: i64,
+) -> Option<WorkBuddyCreditExpiry> {
+    ["cycleEndTime", "cycle_end_time"]
+        .into_iter()
+        .find_map(|name| data.get(name))
+        .and_then(|value| billing_time(Some(value)))
+        .filter(|at| !unlimited && remaining > 0.0 && at - queried_at < NEVER_EXPIRES_AFTER_MS)
+        .map(|expires_at| WorkBuddyCreditExpiry {
+            credits: remaining,
+            expires_at: Some(expires_at),
+        })
 }
 
 /// 业务码为 0 时取 `data`，否则报错。

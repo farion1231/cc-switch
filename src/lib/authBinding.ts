@@ -1,9 +1,9 @@
-import { isMac, isWindows } from "@/lib/platform";
+import { isLinux, isMac, isWindows } from "@/lib/platform";
 import type { Provider, ProviderMeta } from "@/types";
 
-/** 能不能切 agy 的全局登录：和后端 `agy_account::keychain::supported` 一致（macOS 钥匙串、Windows 凭据管理器）。 */
+/** 能不能切 agy 的全局登录：和后端 `agy_account::keychain::supported` 一致。 */
 export function canSwitchAgyAccount(): boolean {
-  return isMac() || isWindows();
+  return isMac() || isWindows() || isLinux();
 }
 
 export function resolveManagedAccountId(
@@ -26,12 +26,41 @@ export function resolveManagedAccountId(
   return null;
 }
 
+export function isDshCodexAccountProvider(
+  appId: string,
+  providerId: string | undefined,
+  meta: ProviderMeta | undefined,
+): boolean {
+  return (
+    appId === "dsh" &&
+    providerId === "openai-codex" &&
+    meta?.authBinding?.source === "managed_account" &&
+    meta.authBinding.authProvider === "codex_oauth"
+  );
+}
+
+export function isDshCodexOAuthRoute(
+  appId: string,
+  providerId: string | undefined,
+  settings: Record<string, unknown> | undefined,
+): boolean {
+  if (appId !== "dsh" || providerId !== "openai-codex") return false;
+  const options = settings?.options;
+  const apiKey =
+    options && typeof options === "object" && "apiKey" in options
+      ? options.apiKey
+      : undefined;
+  return ![settings?.apiKeyEnv, apiKey].some(
+    (credential) => typeof credential === "string" && credential.trim() !== "",
+  );
+}
+
 /** Native DSH Codex uses its local binding, not the CLI or proxy default account. */
 export function resolveDshCodexAccountId(
   appId: string,
   provider: Provider,
 ): string | null {
-  return appId === "dsh" && provider.id === "openai-codex"
+  return isDshCodexAccountProvider(appId, provider.id, provider.meta)
     ? resolveManagedAccountId(provider.meta, "codex_oauth")?.trim() || null
     : null;
 }

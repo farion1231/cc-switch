@@ -42,7 +42,7 @@ pub async fn get_codex_oauth_quota(
         return Ok(SubscriptionQuota::not_found("codex_oauth"));
     };
 
-    let result = query_codex_oauth_quota_for(manager, &id).await;
+    let result = query_codex_oauth_quota_for(manager, &id, false).await;
     // Cache by the resolved account, even if the default/binding changes while
     // the request is in flight. Transport errors retain the last good snapshot;
     // authentication/HTTP failures replace it so the tray hides invalid quotas.
@@ -53,12 +53,26 @@ pub async fn get_codex_oauth_quota(
     result
 }
 
+/// Query only the native DSH grant. Do not populate the managed Codex tray cache.
+#[tauri::command(rename_all = "camelCase")]
+pub async fn get_dsh_codex_quota(
+    account_id: String,
+    state: State<'_, CodexOAuthState>,
+) -> Result<SubscriptionQuota, String> {
+    query_codex_oauth_quota_for(&state.0, account_id.trim(), true).await
+}
+
 pub(crate) async fn query_codex_oauth_quota_for(
     manager: &CodexOAuthManager,
     id: &str,
+    use_dsh: bool,
 ) -> Result<SubscriptionQuota, String> {
-    // 获取（必要时自动刷新）access_token
-    let token = match manager.get_valid_token_for_account(id).await {
+    let token_result = if use_dsh {
+        manager.get_valid_dsh_token_for_account(id).await
+    } else {
+        manager.get_valid_token_for_account(id).await
+    };
+    let token = match token_result {
         Ok(t) => t,
         // 网络 / 刷新端点暂时失败不代表登录失效：以 Err 传播，前端 retry 并保留
         // 上次成功值，托盘缓存也不被覆盖；只有确定的凭据问题才标成过期。

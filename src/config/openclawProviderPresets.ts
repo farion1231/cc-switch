@@ -266,6 +266,22 @@ const aiCodeMirrorModels = (): NonNullable<
   },
 ];
 
+// String AI 接入文档给的 OpenClaw 配置补丁按 128K 上下文、16K 输出写
+const stringAiModels = (): NonNullable<OpenClawProviderConfig["models"]> => [
+  {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    contextWindow: 128000,
+    maxTokens: 16384,
+  },
+  {
+    id: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    contextWindow: 128000,
+    maxTokens: 16384,
+  },
+];
+
 const fennoAiModels = (): NonNullable<OpenClawProviderConfig["models"]> => [
   {
     id: "gpt-6.1-sol",
@@ -944,6 +960,37 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      baseUrl: "https://www.string.ink/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: stringAiModels(),
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "stringai/gpt-6-astra",
+      },
+      modelCatalog: {
+        "stringai/gpt-6-astra": { alias: "GPT-6 Astra" },
+        "stringai/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
+      },
+    },
   },
   {
     name: "FennoAI",

@@ -12,8 +12,9 @@
 
 use super::codex_compaction;
 use super::transform_codex_chat::{
-    build_codex_tool_context_from_request, response_tool_call_item_from_chat_name,
-    response_tool_call_item_id_from_chat_name, CodexToolContext,
+    build_codex_tool_context_from_request, response_message_item_id_indexed,
+    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
+    CodexToolContext,
 };
 use super::transform_responses::{sanitize_anthropic_tool_use_input, TOOL_RESULT_ERROR_MARKER};
 use crate::proxy::error::ProxyError;
@@ -316,6 +317,10 @@ pub fn responses_request_to_anthropic(
     let adaptive_by_default = crate::proxy::thinking_optimizer::adaptive_thinking_is_default(model);
     let cannot_disable_thinking =
         crate::proxy::thinking_optimizer::thinking_cannot_be_disabled(model);
+    // Opus 5.5 / Sonnet 5.5 reject `disabled` but accept a tool turn the model
+    // answered without thinking, so unsigned tool history keeps adaptive thinking.
+    let thinking_history_is_valid = thinking_history_is_valid
+        || crate::proxy::thinking_optimizer::accepts_unsigned_tool_history(model);
 
     // max_output_tokens → max_tokens (required)
     let max_tokens = body
@@ -350,7 +355,7 @@ pub fn responses_request_to_anthropic(
         if let Some(effort) = reasoning_effort.and_then(codex_effort_to_anthropic) {
             result["output_config"] = json!({ "effort": effort });
         } else if explicitly_disabled && cannot_disable_thinking {
-            // Fable/Mythos cannot turn thinking off. `low` is the closest safe
+            // These models cannot turn thinking off. `low` is the closest safe
             // representation of Codex's explicit `none` request.
             result["output_config"] = json!({ "effort": "low" });
         }
@@ -478,9 +483,10 @@ fn chat_tool_to_anthropic_tool(chat_tool: &Value) -> Option<Value> {
     if let Some(description) = function.get("description").and_then(|value| value.as_str()) {
         tool["description"] = json!(description);
     }
-    if let Some(strict) = function.get("strict").and_then(|value| value.as_bool()) {
-        tool["strict"] = json!(strict);
-    }
+    // `strict` is an OpenAI function-tool flag with no Anthropic Messages
+    // equivalent on this path. Bedrock-hosted Claude validates tool definitions
+    // strictly and rejects it with `400 ... strict: Extra inputs are not permitted`,
+    // so it must not be forwarded.
     Some(tool)
 }
 
@@ -500,10 +506,14 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolCon
                 let upstream_name = tool_context.chat_name_for_response_function(name, namespace);
                 json!({ "type": "tool", "name": upstream_name })
             }
-            Some("custom") => json!({
-                "type": "tool",
-                "name": obj.get("name").and_then(|value| value.as_str()).unwrap_or("")
-            }),
+            Some("custom") => {
+                let name = obj
+                    .get("name")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let upstream_name = tool_context.chat_name_for_response_function(name, None);
+                json!({ "type": "tool", "name": upstream_name })
+            }
             Some("tool_search") => {
                 json!({ "type": "tool", "name": TOOL_SEARCH_PROXY_NAME })
             }
@@ -594,6 +604,7 @@ fn convert_input_to_messages(
                     .get("name")
                     .and_then(|value| value.as_str())
                     .unwrap_or("");
+                let upstream_name = tool_context.chat_name_for_response_function(name, None);
                 let input = item.get("input").cloned().unwrap_or_else(|| json!(""));
                 push_block(
                     &mut messages,
@@ -601,7 +612,7 @@ fn convert_input_to_messages(
                     json!({
                         "type": "tool_use",
                         "id": call_id,
-                        "name": name,
+                        "name": upstream_name,
                         "input": { "input": input }
                     }),
                 );
@@ -1329,7 +1340,7 @@ pub(crate) fn anthropic_response_to_responses_with_context(
         if !text_parts.is_empty() {
             let idx = output.len();
             output.push(json!({
-                "id": format!("{response_id}_msg_{idx}"),
+                "id": response_message_item_id_indexed(&response_id, idx),
                 "type": "message",
                 "status": "completed",
                 "role": "assistant",
@@ -1745,6 +1756,27 @@ mod tests {
         assert_eq!(tools[0]["input_schema"]["type"], "object");
         assert!(tools[0].get("parameters").is_none());
         assert_eq!(tools[1]["name"], "apply_patch");
+    }
+
+    #[test]
+    fn test_request_tools_do_not_forward_openai_strict_flag() {
+        for strict in [json!(true), json!(false)] {
+            let input = json!({
+                "model": "claude",
+                "max_output_tokens": 100,
+                "input": [{ "role": "user", "content": "hi" }],
+                "tools": [{
+                    "type": "function",
+                    "name": "get_weather",
+                    "parameters": {"type": "object"},
+                    "strict": strict
+                }]
+            });
+            let result = responses_request_to_anthropic(input, 4096).unwrap();
+            let tool = &result["tools"][0];
+            assert_eq!(tool["name"], "get_weather");
+            assert!(tool.get("strict").is_none());
+        }
     }
 
     #[test]
@@ -2254,6 +2286,60 @@ mod tests {
     }
 
     #[test]
+    fn test_unsigned_tool_history_keeps_adaptive_thinking_on_models_that_cannot_disable_it() {
+        // #9943: Opus 5.5 / Sonnet 5.5 400 on `thinking: disabled`, and Codex tool turns
+        // replayed without a signed thinking block used to fall back to exactly that.
+        for model in [
+            "claude-opus-5-5",
+            "claude-opus-5-5[1m]",
+            "claude-sonnet-5-5",
+        ] {
+            let input = json!({
+                "model": model,
+                "max_output_tokens": 4096,
+                "temperature": 0.5,
+                "reasoning": { "effort": "high" },
+                "tools": [{ "type": "function", "name": "Read", "parameters": {"type": "object"} }],
+                "input": [
+                    { "role": "user", "content": "read the file" },
+                    { "type": "function_call", "call_id": "c1", "name": "Read", "arguments": "{}" },
+                    { "type": "function_call_output", "call_id": "c1", "output": "ok" }
+                ]
+            });
+
+            let result = responses_request_to_anthropic(input, 4096).unwrap();
+
+            assert_eq!(
+                result["thinking"],
+                json!({ "type": "adaptive" }),
+                "model={model}"
+            );
+            assert_eq!(result["output_config"]["effort"], "high", "model={model}");
+            assert!(result.get("temperature").is_none(), "model={model}");
+            let messages = result["messages"].as_array().unwrap();
+            assert_eq!(
+                messages[messages.len() - 2]["content"][0]["type"],
+                "tool_use"
+            );
+        }
+    }
+
+    #[test]
+    fn test_explicit_none_effort_keeps_adaptive_thinking_on_opus_5_5() {
+        let input = json!({
+            "model": "claude-opus-5-5",
+            "max_output_tokens": 4096,
+            "reasoning": { "effort": "none" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        assert_eq!(result["output_config"]["effort"], "low");
+    }
+
+    #[test]
     fn test_thinking_requires_all_parallel_tool_results_to_match_paired_turn() {
         let paired = json!([
             {"role": "assistant", "content": [
@@ -2322,6 +2408,36 @@ mod tests {
         assert_eq!(result["tools"].as_array().unwrap().len(), 1);
         assert_eq!(result["tools"][0]["name"], "apply_patch");
         assert_eq!(result["tool_choice"], json!({ "type": "any" }));
+    }
+
+    #[test]
+    fn test_request_long_custom_tool_uses_the_same_name_in_choice_and_history() {
+        let name = format!("custom_{}", "a".repeat(64));
+        let request = json!({
+            "model": "claude",
+            "tools": [{ "type": "custom", "name": name }],
+            "tool_choice": { "type": "custom", "name": name },
+            "input": [
+                { "role": "user", "content": "Use the custom tool." },
+                { "type": "custom_tool_call", "call_id": "call_1", "name": name, "input": "text" },
+                { "type": "custom_tool_call_output", "call_id": "call_1", "output": "done" }
+            ]
+        });
+
+        let result = responses_request_to_anthropic(request, 4096).unwrap();
+        let upstream_name = result["tools"][0]["name"].as_str().unwrap();
+        assert_ne!(upstream_name, name);
+        assert!(upstream_name.len() <= 64);
+        assert_eq!(result["tool_choice"]["name"], upstream_name);
+        assert_eq!(
+            result["messages"][1]["content"][0],
+            json!({
+                "type": "tool_use",
+                "id": "call_1",
+                "name": upstream_name,
+                "input": { "input": "text" }
+            })
+        );
     }
 
     #[test]
@@ -2503,6 +2619,7 @@ mod tests {
         assert_eq!(result["id"], "resp_msg_1");
         assert_eq!(result["status"], "completed");
         assert_eq!(result["output"][0]["type"], "message");
+        assert_eq!(result["output"][0]["id"], "msg_msg_1_0");
         assert_eq!(result["output"][0]["content"][0]["type"], "output_text");
         assert_eq!(result["output"][0]["content"][0]["text"], "Hello!");
         assert_eq!(result["usage"]["input_tokens"], 10);
@@ -3051,15 +3168,16 @@ data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usa
     }
 
     #[test]
-    fn test_anthropic_sse_aggregation_missing_message_start_errors() {
-        let sse = "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n";
-        assert!(anthropic_sse_to_message_value(sse).is_err());
-    }
+    fn test_anthropic_sse_aggregation_errors() {
+        for (case, stream) in [
+            ("test_anthropic_sse_aggregation_missing_message_start_errors", "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"),
+            ("test_anthropic_sse_aggregation_error_event_errors", "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"overloaded\"}}\n\n"),
+            ("test_anthropic_sse_aggregation_truncated_without_output_errors", "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n"),
+        ] {
+            let sse = stream;
+            assert!(anthropic_sse_to_message_value(sse).is_err(), "{case}");
 
-    #[test]
-    fn test_anthropic_sse_aggregation_error_event_errors() {
-        let sse = "data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"overloaded\"}}\n\n";
-        assert!(anthropic_sse_to_message_value(sse).is_err());
+        }
     }
 
     #[test]
@@ -3086,13 +3204,6 @@ data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":
             response["incomplete_details"]["reason"],
             "max_output_tokens"
         );
-    }
-
-    #[test]
-    fn test_anthropic_sse_aggregation_truncated_without_output_errors() {
-        let sse =
-            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"content\":[]}}\n\n";
-        assert!(anthropic_sse_to_message_value(sse).is_err());
     }
 
     #[test]

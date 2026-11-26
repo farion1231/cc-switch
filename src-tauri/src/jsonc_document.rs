@@ -19,11 +19,28 @@ pub(crate) struct JsoncDocument {
 
 impl JsoncDocument {
     pub(crate) fn parse(source: &str) -> Result<Self, AppError> {
+        Self::parse_root(source, false)
+    }
+
+    pub(crate) fn parse_array(source: &str) -> Result<Self, AppError> {
+        Self::parse_root(source, true)
+    }
+
+    fn parse_root(source: &str, array: bool) -> Result<Self, AppError> {
         let semantic: Value = json5::from_str(source)
             .map_err(|e| AppError::Config(format!("Failed to parse JSONC config: {e}")))?;
-        if !semantic.is_object() {
+        if !(if array {
+            semantic.is_array()
+        } else {
+            semantic.is_object()
+        }) {
             return Err(AppError::Config(
-                "JSONC config root must be a JSON object".into(),
+                if array {
+                    "JSONC config root must be a JSON array"
+                } else {
+                    "JSONC config root must be a JSON object"
+                }
+                .into(),
             ));
         }
         let text = parse_round_trip(source)?;
@@ -37,6 +54,25 @@ impl JsoncDocument {
 
     pub(crate) fn value(&self) -> &Value {
         &self.semantic
+    }
+
+    /// Remove selected root-array entries without reserializing the retained
+    /// entries. Their comments and formatting stay attached to the same values.
+    pub(crate) fn retain_array(&mut self, keep: impl Fn(&Value) -> bool) -> Result<(), AppError> {
+        let (RtJSONValue::JSONArray { values, context }, Value::Array(current)) =
+            (&mut self.text.value, &mut self.semantic)
+        else {
+            return Err(AppError::Config(
+                "JSONC config root must be a JSON array".into(),
+            ));
+        };
+        for index in (0..current.len()).rev() {
+            if !keep(&current[index]) {
+                remove_array_value_at(values, context, index);
+                current.remove(index);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn original_source(&self) -> &str {
@@ -62,9 +98,19 @@ impl JsoncDocument {
     }
 
     pub(crate) fn apply(&mut self, desired: &Value) -> Result<bool, AppError> {
-        if !desired.is_object() {
+        let array = self.semantic.is_array();
+        if !(if array {
+            desired.is_array()
+        } else {
+            desired.is_object()
+        }) {
             return Err(AppError::Config(
-                "JSONC config root must be a JSON object".into(),
+                if array {
+                    "JSONC config root must be a JSON array"
+                } else {
+                    "JSONC config root must be a JSON object"
+                }
+                .into(),
             ));
         }
         let line_ending = if self.original_source.contains("\r\n") {
@@ -722,6 +768,11 @@ mod tests {
         for source in ["{broken", "[]", "null", "42", "\"text\""] {
             assert!(JsoncDocument::parse(source).is_err());
         }
+        let mut array = JsoncDocument::parse_array("[]").unwrap();
+        assert!(matches!(
+            array.apply(&json!({})),
+            Err(AppError::Config(message)) if message == "JSONC config root must be a JSON array"
+        ));
         for parseable in [false, true] {
             let mut doc = JsoncDocument::parse("{}").unwrap();
             doc.apply(&json!({"new":true})).unwrap();

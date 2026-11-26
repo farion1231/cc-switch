@@ -10,7 +10,7 @@ use indexmap::IndexMap;
 use rusqlite::{params, OptionalExtension, Row};
 
 const MCP_SERVER_SELECT: &str =
-    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy FROM mcp_servers";
+    "SELECT id, name, server_config, description, homepage, docs, tags, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_codebuddy FROM mcp_servers";
 
 fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
     let id: String = row.get(0)?;
@@ -50,6 +50,7 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
                 dsh: row.get(18)?,
                 copilot: row.get(19)?,
                 workbuddy: row.get(20)?,
+                codebuddy: row.get(21)?,
             },
             description,
             homepage,
@@ -57,6 +58,28 @@ fn row_to_mcp_server(row: &Row<'_>) -> rusqlite::Result<(String, McpServer)> {
             tags,
         },
     ))
+}
+
+/// 应用对应的 `enabled_*` 列；Claude Desktop、OpenClaw 在库里没有 MCP 标志。
+fn mcp_flag_column(app: &AppType) -> Option<&'static str> {
+    match app {
+        AppType::Claude => Some("enabled_claude"),
+        AppType::Codex => Some("enabled_codex"),
+        AppType::Gemini => Some("enabled_gemini"),
+        AppType::GrokBuild => Some("enabled_grokbuild"),
+        AppType::OpenCode => Some("enabled_opencode"),
+        AppType::Hermes => Some("enabled_hermes"),
+        AppType::Mcode => Some("enabled_mcode"),
+        AppType::Kimi => Some("enabled_kimi"),
+        AppType::Dsh => Some("enabled_dsh"),
+        AppType::Copilot => Some("enabled_copilot"),
+        AppType::WorkBuddy => Some("enabled_workbuddy"),
+        AppType::Pi => Some("enabled_pi"),
+        AppType::Omp => Some("enabled_omp"),
+        AppType::Agy => Some("enabled_agy"),
+        AppType::Codebuddy => Some("enabled_codebuddy"),
+        AppType::ClaudeDesktop | AppType::OpenClaw => None,
+    }
 }
 
 impl Database {
@@ -106,6 +129,24 @@ impl Database {
         Ok(result.and_then(Result::err))
     }
 
+    /// 给某个应用开着的 MCP 服务器 id。只读布尔列、不解码 JSON，所以存坏的行也能判断归属。
+    pub fn mcp_server_ids_enabled_for(&self, app: &AppType) -> Result<Vec<String>, AppError> {
+        let Some(column) = mcp_flag_column(app) else {
+            return Ok(Vec::new());
+        };
+        let conn = lock_conn!(self.conn);
+        // `column` comes exclusively from the fixed allow-list in `mcp_flag_column`.
+        let mut stmt = conn
+            .prepare(&format!("SELECT id FROM mcp_servers WHERE {column} <> 0"))
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| AppError::Database(e.to_string()))?
+            .collect::<Result<_, _>>()
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(ids)
+    }
+
     /// Atomically update one application's flag and return the authoritative row.
     ///
     /// The update and read share the same connection lock, so concurrent toggles
@@ -121,26 +162,7 @@ impl Database {
         let conn = conn
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
-        let column = match app {
-            AppType::Claude => Some("enabled_claude"),
-            AppType::Codex => Some("enabled_codex"),
-            AppType::Gemini => Some("enabled_gemini"),
-            AppType::GrokBuild => Some("enabled_grokbuild"),
-            AppType::OpenCode => Some("enabled_opencode"),
-            AppType::Hermes => Some("enabled_hermes"),
-            // These applications intentionally have no MCP flag in the SSOT.
-            AppType::Mcode => Some("enabled_mcode"),
-            AppType::Kimi => Some("enabled_kimi"),
-            AppType::Dsh => Some("enabled_dsh"),
-            AppType::Copilot => Some("enabled_copilot"),
-            AppType::WorkBuddy => Some("enabled_workbuddy"),
-            AppType::Pi => Some("enabled_pi"),
-            AppType::Omp => Some("enabled_omp"),
-            AppType::ClaudeDesktop | AppType::OpenClaw => None,
-            AppType::Agy => Some("enabled_agy"),
-        };
-
-        if let Some(column) = column {
+        if let Some(column) = mcp_flag_column(app) {
             // `column` comes exclusively from the fixed allow-list above.
             let sql = format!("UPDATE mcp_servers SET {column} = ?1 WHERE id = ?2");
             let affected = conn
@@ -170,8 +192,8 @@ impl Database {
         conn.execute(
             "INSERT OR REPLACE INTO mcp_servers (
                 id, name, server_config, description, homepage, docs, tags,
-                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes, enabled_mcode, enabled_pi, enabled_agy, enabled_kimi, enabled_omp, enabled_dsh, enabled_copilot, enabled_workbuddy, enabled_codebuddy
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
             params![
                 server.id,
                 server.name,
@@ -197,6 +219,7 @@ impl Database {
                 server.apps.dsh,
                 server.apps.copilot,
                 server.apps.workbuddy,
+                server.apps.codebuddy,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;

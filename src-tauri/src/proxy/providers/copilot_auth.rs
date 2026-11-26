@@ -21,7 +21,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::{Mutex, RwLock};
 
 use crate::proxy::error::ProxyError;
@@ -93,6 +95,9 @@ fn copilot_api_base(domain: &str) -> String {
 
 /// Token 刷新提前量（秒）
 const TOKEN_REFRESH_BUFFER_SECONDS: i64 = 60;
+
+/// GitHub / Copilot 认证元数据请求超时（避免复用代理流式请求的 600s 超时长期阻塞迁移锁）
+const GITHUB_HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// 判断是否为 GitHub Enterprise Server（非 github.com）
 fn is_ghes(domain: &str) -> bool {
@@ -271,6 +276,7 @@ pub struct CopilotModel {
     /// 模型供应商
     pub vendor: String,
     /// 是否在模型选择器中显示
+    #[serde(default)]
     pub model_picker_enabled: bool,
     /// Copilot-reported maximum prompt limit for this exact model ID.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -287,6 +293,33 @@ pub struct CopilotModel {
     /// Copilot-reported reasoning effort levels supported by this model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<Vec<CopilotReasoningEffort>>,
+    /// Billing metadata reported by the account model catalogue.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub billing: Option<CopilotModelBilling>,
+}
+
+/// User-selectable models plus account-wide Auto capability. Hidden models are
+/// deliberately omitted from `models`, while they may still establish Auto.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CopilotModelOptions {
+    pub models: Vec<CopilotModel>,
+    pub auto_routing_supported: bool,
+}
+
+impl CopilotModel {
+    pub fn supports_auto_routing(&self) -> bool {
+        self.billing
+            .as_ref()
+            .and_then(|billing| billing.auto_discount)
+            .is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CopilotModelBilling {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_discount: Option<f64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -309,16 +342,32 @@ struct CopilotModelsResponse {
 }
 
 /// Copilot Models API 响应项
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct CopilotModelsResponseItem {
     id: String,
     name: String,
     vendor: String,
+    #[serde(default)]
     model_picker_enabled: bool,
     #[serde(default)]
     supported_endpoints: Vec<String>,
     #[serde(default)]
     capabilities: Option<Value>,
+    #[serde(default)]
+    billing: Option<CopilotModelBilling>,
+    #[serde(default)]
+    policy: Option<Value>,
+}
+
+impl CopilotModelsResponseItem {
+    fn is_usable(&self) -> bool {
+        !self
+            .policy
+            .as_ref()
+            .and_then(|policy| policy.get("state"))
+            .and_then(Value::as_str)
+            .is_some_and(|state| state.eq_ignore_ascii_case("disabled"))
+    }
 }
 
 fn positive_capability_limit(capabilities: &Value, pointer: &str) -> Option<u64> {
@@ -386,6 +435,9 @@ pub enum CopilotAuthError {
 
     #[error("GitHub 令牌无效或已过期")]
     GitHubTokenInvalid,
+
+    #[error("Copilot /models returned HTTP 401")]
+    ModelsUnauthorized,
 
     #[error("Copilot 令牌获取失败: {0}")]
     CopilotTokenFetchFailed(String),
@@ -564,6 +616,31 @@ struct CopilotAuthStore {
     authenticated_at: Option<i64>,
 }
 
+/// 按磁盘上的账号表给出 `(account_id -> GitHub 用户名, 默认账号 id)`（同 [`GitHubAccount::from`]）：托盘同步读状态用。
+pub fn labels_on_disk(data_dir: &std::path::Path) -> (HashMap<String, String>, Option<String>) {
+    let Ok(content) = fs::read_to_string(data_dir.join("copilot_auth.json")) else {
+        return (HashMap::new(), None);
+    };
+    let Ok(store) = serde_json::from_str::<CopilotAuthStore>(&content) else {
+        return (HashMap::new(), None);
+    };
+    if store.version < 2 {
+        return (HashMap::new(), None);
+    }
+    let default_id = store
+        .default_account_id
+        .filter(|id| store.accounts.contains_key(id))
+        .or_else(|| CopilotAuthManager::fallback_default_account_id(&store.accounts));
+    let labels = store
+        .accounts
+        .iter()
+        .map(|(id, data)| (id.clone(), GitHubAccount::from(data).login))
+        .collect();
+    (labels, default_id)
+}
+
+type CopilotModelCache = HashMap<(String, &'static str), Vec<CopilotModel>>;
+
 /// Copilot 认证管理器（支持多账号）
 pub struct CopilotAuthManager {
     /// 所有 GitHub 账号（key = GitHub user ID）
@@ -574,8 +651,11 @@ pub struct CopilotAuthManager {
     refresh_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     /// Copilot Token 缓存（key = GitHub user ID，内存缓存，自动刷新）
     copilot_tokens: Arc<RwLock<HashMap<String, CopilotToken>>>,
-    /// Copilot Models 缓存（key = GitHub user ID，仅进程内复用）
-    copilot_models: Arc<RwLock<HashMap<String, Vec<CopilotModel>>>>,
+    /// Copilot Models 进程内缓存，按账号 ID 和 API 版本区分。
+    copilot_models: Arc<RwLock<CopilotModelCache>>,
+    /// 目录里看不出 Auto 时，实际调一次 /auto 的结论（key = GitHub user ID）。
+    /// 只存确定的答案，网络错误下次再探；和模型目录一起清。
+    auto_routing_probes: Arc<RwLock<HashMap<String, bool>>>,
     /// Copilot API 端点缓存（key = GitHub user ID，从 /copilot_internal/user 获取）
     api_endpoints: Arc<RwLock<HashMap<String, String>>>,
     /// 每个账号的端点拉取锁，避免并发拉取重复打 GitHub API
@@ -586,6 +666,19 @@ pub struct CopilotAuthManager {
     pending_migration: Arc<RwLock<Option<String>>>,
     /// 旧认证数据迁移失败时的状态消息
     migration_error: Arc<RwLock<Option<String>>>,
+    /// 凭证代次（账号添加/删除/切换默认时自增，使失效的 Auto 会话感知）
+    credential_generation: Arc<AtomicU64>,
+    /// 串行化旧认证迁移的网络请求
+    migration_lock: Arc<Mutex<()>>,
+    /// 串行化账号写盘和迁移状态提交，不跨网络请求持有
+    auth_write_lock: Arc<Mutex<()>>,
+    /// 登录成功或登出时递增，阻止在飞的旧迁移写回账号
+    migration_epoch: Arc<AtomicU64>,
+    /// GitHub / Copilot 认证请求超时
+    request_timeout: Duration,
+    /// 测试用 GitHub API 基址覆盖
+    #[cfg(test)]
+    github_api_base_override: Option<String>,
 }
 
 impl CopilotAuthManager {
@@ -599,11 +692,19 @@ impl CopilotAuthManager {
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             copilot_tokens: Arc::new(RwLock::new(HashMap::new())),
             copilot_models: Arc::new(RwLock::new(HashMap::new())),
+            auto_routing_probes: Arc::new(RwLock::new(HashMap::new())),
             api_endpoints: Arc::new(RwLock::new(HashMap::new())),
             endpoint_locks: Arc::new(RwLock::new(HashMap::new())),
             storage_path,
             pending_migration: Arc::new(RwLock::new(None)),
             migration_error: Arc::new(RwLock::new(None)),
+            credential_generation: Arc::new(AtomicU64::new(1)),
+            migration_lock: Arc::new(Mutex::new(())),
+            auth_write_lock: Arc::new(Mutex::new(())),
+            migration_epoch: Arc::new(AtomicU64::new(0)),
+            request_timeout: GITHUB_HTTP_TIMEOUT,
+            #[cfg(test)]
+            github_api_base_override: None,
         };
 
         // 尝试从磁盘加载（同步，不发起网络请求）
@@ -614,10 +715,58 @@ impl CopilotAuthManager {
         manager
     }
 
+    #[cfg(test)]
+    pub(crate) async fn with_mock_server(data_dir: PathBuf, api_base: &str) -> Self {
+        let auth = Self::with_test_github_api_base(data_dir, api_base, GITHUB_HTTP_TIMEOUT);
+        let account_id = "123".to_string();
+        auth.accounts.write().await.insert(
+            account_id.clone(),
+            GitHubAccountData {
+                github_token: "mock-github-token".into(),
+                user: GitHubUser {
+                    id: 123,
+                    login: "mock-user".into(),
+                    avatar_url: None,
+                },
+                authenticated_at: 1,
+                github_domain: DEFAULT_GITHUB_DOMAIN.into(),
+            },
+        );
+        auth.api_endpoints
+            .write()
+            .await
+            .insert(account_id.clone(), api_base.into());
+        *auth.default_account_id.write().await = Some(account_id);
+        auth
+    }
+
+    /// 获取凭证代次
+    pub fn get_credential_generation(&self) -> u64 {
+        self.credential_generation.load(Ordering::Relaxed)
+    }
+
+    /// 递增凭证代次（在账号变更、登出或关键凭证重置时调用）
+    pub fn bump_credential_generation(&self) {
+        self.credential_generation.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    fn with_test_github_api_base(
+        data_dir: PathBuf,
+        api_base: impl Into<String>,
+        timeout: Duration,
+    ) -> Self {
+        let mut manager = Self::new(data_dir);
+        manager.github_api_base_override = Some(api_base.into());
+        manager.request_timeout = timeout;
+        manager
+    }
+
     // ==================== 多账号管理方法 ====================
 
     /// 列出所有已认证的账号
     pub async fn list_accounts(&self) -> Vec<GitHubAccount> {
+        let _ = self.ensure_migration_for_default().await;
         let accounts = self.accounts.read().await.clone();
         let default_account_id = self.resolve_default_account_id().await;
         Self::sorted_accounts(&accounts, default_account_id.as_deref())
@@ -629,6 +778,7 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Option<(String, String)> {
+        let _ = self.ensure_migration_for_account(account_id).await;
         let accounts = self.accounts.read().await;
         accounts
             .get(account_id)
@@ -639,11 +789,9 @@ impl CopilotAuthManager {
     pub async fn remove_account(&self, account_id: &str) -> Result<(), CopilotAuthError> {
         log::info!("[CopilotAuth] 移除账号: {account_id}");
 
-        {
-            let mut accounts = self.accounts.write().await;
-            if accounts.remove(account_id).is_none() {
-                return Err(CopilotAuthError::AccountNotFound(account_id.to_string()));
-            }
+        let _write_guard = self.auth_write_lock.lock().await;
+        if self.accounts.write().await.remove(account_id).is_none() {
+            return Err(CopilotAuthError::AccountNotFound(account_id.to_string()));
         }
 
         // 同时移除缓存的 Copilot token
@@ -653,8 +801,9 @@ impl CopilotAuthManager {
         }
         {
             let mut models = self.copilot_models.write().await;
-            models.remove(account_id);
+            models.retain(|(id, _), _| id != account_id);
         }
+        self.auto_routing_probes.write().await.remove(account_id);
         {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.remove(account_id);
@@ -679,60 +828,63 @@ impl CopilotAuthManager {
 
         // 持久化
         self.save_to_disk().await?;
+        self.bump_credential_generation();
 
         Ok(())
     }
 
-    /// 添加新账号（内部方法，在 OAuth 完成后调用）
+    /// 持有 auth_write_lock 时，先持久化新账号，再发布认证状态。
     async fn add_account_internal(
         &self,
         github_token: String,
         user: GitHubUser,
         github_domain: String,
+        copilot_token: Option<CopilotToken>,
     ) -> Result<GitHubAccount, CopilotAuthError> {
-        let account_id = composite_account_id(&github_domain, user.id);
-        let now = chrono::Utc::now().timestamp();
-
         let account_data = GitHubAccountData {
             github_token,
-            user: user.clone(),
-            authenticated_at: now,
-            github_domain: github_domain.clone(),
-        };
-
-        let account = GitHubAccount {
-            id: account_id.clone(),
-            login: user.login.clone(),
-            avatar_url: user.avatar_url.clone(),
-            authenticated_at: now,
+            user,
+            authenticated_at: chrono::Utc::now().timestamp(),
             github_domain,
-            reauth_required: false,
         };
+        let account = GitHubAccount::from(&account_data);
 
-        {
-            let mut accounts = self.accounts.write().await;
-            accounts.insert(account_id, account_data);
+        let mut accounts = self.accounts.write().await;
+        let mut default_account_id = self.default_account_id.write().await;
+        let mut tokens = self.copilot_tokens.write().await;
+        let mut pending = self.pending_migration.write().await;
+        let mut migration_error = self.migration_error.write().await;
+
+        let mut store = CopilotAuthStore {
+            version: 3,
+            accounts: accounts.clone(),
+            ..Default::default()
+        };
+        store.accounts.insert(account.id.clone(), account_data);
+        store.default_account_id = match default_account_id.as_ref() {
+            Some(id) if store.accounts.contains_key(id) => Some(id.clone()),
+            Some(_) => Self::fallback_default_account_id(&store.accounts),
+            None => Some(account.id.clone()),
+        };
+        self.write_store(&store)?;
+
+        self.migration_epoch.fetch_add(1, Ordering::AcqRel);
+        *pending = None;
+        *migration_error = None;
+        if let Some(token) = copilot_token {
+            tokens.insert(account.id.clone(), token);
         }
+        *default_account_id = store.default_account_id;
+        *accounts = store.accounts;
 
-        {
-            let mut default_account_id = self.default_account_id.write().await;
-            if default_account_id.is_none() {
-                *default_account_id = Some(account.id.clone());
-            }
-        }
-
-        self.set_migration_error(None).await;
-
-        // 持久化
-        self.save_to_disk().await?;
-
-        log::info!("[CopilotAuth] 添加账号成功: {}", user.login);
-
+        self.bump_credential_generation();
+        log::info!("[CopilotAuth] 添加账号成功: {}", account.login);
         Ok(account)
     }
 
     /// 设置默认账号
     pub async fn set_default_account(&self, account_id: &str) -> Result<(), CopilotAuthError> {
+        let _write_guard = self.auth_write_lock.lock().await;
         {
             let accounts = self.accounts.read().await;
             if !accounts.contains_key(account_id) {
@@ -746,6 +898,7 @@ impl CopilotAuthManager {
         }
 
         self.save_to_disk().await?;
+        self.bump_credential_generation();
         Ok(())
     }
 
@@ -852,21 +1005,24 @@ impl CopilotAuthManager {
 
         // GHES 无需换取 Copilot Token，直接使用 OAuth token 作为 Bearer
         // 参考 OpenCode 的实现：GHE Copilot 直接用 OAuth token 调用 copilot-api.{domain}
-        if !is_ghes(&domain) {
-            // github.com：验证 Copilot 订阅（获取 Copilot Token）
-            self.fetch_copilot_token_with_github_token(
-                &access_token,
-                &user.id.to_string(),
-                &domain,
-            )
-            .await?;
-        } else {
+        let copilot_token = if is_ghes(&domain) {
             log::info!("[CopilotAuth] GHES 账号，跳过 Copilot Token 兑换，直接使用 OAuth token");
-        }
+            None
+        } else {
+            Some(
+                self.fetch_copilot_token_with_github_token(
+                    &access_token,
+                    &user.id.to_string(),
+                    &domain,
+                )
+                .await?,
+            )
+        };
 
-        // 添加账号
+        // 新登录成功写盘后，旧认证迁移不再有权提交。
+        let _write_guard = self.auth_write_lock.lock().await;
         let account = self
-            .add_account_internal(access_token, user, domain)
+            .add_account_internal(access_token, user, domain, copilot_token)
             .await?;
 
         Ok(Some(account))
@@ -880,7 +1036,7 @@ impl CopilotAuthManager {
         account_id: &str,
     ) -> Result<String, CopilotAuthError> {
         // 确保迁移完成
-        self.ensure_migration_complete().await?;
+        self.ensure_migration_for_account(account_id).await?;
 
         // GHES 账号直接使用 GitHub OAuth token，无需 Copilot token 交换
         let domain = self.get_account_domain(account_id).await;
@@ -928,25 +1084,50 @@ impl CopilotAuthManager {
         };
 
         // 刷新 Copilot token
-        self.fetch_copilot_token_with_github_token(&github_token, account_id, &domain)
+        let refreshed = self
+            .fetch_copilot_token_with_github_token(&github_token, account_id, &domain)
             .await?;
-
-        // 返回新 token
-        let tokens = self.copilot_tokens.read().await;
-        tokens.get(account_id).map(|t| t.token.clone()).ok_or(
-            CopilotAuthError::CopilotTokenFetchFailed("刷新后仍无令牌".to_string()),
-        )
+        let token = refreshed.token.clone();
+        self.copilot_tokens
+            .write()
+            .await
+            .insert(account_id.to_string(), refreshed);
+        Ok(token)
     }
 
     /// 获取有效的 Copilot Token（向后兼容：使用第一个账号）
     pub async fn get_valid_token(&self) -> Result<String, CopilotAuthError> {
         // 确保迁移完成
-        self.ensure_migration_complete().await?;
+        self.ensure_migration_for_default().await?;
 
         match self.resolve_default_account_id().await {
             Some(id) => self.get_valid_token_for_account(&id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
+    }
+
+    /// 仅当指定账号当前缓存的 Copilot Bearer Token 与 expected_token 匹配时才失效缓存。
+    /// 防止并发请求 A 刷新出新 Bearer 后，B 的旧请求迟到返回 401 误删新凭证。
+    pub async fn invalidate_token_if_matches(
+        &self,
+        account_id: &str,
+        expected_token: &str,
+    ) -> bool {
+        let mut tokens = self.copilot_tokens.write().await;
+        if let Some(cached) = tokens.get(account_id) {
+            if cached.token == expected_token {
+                tokens.remove(account_id);
+                log::info!(
+                    "[CopilotAuth] 已失效账号 {account_id} 匹配版本的 Copilot Bearer Token 缓存"
+                );
+                return true;
+            } else {
+                log::info!(
+                    "[CopilotAuth] 保留账号 {account_id} 较新的 Copilot Bearer Token（与 401 失败令牌版本不一致）"
+                );
+            }
+        }
+        false
     }
 
     // ==================== 模型和使用量 ====================
@@ -956,53 +1137,118 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
-        let all_models = self.fetch_all_models_for_account(account_id).await?;
-        let total = all_models.len();
-        let picker_models: Vec<CopilotModel> = all_models
-            .iter()
-            .filter(|model| model.model_picker_enabled)
-            .cloned()
-            .collect();
-        // Copilot Free / Student 账号的模型通常全部 model_picker_enabled=false，这里记录两个数便于排查
-        log::info!(
-            "[CopilotAuth] 账号 {account_id} 共 {total} 个模型，其中可在模型选择器使用的 {} 个",
-            picker_models.len()
-        );
-        if picker_models.is_empty() && total > 0 {
-            // 全被筛掉时列出模型 ID（不含隐私），用户贴一次日志就能看出账号拿到的是哪类模型
-            let ids: Vec<&str> = all_models.iter().map(|model| model.id.as_str()).collect();
-            log::info!(
-                "[CopilotAuth] 账号 {account_id} 没有可在模型选择器使用的模型，接口返回的模型 ID: {}",
-                ids.join(", ")
-            );
-        }
-        Ok(picker_models)
+        let mut models = self
+            .fetch_catalog_version(account_id, COPILOT_API_VERSION)
+            .await?;
+        models.retain(|model| model.model_picker_enabled);
+        Ok(models)
     }
 
-    async fn fetch_all_models_for_account(
+    pub async fn fetch_model_options_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<CopilotModelOptions, CopilotAuthError> {
+        let catalogue = self
+            .fetch_catalog_version(account_id, COPILOT_API_VERSION)
+            .await?;
+        let auto_routing_supported = catalogue.iter().any(CopilotModel::supports_auto_routing)
+            || self
+                .fetch_catalog_for_account(account_id)
+                .await
+                .is_ok_and(|models| models.iter().any(CopilotModel::supports_auto_routing))
+            || self.probe_auto_routing(account_id).await;
+        Ok(CopilotModelOptions {
+            models: catalogue
+                .into_iter()
+                .filter(|model| model.model_picker_enabled)
+                .collect(),
+            auto_routing_supported,
+        })
+    }
+
+    /// Free 账号的目录不带 `auto_discount`（那是给付费档的计价字段），但 /auto 照样能选模型。
+    /// 目录看不出来时实际调一次 /auto（只选模型，不推理）：成功就算支持，上游明确拒绝算不支持。
+    async fn probe_auto_routing(&self, account_id: &str) -> bool {
+        if let Some(known) = self.auto_routing_probes.read().await.get(account_id) {
+            return *known;
+        }
+        let Ok(token) = self.get_valid_token_for_account(account_id).await else {
+            return false;
+        };
+        let api_base = self.get_api_endpoint(account_id).await;
+        let result = super::copilot_auto::CopilotAutoClient::resolve(
+            &crate::proxy::http_client::get_for_url(&api_base),
+            &api_base,
+            &token,
+            "hi",
+            false,
+            self.request_timeout,
+        )
+        .await;
+        let known = match result {
+            Ok(_) => Some(true),
+            Err(ProxyError::UpstreamError {
+                status: 400 | 403 | 404,
+                ..
+            }) => Some(false),
+            Err(ProxyError::UpstreamError { status: 401, .. }) => {
+                self.invalidate_token_if_matches(account_id, &token).await;
+                None
+            }
+            Err(err) => {
+                log::debug!("[CopilotAuth] 账号 {account_id} 的 /auto 探测失败，下次再试: {err}");
+                None
+            }
+        };
+        if let Some(known) = known {
+            self.auto_routing_probes
+                .write()
+                .await
+                .insert(account_id.to_string(), known);
+        }
+        known.unwrap_or(false)
+    }
+
+    /// Auto may need the newer billing metadata. Keep the established /models
+    /// contract and its cache for fixed-model requests.
+    pub async fn fetch_catalog_for_account(
         &self,
         account_id: &str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
-        self.ensure_migration_complete().await?;
-
-        {
-            let models = self.copilot_models.read().await;
-            if let Some(cached) = models.get(account_id) {
-                return Ok(cached.clone());
-            }
+        let models = self
+            .fetch_catalog_version(account_id, COPILOT_API_VERSION)
+            .await?;
+        if models.iter().any(CopilotModel::supports_auto_routing) {
+            return Ok(models);
         }
+        self.fetch_catalog_version(account_id, super::copilot_auto::COPILOT_AUTO_API_VERSION)
+            .await
+    }
 
-        let models = self.fetch_models_for_account_uncached(account_id).await?;
-        {
-            let mut cache = self.copilot_models.write().await;
-            cache.insert(account_id.to_string(), models.clone());
+    async fn fetch_catalog_version(
+        &self,
+        account_id: &str,
+        api_version: &'static str,
+    ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
+        self.ensure_migration_for_account(account_id).await?;
+        let key = (account_id.to_string(), api_version);
+        if let Some(cached) = self.copilot_models.read().await.get(&key) {
+            return Ok(cached.clone());
         }
+        let models = self
+            .fetch_models_for_account_uncached(account_id, api_version)
+            .await?;
+        self.copilot_models
+            .write()
+            .await
+            .insert(key, models.clone());
         Ok(models)
     }
 
     async fn fetch_models_for_account_uncached(
         &self,
         account_id: &str,
+        api_version: &'static str,
     ) -> Result<Vec<CopilotModel>, CopilotAuthError> {
         let copilot_token = self.get_valid_token_for_account(account_id).await?;
 
@@ -1024,10 +1270,15 @@ impl CopilotAuthManager {
             .header("editor-version", COPILOT_EDITOR_VERSION)
             .header("editor-plugin-version", COPILOT_PLUGIN_VERSION)
             .header("user-agent", COPILOT_USER_AGENT)
-            .header("x-github-api-version", COPILOT_API_VERSION)
+            .header("x-github-api-version", api_version)
             .send()
             .await?;
 
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            self.invalidate_token_if_matches(account_id, &copilot_token)
+                .await;
+            return Err(CopilotAuthError::ModelsUnauthorized);
+        }
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
@@ -1044,6 +1295,7 @@ impl CopilotAuthManager {
         let models: Vec<CopilotModel> = models_response
             .data
             .into_iter()
+            .filter(CopilotModelsResponseItem::is_usable)
             .map(|m| CopilotModel {
                 id: m.id,
                 name: m.name,
@@ -1056,6 +1308,7 @@ impl CopilotAuthManager {
                 ),
                 supports_vision: extract_copilot_vision(m.capabilities.as_ref()),
                 reasoning_effort: extract_copilot_reasoning_effort(m.capabilities.as_ref()),
+                billing: m.billing,
             })
             .collect();
 
@@ -1072,7 +1325,9 @@ impl CopilotAuthManager {
         account_id: &str,
         model_id: &str,
     ) -> Result<Option<String>, CopilotAuthError> {
-        let models = self.fetch_all_models_for_account(account_id).await?;
+        let models = self
+            .fetch_catalog_version(account_id, COPILOT_API_VERSION)
+            .await?;
         Ok(super::copilot_model_map::resolve_model(model_id, &models).map(|model| model.vendor))
     }
 
@@ -1082,7 +1337,9 @@ impl CopilotAuthManager {
         account_id: &str,
         model_id: &str,
     ) -> Result<Option<CopilotModel>, CopilotAuthError> {
-        let models = self.fetch_all_models_for_account(account_id).await?;
+        let models = self
+            .fetch_catalog_version(account_id, COPILOT_API_VERSION)
+            .await?;
         Ok(super::copilot_model_map::resolve_model_record(model_id, &models).cloned())
     }
 
@@ -1090,6 +1347,8 @@ impl CopilotAuthManager {
         &self,
         model_id: &str,
     ) -> Result<Option<CopilotModel>, CopilotAuthError> {
+        self.ensure_migration_for_default().await?;
+
         match self.resolve_default_account_id().await {
             Some(id) => self.get_model_record_for_account(&id, model_id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
@@ -1102,7 +1361,9 @@ impl CopilotAuthManager {
         model_id: &str,
         api_format: crate::provider::CodexCopilotApiFormat,
     ) -> Result<Option<super::copilot_model_map::ResolvedCopilotModel>, CopilotAuthError> {
-        let models = self.fetch_all_models_for_account(account_id).await?;
+        let models = self
+            .fetch_catalog_version(account_id, COPILOT_API_VERSION)
+            .await?;
         Ok(super::copilot_model_map::resolve_model_with_format(
             model_id, &models, api_format,
         ))
@@ -1110,8 +1371,27 @@ impl CopilotAuthManager {
 
     /// 获取 Copilot 可用模型列表（向后兼容：使用第一个账号）
     pub async fn fetch_models(&self) -> Result<Vec<CopilotModel>, CopilotAuthError> {
+        self.ensure_migration_for_default().await?;
+
         match self.resolve_default_account_id().await {
             Some(id) => self.fetch_models_for_account(&id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
+    pub async fn fetch_model_options(&self) -> Result<CopilotModelOptions, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.fetch_model_options_for_account(&id).await,
+            None => Err(CopilotAuthError::GitHubTokenInvalid),
+        }
+    }
+
+    pub async fn get_model_vendor(
+        &self,
+        model_id: &str,
+    ) -> Result<Option<String>, CopilotAuthError> {
+        match self.resolve_default_account_id().await {
+            Some(id) => self.get_model_vendor_for_account(&id, model_id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
         }
     }
@@ -1121,6 +1401,8 @@ impl CopilotAuthManager {
         model_id: &str,
         api_format: crate::provider::CodexCopilotApiFormat,
     ) -> Result<Option<super::copilot_model_map::ResolvedCopilotModel>, CopilotAuthError> {
+        self.ensure_migration_for_default().await?;
+
         match self.resolve_default_account_id().await {
             Some(id) => {
                 self.resolve_model_for_account(&id, model_id, api_format)
@@ -1135,6 +1417,8 @@ impl CopilotAuthManager {
         &self,
         account_id: &str,
     ) -> Result<CopilotUsageResponse, CopilotAuthError> {
+        self.ensure_migration_for_account(account_id).await?;
+
         let (github_token, domain) = {
             let accounts = self.accounts.read().await;
             let account = accounts
@@ -1193,6 +1477,8 @@ impl CopilotAuthManager {
 
     /// 获取 Copilot 使用量信息（向后兼容：使用第一个账号）
     pub async fn fetch_usage(&self) -> Result<CopilotUsageResponse, CopilotAuthError> {
+        self.ensure_migration_for_default().await?;
+
         match self.resolve_default_account_id().await {
             Some(id) => self.fetch_usage_for_account(&id).await,
             None => Err(CopilotAuthError::GitHubTokenInvalid),
@@ -1203,7 +1489,7 @@ impl CopilotAuthManager {
 
     /// 获取指定账号的 API 端点（缓存命中直接返回，未命中则从 API 惰性拉取）
     pub async fn get_api_endpoint(&self, account_id: &str) -> String {
-        let _ = self.ensure_migration_complete().await;
+        let _ = self.ensure_migration_for_account(account_id).await;
 
         {
             let endpoints = self.api_endpoints.read().await;
@@ -1238,7 +1524,7 @@ impl CopilotAuthManager {
 
     /// 获取默认账号的 API 端点
     pub async fn get_default_api_endpoint(&self) -> String {
-        let _ = self.ensure_migration_complete().await;
+        let _ = self.ensure_migration_for_default().await;
 
         match self.resolve_default_account_id().await {
             Some(id) => self.get_api_endpoint(&id).await,
@@ -1319,7 +1605,7 @@ impl CopilotAuthManager {
     /// 获取认证状态（支持多账号）
     pub async fn get_status(&self) -> CopilotAuthStatus {
         // 确保迁移完成
-        let _ = self.ensure_migration_complete().await;
+        let _ = self.ensure_migration_for_default().await;
 
         let accounts = self.accounts.read().await.clone();
         let default_account_id = self.resolve_default_account_id().await;
@@ -1354,6 +1640,9 @@ impl CopilotAuthManager {
     pub async fn clear_auth(&self) -> Result<(), CopilotAuthError> {
         log::info!("[CopilotAuth] 清除所有认证");
 
+        let _write_guard = self.auth_write_lock.lock().await;
+        self.clear_pending_migration().await;
+
         // 先清理内存状态，确保即使文件删除失败用户也能看到已登出
         {
             let mut accounts = self.accounts.write().await;
@@ -1363,7 +1652,6 @@ impl CopilotAuthManager {
             let mut default_account_id = self.default_account_id.write().await;
             default_account_id.take();
         }
-        self.set_migration_error(None).await;
         {
             let mut tokens = self.copilot_tokens.write().await;
             tokens.clear();
@@ -1372,6 +1660,7 @@ impl CopilotAuthManager {
             let mut models = self.copilot_models.write().await;
             models.clear();
         }
+        self.auto_routing_probes.write().await.clear();
         {
             let mut refresh_locks = self.refresh_locks.write().await;
             refresh_locks.clear();
@@ -1390,11 +1679,28 @@ impl CopilotAuthManager {
         if self.storage_path.exists() {
             std::fs::remove_file(&self.storage_path)?;
         }
+        self.bump_credential_generation();
 
         Ok(())
     }
 
     // ==================== 内部方法 ====================
+
+    fn github_user_url_for(&self, domain: &str) -> String {
+        #[cfg(test)]
+        if let Some(base) = self.github_api_base_override.as_deref() {
+            return format!("{}/user", base.trim_end_matches('/'));
+        }
+        github_user_url(domain)
+    }
+
+    fn copilot_token_url_for(&self, domain: &str) -> String {
+        #[cfg(test)]
+        if let Some(base) = self.github_api_base_override.as_deref() {
+            return format!("{}/copilot_internal/v2/token", base.trim_end_matches('/'));
+        }
+        copilot_token_url(domain)
+    }
 
     fn fallback_default_account_id(
         accounts: &HashMap<String, GitHubAccountData>,
@@ -1427,7 +1733,7 @@ impl CopilotAuthManager {
         account_list
     }
 
-    async fn resolve_default_account_id(&self) -> Option<String> {
+    pub async fn resolve_default_account_id(&self) -> Option<String> {
         let stored_default = self.default_account_id.read().await.clone();
         let accounts = self.accounts.read().await;
 
@@ -1468,6 +1774,13 @@ impl CopilotAuthManager {
     async fn set_migration_error(&self, message: Option<String>) {
         let mut migration_error = self.migration_error.write().await;
         *migration_error = message;
+    }
+
+    /// 持有 auth_write_lock 时使旧迁移失效。
+    async fn clear_pending_migration(&self) {
+        self.migration_epoch.fetch_add(1, Ordering::AcqRel);
+        *self.pending_migration.write().await = None;
+        self.set_migration_error(None).await;
     }
 
     fn write_store_atomic(&self, content: &str) -> Result<(), CopilotAuthError> {
@@ -1531,8 +1844,10 @@ impl CopilotAuthManager {
         github_token: &str,
         domain: &str,
     ) -> Result<GitHubUser, CopilotAuthError> {
-        let response = crate::proxy::http_client::get()
-            .get(github_user_url(domain))
+        let user_url = self.github_user_url_for(domain);
+        let response = crate::proxy::http_client::get_for_url(&user_url)
+            .get(&user_url)
+            .timeout(self.request_timeout)
             .header("Authorization", format!("token {github_token}"))
             .header("User-Agent", COPILOT_USER_AGENT)
             .header("Editor-Version", COPILOT_EDITOR_VERSION)
@@ -1540,8 +1855,39 @@ impl CopilotAuthManager {
             .send()
             .await?;
 
-        if !response.status().is_success() {
+        let status = response.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(CopilotAuthError::GitHubTokenInvalid);
+        }
+
+        if status == reqwest::StatusCode::FORBIDDEN {
+            let rate_limited_header = response
+                .headers()
+                .get("x-ratelimit-remaining")
+                .and_then(|v| v.to_str().ok())
+                .map(|v| v.trim() == "0")
+                .unwrap_or(false)
+                || response
+                    .headers()
+                    .contains_key(reqwest::header::RETRY_AFTER);
+            let body = response.text().await.unwrap_or_default();
+            let lower = body.to_ascii_lowercase();
+            if rate_limited_header
+                || lower.contains("rate limit")
+                || lower.contains("secondary rate")
+                || lower.contains("abuse detection")
+            {
+                return Err(CopilotAuthError::NetworkError(format!(
+                    "GitHub 用户信息请求被限流: HTTP {status}"
+                )));
+            }
+            return Err(CopilotAuthError::GitHubTokenInvalid);
+        }
+
+        if !status.is_success() {
+            return Err(CopilotAuthError::NetworkError(format!(
+                "GitHub 用户信息请求失败: HTTP {status}"
+            )));
         }
 
         let user: GitHubUser = response
@@ -1560,11 +1906,13 @@ impl CopilotAuthManager {
         github_token: &str,
         account_id: &str,
         domain: &str,
-    ) -> Result<(), CopilotAuthError> {
+    ) -> Result<CopilotToken, CopilotAuthError> {
         log::debug!("[CopilotAuth] 获取账号 {account_id} 的 Copilot Token (domain: {domain})");
 
-        let response = crate::proxy::http_client::get()
-            .get(copilot_token_url(domain))
+        let token_url = self.copilot_token_url_for(domain);
+        let response = crate::proxy::http_client::get_for_url(&token_url)
+            .get(&token_url)
+            .timeout(self.request_timeout)
             .header("Authorization", format!("token {github_token}"))
             .header("User-Agent", COPILOT_USER_AGENT)
             .header("Editor-Version", COPILOT_EDITOR_VERSION)
@@ -1599,15 +1947,10 @@ impl CopilotAuthManager {
             token_response.expires_at
         );
 
-        let copilot_token = CopilotToken {
+        Ok(CopilotToken {
             token: token_response.token,
             expires_at: token_response.expires_at,
-        };
-
-        let mut tokens = self.copilot_tokens.write().await;
-        tokens.insert(account_id.to_string(), copilot_token);
-
-        Ok(())
+        })
     }
 
     // ==================== 存储和迁移 ====================
@@ -1647,63 +1990,100 @@ impl CopilotAuthManager {
         Ok(())
     }
 
+    async fn ensure_migration_for_account(&self, account_id: &str) -> Result<(), CopilotAuthError> {
+        if self.accounts.read().await.contains_key(account_id) {
+            Ok(())
+        } else {
+            self.ensure_migration_complete().await
+        }
+    }
+
+    async fn ensure_migration_for_default(&self) -> Result<(), CopilotAuthError> {
+        if !self.accounts.read().await.is_empty() {
+            Ok(())
+        } else {
+            self.ensure_migration_complete().await
+        }
+    }
+
     /// 确保迁移完成
     async fn ensure_migration_complete(&self) -> Result<(), CopilotAuthError> {
-        let pending = {
-            let guard = self.pending_migration.read().await;
-            guard.clone()
+        if self.pending_migration.read().await.is_none() {
+            return Ok(());
+        }
+
+        let _migration_guard = self.migration_lock.lock().await;
+        let epoch_before = self.migration_epoch.load(Ordering::Acquire);
+        let Some(legacy_token) = self.pending_migration.read().await.clone() else {
+            return Ok(());
         };
 
-        if let Some(legacy_token) = pending {
-            log::info!("[CopilotAuth] 执行旧格式迁移");
+        log::info!("[CopilotAuth] 执行旧格式迁移");
 
-            // 获取用户信息
-            match self
-                .fetch_user_info_with_token(&legacy_token, DEFAULT_GITHUB_DOMAIN)
-                .await
-            {
-                Ok(user) => {
-                    let account_id = composite_account_id(DEFAULT_GITHUB_DOMAIN, user.id);
-
-                    // 尝试获取 Copilot token 验证订阅
-                    if let Err(e) = self
-                        .fetch_copilot_token_with_github_token(
-                            &legacy_token,
-                            &account_id,
-                            DEFAULT_GITHUB_DOMAIN,
-                        )
-                        .await
-                    {
-                        log::warn!("[CopilotAuth] 迁移时验证 Copilot 订阅失败: {e}");
-                    }
-
-                    // 添加账号
-                    self.add_account_internal(
-                        legacy_token,
-                        user,
-                        DEFAULT_GITHUB_DOMAIN.to_string(),
-                    )
-                    .await?;
-                    self.set_migration_error(None).await;
-
-                    log::info!("[CopilotAuth] 旧格式迁移完成");
-                }
+        let user_result = self
+            .fetch_user_info_with_token(&legacy_token, DEFAULT_GITHUB_DOMAIN)
+            .await;
+        let (user, account_id) = {
+            let _write_guard = self.auth_write_lock.lock().await;
+            if self.migration_epoch.load(Ordering::Acquire) != epoch_before {
+                return Ok(());
+            }
+            let user = match user_result {
+                Ok(user) => user,
                 Err(e) => {
+                    if matches!(e, CopilotAuthError::GitHubTokenInvalid) {
+                        *self.pending_migration.write().await = None;
+                    }
                     self.set_migration_error(Some(format!(
                         "Legacy Copilot auth migration failed: {e}"
                     )))
                     .await;
-                    log::warn!("[CopilotAuth] 迁移失败，旧 token 可能已失效: {e}");
+                    log::warn!("[CopilotAuth] 迁移失败: {e}");
+                    return Err(e);
                 }
+            };
+            let account_id = composite_account_id(DEFAULT_GITHUB_DOMAIN, user.id);
+            if self.accounts.read().await.contains_key(&account_id) {
+                self.clear_pending_migration().await;
+                return Ok(());
             }
+            (user, account_id)
+        };
 
-            // 清除待迁移标记
-            {
-                let mut pending = self.pending_migration.write().await;
-                *pending = None;
+        // 验证订阅为尽力而为。完成写盘前不要把旧凭据的 token 发布到缓存。
+        let copilot_token = match self
+            .fetch_copilot_token_with_github_token(
+                &legacy_token,
+                &account_id,
+                DEFAULT_GITHUB_DOMAIN,
+            )
+            .await
+        {
+            Ok(token) => Some(token),
+            Err(e) => {
+                log::warn!("[CopilotAuth] 迁移时验证 Copilot 订阅失败: {e}");
+                None
             }
+        };
+
+        let _write_guard = self.auth_write_lock.lock().await;
+        if self.migration_epoch.load(Ordering::Acquire) != epoch_before {
+            return Ok(());
         }
-
+        if let Err(e) = self
+            .add_account_internal(
+                legacy_token,
+                user,
+                DEFAULT_GITHUB_DOMAIN.to_string(),
+                copilot_token,
+            )
+            .await
+        {
+            self.set_migration_error(Some(format!("Legacy Copilot auth migration failed: {e}")))
+                .await;
+            return Err(e);
+        }
+        log::info!("[CopilotAuth] 旧格式迁移完成");
         Ok(())
     }
 
@@ -1720,7 +2100,11 @@ impl CopilotAuthManager {
             authenticated_at: None,
         };
 
-        let content = serde_json::to_string_pretty(&store)
+        self.write_store(&store)
+    }
+
+    fn write_store(&self, store: &CopilotAuthStore) -> Result<(), CopilotAuthError> {
+        let content = serde_json::to_string_pretty(store)
             .map_err(|e| CopilotAuthError::ParseError(e.to_string()))?;
 
         self.write_store_atomic(&content)?;
@@ -1739,6 +2123,7 @@ mod tests {
     use super::*;
     use crate::provider::CodexCopilotApiFormat;
     use tempfile::tempdir;
+    use tokio::sync::Notify;
 
     #[test]
     fn extracts_model_capabilities_and_supported_endpoints() {
@@ -1786,6 +2171,39 @@ mod tests {
             item.supported_endpoints,
             vec!["/responses", "/chat/completions"]
         );
+    }
+
+    #[test]
+    fn model_directory_keeps_incomplete_capabilities_and_auto_zero() {
+        let usable = serde_json::from_value::<CopilotModelsResponseItem>(serde_json::json!({
+            "id":"kimi-k3", "name":"Kimi K3", "vendor":"Moonshot",
+            "model_picker_enabled":true, "supported_endpoints":["/v1/messages"],
+            "capabilities":{"limits":{"max_prompt_tokens":128000,"max_output_tokens":8192},"supports":{"tool_calls":true}},
+            "billing":{"auto_discount":0}
+        })).unwrap();
+        assert!(usable.is_usable());
+        assert!(CopilotModel {
+            id: usable.id.clone(),
+            name: usable.name.clone(),
+            vendor: usable.vendor.clone(),
+            model_picker_enabled: usable.model_picker_enabled,
+            context_window: None,
+            supported_endpoints: usable.supported_endpoints.clone(),
+            supports_parallel_tool_calls: None,
+            supports_vision: None,
+            reasoning_effort: None,
+            billing: usable.billing.clone()
+        }
+        .supports_auto_routing());
+
+        let mut disabled = usable.clone();
+        disabled.policy = Some(serde_json::json!({"state":"disabled"}));
+        assert!(!disabled.is_usable());
+        let mut incomplete = usable;
+        incomplete.capabilities = Some(
+            serde_json::json!({"limits":{"max_prompt_tokens":128000},"supports":{"tool_calls":true}}),
+        );
+        assert!(incomplete.is_usable());
     }
 
     #[test]
@@ -1860,6 +2278,7 @@ mod tests {
                 CopilotReasoningEffort::Xhigh,
                 CopilotReasoningEffort::Max,
             ]),
+            billing: None,
         };
 
         assert_eq!(
@@ -2138,7 +2557,7 @@ mod tests {
         {
             let mut models = manager.copilot_models.write().await;
             models.insert(
-                "12345".to_string(),
+                ("12345".to_string(), COPILOT_API_VERSION),
                 vec![
                     CopilotModel {
                         id: "gpt-5.4".to_string(),
@@ -2150,6 +2569,7 @@ mod tests {
                         supports_parallel_tool_calls: None,
                         supports_vision: None,
                         reasoning_effort: None,
+                        billing: None,
                     },
                     CopilotModel {
                         id: "claude-sonnet-4".to_string(),
@@ -2161,6 +2581,7 @@ mod tests {
                         supports_parallel_tool_calls: None,
                         supports_vision: None,
                         reasoning_effort: None,
+                        billing: None,
                     },
                     CopilotModel {
                         id: "gpt-hidden".to_string(),
@@ -2175,6 +2596,7 @@ mod tests {
                         supports_parallel_tool_calls: None,
                         supports_vision: None,
                         reasoning_effort: None,
+                        billing: None,
                     },
                 ],
             );
@@ -2244,6 +2666,18 @@ mod tests {
             .unwrap()
             .iter()
             .all(|model| model.id != "gpt-hidden"));
+        let models = manager
+            .fetch_catalog_version("12345", COPILOT_API_VERSION)
+            .await
+            .unwrap();
+        assert_eq!(models.len(), 3);
+        let hidden = models.iter().find(|m| m.id == "gpt-hidden").unwrap();
+        assert!(!hidden.model_picker_enabled);
+        assert_eq!(hidden.context_window, Some(128_000));
+        assert_eq!(
+            hidden.supported_endpoints,
+            vec!["/v1/chat/completions", "/responses"]
+        );
     }
 
     #[tokio::test]
@@ -2263,12 +2697,19 @@ mod tests {
             supports_parallel_tool_calls: None,
             supports_vision: None,
             reasoning_effort: None,
+            billing: None,
         };
         manager.copilot_models.write().await.extend([
-            ("messages-only".to_string(), vec![model(&["/v1/messages"])]),
-            ("no-metadata".to_string(), vec![model(&[])]),
             (
-                "chat-capable".to_string(),
+                ("messages-only".to_string(), COPILOT_API_VERSION),
+                vec![model(&["/v1/messages"])],
+            ),
+            (
+                ("no-metadata".to_string(), COPILOT_API_VERSION),
+                vec![model(&[])],
+            ),
+            (
+                ("chat-capable".to_string(), COPILOT_API_VERSION),
                 vec![model(&["/chat/completions"])],
             ),
         ]);
@@ -2279,6 +2720,13 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty());
+            let models = manager
+                .fetch_catalog_version(account, COPILOT_API_VERSION)
+                .await
+                .unwrap();
+            assert_eq!(models.len(), 1);
+            assert_eq!(models[0].id, "claude-opus-4.7");
+            assert!(!models[0].model_picker_enabled);
             assert_eq!(
                 manager
                     .get_model_vendor_for_account(account, "claude-opus-4-8")
@@ -2321,6 +2769,227 @@ mod tests {
                 endpoint: "/chat/completions".to_string(),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn auto_support_falls_back_to_probing_auto_when_catalogue_is_silent() {
+        use axum::{http::StatusCode, response::IntoResponse, Json};
+        use std::sync::atomic::{AtomicU16, AtomicUsize};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let auto_status = Arc::new(AtomicU16::new(200));
+        let auto_hits = Arc::new(AtomicUsize::new(0));
+        let server = tokio::spawn({
+            let auto_status = auto_status.clone();
+            let auto_hits = auto_hits.clone();
+            async move {
+                let app = axum::Router::new()
+                    .route(
+                        "/copilot_internal/v2/token",
+                        axum::routing::get(|| async {
+                            Json(serde_json::json!({"token": "tid=copilot", "expires_at": 4102444800i64}))
+                        }),
+                    )
+                    .route(
+                        "/auto",
+                        axum::routing::post(move || {
+                            let auto_status = auto_status.clone();
+                            let auto_hits = auto_hits.clone();
+                            async move {
+                                auto_hits.fetch_add(1, Ordering::SeqCst);
+                                let status = auto_status.load(Ordering::SeqCst);
+                                if status != 200 {
+                                    return StatusCode::from_u16(status).unwrap().into_response();
+                                }
+                                Json(serde_json::json!({
+                                    "selected_model": {"id": "mai-code-2-flash"},
+                                    "session_token": "session",
+                                    "expires_at": 4102444800i64
+                                }))
+                                .into_response()
+                            }
+                        }),
+                    );
+                axum::serve(listener, app).await.unwrap();
+            }
+        });
+
+        // Free 账号的目录：两种 API 版本都没有 auto_discount。
+        let silent: Vec<CopilotModel> = serde_json::from_value(serde_json::json!([
+            {"id":"mai-code-2-flash","name":"MAI","vendor":"Microsoft","model_picker_enabled":true,
+             "supported_endpoints":["/chat/completions","/responses"]}
+        ]))
+        .unwrap();
+        let manager_with = |dir: &std::path::Path| {
+            let silent = silent.clone();
+            let base = base.clone();
+            let dir = dir.to_path_buf();
+            async move {
+                let manager = CopilotAuthManager::with_mock_server(dir, &base).await;
+                manager.copilot_models.write().await.extend([
+                    (("123".into(), COPILOT_API_VERSION), silent.clone()),
+                    (
+                        (
+                            "123".into(),
+                            super::super::copilot_auto::COPILOT_AUTO_API_VERSION,
+                        ),
+                        silent,
+                    ),
+                ]);
+                manager
+            }
+        };
+
+        // /auto 能选模型就算支持，结论缓存起来，不再重复探测。
+        let dir = tempdir().unwrap();
+        let manager = manager_with(dir.path()).await;
+        assert!(
+            manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert!(
+            manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert_eq!(auto_hits.load(Ordering::SeqCst), 1);
+
+        // 上游明确拒绝：不支持，同样只探一次。
+        auto_status.store(403, Ordering::SeqCst);
+        let dir = tempdir().unwrap();
+        let manager = manager_with(dir.path()).await;
+        assert!(
+            !manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert!(
+            !manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert_eq!(auto_hits.load(Ordering::SeqCst), 2);
+
+        // 临时故障不下结论，下次再探。
+        auto_status.store(503, Ordering::SeqCst);
+        let dir = tempdir().unwrap();
+        let manager = manager_with(dir.path()).await;
+        assert!(
+            !manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        auto_status.store(200, Ordering::SeqCst);
+        assert!(
+            manager
+                .fetch_model_options()
+                .await
+                .unwrap()
+                .auto_routing_supported
+        );
+        assert_eq!(auto_hits.load(Ordering::SeqCst), 4);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn test_fetch_catalog_returns_hidden_models_with_account_isolation() {
+        let dir = tempdir().unwrap();
+        let manager =
+            CopilotAuthManager::with_mock_server(dir.path().to_path_buf(), "http://unused").await;
+        let models: Vec<CopilotModel> = serde_json::from_value(serde_json::json!([
+            {"id":"visible","name":"Visible","vendor":"OpenAI","model_picker_enabled":true},
+            {"id":"hidden","name":"Hidden","vendor":"Moonshot AI","billing":{"auto_discount":0}}
+        ]))
+        .unwrap();
+        let mut unsupported = models[1].clone();
+        unsupported.billing = None;
+        manager.copilot_models.write().await.extend([
+            (("123".into(), COPILOT_API_VERSION), models),
+            (
+                ("other".into(), COPILOT_API_VERSION),
+                vec![unsupported.clone()],
+            ),
+            (
+                (
+                    "other".into(),
+                    super::super::copilot_auto::COPILOT_AUTO_API_VERSION,
+                ),
+                vec![unsupported],
+            ),
+        ]);
+
+        let options = manager.fetch_model_options().await.unwrap();
+        assert!(options.auto_routing_supported);
+        assert_eq!(options.models.len(), 1);
+        assert_eq!(options.models[0].id, "visible");
+        assert_eq!(manager.fetch_models().await.unwrap()[0].id, "visible");
+        let directory = manager.fetch_catalog_for_account("123").await.unwrap();
+        assert_eq!(directory[1].id, "hidden");
+        assert!(directory[1].supports_auto_routing());
+        let other = manager
+            .fetch_model_options_for_account("other")
+            .await
+            .unwrap();
+        assert!(other.models.is_empty());
+        assert!(!other.auto_routing_supported);
+    }
+
+    #[test]
+    fn test_copilot_models_response_item_defaults_missing_picker_flag() {
+        let json_with_missing_picker = r#"{
+            "data": [
+                {
+                    "id": "test-model-1",
+                    "name": "Test Model 1",
+                    "vendor": "Test Vendor",
+                    "supported_endpoints": ["/chat/completions"],
+                    "billing": {"auto_discount": 0.3}
+                }
+            ]
+        }"#;
+
+        let parsed: CopilotModelsResponse = serde_json::from_str(json_with_missing_picker).unwrap();
+        assert_eq!(parsed.data.len(), 1);
+        assert_eq!(parsed.data[0].id, "test-model-1");
+        assert!(!parsed.data[0].model_picker_enabled);
+        assert_eq!(
+            parsed.data[0].billing.as_ref().unwrap().auto_discount,
+            Some(0.3)
+        );
+    }
+
+    #[test]
+    fn auto_routing_requires_discount_field_even_when_zero() {
+        let model = |discount: Option<f64>| CopilotModel {
+            id: "m".into(),
+            name: "M".into(),
+            vendor: "OpenAI".into(),
+            model_picker_enabled: true,
+            context_window: None,
+            supported_endpoints: vec![],
+            supports_parallel_tool_calls: None,
+            supports_vision: None,
+            reasoning_effort: None,
+            billing: discount.map(|auto_discount| CopilotModelBilling {
+                auto_discount: Some(auto_discount),
+            }),
+        };
+        assert!(model(Some(0.3)).supports_auto_routing());
+        assert!(model(Some(0.0)).supports_auto_routing());
+        assert!(!model(None).supports_auto_routing());
     }
 
     #[tokio::test]
@@ -2525,6 +3194,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_credential_generation_bumps_on_logout_and_removal() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+        let initial_gen = manager.get_credential_generation();
+
+        // Adding account data
+        {
+            let mut accounts = manager.accounts.write().await;
+            accounts.insert(
+                "acc_1".to_string(),
+                GitHubAccountData {
+                    github_token: "gho_test".to_string(),
+                    user: GitHubUser {
+                        login: "alice".to_string(),
+                        id: 1,
+                        avatar_url: None,
+                    },
+                    authenticated_at: 100,
+                    github_domain: "github.com".to_string(),
+                },
+            );
+        }
+
+        manager.remove_account("acc_1").await.unwrap();
+        let gen_after_remove = manager.get_credential_generation();
+        assert!(gen_after_remove > initial_gen);
+
+        manager.clear_auth().await.unwrap();
+        let gen_after_clear = manager.get_credential_generation();
+        assert!(gen_after_clear > gen_after_remove);
+    }
+
+    #[tokio::test]
     async fn test_get_api_endpoint_cache_hit_skips_fetch() {
         // 缓存命中时应直接返回，不发起网络请求
         let temp_dir = tempdir().unwrap();
@@ -2657,5 +3359,545 @@ mod tests {
 
         let account = GitHubAccount::from(&data);
         assert_eq!(account.id, "company.ghe.com:99999");
+    }
+
+    #[tokio::test]
+    async fn test_invalidate_token_if_matches() {
+        let temp_dir = tempdir().unwrap();
+        let manager = CopilotAuthManager::new(temp_dir.path().to_path_buf());
+
+        // 插入 token-v2
+        {
+            let mut tokens = manager.copilot_tokens.write().await;
+            tokens.insert(
+                "acc-1".to_string(),
+                CopilotToken {
+                    token: "bearer-token-v2".to_string(),
+                    expires_at: 1800000000,
+                },
+            );
+        }
+
+        // 旧的 401 请求携带 bearer-token-v1，尝试失效 -> 不应删除 v2
+        let removed = manager
+            .invalidate_token_if_matches("acc-1", "bearer-token-v1")
+            .await;
+        assert!(!removed);
+        {
+            let tokens = manager.copilot_tokens.read().await;
+            assert_eq!(
+                tokens.get("acc-1").map(|t| t.token.as_str()),
+                Some("bearer-token-v2")
+            );
+        }
+
+        // 别的账号尝试失效 -> 不影响 acc-1
+        let removed = manager
+            .invalidate_token_if_matches("acc-2", "bearer-token-v2")
+            .await;
+        assert!(!removed);
+
+        // 匹配当前 token-v2 -> 成功失效
+        let removed = manager
+            .invalidate_token_if_matches("acc-1", "bearer-token-v2")
+            .await;
+        assert!(removed);
+        {
+            let tokens = manager.copilot_tokens.read().await;
+            assert!(tokens.get("acc-1").is_none());
+        }
+    }
+
+    enum MockGitHubAction {
+        DropConnection,
+        Timeout(Duration),
+        Respond {
+            status_line: &'static str,
+            extra_headers: &'static str,
+            body: String,
+        },
+    }
+
+    async fn spawn_mock_github_server(
+        initial_actions: Vec<MockGitHubAction>,
+        token_exchange_gate: Option<(Arc<Notify>, Arc<Notify>)>,
+    ) -> (
+        String,
+        Arc<std::sync::atomic::AtomicUsize>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        use std::collections::VecDeque;
+        use std::sync::atomic::AtomicUsize;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let actions = Arc::new(Mutex::new(VecDeque::from(initial_actions)));
+        let user_hits = Arc::new(AtomicUsize::new(0));
+        let user_hits_for_loop = Arc::clone(&user_hits);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let actions = Arc::clone(&actions);
+                let user_hits = Arc::clone(&user_hits_for_loop);
+                let token_exchange_gate = token_exchange_gate.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::with_capacity(1024);
+                    let mut chunk = [0u8; 512];
+                    loop {
+                        match stream.read(&mut chunk).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                buf.extend_from_slice(&chunk[..n]);
+                                if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() >= 8192 {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    let request_text = String::from_utf8_lossy(&buf);
+                    let first_line = request_text.lines().next().unwrap_or("");
+
+                    if first_line.starts_with("GET /copilot_internal/v2/token") {
+                        if let Some((started, release)) = token_exchange_gate {
+                            started.notify_one();
+                            release.notified().await;
+                        }
+                        let body = r#"{"token":"tid=copilot-jwt","expires_at":4102444800}"#;
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len(),
+                        );
+                        let _ = stream.write_all(response.as_bytes()).await;
+                        let _ = stream.flush().await;
+                        let _ = stream.shutdown().await;
+                        return;
+                    }
+
+                    if first_line.starts_with("GET /user") {
+                        user_hits.fetch_add(1, Ordering::SeqCst);
+                        let next_action = actions.lock().await.pop_front();
+                        match next_action {
+                            Some(MockGitHubAction::DropConnection) => {
+                                let _ = stream.shutdown().await;
+                            }
+                            Some(MockGitHubAction::Timeout(delay)) => {
+                                tokio::time::sleep(delay).await;
+                            }
+                            Some(MockGitHubAction::Respond {
+                                status_line,
+                                extra_headers,
+                                body,
+                            }) => {
+                                let response = format!(
+                                    "HTTP/1.1 {status_line}\r\nContent-Type: application/json\r\n{extra_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                    body.len(),
+                                );
+                                let _ = stream.write_all(response.as_bytes()).await;
+                                let _ = stream.flush().await;
+                                let _ = stream.shutdown().await;
+                            }
+                            None => {
+                                let body = r#"{"message":"unexpected /user request"}"#;
+                                let response = format!(
+                                    "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                                    body.len(),
+                                );
+                                let _ = stream.write_all(response.as_bytes()).await;
+                                let _ = stream.flush().await;
+                                let _ = stream.shutdown().await;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        (format!("http://{addr}"), user_hits, handle)
+    }
+
+    fn write_legacy_v1_copilot_store(dir: &std::path::Path, token: &str) {
+        let legacy = serde_json::json!({
+            "github_token": token,
+            "authenticated_at": 1700000000_i64
+        });
+        fs::write(
+            dir.join("copilot_auth.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn legacy_migration_retains_pending_on_transient_errors_and_succeeds_on_retry() {
+        let dir = tempdir().unwrap();
+        write_legacy_v1_copilot_store(dir.path(), "gho_legacy_retry");
+
+        let (base_url, user_hits, server) = spawn_mock_github_server(
+            vec![
+            MockGitHubAction::DropConnection,
+            MockGitHubAction::Timeout(Duration::from_millis(250)),
+            MockGitHubAction::Respond {
+                status_line: "503 Service Unavailable",
+                extra_headers: "",
+                body: r#"{"message":"service unavailable"}"#.to_string(),
+            },
+            MockGitHubAction::Respond {
+                status_line: "403 Forbidden",
+                extra_headers: "x-ratelimit-remaining: 0\r\n",
+                body: r#"{"message":"API rate limit exceeded"}"#.to_string(),
+            },
+            MockGitHubAction::Respond {
+                status_line: "200 OK",
+                extra_headers: "",
+                body:
+                    r#"{"login":"octocat","id":4242,"avatar_url":"https://avatars.example/u/4242"}"#
+                        .to_string(),
+            },
+        ],
+            None,
+        )
+        .await;
+
+        let manager = CopilotAuthManager::with_test_github_api_base(
+            dir.path().to_path_buf(),
+            base_url,
+            Duration::from_millis(80),
+        );
+        assert_eq!(
+            manager.pending_migration.read().await.as_deref(),
+            Some("gho_legacy_retry")
+        );
+
+        // 1st attempt: transport connection drop -> pending_migration retained
+        let status1 = manager.get_status().await;
+        assert!(!status1.authenticated);
+        assert!(status1.migration_error.is_some());
+        assert_eq!(
+            manager.pending_migration.read().await.as_deref(),
+            Some("gho_legacy_retry")
+        );
+
+        // 2nd attempt: request timeout -> pending_migration retained
+        let status2 = manager.get_status().await;
+        assert!(!status2.authenticated);
+        assert_eq!(
+            manager.pending_migration.read().await.as_deref(),
+            Some("gho_legacy_retry")
+        );
+
+        // 3rd attempt: HTTP 503 -> get_valid_token surfaces NetworkError and retains pending_migration
+        let token_err = manager.get_valid_token().await.unwrap_err();
+        assert!(
+            matches!(token_err, CopilotAuthError::NetworkError(_)),
+            "expected NetworkError on 503, got {token_err:?}"
+        );
+        assert_eq!(
+            manager.pending_migration.read().await.as_deref(),
+            Some("gho_legacy_retry")
+        );
+
+        // 4th attempt: HTTP 403 rate-limited -> pending_migration retained
+        let status4 = manager.get_status().await;
+        assert!(!status4.authenticated);
+        assert_eq!(
+            manager.pending_migration.read().await.as_deref(),
+            Some("gho_legacy_retry")
+        );
+
+        // 5th attempt (concurrent callers): network recovers -> serialized migration succeeds once
+        let (ok_a, ok_b) = tokio::join!(manager.get_status(), manager.get_status());
+        assert!(ok_a.authenticated);
+        assert!(ok_b.authenticated);
+        assert_eq!(ok_a.username.as_deref(), Some("octocat"));
+        assert_eq!(ok_a.default_account_id.as_deref(), Some("4242"));
+        assert!(ok_a.migration_error.is_none());
+        assert!(manager.pending_migration.read().await.is_none());
+        assert_eq!(user_hits.load(Ordering::SeqCst), 5);
+
+        // Verify persisted multi-account store on disk (v3 format, legacy github_token cleared)
+        let persisted: CopilotAuthStore = serde_json::from_str(
+            &fs::read_to_string(dir.path().join("copilot_auth.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(persisted.version >= 2);
+        assert!(persisted.github_token.is_none());
+        assert_eq!(persisted.default_account_id.as_deref(), Some("4242"));
+        assert_eq!(
+            persisted
+                .accounts
+                .get("4242")
+                .map(|account| account.github_token.as_str()),
+            Some("gho_legacy_retry")
+        );
+
+        let reloaded = CopilotAuthManager::new(dir.path().to_path_buf());
+        assert!(reloaded.pending_migration.read().await.is_none());
+        assert!(!reloaded.list_accounts().await.is_empty());
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn legacy_migration_clears_pending_on_deterministic_401_and_bad_credentials_403() {
+        // 1. Deterministic 401 Unauthorized clears pending_migration
+        let dir_401 = tempdir().unwrap();
+        write_legacy_v1_copilot_store(dir_401.path(), "gho_revoked_401");
+
+        let (base_401, hits_401, server_401) = spawn_mock_github_server(
+            vec![
+                MockGitHubAction::Respond {
+                    status_line: "401 Unauthorized",
+                    extra_headers: "",
+                    body: r#"{"message":"Bad credentials"}"#.to_string(),
+                },
+                MockGitHubAction::Respond {
+                    status_line: "200 OK",
+                    extra_headers: "",
+                    body: r#"{"login":"should-not-run","id":1,"avatar_url":null}"#.to_string(),
+                },
+            ],
+            None,
+        )
+        .await;
+
+        let manager_401 = CopilotAuthManager::with_test_github_api_base(
+            dir_401.path().to_path_buf(),
+            base_401,
+            Duration::from_secs(2),
+        );
+        let first = manager_401.get_status().await;
+        assert!(!first.authenticated);
+        assert!(first.migration_error.is_some());
+        assert!(manager_401.pending_migration.read().await.is_none());
+
+        let second = manager_401.get_status().await;
+        assert!(!second.authenticated);
+        assert_eq!(hits_401.load(Ordering::SeqCst), 1);
+        server_401.abort();
+
+        // 2. Deterministic 403 Forbidden (bad credentials, not rate-limited) clears pending_migration
+        let dir_403 = tempdir().unwrap();
+        write_legacy_v1_copilot_store(dir_403.path(), "gho_forbidden_403");
+
+        let (base_403, hits_403, server_403) = spawn_mock_github_server(
+            vec![
+                MockGitHubAction::Respond {
+                    status_line: "403 Forbidden",
+                    extra_headers: "",
+                    body: r#"{"message":"Resource not accessible by integration"}"#.to_string(),
+                },
+                MockGitHubAction::Respond {
+                    status_line: "200 OK",
+                    extra_headers: "",
+                    body: r#"{"login":"should-not-run","id":2,"avatar_url":null}"#.to_string(),
+                },
+            ],
+            None,
+        )
+        .await;
+
+        let manager_403 = CopilotAuthManager::with_test_github_api_base(
+            dir_403.path().to_path_buf(),
+            base_403,
+            Duration::from_secs(2),
+        );
+        let status_403 = manager_403.get_status().await;
+        assert!(!status_403.authenticated);
+        assert!(manager_403.pending_migration.read().await.is_none());
+        let _ = manager_403.get_status().await;
+        assert_eq!(hits_403.load(Ordering::SeqCst), 1);
+        server_403.abort();
+    }
+
+    #[tokio::test]
+    async fn explicit_logout_clears_pending_migration_after_transient_failure() {
+        let dir = tempdir().unwrap();
+        write_legacy_v1_copilot_store(dir.path(), "gho_legacy_logout");
+
+        let (base_url, user_hits, server) = spawn_mock_github_server(
+            vec![
+                MockGitHubAction::Respond {
+                    status_line: "503 Service Unavailable",
+                    extra_headers: "",
+                    body: r#"{"message":"temporary outage"}"#.to_string(),
+                },
+                MockGitHubAction::Respond {
+                    status_line: "200 OK",
+                    extra_headers: "",
+                    body: r#"{"login":"octocat","id":4242,"avatar_url":null}"#.to_string(),
+                },
+            ],
+            None,
+        )
+        .await;
+
+        let manager = CopilotAuthManager::with_test_github_api_base(
+            dir.path().to_path_buf(),
+            base_url,
+            Duration::from_secs(2),
+        );
+
+        // Transient failure retains pending_migration
+        let status_before = manager.get_status().await;
+        assert!(!status_before.authenticated);
+        assert_eq!(
+            manager.pending_migration.read().await.as_deref(),
+            Some("gho_legacy_logout")
+        );
+
+        // Explicit logout clears pending_migration, migration_error, and disk store permanently
+        manager.clear_auth().await.unwrap();
+        assert!(manager.pending_migration.read().await.is_none());
+        assert!(manager.migration_error.read().await.is_none());
+        assert!(!dir.path().join("copilot_auth.json").exists());
+
+        // Subsequent get_status must not retry migrating the logged-out legacy token
+        let status_after = manager.get_status().await;
+        assert!(!status_after.authenticated);
+        assert!(status_after.accounts.is_empty());
+        assert!(status_after.migration_error.is_none());
+        assert_eq!(user_hits.load(Ordering::SeqCst), 1);
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn explicit_login_supersedes_an_in_flight_legacy_migration() {
+        let dir = tempdir().unwrap();
+        write_legacy_v1_copilot_store(dir.path(), "legacy-oauth");
+        let exchange_started = Arc::new(Notify::new());
+        let release_exchange = Arc::new(Notify::new());
+        let deadline = Duration::from_secs(5);
+        let (base_url, user_hits, server) = spawn_mock_github_server(
+            vec![
+                MockGitHubAction::Respond {
+                    status_line: "503 Service Unavailable",
+                    extra_headers: "",
+                    body: r#"{"message":"temporary outage"}"#.to_string(),
+                },
+                MockGitHubAction::Respond {
+                    status_line: "200 OK",
+                    extra_headers: "",
+                    body: r#"{"login":"octocat","id":4242,"avatar_url":null}"#.to_string(),
+                },
+            ],
+            Some((exchange_started.clone(), release_exchange.clone())),
+        )
+        .await;
+        let manager = Arc::new(CopilotAuthManager::with_test_github_api_base(
+            dir.path().to_path_buf(),
+            base_url,
+            deadline * 2,
+        ));
+        assert!(manager.get_status().await.migration_error.is_some());
+
+        let migration = {
+            let manager = manager.clone();
+            tokio::spawn(async move { manager.ensure_migration_complete().await })
+        };
+        tokio::time::timeout(deadline, exchange_started.notified())
+            .await
+            .expect("legacy token exchange started");
+
+        // Commit the same account with the credentials returned by a fresh device login.
+        {
+            let _write_guard = manager.auth_write_lock.lock().await;
+            manager
+                .add_account_internal(
+                    "fresh-oauth".to_string(),
+                    GitHubUser {
+                        login: "octocat".to_string(),
+                        id: 4242,
+                        avatar_url: None,
+                    },
+                    DEFAULT_GITHUB_DOMAIN.to_string(),
+                    Some(CopilotToken {
+                        token: "fresh-copilot".to_string(),
+                        expires_at: 4102444800,
+                    }),
+                )
+                .await
+                .unwrap();
+        }
+        let status = tokio::time::timeout(deadline, manager.get_status())
+            .await
+            .expect("status should not wait for the obsolete migration");
+        assert!(status.authenticated);
+        assert!(status.migration_error.is_none());
+
+        release_exchange.notify_one();
+        tokio::time::timeout(deadline, migration)
+            .await
+            .expect("legacy migration finished")
+            .unwrap()
+            .unwrap();
+
+        assert!(manager.pending_migration.read().await.is_none());
+        assert!(manager.get_status().await.migration_error.is_none());
+        assert_eq!(
+            manager.get_valid_token_for_account("4242").await.unwrap(),
+            "fresh-copilot"
+        );
+        let persisted = CopilotAuthManager::new(dir.path().to_path_buf());
+        assert_eq!(
+            persisted.github_credentials_for_account("4242").await,
+            Some(("fresh-oauth".to_string(), DEFAULT_GITHUB_DOMAIN.to_string()))
+        );
+        assert_eq!(user_hits.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn logout_during_legacy_token_exchange_prevents_a_late_commit() {
+        let dir = tempdir().unwrap();
+        write_legacy_v1_copilot_store(dir.path(), "legacy-oauth");
+        let exchange_started = Arc::new(Notify::new());
+        let release_exchange = Arc::new(Notify::new());
+        let deadline = Duration::from_secs(5);
+        let (base_url, _, server) = spawn_mock_github_server(
+            vec![MockGitHubAction::Respond {
+                status_line: "200 OK",
+                extra_headers: "",
+                body: r#"{"login":"octocat","id":4242,"avatar_url":null}"#.to_string(),
+            }],
+            Some((exchange_started.clone(), release_exchange.clone())),
+        )
+        .await;
+        let manager = Arc::new(CopilotAuthManager::with_test_github_api_base(
+            dir.path().to_path_buf(),
+            base_url,
+            deadline * 2,
+        ));
+        let migration = {
+            let manager = manager.clone();
+            tokio::spawn(async move { manager.ensure_migration_complete().await })
+        };
+        tokio::time::timeout(deadline, exchange_started.notified())
+            .await
+            .expect("legacy token exchange started");
+
+        tokio::time::timeout(deadline, manager.clear_auth())
+            .await
+            .expect("logout should not wait for the legacy exchange")
+            .unwrap();
+        release_exchange.notify_one();
+        tokio::time::timeout(deadline, migration)
+            .await
+            .expect("legacy migration finished")
+            .unwrap()
+            .unwrap();
+
+        let status = manager.get_status().await;
+        assert!(!status.authenticated);
+        assert!(status.migration_error.is_none());
+        assert!(manager.pending_migration.read().await.is_none());
+        assert!(manager.copilot_tokens.read().await.is_empty());
+        assert!(!manager.storage_path.exists());
+        server.abort();
     }
 }
