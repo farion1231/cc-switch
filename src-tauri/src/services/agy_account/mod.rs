@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex, Semaphore};
 
 use crate::error::AppError;
 use keychain::AgyLoginStore;
@@ -36,6 +36,8 @@ const STASH_FILENAME: &str = "agy-login-stash.json";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// access token 剩不到这么久就先续期再查额度。
 const TOKEN_MARGIN: Duration = Duration::from_secs(120);
+/// 同时向上游查额度的并发上限，避免多账号冷启动或批量刷新时一拥而上。
+const MAX_CONCURRENT_QUOTA_QUERIES: usize = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AccountData {
@@ -152,6 +154,8 @@ pub struct AgyAccountManager {
     /// 账号表；同时充当所有改动（含写钥匙串）的互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
+    /// 限制同时查额度的并发数
+    quota_permits: Semaphore,
 }
 
 impl AgyAccountManager {
@@ -177,6 +181,7 @@ impl AgyAccountManager {
             login,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
+            quota_permits: Semaphore::new(MAX_CONCURRENT_QUOTA_QUERIES),
         }
     }
 
@@ -396,12 +401,33 @@ impl AgyAccountManager {
 
     /// 用这个账号自己的令牌查剩余额度（不用先切号）。令牌被拒时强制续期再试一次。
     pub async fn quota(&self, account_id: &str) -> Result<quota::AccountQuota, AccountQuotaError> {
+        self.quota_with(
+            account_id,
+            |token| async move { quota::fetch(&token).await },
+        )
+        .await
+    }
+
+    async fn quota_with<F, Fut>(
+        &self,
+        account_id: &str,
+        mut fetch: F,
+    ) -> Result<quota::AccountQuota, AccountQuotaError>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = Result<quota::AccountQuota, quota::QuotaError>>,
+    {
+        let _permit = self
+            .quota_permits
+            .acquire()
+            .await
+            .map_err(|_| AccountQuotaError::Failed("quota semaphore closed".into()))?;
         let token = self.access_token(account_id).await?;
-        match quota::fetch(&token).await {
+        match fetch(token).await {
             Ok(result) => Ok(result),
             Err(quota::QuotaError::Unauthorized) => {
                 let token = self.refresh_account(account_id).await?;
-                quota::fetch(&token)
+                fetch(token)
                     .await
                     .map_err(|error| AccountQuotaError::Failed(error.to_string()))
             }
@@ -439,10 +465,20 @@ impl AgyAccountManager {
         id
     }
 
-    /// 这个账号还能用的 access token。agy 在用的号先从钥匙串收回 agy 续过的那份。
+    /// 这个账号还能用的 access token。副本里的令牌还有效且未失效时直接用；需要续期或账号已标为
+    /// 失效时再去读钥匙串，把 agy 续过的令牌或重新登录的结果收回来。
     async fn access_token(&self, account_id: &str) -> Result<String, AccountQuotaError> {
         {
             let mut store = self.store.lock().await;
+            let account = store
+                .accounts
+                .get(account_id)
+                .ok_or(AccountQuotaError::NotFound)?;
+            if !account.requires_reauth {
+                if let Some(token) = oauth::usable_access_token(&account.credential, TOKEN_MARGIN) {
+                    return Ok(token.to_string());
+                }
+            }
             if keychain::supported() {
                 if let Ok(live) = self.read_live(&store, false).await {
                     if absorb(&mut store, live, false).1 {

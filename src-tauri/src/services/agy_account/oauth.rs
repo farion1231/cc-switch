@@ -36,6 +36,8 @@ const SCOPES: [&str; 7] = [
 ];
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const MAX_REQUEST_BYTES: usize = 16 * 1024;
+const MAX_LOG_DETAIL_CHARS: usize = 200;
+const MAX_LOG_SUBTYPE_CHARS: usize = 64;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn client_secret() -> String {
@@ -256,7 +258,14 @@ async fn post_token(form: &[(&str, &str)]) -> Result<TokenResponse, AgyOAuthErro
     if bytes.len() > MAX_RESPONSE_BYTES {
         return Err(AgyOAuthError::TokenExchange("响应过大".into()));
     }
-    let value: Value = serde_json::from_slice(&bytes)
+    parse_token_response(status, &bytes)
+}
+
+fn parse_token_response(
+    status: reqwest::StatusCode,
+    bytes: &[u8],
+) -> Result<TokenResponse, AgyOAuthError> {
+    let value: Value = serde_json::from_slice(bytes)
         .map_err(|_| AgyOAuthError::TokenExchange(format!("HTTP {status}，响应不是 JSON")))?;
     if !status.is_success() {
         let code = value
@@ -265,6 +274,14 @@ async fn post_token(form: &[(&str, &str)]) -> Result<TokenResponse, AgyOAuthErro
             .map(sanitize)
             .unwrap_or_default();
         if code == "invalid_grant" {
+            match invalid_grant_detail(&value) {
+                Some(detail) => {
+                    log::warn!("[AgyAccount] Google OAuth 返回 invalid_grant ({detail})");
+                }
+                None => {
+                    log::warn!("[AgyAccount] Google OAuth 返回 invalid_grant");
+                }
+            }
             return Err(AgyOAuthError::InvalidGrant);
         }
         return Err(AgyOAuthError::TokenExchange(format!(
@@ -275,6 +292,25 @@ async fn post_token(form: &[(&str, &str)]) -> Result<TokenResponse, AgyOAuthErro
         .map_err(|_| AgyOAuthError::TokenExchange("响应缺少 access_token".into()))
 }
 
+fn invalid_grant_detail(value: &Value) -> Option<String> {
+    let subtype = value
+        .get("error_subtype")
+        .and_then(Value::as_str)
+        .and_then(|s| sanitize_log_text(s, MAX_LOG_SUBTYPE_CHARS));
+    let description = value
+        .get("error_description")
+        .and_then(Value::as_str)
+        .and_then(|s| sanitize_log_text(s, MAX_LOG_DETAIL_CHARS));
+    match (subtype, description) {
+        (Some(subtype), Some(description)) => {
+            Some(format!("subtype={subtype}, description={description}"))
+        }
+        (Some(subtype), None) => Some(format!("subtype={subtype}")),
+        (None, Some(description)) => Some(format!("description={description}")),
+        (None, None) => None,
+    }
+}
+
 /// Google 错误码只留字母数字和下划线，免得把意外内容带进界面。
 fn sanitize(value: &str) -> String {
     value
@@ -282,6 +318,42 @@ fn sanitize(value: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
         .take(64)
         .collect()
+}
+
+/// 日志里的上游错误细节：过滤控制字符、压平空白并截短，避免日志注入或刷屏。
+fn sanitize_log_text(value: &str, max_chars: usize) -> Option<String> {
+    let mut out = String::new();
+    let mut prev_space = false;
+    let mut count = 0;
+    for ch in value.chars() {
+        let mapped = if matches!(
+            ch,
+            '\r' | '\n' | '\t' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+        ) {
+            ' '
+        } else if ch.is_control() {
+            continue;
+        } else {
+            ch
+        };
+        if mapped == ' ' {
+            if out.is_empty() || prev_space {
+                continue;
+            }
+            prev_space = true;
+        } else {
+            prev_space = false;
+        }
+        if count >= max_chars {
+            break;
+        }
+        out.push(mapped);
+        count += 1;
+    }
+    while out.ends_with(' ') {
+        out.pop();
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// id_token 里认账号要用的字段。令牌是刚从 Google 的 TLS 端点拿到的，只解码不验签。
@@ -536,5 +608,109 @@ mod tests {
         .is_ok());
         tokens.refresh_token = None;
         assert!(new_credential(&tokens).is_none());
+    }
+
+    #[test]
+    fn invalid_grant_detail_sanitizes_control_chars_and_truncates() {
+        assert_eq!(
+            invalid_grant_detail(&json!({
+                "error": "invalid_grant",
+                "error_subtype": "invalid_rapt",
+                "error_description": "reauth related error (invalid_rapt)"
+            }))
+            .as_deref(),
+            Some("subtype=invalid_rapt, description=reauth related error (invalid_rapt)")
+        );
+        assert_eq!(
+            invalid_grant_detail(&json!({
+                "error": "invalid_grant",
+                "error_description": "Token has been expired or revoked."
+            }))
+            .as_deref(),
+            Some("description=Token has been expired or revoked.")
+        );
+        assert_eq!(
+            invalid_grant_detail(&json!({
+                "error": "invalid_grant",
+                "error_subtype": "rapt_required"
+            }))
+            .as_deref(),
+            Some("subtype=rapt_required")
+        );
+        assert_eq!(
+            invalid_grant_detail(&json!({"error": "invalid_grant"})),
+            None
+        );
+        assert_eq!(
+            invalid_grant_detail(&json!({
+                "error_subtype": " \r\n\t\x00 ",
+                "error_description": 123
+            })),
+            None
+        );
+
+        let dirty = invalid_grant_detail(&json!({
+            "error_subtype": "invalid_rapt\r\nFAKE",
+            "error_description": "line1\r\n\tline2\x00\x1b[31m\u{2028}line3"
+        }))
+        .unwrap();
+        assert!(!dirty
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '\u{2028}' | '\u{2029}')));
+        assert_eq!(
+            dirty,
+            "subtype=invalid_rapt FAKE, description=line1 line2[31m line3"
+        );
+
+        let long_subtype = "s".repeat(MAX_LOG_SUBTYPE_CHARS + 20);
+        let long_desc = "中".repeat(MAX_LOG_DETAIL_CHARS + 20);
+        assert_eq!(
+            sanitize_log_text(&long_subtype, MAX_LOG_SUBTYPE_CHARS)
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_LOG_SUBTYPE_CHARS
+        );
+        assert_eq!(
+            sanitize_log_text(&long_desc, MAX_LOG_DETAIL_CHARS)
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_LOG_DETAIL_CHARS
+        );
+        assert_eq!(sanitize_log_text("abcd  ef", 5).as_deref(), Some("abcd"));
+    }
+
+    #[test]
+    fn parse_token_response_keeps_invalid_grant_details_out_of_ui_error() {
+        let body = br#"{"error":"invalid_grant","error_subtype":"invalid_rapt","error_description":"reauth related error (invalid_rapt)"}"#;
+        let err = parse_token_response(reqwest::StatusCode::BAD_REQUEST, body).unwrap_err();
+        assert!(matches!(err, AgyOAuthError::InvalidGrant));
+        let rendered = err.to_string();
+        assert!(!rendered.contains("invalid_rapt"));
+        assert!(!rendered.contains("reauth related error"));
+
+        let bare_invalid_grant = parse_token_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":"invalid_grant"}"#,
+        )
+        .unwrap_err();
+        assert!(matches!(bare_invalid_grant, AgyOAuthError::InvalidGrant));
+
+        let other = parse_token_response(
+            reqwest::StatusCode::BAD_REQUEST,
+            br#"{"error":"invalid_client","error_description":"do not expose"}"#,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(other, AgyOAuthError::TokenExchange(ref msg) if msg.contains("invalid_client") && !msg.contains("do not expose"))
+        );
+
+        let ok = parse_token_response(
+            reqwest::StatusCode::OK,
+            br#"{"access_token":"tok","expires_in":3599}"#,
+        )
+        .unwrap();
+        assert_eq!(ok.access_token, "tok");
     }
 }

@@ -172,8 +172,8 @@ fn parse_version(stdout: &[u8]) -> Option<String> {
 }
 
 /// 先问 `loadCodeAssist` 拿套餐、`cloudaicompanionProject` 和使用资格，再带 `project` 查额度
-/// （和 agy 1.5.5 一致）；`loadCodeAssist` 因非 401 失败时降级为不带项目直查额度（套餐问不到
-/// 只是不显示，不影响额度）。
+/// （和 agy 1.5.5 一致）；`loadCodeAssist` 返回 401 / 403 / 429 时直接返回，不再补发后续请求；
+/// 网络错误或 5xx 等其余失败继续降级为不带项目直查额度（套餐问不到只是不显示，不影响额度）。
 pub async fn fetch(access_token: &str) -> Result<AccountQuota, QuotaError> {
     fetch_with(|method, body| post(access_token, method, body)).await
 }
@@ -185,6 +185,18 @@ where
 {
     match load_code_assist(&mut send).await {
         Ok((reqwest::StatusCode::UNAUTHORIZED, _)) => Err(QuotaError::Unauthorized),
+        Ok((
+            status @ (reqwest::StatusCode::FORBIDDEN | reqwest::StatusCode::TOO_MANY_REQUESTS),
+            body,
+        )) => {
+            if let Some(reason) = parse_ineligible_reason(&body) {
+                return Err(QuotaError::Ineligible(reason));
+            }
+            Err(QuotaError::Http {
+                status: status.as_u16(),
+                message: error_message(&body),
+            })
+        }
         Ok((status, body)) if status.is_success() => {
             if let Some(reason) = parse_ineligible_reason(&body) {
                 return Err(QuotaError::Ineligible(reason));
@@ -894,5 +906,91 @@ mod tests {
         .err()
         .unwrap();
         assert!(matches!(err, QuotaError::Ineligible(ref msg) if msg == "Restricted age"));
+    }
+
+    #[tokio::test]
+    async fn fetch_stops_early_when_load_code_assist_returns_forbidden_or_rate_limited() {
+        // 1. loadCodeAssist 回 403 且无资格原因：直接带上 error_message 返回，不再补发请求
+        let mut count = 0;
+        let err = fetch_with(|_, _| {
+            count += 1;
+            async {
+                Ok((
+                    reqwest::StatusCode::FORBIDDEN,
+                    bytes::Bytes::from_static(
+                        br#"{"error":{"code":403,"message":"You do not have a valid license"}}"#,
+                    ),
+                ))
+            }
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(
+            err,
+            QuotaError::Http { status: 403, ref message } if message == "You do not have a valid license"
+        ));
+        assert_eq!(count, 1);
+
+        // 2. loadCodeAssist 回 403 且带资格原因：直接返回 Ineligible，只发一次请求
+        let mut count = 0;
+        let err = fetch_with(|_, _| {
+            count += 1;
+            async {
+                Ok((
+                    reqwest::StatusCode::FORBIDDEN,
+                    bytes::Bytes::from_static(
+                        br#"{"ineligibleTiers":[{"tierId":"free-tier","reasonMessage":"Restricted age"}]}"#,
+                    ),
+                ))
+            }
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(err, QuotaError::Ineligible(ref msg) if msg == "Restricted age"));
+        assert_eq!(count, 1);
+
+        // 3. loadCodeAssist 回 429：直接带上 error_message 返回，不再继续查额度
+        let mut count = 0;
+        let err = fetch_with(|_, _| {
+            count += 1;
+            async {
+                Ok((
+                    reqwest::StatusCode::TOO_MANY_REQUESTS,
+                    bytes::Bytes::from_static(
+                        br#"{"error":{"code":429,"message":"Resource has been exhausted"}}"#,
+                    ),
+                ))
+            }
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(
+            err,
+            QuotaError::Http { status: 429, ref message } if message == "Resource has been exhausted"
+        ));
+        assert_eq!(count, 1);
+
+        // 4. loadCodeAssist 回 403 且响应体不是 JSON：message 为空串，依然不放大请求
+        let mut count = 0;
+        let err = fetch_with(|_, _| {
+            count += 1;
+            async {
+                Ok((
+                    reqwest::StatusCode::FORBIDDEN,
+                    bytes::Bytes::from_static(b"<html>forbidden</html>"),
+                ))
+            }
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(matches!(
+            err,
+            QuotaError::Http { status: 403, ref message } if message.is_empty()
+        ));
+        assert_eq!(count, 1);
     }
 }
