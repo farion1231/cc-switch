@@ -122,6 +122,8 @@ pub struct PluginEntry {
     pub enabled: bool,
     /// Claude Code 的安装范围（user / project / local / managed）；其它应用没有。
     pub scope: Option<String>,
+    /// Claude Code 项目 / 本地范围安装所属的项目目录；其它范围和应用没有。
+    pub project_path: Option<String>,
     /// CC Switch 能不能启停它：Claude Code 只管 user 范围（项目范围的跟着项目目录走）。
     pub manageable: bool,
     /// 能不能卸载、更新：OpenClaw 随程序自带的插件只能开关。
@@ -695,6 +697,9 @@ fn parse_claude_listing(value: &Value, wsl_root: Option<&Path>) -> PluginListing
             let id = str_field(item, "id").or_else(|| str_field(item, "pluginId"))?;
             let (name, market) = split_id(&id);
             let scope = str_field(item, "scope");
+            let project_path = (scope.as_deref() != Some("user"))
+                .then(|| str_field(item, "projectPath"))
+                .flatten();
             let install_path = str_field(item, "installPath");
             let manifest = install_path
                 .as_deref()
@@ -723,6 +728,7 @@ fn parse_claude_listing(value: &Value, wsl_root: Option<&Path>) -> PluginListing
                 installed_id: None,
                 catalog_id: None,
                 scope,
+                project_path,
                 install_path,
                 updated_at: str_field(item, "lastUpdated")
                     .or_else(|| str_field(item, "installedAt")),
@@ -799,6 +805,7 @@ fn parse_codex_entry(item: &Value, wsl_root: Option<&Path>) -> Option<PluginEntr
         install_path: None,
         updated_at: None,
         scope: None,
+        project_path: None,
         id,
     })
 }
@@ -957,6 +964,7 @@ fn catalog_from_listing(listing: PluginListing) -> Vec<PluginEntry> {
                 installed: false,
                 enabled: false,
                 scope: None,
+                project_path: None,
                 manageable: true,
                 removable: true,
                 catalog_id: None,
@@ -1608,19 +1616,113 @@ mod tests {
     }
 
     #[test]
+    fn claude_listing_preserves_project_path_for_multi_project_installs() {
+        let value = json!({
+            "installed": [
+                {
+                    "id": "context7@official",
+                    "version": "1.0.0",
+                    "scope": "user",
+                    "projectPath": "/ignored-user-path",
+                    "enabled": true
+                },
+                {
+                    "id": "context7@official",
+                    "version": "1.0.0",
+                    "scope": "local",
+                    "projectPath": "/work/proj-a",
+                    "enabled": true
+                },
+                {
+                    "id": "context7@official",
+                    "version": "1.0.0",
+                    "scope": "local",
+                    "projectPath": "/work/proj-b",
+                    "enabled": false
+                },
+                {
+                    "id": "context7@official",
+                    "version": "1.0.0",
+                    "scope": "project",
+                    "projectPath": "/work/proj-a",
+                    "enabled": true
+                },
+                {
+                    "id": "lint@official",
+                    "scope": "project",
+                    "projectPath": "   ",
+                    "enabled": true
+                }
+            ],
+            "available": [
+                {
+                    "pluginId": "context7@official",
+                    "name": "context7",
+                    "description": "Docs lookup",
+                    "marketplaceName": "official"
+                }
+            ]
+        });
+        let listing = parse_claude_listing(&value, None);
+        assert_eq!(listing.installed.len(), 5);
+        assert_eq!(listing.installed[0].scope.as_deref(), Some("user"));
+        assert_eq!(listing.installed[0].project_path, None);
+        assert!(listing.installed[0].manageable && listing.installed[0].removable);
+        assert_eq!(listing.installed[1].scope.as_deref(), Some("local"));
+        assert_eq!(
+            listing.installed[1].project_path.as_deref(),
+            Some("/work/proj-a")
+        );
+        assert!(!listing.installed[1].manageable && !listing.installed[1].removable);
+        assert_eq!(
+            listing.installed[1].description.as_deref(),
+            Some("Docs lookup")
+        );
+        assert_eq!(
+            listing.installed[2].project_path.as_deref(),
+            Some("/work/proj-b")
+        );
+        assert!(!listing.installed[2].enabled);
+        assert_eq!(listing.installed[3].scope.as_deref(), Some("project"));
+        assert_eq!(
+            listing.installed[3].project_path.as_deref(),
+            Some("/work/proj-a")
+        );
+        assert!(!listing.installed[3].manageable && !listing.installed[3].removable);
+        assert_eq!(listing.installed[4].project_path, None);
+        assert!(listing.available.is_empty());
+
+        let serialized = serde_json::to_value(&listing.installed[1]).unwrap();
+        assert_eq!(serialized["projectPath"], json!("/work/proj-a"));
+    }
+
+    #[test]
     fn catalog_includes_installed_entries_as_catalog_items() {
         let listing = PluginListing {
-            installed: vec![PluginEntry {
-                id: "a@m".into(),
-                name: "a".into(),
-                installed: true,
-                enabled: true,
-                scope: Some("project".into()),
-                manageable: false,
-                install_path: Some("/x".into()),
-                description: Some("from manifest".into()),
-                ..Default::default()
-            }],
+            installed: vec![
+                PluginEntry {
+                    id: "a@m".into(),
+                    name: "a".into(),
+                    installed: true,
+                    enabled: true,
+                    scope: Some("project".into()),
+                    project_path: Some("/work/proj-a".into()),
+                    manageable: false,
+                    install_path: Some("/x".into()),
+                    description: Some("from manifest".into()),
+                    ..Default::default()
+                },
+                PluginEntry {
+                    id: "a@m".into(),
+                    name: "a".into(),
+                    installed: true,
+                    enabled: false,
+                    scope: Some("local".into()),
+                    project_path: Some("/work/proj-b".into()),
+                    manageable: false,
+                    ..Default::default()
+                },
+            ],
             available: vec![PluginEntry {
                 id: "b@m".into(),
                 name: "b".into(),
@@ -1636,6 +1738,7 @@ mod tests {
         let a = &catalog[1];
         assert!(!a.installed && !a.enabled && a.manageable);
         assert_eq!(a.scope, None);
+        assert_eq!(a.project_path, None);
         assert_eq!(a.install_path, None);
         assert_eq!(a.description.as_deref(), Some("from manifest"));
     }
