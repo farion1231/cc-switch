@@ -1496,7 +1496,7 @@ export function CodexFormFields({
             }),
             t("codexConfig.officialSpeedTiersHint", {
               defaultValue:
-                "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
+                "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。Codex 桌面版要登录 ChatGPT 才显示 Fast：在桌面版登录后，打开设置里的「非接管切换时保留官方登录」（或使用路由模式），请求仍发往这张卡；不登录时只有命令行版能用（/fast）。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
             }),
             "codexOfficialSpeedTiers",
           )}
