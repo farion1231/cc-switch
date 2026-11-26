@@ -2581,6 +2581,8 @@ function ProviderFormFull({
       onUniversalPresetSelect={onUniversalPresetSelect}
       onManageUniversalProviders={onManageUniversalProviders}
       category={category}
+      // 状态还没读到时先进表单：表单里仍有前往授权中心的入口，WSL 下也不会走进死路
+      claudeOfficialBlocked={claudeBlockedByWsl !== false}
     />
   );
 

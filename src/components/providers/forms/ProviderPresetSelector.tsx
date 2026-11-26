@@ -29,10 +29,7 @@ import {
 } from "@/config/universalProviderPresets";
 import { cn } from "@/lib/utils";
 import { usePresetStep } from "./presetStep";
-import {
-  officialAuthTargetForPreset,
-  useClaudeOfficialAddBlockedByWsl,
-} from "./shared";
+import { officialAuthTargetForPreset } from "./shared";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
@@ -147,6 +144,8 @@ interface ProviderPresetSelectorProps {
   onManageUniversalProviders?: () => void;
   category?: ProviderCategory;
   barAction?: React.ReactNode;
+  /** Claude 官方预设不能跳授权中心（配置目录在 WSL，或状态还没读到）：留在表单里 */
+  claudeOfficialBlocked?: boolean;
 }
 
 /**
@@ -160,11 +159,11 @@ export function ProviderPresetSelector({
   onUniversalPresetSelect,
   onManageUniversalProviders,
   barAction,
+  claudeOfficialBlocked,
 }: Readonly<ProviderPresetSelectorProps>) {
   const step = usePresetStep();
   const registerSelector = step?.registerSelector;
   useEffect(() => registerSelector?.(), [registerSelector]);
-  const claudeBlockedByWsl = useClaudeOfficialAddBlockedByWsl(step?.appId);
 
   const pick = (id: string) => {
     const picked = presetEntries.find((item) => item.id === id);
@@ -172,8 +171,7 @@ export function ProviderPresetSelector({
       ? officialAuthTargetForPreset(
           step?.appId,
           picked.preset.category,
-          // 状态还没读到时先进表单：表单里仍有前往授权中心的入口，WSL 下也不会走进死路
-          claudeBlockedByWsl !== false,
+          claudeOfficialBlocked,
         )
       : null;
     if (authTarget && step?.openAuthCenter) {
