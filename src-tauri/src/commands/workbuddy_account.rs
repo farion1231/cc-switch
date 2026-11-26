@@ -52,9 +52,11 @@ pub async fn workbuddy_account_live_state(
 /// 收录 WorkBuddy 当前登录的账号（已收录的就更新副本）。
 #[tauri::command]
 pub async fn workbuddy_account_import_current(
+    app: tauri::AppHandle,
     state: tauri::State<'_, WorkBuddyAccountState>,
+    app_state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<WorkBuddyImportResult, String> {
-    run_workbuddy(&state.0, |manager| {
+    let imported = run_workbuddy(&state.0, |manager| {
         let outcome = manager.import_current()?;
         let current = manager.status()?.current_account_id;
         Ok(WorkBuddyImportResult {
@@ -62,7 +64,29 @@ pub async fn workbuddy_account_import_current(
             created: outcome.created,
         })
     })
-    .await
+    .await?;
+    let entry = crate::services::provider::official_account_cards::OfficialAccountEntry {
+        id: imported.account.id.clone(),
+        login: imported.account.login.clone(),
+    };
+    let state_clone = app_state.inner().clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        if let Err(error) =
+            crate::services::provider::official_account_cards::clear_dismissed_and_sync_locked(
+                &state_clone,
+                &crate::app_config::AppType::WorkBuddy,
+                &[entry],
+            )
+        {
+            log::warn!("[WorkBuddyAccount] 同步官方账号卡片失败: {error}");
+        }
+    })
+    .await;
+    crate::commands::auth::emit_official_cards_updated(
+        &app,
+        &crate::app_config::AppType::WorkBuddy,
+    );
+    Ok(imported)
 }
 
 /// 收录当前账号后在本机写登出标记，WorkBuddy 下次打开停在登录页（不调用服务端登出）。
@@ -70,17 +94,43 @@ pub async fn workbuddy_account_import_current(
 /// 结果经 `workbuddy_account_live_state` 的 `reauth` 报一次。
 #[tauri::command(rename_all = "camelCase")]
 pub async fn workbuddy_account_prepare_new_login(
+    app: tauri::AppHandle,
     reauth_account_id: Option<String>,
     state: tauri::State<'_, WorkBuddyAccountState>,
+    app_state: tauri::State<'_, crate::store::AppState>,
 ) -> Result<Option<ManagedAuthAccount>, String> {
-    run_workbuddy(&state.0, move |manager| {
+    let captured = run_workbuddy(&state.0, move |manager| {
         let captured = match reauth_account_id.as_deref() {
             Some(account_id) => manager.prepare_reauth(account_id)?,
             None => manager.prepare_new_login()?,
         };
         Ok(captured.map(|account| map_workbuddy_account(account, None)))
     })
-    .await
+    .await?;
+    if let Some(ref account) = captured {
+        let entry = crate::services::provider::official_account_cards::OfficialAccountEntry {
+            id: account.id.clone(),
+            login: account.login.clone(),
+        };
+        let state_clone = app_state.inner().clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            if let Err(error) =
+                crate::services::provider::official_account_cards::clear_dismissed_and_sync_locked(
+                    &state_clone,
+                    &crate::app_config::AppType::WorkBuddy,
+                    &[entry],
+                )
+            {
+                log::warn!("[WorkBuddyAccount] 同步官方账号卡片失败: {error}");
+            }
+        })
+        .await;
+        crate::commands::auth::emit_official_cards_updated(
+            &app,
+            &crate::app_config::AppType::WorkBuddy,
+        );
+    }
+    Ok(captured)
 }
 
 /// 打开 WorkBuddy 桌面端（让用户在里面登录）。

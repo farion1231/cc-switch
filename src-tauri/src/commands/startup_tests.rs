@@ -95,7 +95,12 @@ fn startup_database_commands_yield_during_session_sync_contention() {
         };
     }
 
-    let providers = query!(get_providers, "opencode".into());
+    let providers = while_connection_locked(
+        &db,
+        "get_providers",
+        super::get_providers(app.handle().clone(), app.state(), "opencode".into()),
+    )
+    .unwrap();
     assert_eq!(providers[&provider.id].name, provider.name);
     assert_eq!(query!(get_current_provider, "claude".into()), provider.id);
     let mode = query!(get_app_mode, "claude".into());
@@ -129,10 +134,12 @@ fn startup_database_commands_yield_during_session_sync_contention() {
     query!(delete_model_pricing, pricing.model_id);
 
     // Validation errors must still reach the caller after moving work off-thread.
-    assert!(
-        tauri::async_runtime::block_on(super::get_providers(app.state(), "invalid".into()))
-            .is_err()
-    );
+    assert!(tauri::async_runtime::block_on(super::get_providers(
+        app.handle().clone(),
+        app.state(),
+        "invalid".into()
+    ))
+    .is_err());
     let error = tauri::async_runtime::block_on(super::update_model_pricing_batch(
         app.state(),
         vec![ModelPricingInfo {
@@ -175,7 +182,17 @@ fn startup_database_commands_yield_during_session_sync_contention() {
         "kimi".into(),
         kimi.id.clone()
     );
-    query!(delete_provider, "kimi".into(), kimi.id.clone());
+    while_connection_locked(
+        &db,
+        "delete_provider",
+        super::delete_provider(
+            app.handle().clone(),
+            app.state(),
+            "kimi".into(),
+            kimi.id.clone(),
+        ),
+    )
+    .unwrap();
     assert!(db
         .get_provider_by_id(&kimi.id, &AppType::Kimi)
         .unwrap()

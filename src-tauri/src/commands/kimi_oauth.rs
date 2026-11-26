@@ -24,10 +24,15 @@ pub async fn kimi_oauth_start(
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn kimi_oauth_poll(
+    app: tauri::AppHandle,
     flow_id: String,
     state: State<'_, KimiOAuthManager>,
 ) -> Result<KimiLoginPoll, String> {
-    state.poll(&flow_id).await
+    let poll = state.poll(&flow_id).await?;
+    if poll.authenticated {
+        crate::commands::auth::emit_official_cards_updated(&app, &AppType::Kimi);
+    }
+    Ok(poll)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -42,18 +47,23 @@ pub async fn kimi_oauth_cancel(
 /// login is only removed from the list.
 #[tauri::command(rename_all = "camelCase")]
 pub async fn kimi_oauth_remove(
+    app: tauri::AppHandle,
     account_id: String,
     state: State<'_, KimiOAuthManager>,
     app_state: State<'_, AppState>,
 ) -> Result<(), String> {
     // Listing Kimi providers writes native entries back to the database too.
     let _guard = app_state.proxy_service.lock_switch_for_app("kimi").await;
-    state
+    let result = state
         .remove(&account_id, || {
             app_state.db.delete_provider(&AppType::Kimi, &account_id)?;
             Ok(())
         })
-        .await
+        .await;
+    if result.is_ok() {
+        crate::commands::auth::emit_official_cards_updated(&app, &AppType::Kimi);
+    }
+    result
 }
 
 #[tauri::command(rename_all = "camelCase")]

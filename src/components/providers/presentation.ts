@@ -646,43 +646,130 @@ function buildSwitchSectionsByView(input: SwitchModeInput): ProviderSection[] {
 
 // ─── 启动器式应用（Antigravity）──────────────────────────────────────────────
 
+export interface AgyAccountsState {
+  status: "loading" | "error" | "ready";
+  currentAccountId: string | null;
+  accounts: { id: string; requiresReauth: boolean }[];
+  switchingId?: string | null;
+}
+
 export interface LaunchInput {
   app: AppId;
   t: TFunction;
   providers: Provider[];
   openTerminal: (provider: Provider) => void;
+  agyAccounts?: AgyAccountsState;
+  switchAccount?: (provider: Provider) => void;
 }
 
 /**
  * Antigravity：第三方 Key 只能经环境变量交给 CC Switch 打开的那个 agy，管不到用户自己敲的
  * `agy`，所以没有「启用 / 使用中」，每张卡的主操作就是「打开终端」，哪张都能删。
+ * 绑定了授权中心账号的官方卡可以直接在列表里一键「切换」agy 的全局登录，同时保留「打开终端」。
  */
 export function buildLaunchSections(input: LaunchInput): ProviderSection[] {
-  const { app, t, providers, openTerminal } = input;
+  const { app, t, providers, openTerminal, agyAccounts, switchAccount } = input;
   return [
     {
       key: "all",
-      items: providers.map((p) => ({
-        provider: p,
-        presentation: {
-          chips: isOfficialAccount(app, p)
-            ? [
-                {
-                  key: "official",
-                  label: t("providerCard.chip.official"),
-                  tone: "outline",
+      items: providers.map((p) => {
+        const official = isOfficialAccount(app, p);
+        const chips: CardChip[] = official
+          ? [
+              {
+                key: "official",
+                label: t("providerCard.chip.official"),
+                tone: "outline",
+              },
+            ]
+          : [];
+
+        const boundAccountId =
+          app === "agy" && official
+            ? resolveManagedAccountId(p.meta, "agy_oauth")?.trim() || null
+            : null;
+        if (boundAccountId && agyAccounts) {
+          const account = agyAccounts.accounts.find(
+            (item) => item.id === boundAccountId,
+          );
+          const inUse = Boolean(
+            account &&
+              agyAccounts.status === "ready" &&
+              agyAccounts.currentAccountId === account.id,
+          );
+          if (inUse) {
+            return {
+              provider: p,
+              presentation: {
+                tone: "direct" as const,
+                status: {
+                  label: t("authCenter.inUseBy", { app: "agy" }),
+                  dot: "direct" as const,
                 },
-              ]
-            : [],
-          buttons: [
-            {
-              key: "openTerminal",
-              label: t("provider.openTerminalWithProvider"),
-              onClick: () => openTerminal(p),
+                chips,
+                buttons: [],
+              },
+            };
+          }
+          let disabledReason: string | undefined;
+          if (agyAccounts.status === "loading") {
+            disabledReason = t("codex.accountLoading", {
+              defaultValue: "正在加载账号…",
+            });
+          } else if (agyAccounts.status === "error") {
+            disabledReason = t("authCenter.agy.statusLoadFailed", {
+              defaultValue: "无法读取 Antigravity 账号，请重试。",
+            });
+          } else if (!account) {
+            chips.push({
+              key: "accountMissing",
+              label: t("provider.form.managedAccount.missing", {
+                defaultValue: "不在这台电脑上的账号",
+              }),
+              tone: "warning",
+            });
+            disabledReason = t("provider.form.agy.accountMissing", {
+              defaultValue: "不在这台电脑上的账号",
+            });
+          } else if (account.requiresReauth) {
+            disabledReason = t("authCenter.agy.reauthNote", {
+              defaultValue: "登录凭据已失效，切不过去",
+            });
+          } else if (agyAccounts.switchingId) {
+            disabledReason = t("workbuddy.official.switching", {
+              defaultValue: "正在切换…",
+            });
+          }
+          return {
+            provider: p,
+            presentation: {
+              chips,
+              buttons: [
+                {
+                  key: "switch",
+                  label: t("providerCard.action.switch"),
+                  onClick: () => switchAccount?.(p),
+                  disabledReason,
+                },
+              ],
             },
-          ],
-        },
-      })),
+          };
+        }
+
+        return {
+          provider: p,
+          presentation: {
+            chips,
+            buttons: [
+              {
+                key: "openTerminal",
+                label: t("provider.openTerminalWithProvider"),
+                onClick: () => openTerminal(p),
+              },
+            ],
+          },
+        };
+      }),
     },
   ];
 }
@@ -788,8 +875,8 @@ function codebuddyOfficialItem(
   }
   let disabledReason: string | undefined;
   if (!accountId) {
-    disabledReason = t("codebuddy.official.unbound", {
-      defaultValue: "还没有选择账号，请编辑卡片选择一个",
+    disabledReason = t("codebuddy.official.unboundManaged", {
+      defaultValue: "未绑定官方账号，请前往授权中心登录",
     });
   } else if (!state || state.status === "loading") {
     disabledReason = t("codebuddy.official.statusLoading", {
@@ -800,8 +887,8 @@ function codebuddyOfficialItem(
       defaultValue: "无法读取 CodeBuddy 账号，请重试。",
     });
   } else if (!account) {
-    disabledReason = t("codebuddy.official.accountDeleted", {
-      defaultValue: "账号已删除，请重新选择",
+    disabledReason = t("codebuddy.official.accountRemoved", {
+      defaultValue: "该账号已从授权中心移除",
     });
     chips.push({
       key: "accountDeleted",
@@ -897,8 +984,12 @@ function workbuddyOfficialCard(
           onClick: () => input.actions.switchAccount?.(p),
           disabledReason: missing
             ? bound
-              ? t("workbuddy.official.accountDeleted")
-              : t("workbuddy.official.accountUnset")
+              ? t("workbuddy.official.accountRemoved", {
+                  defaultValue: "该账号已从授权中心移除",
+                })
+              : t("workbuddy.official.unboundManaged", {
+                  defaultValue: "未绑定官方账号，请前往授权中心登录",
+                })
             : state?.running
               ? t("workbuddy.official.quitFirst")
               : state?.switching

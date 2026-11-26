@@ -799,7 +799,11 @@ impl Database {
             .map_err(|e| AppError::Database(e.to_string()))?;
         while let Some(row) = rows.next().map_err(|e| AppError::Database(e.to_string()))? {
             let id: String = row.get(0).map_err(|e| AppError::Database(e.to_string()))?;
-            if !is_official_seed_id(&id) {
+            if !is_official_seed_id(&id)
+                && !crate::services::provider::official_account_cards::is_official_account_card_id(
+                    &id,
+                )
+            {
                 return Ok(true);
             }
         }
@@ -807,7 +811,7 @@ impl Database {
     }
 
     /// 计算指定 app 下一个可用的 sort_index（追加到末尾）。
-    fn next_sort_index_for_app(&self, app_type: &AppType) -> Result<usize, AppError> {
+    pub(crate) fn next_sort_index_for_app(&self, app_type: &AppType) -> Result<usize, AppError> {
         let conn = lock_conn!(self.conn);
         let max: Option<i64> = conn
             .query_row(

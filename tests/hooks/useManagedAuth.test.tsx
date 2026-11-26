@@ -687,4 +687,133 @@ describe("useManagedAuth", () => {
     );
     expect(queryClient.getQueryState(quotaKey)?.isInvalidated).toBe(false);
   });
+
+  it("invalidates the app provider list when login completes", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    queryClient.setQueryData(["providers", "claude"], { providers: {} });
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "claude_official",
+      device_code: "flow-1",
+      user_code: "",
+      verification_uri: "https://claude.com/cai/oauth/authorize?state=s",
+      expires_in: 600,
+      interval: 1,
+    });
+    apiMocks.authPollForAccount.mockResolvedValue({
+      id: "acct-claude-1",
+      provider: "claude_official",
+      login: "alice@example.com",
+      avatar_url: null,
+      authenticated_at: 1,
+      is_default: false,
+      github_domain: "claude.ai",
+      requires_reauth: false,
+    });
+
+    const { result } = renderHook(() => useManagedAuth("claude_official"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+
+    act(() => result.current.addAccount());
+
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryState(["providers", "claude"])?.isInvalidated,
+      ).toBe(true),
+    );
+  });
+
+  it("invalidates inactive app providers cache when authStatus.accounts changes via refresh", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    queryClient.setQueryData(["providers", "workbuddy"], { providers: {} });
+
+    const { result } = renderHook(() => useManagedAuth("workbuddy_account"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+
+    // Initial load must not invalidate providers unnecessarily.
+    expect(invalidateSpy).not.toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["providers", "workbuddy"] }),
+    );
+
+    apiMocks.authGetStatus.mockResolvedValueOnce({
+      provider: "workbuddy_account",
+      authenticated: true,
+      default_account_id: "wb-1",
+      accounts: [
+        {
+          id: "wb-1",
+          provider: "workbuddy_account",
+          login: "alice",
+          avatar_url: null,
+          authenticated_at: 1,
+          is_default: true,
+          github_domain: "workbuddy",
+        },
+      ],
+    });
+
+    await act(async () => {
+      await result.current.refetchStatus();
+    });
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["providers", "workbuddy"],
+        refetchType: "all",
+      }),
+    );
+  });
+
+  it("invalidates app providers cache when cancelBackendFlow reports login already committed", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "claude_official",
+      device_code: "flow-late-commit",
+      user_code: "",
+      verification_uri: "https://claude.com/cai/oauth/authorize?state=s",
+      expires_in: 600,
+      interval: 60,
+    });
+    apiMocks.authPollForAccount.mockResolvedValue(null);
+    apiMocks.authCancelLogin.mockResolvedValue(false);
+
+    const { result } = renderHook(() => useManagedAuth("claude_official"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+
+    act(() => result.current.addAccount());
+    await waitFor(() => expect(result.current.isPolling).toBe(true));
+
+    await act(async () => {
+      await result.current.cancelAuthAndWait();
+    });
+
+    await waitFor(() =>
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ["providers", "claude"],
+        refetchType: "all",
+      }),
+    );
+  });
 });

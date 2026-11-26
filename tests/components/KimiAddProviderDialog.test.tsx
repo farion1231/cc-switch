@@ -92,16 +92,9 @@ function setup() {
   return { ...view, onOpenChange, onSubmit };
 }
 
-async function selectAccount() {
+async function openAuthCenter() {
   fireEvent.click(
     await screen.findByRole("button", { name: "kimi.oauth.title" }),
-  );
-  await screen.findByRole("button", { name: "kimi.oauth.manageAccounts" });
-}
-async function openAuthCenter() {
-  await selectAccount();
-  fireEvent.click(
-    screen.getByRole("button", { name: "kimi.oauth.manageAccounts" }),
   );
   return screen.findByRole("region", { name: "Kimi Code" });
 }
@@ -114,20 +107,20 @@ describe("Kimi account entry in the add-provider dialog", () => {
     vi.mocked(kimiOAuthApi.useAccount).mockResolvedValue(undefined);
   });
 
-  it("directs official sign-in to Auth Center without API-key fields or an add footer", async () => {
+  it("opens Auth Center directly on official sign-in without an intermediate form or add footer", async () => {
     const { onSubmit } = setup();
-    await selectAccount();
+    const group = await openAuthCenter();
     expect(
       screen.queryByRole("button", { name: "common.add" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "kimi.oauth.signIn" }),
     ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
-    fireEvent.click(
-      screen.getByRole("button", { name: "kimi.oauth.manageAccounts" }),
-    );
-    const group = await screen.findByRole("region", { name: "Kimi Code" });
+    expect(
+      screen.queryByRole("button", {
+        name: "provider.form.officialManaged.manageAccounts",
+      }),
+    ).not.toBeInTheDocument();
     expect(
       within(group).getByRole("button", { name: "添加账号" }),
     ).toBeEnabled();

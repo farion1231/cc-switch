@@ -28,7 +28,7 @@ import {
   yamlNodeToText,
   type YamlNodeError,
 } from "./helpers/yamlNode";
-import { NativeConfigEditor } from "./shared";
+import { NativeConfigEditor, OfficialAccountPresetPanel } from "./shared";
 import {
   mergeOpencodeExtraOptionRows,
   toOpencodeExtraOptions,
@@ -237,18 +237,10 @@ export function McodeProviderForm({
         >
           {presetSelector}
           {showAccountLogin && (
-            <div className="space-y-3">
-              <p className="text-body text-fg-2">
-                {t("dsh.account.presetDescription")}
-              </p>
-              <Button
-                type="button"
-                variant="neutral"
-                onClick={() => onManageAuthAccounts?.("dsh_account")}
-              >
-                {t("dsh.account.manageAccounts")}
-              </Button>
-            </div>
+            <OfficialAccountPresetPanel
+              authProvider="dsh_account"
+              onManageAuthAccounts={onManageAuthAccounts}
+            />
           )}
         </form>
       </Form>

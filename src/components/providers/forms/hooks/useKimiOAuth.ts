@@ -33,9 +33,31 @@ export function useKimiOAuth() {
   const invalidate = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: STATUS_KEY }),
-      queryClient.invalidateQueries({ queryKey: ["providers", "kimi"] }),
+      queryClient.invalidateQueries({
+        queryKey: ["providers", "kimi"],
+        refetchType: "all",
+      }),
     ]);
   }, [queryClient]);
+
+  const prevAccountIdsRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!status.data) return;
+    const signature = status.data.accounts
+      .map((account) => account.id)
+      .sort()
+      .join("\n");
+    if (
+      prevAccountIdsRef.current !== null &&
+      prevAccountIdsRef.current !== signature
+    ) {
+      void queryClient.invalidateQueries({
+        queryKey: ["providers", "kimi"],
+        refetchType: "all",
+      });
+    }
+    prevAccountIdsRef.current = signature;
+  }, [queryClient, status.data]);
 
   const clearTimer = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);

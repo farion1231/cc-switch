@@ -120,54 +120,40 @@ describe("WorkBuddyProviderForm", () => {
     authMocks.openApp.mockResolvedValue(undefined);
   });
 
-  it("creates an official sign-in card bound to the current account", async () => {
+  it("directs creating an official sign-in card to the Auth Center", async () => {
     setProviders("workbuddy", {});
-    const submit = vi.fn();
+    const onAccountLoginChange = vi.fn();
+    const onManageAuthAccounts = vi.fn();
     render(
       <WorkBuddyProviderForm
         appId="workbuddy"
         initialData={undefined}
         submitLabel="Add"
-        onSubmit={submit}
+        onSubmit={vi.fn()}
         onCancel={() => {}}
+        onAccountLoginChange={onAccountLoginChange}
+        onManageAuthAccounts={onManageAuthAccounts}
       />,
     );
     fireEvent.click(await screen.findByText("workbuddy.official.presetName"));
 
-    // 账号区代替接口地址、Key、模型和 JSON
-    expect(
-      await screen.findByLabelText("workbuddy.official.account"),
-    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(onAccountLoginChange).toHaveBeenCalledWith(true),
+    );
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
     expect(screen.queryByLabelText(/workbuddy.form.url/)).toBeNull();
     expect(screen.queryByLabelText(/opencode.providerKey/)).toBeNull();
     expect(screen.queryByLabelText("provider.configJson")).toBeNull();
 
-    // 默认绑定 WorkBuddy 现在登着的号，名称用它的昵称
-    await waitFor(() =>
-      expect(screen.getByLabelText("provider.name")).toHaveValue("Alice"),
+    fireEvent.click(
+      screen.getByRole("button", { name: "前往授权中心管理账号" }),
     );
-    const save = screen.getByRole("button", { name: "Add" });
-    await waitFor(() => expect(save).toBeEnabled());
-    fireEvent.click(save);
-    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-    const call = submit.mock.calls[0][0];
-    expect(call).toMatchObject({
-      name: "Alice",
-      presetCategory: "official",
-      providerKey: "workbuddy-official",
-      meta: {
-        authBinding: {
-          source: "managed_account",
-          authProvider: "workbuddy_account",
-          accountId: "u-1",
-        },
-      },
-    });
-    expect(JSON.parse(call.settingsConfig)).toEqual({});
+    expect(onManageAuthAccounts).toHaveBeenCalledWith("workbuddy_account");
   });
 
-  it("keeps the binding when editing an official card", async () => {
+  it("keeps the binding when editing an official card without an account selector", async () => {
     const submit = vi.fn();
+    const onManageAuthAccounts = vi.fn();
     render(
       <WorkBuddyProviderForm
         appId="workbuddy"
@@ -176,11 +162,13 @@ describe("WorkBuddyProviderForm", () => {
         submitLabel="Save"
         onSubmit={submit}
         onCancel={() => {}}
+        onManageAuthAccounts={onManageAuthAccounts}
       />,
     );
+    expect(screen.queryByLabelText("workbuddy.official.account")).toBeNull();
+    expect(await screen.findByText("Bob")).toBeInTheDocument();
     const save = screen.getByRole("button", { name: "Save" });
     await waitFor(() => expect(save).toBeEnabled());
-    // 用户起的名称不被昵称覆盖
     expect(screen.getByLabelText("provider.name")).toHaveValue("Work account");
     fireEvent.click(save);
     await waitFor(() => expect(submit).toHaveBeenCalledOnce());
@@ -191,7 +179,8 @@ describe("WorkBuddyProviderForm", () => {
     });
   });
 
-  it("asks to choose again when the bound account was deleted", async () => {
+  it("shows missing-account status while allowing metadata edits on an official card", async () => {
+    const onManageAuthAccounts = vi.fn();
     render(
       <WorkBuddyProviderForm
         appId="workbuddy"
@@ -200,33 +189,13 @@ describe("WorkBuddyProviderForm", () => {
         submitLabel="Save"
         onSubmit={vi.fn()}
         onCancel={() => {}}
+        onManageAuthAccounts={onManageAuthAccounts}
       />,
     );
-    expect(
-      (await screen.findAllByText("workbuddy.official.accountDeleted")).length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  });
-
-  it("prepares a new sign-in and opens WorkBuddy", async () => {
-    authMocks.prepareNewLogin.mockResolvedValue(null);
-    render(
-      <WorkBuddyProviderForm
-        appId="workbuddy"
-        providerId="workbuddy-official"
-        initialData={officialCard("u-1")}
-        submitLabel="Save"
-        onSubmit={vi.fn()}
-        onCancel={() => {}}
-      />,
-    );
-    fireEvent.click(
-      await screen.findByRole("button", {
-        name: "authCenter.workbuddy.prepareNewLogin",
-      }),
-    );
-    await waitFor(() => expect(authMocks.prepareNewLogin).toHaveBeenCalled());
-    await waitFor(() => expect(authMocks.openApp).toHaveBeenCalled());
+    expect(await screen.findByText("不在这台电脑上的账号")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "前往授权中心" }));
+    expect(onManageAuthAccounts).toHaveBeenCalledWith("workbuddy_account");
   });
 
   it("edits fields while keeping the key and unknown settings", async () => {

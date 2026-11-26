@@ -5,7 +5,6 @@ import {
   render as rtlRender,
   screen,
   waitFor,
-  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -459,15 +458,18 @@ describe("CodebuddyProviderForm", () => {
         ),
       );
 
-    it("binds a new card to the current account and names it after the account", async () => {
+    it("directs adding a new official CodeBuddy preset to the Auth Center", async () => {
       useAccounts("1@www.codebuddy.cn");
-      const submit = vi.fn();
+      const onAccountLoginChange = vi.fn();
+      const onManageAuthAccounts = vi.fn();
       render(
         <CodebuddyProviderForm
           appId="codebuddy"
           submitLabel="Add"
-          onSubmit={submit}
+          onSubmit={vi.fn()}
           onCancel={() => {}}
+          onAccountLoginChange={onAccountLoginChange}
+          onManageAuthAccounts={onManageAuthAccounts}
         />,
       );
       fireEvent.click(
@@ -475,39 +477,21 @@ describe("CodebuddyProviderForm", () => {
           name: /codebuddy\.official\.presetName/,
         }),
       );
-      // 不填模型、地址、Key，只选账号
-      expect(
-        screen.queryByLabelText("providerForm.apiEndpoint"),
-      ).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
-      const alice = await screen.findByRole("radio", { name: /alice/ });
       await waitFor(() =>
-        expect(alice).toHaveAttribute("aria-checked", "true"),
+        expect(onAccountLoginChange).toHaveBeenCalledWith(true),
       );
-      expect(screen.getByLabelText("provider.name")).toHaveValue("alice");
-      expect(screen.getByText("CodeBuddy 在用")).toBeInTheDocument();
-
-      // 换成 bob，名字跟着换
-      fireEvent.click(screen.getByRole("radio", { name: /bob/ }));
-      expect(screen.getByLabelText("provider.name")).toHaveValue("bob");
-      const save = screen.getByRole("button", { name: "Add" });
-      await waitFor(() => expect(save).toBeEnabled());
-      fireEvent.click(save);
-      await waitFor(() => expect(submit).toHaveBeenCalledOnce());
-      const values = submit.mock.calls[0][0];
-      expect(values.presetCategory).toBe("official");
-      expect(values.providerKey).toMatch(/^codebuddy-official-/);
-      expect(JSON.parse(values.settingsConfig)).toEqual({});
-      expect(values.meta.authBinding).toEqual({
-        source: "managed_account",
-        authProvider: "codebuddy_oauth",
-        accountId: "2@www.codebuddy.ai",
-      });
+      expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+      expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "前往授权中心管理账号" }),
+      );
+      expect(onManageAuthAccounts).toHaveBeenCalledWith("codebuddy_oauth");
     });
 
-    it("flags a card whose bound account was removed", async () => {
+    it("shows read-only account info and preserves authBinding without a radio picker when editing", async () => {
       useAccounts(null);
       const submit = vi.fn();
+      const onManageAuthAccounts = vi.fn();
       render(
         <CodebuddyProviderForm
           appId="codebuddy"
@@ -527,150 +511,23 @@ describe("CodebuddyProviderForm", () => {
           submitLabel="Save"
           onSubmit={submit}
           onCancel={() => {}}
+          onManageAuthAccounts={onManageAuthAccounts}
         />,
       );
+      expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
       expect(
-        await screen.findByText("账号已删除，请重新选择"),
+        await screen.findByText("不在这台电脑上的账号"),
       ).toBeInTheDocument();
-      fireEvent.click(screen.getByRole("radio", { name: /alice/ }));
-      // 用户自己起的名字不被账号名覆盖
       expect(screen.getByLabelText("provider.name")).toHaveValue("Old");
+
+      fireEvent.click(screen.getByRole("button", { name: "前往授权中心" }));
+      expect(onManageAuthAccounts).toHaveBeenCalledWith("codebuddy_oauth");
+
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
       await waitFor(() => expect(submit).toHaveBeenCalledOnce());
       const values = submit.mock.calls[0][0];
       expect(values.providerKey).toBe("codebuddy-official-x");
-      expect(values.meta.authBinding.accountId).toBe("1@www.codebuddy.cn");
-    });
-
-    const loginFlow = () => ({
-      provider: "codebuddy_oauth",
-      device_code: "flow-1",
-      user_code: "",
-      verification_uri: "",
-      expires_in: 900,
-      interval: 2,
-    });
-
-    const openOfficialPreset = async () => {
-      render(
-        <CodebuddyProviderForm
-          appId="codebuddy"
-          submitLabel="Add"
-          onSubmit={vi.fn()}
-          onCancel={() => {}}
-        />,
-      );
-      fireEvent.click(
-        await screen.findByRole("button", {
-          name: /codebuddy\.official\.presetName/,
-        }),
-      );
-      await screen.findByRole("radio", { name: /alice/ });
-      // 已登录：账号区先说明副作用
-      await screen.findByText(/正在运行的 CodeBuddy 会话会暂时变为未登录/);
-    };
-
-    it("signs in a new account while signed in, then binds the card to it", async () => {
-      useAccounts("1@www.codebuddy.cn");
-      let signedIn = false;
-      const started = vi.fn();
-      server.use(
-        http.post("http://tauri.local/auth_start_login", () => {
-          started();
-          return HttpResponse.json(loginFlow());
-        }),
-        http.post("http://tauri.local/auth_poll_for_account", () => {
-          if (!signedIn) return HttpResponse.json(null);
-          return HttpResponse.json(account("3", "www.codebuddy.ai", "carol"));
-        }),
-      );
-      await openOfficialPreset();
-
-      fireEvent.click(screen.getByRole("button", { name: "登录新账号" }));
-      const dialog = await screen.findByRole("dialog", {
-        name: /登录新的 CodeBuddy 账号/,
-      });
-      expect(started).not.toHaveBeenCalled();
-      fireEvent.click(within(dialog).getByRole("button", { name: "继续登录" }));
-      await waitFor(() => expect(started).toHaveBeenCalledOnce());
-      expect(
-        await screen.findByText(/已让 CodeBuddy 暂时退出原来的登录/),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "恢复原来的登录" }),
-      ).toBeInTheDocument();
-
-      // 在终端登上 carol：自动收录并选中，名字跟着换
-      server.use(
-        http.post("http://tauri.local/auth_get_status", () =>
-          HttpResponse.json({
-            provider: "codebuddy_oauth",
-            authenticated: true,
-            default_account_id: "3@www.codebuddy.ai",
-            accounts: [
-              account("1", "www.codebuddy.cn", "alice"),
-              account("2", "www.codebuddy.ai", "bob"),
-              account("3", "www.codebuddy.ai", "carol"),
-            ],
-          }),
-        ),
-      );
-      signedIn = true;
-      const carol = await screen.findByRole(
-        "radio",
-        { name: /carol/ },
-        { timeout: 4000 },
-      );
-      await waitFor(() =>
-        expect(carol).toHaveAttribute("aria-checked", "true"),
-      );
-      // 名字在选中之后的下一次渲染才跟着换，CI 机器慢时要等
-      await waitFor(() =>
-        expect(screen.getByLabelText("provider.name")).toHaveValue("carol"),
-      );
-      expect(
-        screen.queryByRole("button", { name: "恢复原来的登录" }),
-      ).not.toBeInTheDocument();
-    });
-
-    it("restores the original sign-in when the new sign-in is abandoned", async () => {
-      useAccounts("1@www.codebuddy.cn");
-      const cancelled = vi.fn();
-      server.use(
-        http.post("http://tauri.local/auth_start_login", () =>
-          HttpResponse.json(loginFlow()),
-        ),
-        http.post("http://tauri.local/auth_poll_for_account", () =>
-          HttpResponse.json(null),
-        ),
-        http.post(
-          "http://tauri.local/auth_cancel_login",
-          async ({ request }) => {
-            cancelled(await request.json());
-            return HttpResponse.json(true);
-          },
-        ),
-      );
-      await openOfficialPreset();
-
-      fireEvent.click(screen.getByRole("button", { name: "登录新账号" }));
-      fireEvent.click(
-        within(await screen.findByRole("dialog")).getByRole("button", {
-          name: "继续登录",
-        }),
-      );
-      fireEvent.click(
-        await screen.findByRole("button", { name: "恢复原来的登录" }),
-      );
-      await waitFor(() =>
-        expect(cancelled).toHaveBeenCalledWith({
-          authProvider: "codebuddy_oauth",
-          deviceCode: "flow-1",
-        }),
-      );
-      expect(
-        await screen.findByRole("button", { name: "登录新账号" }),
-      ).toBeInTheDocument();
+      expect(values.meta.authBinding.accountId).toBe("9@www.codebuddy.ai");
     });
   });
 

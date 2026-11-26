@@ -79,17 +79,15 @@ export function AgyOfficialSubtitle({
   );
 }
 
-/** CodeBuddy 官方登录卡副标题：绑定账号 + 国内/国际版站点；缺失或报错时提供重新选择入口。 */
+/** CodeBuddy 官方登录卡副标题：绑定账号 + 国内/国际版站点；缺失或未绑定时提示在授权中心管理，不在卡内切号。 */
 export function CodebuddyOfficialAccountLine({
-  provider,
   accountId,
   manualNote,
-  onEdit,
 }: {
   provider: Provider;
   accountId: string | null;
   manualNote?: string;
-  onEdit: (provider: Provider) => void;
+  onEdit?: (provider: Provider) => void;
 }) {
   const { t } = useTranslation();
   const { data, isSuccess, isError } = useQuery(
@@ -137,29 +135,18 @@ export function CodebuddyOfficialAccountLine({
           </span>
         </span>
       ) : isSuccess || !accountId ? (
-        <>
-          <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
-            <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-            <span className="truncate">
-              {accountId
-                ? t("codebuddy.official.accountDeleted", {
-                    defaultValue: "账号已删除，请重新选择",
-                  })
-                : t("codebuddy.official.unbound", {
-                    defaultValue: "还没有选择账号，请编辑卡片选择一个",
-                  })}
-            </span>
+        <span className="inline-flex min-w-0 items-center gap-1 text-warning-text">
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">
+            {accountId
+              ? t("codebuddy.official.accountRemoved", {
+                  defaultValue: "该账号已从授权中心移除",
+                })
+              : t("codebuddy.official.unboundManaged", {
+                  defaultValue: "未绑定官方账号，请前往授权中心管理",
+                })}
           </span>
-          <button
-            type="button"
-            className="shrink-0 text-body font-medium text-action-text hover:underline"
-            onClick={() => onEdit(provider)}
-          >
-            {t("codex.chooseAccount", {
-              defaultValue: "选择账号",
-            })}
-          </button>
-        </>
+        </span>
       ) : (
         <span className="min-w-0 truncate">
           {t("codebuddy.official.statusLoading", {
@@ -196,12 +183,14 @@ export function CodexOauthAccountLine({
   manualNote,
   planSuffix,
   onEdit,
+  allowChooseAccount = true,
 }: {
   provider: Provider;
   accountId?: string;
   manualNote?: string;
   planSuffix: ReactNode;
   onEdit: (provider: Provider) => void;
+  allowChooseAccount?: boolean;
 }) {
   const { t } = useTranslation();
   const { data, isSuccess, isError } = useQuery(
@@ -258,15 +247,17 @@ export function CodexOauthAccountLine({
               })}
             </span>
           </span>
-          <button
-            type="button"
-            className="shrink-0 text-body font-medium text-action-text hover:underline"
-            onClick={() => onEdit(provider)}
-          >
-            {t("codex.chooseAccount", {
-              defaultValue: "选择账号",
-            })}
-          </button>
+          {allowChooseAccount && (
+            <button
+              type="button"
+              className="shrink-0 text-body font-medium text-action-text hover:underline"
+              onClick={() => onEdit(provider)}
+            >
+              {t("codex.chooseAccount", {
+                defaultValue: "选择账号",
+              })}
+            </button>
+          )}
         </>
       ) : (
         <span className="min-w-0 truncate">
@@ -389,4 +380,74 @@ export function XaiAccountSubtitle({
   }
 
   return fallback;
+}
+
+/** Copilot CLI 官方卡（绑定托管 GitHub 账号时）的副标题：账号 + 可选模型 + 套餐。 */
+export function CopilotCliOfficialSubtitle({
+  providerName,
+  accountId,
+  manualNote,
+  model,
+  planSuffix,
+}: {
+  providerName: string;
+  accountId: string;
+  manualNote?: string;
+  model: string | null;
+  planSuffix: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const { data, isSuccess } = useQuery(
+    managedAuthStatusQuery("github_copilot"),
+  );
+  const account = data?.accounts.find((item) => item.id === accountId);
+
+  if (!account && isSuccess) {
+    return (
+      <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-warning-text">
+        <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+        <span className="min-w-0 truncate">
+          {t("provider.form.managedAccount.missing", {
+            defaultValue: "不在这台电脑上的账号",
+          })}
+        </span>
+      </div>
+    );
+  }
+
+  const providerNameIncludesLogin = Boolean(
+    account?.login && providerName.includes(account.login),
+  );
+  const accountLabel = account
+    ? (manualNote ??
+      (providerNameIncludesLogin
+        ? t("copilot.githubAccount", { defaultValue: "GitHub 账号" })
+        : account.login))
+    : (manualNote ?? model);
+
+  if (!accountLabel && !model) {
+    return null;
+  }
+
+  return (
+    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+      {accountLabel && (
+        <span
+          className="min-w-0 truncate"
+          title={account?.login ?? accountLabel}
+        >
+          {accountLabel}
+        </span>
+      )}
+      {account && model && !manualNote && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span className="min-w-0 truncate" title={model}>
+            {model}
+          </span>
+        </>
+      )}
+      {planSuffix}
+    </div>
+  );
 }

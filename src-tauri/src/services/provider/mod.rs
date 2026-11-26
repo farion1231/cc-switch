@@ -22,6 +22,7 @@ pub(crate) mod grok_direct;
 mod grok_editor;
 pub(crate) mod icon;
 mod live;
+pub(crate) mod official_account_cards;
 mod omp;
 #[cfg(test)]
 mod opencode_tests;
@@ -5894,7 +5895,25 @@ impl ProviderService {
         state: &AppState,
         app_type: AppType,
     ) -> Result<IndexMap<String, Provider>, AppError> {
+        Self::list_with_official_accounts(state, app_type, None)
+    }
+
+    pub(crate) fn list_with_official_accounts(
+        state: &AppState,
+        app_type: AppType,
+        official_accounts: Option<&[official_account_cards::OfficialAccountEntry]>,
+    ) -> Result<IndexMap<String, Provider>, AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        if let Some(accounts) = official_accounts {
+            if let Err(error) =
+                official_account_cards::sync_app_cards(&state.db, &app_type, accounts)
+            {
+                log::warn!(
+                    "Syncing official account cards for {} failed: {error}",
+                    app_type.as_str()
+                );
+            }
+        }
         if app_type == AppType::Dsh {
             // A profile can appear while CC Switch is running. Keep the provider list usable
             // when a native lock or an invalid profile prevents the initial sync; retry later.
@@ -6182,6 +6201,22 @@ impl ProviderService {
 
     /// Add a new provider
     pub fn add(
+        state: &AppState,
+        app_type: AppType,
+        provider: Provider,
+        add_to_live: bool,
+    ) -> Result<bool, AppError> {
+        let bound_account = official_account_cards::bound_official_account_id(&app_type, &provider);
+        let ok = Self::add_inner(state, app_type.clone(), provider, add_to_live)?;
+        if ok {
+            if let Some(account_id) = bound_account {
+                official_account_cards::clear_dismissed(&state.db, &app_type, &[account_id]);
+            }
+        }
+        Ok(ok)
+    }
+
+    fn add_inner(
         state: &AppState,
         app_type: AppType,
         provider: Provider,
@@ -6489,12 +6524,13 @@ impl ProviderService {
         add_to_live: bool,
         editor: Option<EditorSave>,
     ) -> Result<bool, AppError> {
-        match (app_type, editor) {
+        let bound_account = official_account_cards::bound_official_account_id(&app_type, &provider);
+        let ok = match (app_type.clone(), editor) {
             (AppType::Claude, Some(editor)) => {
-                Self::add_claude_from_editor(state, provider, editor)
+                Self::add_claude_from_editor(state, provider, editor)?
             }
             (AppType::Codex, Some(editor)) => {
-                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Add)
+                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Add)?
             }
             (app_type @ (AppType::Gemini | AppType::GrokBuild), Some(editor)) => {
                 Self::save_gemini_or_grok_from_editor(
@@ -6503,10 +6539,16 @@ impl ProviderService {
                     provider,
                     editor,
                     EditorSaveKind::Add,
-                )
+                )?
             }
-            (app_type, _) => Self::add(state, app_type, provider, add_to_live),
+            (app_type, _) => Self::add(state, app_type, provider, add_to_live)?,
+        };
+        if ok {
+            if let Some(account_id) = bound_account {
+                official_account_cards::clear_dismissed(&state.db, &app_type, &[account_id]);
+            }
         }
+        Ok(ok)
     }
 
     /// 从编辑器保存供应商。Claude Code、Codex、Gemini CLI、Grok Build 按关键字段拆开保存
@@ -6518,16 +6560,17 @@ impl ProviderService {
         provider: Provider,
         editor: Option<EditorSave>,
     ) -> Result<bool, AppError> {
-        match (app_type, editor) {
+        let bound_account = official_account_cards::bound_official_account_id(&app_type, &provider);
+        let ok = match (app_type.clone(), editor) {
             (AppType::Claude, Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
             {
-                Self::update_claude_from_editor(state, provider, editor)
+                Self::update_claude_from_editor(state, provider, editor)?
             }
             (AppType::Codex, Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
             {
-                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Update)
+                Self::save_codex_from_editor(state, provider, editor, EditorSaveKind::Update)?
             }
             (app_type @ (AppType::Gemini | AppType::GrokBuild), Some(editor))
                 if original_id.is_none_or(|original| original == provider.id) =>
@@ -6538,10 +6581,16 @@ impl ProviderService {
                     provider,
                     editor,
                     EditorSaveKind::Update,
-                )
+                )?
             }
-            (app_type, _) => Self::update(state, app_type, original_id, provider),
+            (app_type, _) => Self::update(state, app_type, original_id, provider)?,
+        };
+        if ok {
+            if let Some(account_id) = bound_account {
+                official_account_cards::clear_dismissed(&state.db, &app_type, &[account_id]);
+            }
         }
+        Ok(ok)
     }
 
     /// 从编辑器新增或保存 Codex 供应商：关键字段、独有字段存回行，其余改动作为全局设置
@@ -6792,6 +6841,22 @@ impl ProviderService {
 
     /// Update a provider
     pub fn update(
+        state: &AppState,
+        app_type: AppType,
+        original_id: Option<&str>,
+        provider: Provider,
+    ) -> Result<bool, AppError> {
+        let bound_account = official_account_cards::bound_official_account_id(&app_type, &provider);
+        let ok = Self::update_inner(state, app_type.clone(), original_id, provider)?;
+        if ok {
+            if let Some(account_id) = bound_account {
+                official_account_cards::clear_dismissed(&state.db, &app_type, &[account_id]);
+            }
+        }
+        Ok(ok)
+    }
+
+    fn update_inner(
         state: &AppState,
         app_type: AppType,
         original_id: Option<&str>,
@@ -7133,7 +7198,27 @@ impl ProviderService {
     /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
+        Self::delete_reporting_uncovered_official_account(state, app_type, id).map(|_| ())
+    }
+
+    /// Deletes a provider under the per-app native lock and returns `Some(account_id)` when the
+    /// removed row was the last official card in `app_type` bound to that Auth Center account.
+    pub(crate) fn delete_reporting_uncovered_official_account(
+        state: &AppState,
+        app_type: AppType,
+        id: &str,
+    ) -> Result<Option<String>, AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
+        let deleted_candidate = official_account_cards::auth_provider_for_app(&app_type)
+            .and_then(|_| state.db.get_provider_by_id(id, &app_type).ok().flatten());
+        Self::delete_inner(state, app_type.clone(), id)?;
+        let uncovered_account_id = deleted_candidate.and_then(|deleted| {
+            official_account_cards::record_deleted_card(&state.db, &app_type, &deleted)
+        });
+        Ok(uncovered_account_id)
+    }
+
+    fn delete_inner(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         if state.db.get_unreadable_provider(&app_type, id)?.is_some() {
             return Self::delete_unreadable(state, &app_type, id);
         }

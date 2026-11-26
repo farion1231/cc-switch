@@ -63,6 +63,8 @@ import {
   ModelDropdown,
   ModelInputWithFetch,
   NativeConfigEditor,
+  OfficialAccountManagedInfo,
+  OfficialAccountPresetPanel,
 } from "./shared";
 import {
   FetchedModelPicker,
@@ -70,7 +72,7 @@ import {
 } from "./FetchedModelPicker";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
-import { CopilotAuthSection } from "./CopilotAuthSection";
+import { usePresetStep } from "./presetStep";
 import type { ProviderFormProps } from "./ProviderForm";
 
 const PRESETS = [
@@ -289,16 +291,15 @@ export function CopilotProviderForm({
   showButtons = true,
   onSubmittingChange,
   onSubmitReadyChange,
+  onAccountLoginChange,
   onManageAuthAccounts,
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const isEdit = Boolean(initialData);
   const initialConfig = initialData?.settingsConfig;
-  const [presetId, setPresetId] = useState(
-    isEdit ? "custom" : COPILOT_OFFICIAL_PRESET_ID,
-  );
+  const [presetId, setPresetId] = useState("custom");
   const [category, setCategory] = useState<ProviderCategory>(
-    initialData?.category ?? (isEdit ? "custom" : "official"),
+    initialData?.category ?? "custom",
   );
   // 编辑时按配置认（没有 provider 节点的旧卡也是官方卡），新建时按选的预设
   const isOfficial = isEdit
@@ -307,6 +308,14 @@ export function CopilotProviderForm({
         settingsConfig: initialConfig,
       })
     : category === "official";
+  const step = usePresetStep();
+  const isOfficialAccountAdd = !isEdit && isOfficial;
+  const showOfficialAccountAdd =
+    isOfficialAccountAdd && (!step || step.step === "form");
+  useEffect(() => {
+    onAccountLoginChange?.(showOfficialAccountAdd);
+    return () => onAccountLoginChange?.(false);
+  }, [showOfficialAccountAdd, onAccountLoginChange]);
   const [officialModel, setOfficialModel] = useState(
     () => copilotEnvOf(initialConfig).COPILOT_MODEL ?? "",
   );
@@ -336,7 +345,7 @@ export function CopilotProviderForm({
   const textId = (isEdit ? providerId : cardId) || "custom";
   const [text, setText] = useState(() => toNativeText(connection, textId));
   const [textError, setTextError] = useState<NativeError | null>(null);
-  const [accountId, setAccountId] = useState<string | null>(() =>
+  const [accountId] = useState<string | null>(() =>
     resolveManagedAccountId(initialData?.meta, "github_copilot"),
   );
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
@@ -350,12 +359,10 @@ export function CopilotProviderForm({
 
   const form = useForm<ProviderFormData>({
     defaultValues: {
-      name: initialData?.name ?? (isEdit ? "" : copilotOfficialPreset.name),
+      name: initialData?.name ?? "",
       notes: initialData?.notes ?? "",
-      websiteUrl:
-        initialData?.websiteUrl ??
-        (isEdit ? "" : copilotOfficialPreset.websiteUrl),
-      icon: initialData?.icon ?? (isEdit ? "" : "githubcopilot"),
+      websiteUrl: initialData?.websiteUrl ?? "",
+      icon: initialData?.icon ?? "",
       iconColor: initialData?.iconColor ?? "",
       settingsConfig: "",
     },
@@ -414,15 +421,17 @@ export function CopilotProviderForm({
     models.every((model) =>
       NUMBER_FIELDS.every((key) => validNumber(model[key])),
     );
-  const ready = Boolean(
-    name.trim() &&
-      (isOfficial ||
-        (!textError &&
-          idValid &&
-          !duplicate &&
-          /^https?:\/\//.test(baseUrl.trim()) &&
-          modelsValid)),
-  );
+  const ready = isOfficialAccountAdd
+    ? false
+    : Boolean(
+        name.trim() &&
+          (isOfficial ||
+            (!textError &&
+              idValid &&
+              !duplicate &&
+              /^https?:\/\//.test(baseUrl.trim()) &&
+              modelsValid)),
+      );
   useEffect(() => {
     onSubmitReadyChange?.(ready);
   }, [ready, onSubmitReadyChange]);
@@ -897,6 +906,26 @@ export function CopilotProviderForm({
     </div>
   );
 
+  if (isOfficialAccountAdd) {
+    return (
+      <Form {...form}>
+        <form
+          id="provider-form"
+          className="space-y-6"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          {presetSelector}
+          {showOfficialAccountAdd && (
+            <OfficialAccountPresetPanel
+              authProvider="github_copilot"
+              onManageAuthAccounts={onManageAuthAccounts}
+            />
+          )}
+        </form>
+      </Form>
+    );
+  }
+
   return (
     <Form {...form}>
       <form id="provider-form" className="space-y-6" onSubmit={submit}>
@@ -922,16 +951,10 @@ export function CopilotProviderForm({
           />
           {isOfficial ? (
             <>
-              <CopilotAuthSection
-                mode="select"
-                selectedAccountId={accountId}
-                onAccountSelect={setAccountId}
-                noneOptionLabel={t("copilot.form.followCliLogin")}
-                onManageAccounts={
-                  onManageAuthAccounts
-                    ? () => onManageAuthAccounts("github_copilot")
-                    : undefined
-                }
+              <OfficialAccountManagedInfo
+                authProvider="github_copilot"
+                accountId={accountId}
+                onManageAuthAccounts={onManageAuthAccounts}
               />
               <div className="space-y-2">
                 <div className="flex items-center gap-0.5">

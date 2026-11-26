@@ -3,10 +3,10 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  ClaudeAccountSelect,
   ClaudeBoundAccountLine,
   ClaudeOfficialSection,
 } from "@/components/providers/forms/ClaudeOfficialSection";
+import { OfficialAccountManagedInfo } from "@/components/providers/forms/shared";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const mocks = vi.hoisted(() => ({
@@ -90,8 +90,6 @@ const withQuery = (node: React.ReactNode) =>
     </QueryClientProvider>,
   );
 const renderSection = () => withQuery(<ClaudeOfficialSection />);
-const renderSelect = () =>
-  withQuery(<ClaudeAccountSelect value={null} onChange={vi.fn()} />);
 
 describe("ClaudeOfficialSection", () => {
   beforeEach(() => {
@@ -280,62 +278,26 @@ describe("ClaudeOfficialSection", () => {
     ).toBeInTheDocument();
   });
 
-  it("says switching to the card changes the sign-in", async () => {
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
-    renderSelect();
-    expect(
-      await screen.findByText(/Claude Code 的登录会实时换成选中的账号/),
-    ).toBeInTheDocument();
-  });
-
-  it("lays out the sign-in choices like the Codex card", async () => {
-    // jsdom 没有 scrollIntoView，下拉打开时会调
-    Element.prototype.scrollIntoView = vi.fn();
+  it("renders read-only managed account info without a sign-in method dropdown", async () => {
     const user = userEvent.setup();
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
     mocks.getStatus.mockResolvedValue({
       accounts: [account("work:org", "work@example.com")],
     });
-    const onChange = vi.fn();
     const onManageAccounts = vi.fn();
     withQuery(
-      <ClaudeAccountSelect
-        value={null}
-        onChange={onChange}
-        onManageAccounts={onManageAccounts}
+      <OfficialAccountManagedInfo
+        authProvider="claude_official"
+        accountId="work:org"
+        onManageAuthAccounts={onManageAccounts}
       />,
     );
 
-    const select = screen.getByRole("combobox", { name: "登录方式" });
-    expect(select).toHaveTextContent("跟随 Claude Code 登录");
-    await user.click(select);
     expect(
-      (await screen.findAllByRole("option")).map((el) => el.textContent),
-    ).toEqual([
-      "work@example.com",
-      "添加或管理 Claude 账号",
-      "跟随 Claude Code 登录账号会随 Claude Code 当前登录变化",
-    ]);
-    await user.click(screen.getByRole("option", { name: /添加或管理/ }));
-    expect(onManageAccounts).toHaveBeenCalled();
-    expect(onChange).not.toHaveBeenCalled();
-
-    await user.click(select);
-    await user.click(
-      await screen.findByRole("option", { name: "work@example.com" }),
-    );
-    expect(onChange).toHaveBeenCalledWith("work:org");
-  });
-
-  it("points to Open Terminal when a config dir override blocks switching", async () => {
-    mocks.getLoginSwitch.mockResolvedValue(
-      loginSwitch({ blocked: "overrideDir" }),
-    );
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
-    renderSelect();
-    expect(
-      await screen.findByText(/请从卡片「打开终端」使用选中的账号/),
-    ).toBeInTheDocument();
+      screen.queryByRole("combobox", { name: "登录方式" }),
+    ).not.toBeInTheDocument();
+    expect(await screen.findByText("work@example.com")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "前往授权中心" }));
+    expect(onManageAccounts).toHaveBeenCalledWith("claude_official");
   });
 
   it("greys out sign-in when the Claude config dir is in WSL", async () => {
@@ -364,13 +326,17 @@ describe("ClaudeOfficialSection", () => {
     expect(auth.addAccount).not.toHaveBeenCalled();
   });
 
-  it("says WSL isn't supported on the card form", async () => {
-    mocks.getLoginSwitch.mockResolvedValue(loginSwitch({ blocked: "wsl" }));
-    mocks.useManagedAuth.mockReturnValue(baseAuth());
-    renderSelect();
+  it("shows neutral unbound copy without account switching for unbound official cards", () => {
+    withQuery(
+      <OfficialAccountManagedInfo
+        authProvider="claude_official"
+        accountId={null}
+      />,
+    );
+    expect(screen.getByText("未绑定官方账号")).toBeInTheDocument();
     expect(
-      await screen.findByText(/Claude 配置目录在 WSL 里，暂不支持 Claude 账号/),
-    ).toBeInTheDocument();
+      screen.queryByRole("combobox", { name: "登录方式" }),
+    ).not.toBeInTheDocument();
   });
 
   it("words the card subtitle like the Codex card", async () => {

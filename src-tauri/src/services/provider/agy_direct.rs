@@ -53,6 +53,11 @@ pub(crate) fn save_from_editor(
     let binding_changed = binding != previous.as_ref().and_then(bound_account_id);
 
     state.db.save_provider(&app, &provider)?;
+    if let Some(account_id) =
+        super::official_account_cards::bound_official_account_id(&app, &provider)
+    {
+        super::official_account_cards::clear_dismissed(&state.db, &app, &[account_id]);
+    }
     if !binding_changed {
         return Ok(true);
     }

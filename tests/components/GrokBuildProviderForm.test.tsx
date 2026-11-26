@@ -242,15 +242,17 @@ context_window = 250000
     expect(onSubmit.mock.calls[0][0].meta.custom_endpoints).toBeUndefined();
   });
 
-  it("keeps the xAI account bound to an official card when saving", async () => {
+  it("shows read-only managed account info and preserves authBinding without a login-method picker", async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn();
+    const onManageAuthAccounts = vi.fn();
     render(
       <GrokBuildProviderForm
         providerId="grok-official-2"
         submitLabel="Save"
         onSubmit={onSubmit}
         onCancel={() => {}}
+        onManageAuthAccounts={onManageAuthAccounts}
         initialData={{
           name: "Grok Official (a@example.com)",
           category: "official",
@@ -266,11 +268,14 @@ context_window = 250000
       />,
     );
 
-    // 官方卡显示登录方式选择，不显示 API Key / 模型等字段
-    expect(screen.getByRole("combobox", { name: "登录方式" })).toBeTruthy();
+    // 官方卡显示只读账号信息，不显示登录方式下拉框或 API Key / 模型等字段
+    expect(screen.queryByRole("combobox", { name: "登录方式" })).toBeNull();
     expect(document.querySelector("#codexBaseUrl")).toBeNull();
     // 这台电脑的授权中心里没有这个号：照样显示出来，不悄悄改成跟随 Grok CLI 登录
     expect(await screen.findByText("不在这台电脑上的账号")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "前往授权中心" }));
+    expect(onManageAuthAccounts).toHaveBeenCalledWith("xai_oauth");
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -282,6 +287,29 @@ context_window = 250000
       authProvider: "xai_oauth",
       accountId: "user-a",
     });
+  });
+
+  it("directs adding an official Grok card to the Auth Center", async () => {
+    const user = userEvent.setup();
+    const onAccountLoginChange = vi.fn();
+    const onManageAuthAccounts = vi.fn();
+    render(
+      <GrokBuildProviderForm
+        submitLabel="Add"
+        onSubmit={vi.fn()}
+        onCancel={() => {}}
+        onAccountLoginChange={onAccountLoginChange}
+        onManageAuthAccounts={onManageAuthAccounts}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Grok Official/ }));
+    expect(onAccountLoginChange).toHaveBeenCalledWith(true);
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "前往授权中心管理账号" }),
+    );
+    expect(onManageAuthAccounts).toHaveBeenCalledWith("xai_oauth");
   });
 
   it("leaves an unbound official card following the Grok CLI sign-in", async () => {
@@ -301,7 +329,8 @@ context_window = 250000
       />,
     );
 
-    expect(screen.getByText("跟随 Grok CLI 登录")).toBeTruthy();
+    expect(screen.getByText("未绑定官方账号")).toBeTruthy();
+    expect(screen.queryByText("跟随 Grok CLI 登录")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(onSubmit).toHaveBeenCalledTimes(1);

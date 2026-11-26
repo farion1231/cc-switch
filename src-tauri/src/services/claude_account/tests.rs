@@ -2,7 +2,7 @@ use super::*;
 
 impl ClaudeAccountManager {
     /// 测试用：不跑登录，直接收录一个账号并建好目录。
-    async fn insert_for_test(&self, key: &str, email: &str) -> PathBuf {
+    pub(crate) async fn insert_for_test(&self, key: &str, email: &str) -> PathBuf {
         let local_id = layout::new_local_id();
         let config_dir = layout::config_dir(&self.data_dir, &local_id);
         create_private_dir(&config_dir).unwrap();

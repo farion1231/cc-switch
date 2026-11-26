@@ -124,7 +124,13 @@ vi.mock("@/components/providers/forms/hooks", async (importOriginal) => {
   };
 });
 
-function renderCodexForm(onSubmit: (values: ProviderFormValues) => void) {
+function renderCodexForm(
+  onSubmit: (values: ProviderFormValues) => void,
+  extra?: {
+    onAccountLoginChange?: (accountLogin: boolean) => void;
+    onManageAuthAccounts?: (target: "codex_oauth") => void;
+  },
+) {
   const queryClient = createTestQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
@@ -133,6 +139,10 @@ function renderCodexForm(onSubmit: (values: ProviderFormValues) => void) {
         submitLabel="save-provider"
         onSubmit={onSubmit}
         onCancel={vi.fn()}
+        onAccountLoginChange={extra?.onAccountLoginChange}
+        onManageAuthAccounts={
+          extra?.onManageAuthAccounts as (target: string) => void
+        }
       />
     </QueryClientProvider>,
   );
@@ -164,136 +174,86 @@ describe("ProviderForm Codex Official managed account", () => {
     toastMocks.error.mockReset();
   });
 
-  it("persists the selected managed account while stripping OAuth secrets", async () => {
+  it("directs adding an Official card to the Auth Center without a login-method picker", async () => {
     const onSubmit = vi.fn();
-    renderCodexForm(onSubmit);
-
-    fireEvent.click(screen.getByRole("button", { name: /OpenAI Official/ }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "select-managed-account" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const submitted = onSubmit.mock.calls[0][0] as ProviderFormValues;
-    expect(submitted).toEqual(
-      expect.objectContaining({
-        name: "OpenAI Official (user@example.com)",
-        presetId: "codex-0",
-        presetCategory: "official",
-        meta: expect.objectContaining({
-          providerType: "codex_oauth",
-          authBinding: {
-            source: "managed_account",
-            authProvider: "codex_oauth",
-            accountId: "acct-managed",
-          },
-        }),
-      }),
-    );
-    expect(JSON.parse(submitted.settingsConfig)).toEqual({
-      auth: {},
-      config: "",
+    const onAccountLoginChange = vi.fn();
+    const onManageAuthAccounts = vi.fn();
+    renderCodexForm(onSubmit, {
+      onAccountLoginChange,
+      onManageAuthAccounts,
     });
-  });
-
-  it("defaults every new Official card to the current Codex login", async () => {
-    const onSubmit = vi.fn();
-    renderCodexForm(onSubmit);
 
     fireEvent.click(screen.getByRole("button", { name: /OpenAI Official/ }));
-    expect(
-      await screen.findByRole("button", { name: "select-native-login" }),
-    ).toBeInTheDocument();
-    expect(screen.getByTestId("allow-unbound-selection")).toHaveTextContent(
-      "true",
-    );
-    expect(
-      screen.getByTestId("allow-unbound-without-status"),
-    ).toHaveTextContent("true");
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    const submitted = onSubmit.mock.calls[0][0] as ProviderFormValues;
-    expect(submitted.presetCategory).toBe("official");
-    expect(submitted.meta?.providerType).toBeUndefined();
-    expect(submitted.meta?.authBinding).toBeUndefined();
-    expect(submitted).not.toHaveProperty("codexNativeLoginSelected");
-  });
-
-  it("requires confirmation before falling back when a selected account disappears", async () => {
-    const onSubmit = vi.fn();
-    renderCodexForm(onSubmit);
-
-    fireEvent.click(screen.getByRole("button", { name: /OpenAI Official/ }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "select-managed-account" }),
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "invalidate-selected-account" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-
     await waitFor(() =>
-      expect(toastMocks.error).toHaveBeenCalledWith("请先选择登录方式"),
+      expect(onAccountLoginChange).toHaveBeenCalledWith(true),
     );
-    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "save-provider" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "select-managed-account" }),
+    ).toBeNull();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "select-native-login" }),
+      screen.getByRole("button", { name: "前往授权中心管理账号" }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit.mock.calls[0][0].meta?.providerType).toBeUndefined();
-    expect(onSubmit.mock.calls[0][0].meta?.authBinding).toBeUndefined();
+    expect(onManageAuthAccounts).toHaveBeenCalledWith("codex_oauth");
   });
 
-  it("allows the fixed Official card to switch to a managed account", async () => {
+  it("edits a bound official card without a login-method picker or API key field and strips OAuth secrets", async () => {
     const queryClient = createTestQueryClient();
     const onSubmit = vi.fn();
     render(
       <QueryClientProvider client={queryClient}>
         <ProviderForm
           appId="codex"
-          providerId="codex-official"
+          providerId="codex-official-acct-1"
           submitLabel="save-provider"
           onSubmit={onSubmit}
           onCancel={vi.fn()}
           initialData={{
-            name: "OpenAI Official",
-            settingsConfig: { auth: {}, config: "" },
+            name: "OpenAI Official (user@example.com)",
+            category: "official",
+            settingsConfig: {
+              auth: {
+                tokens: { refresh_token: "stale-secret" },
+              },
+              config: "",
+            },
+            meta: {
+              providerType: "codex_oauth",
+              authBinding: {
+                source: "managed_account",
+                authProvider: "codex_oauth",
+                accountId: "acct-managed",
+              },
+            },
           }}
         />
       </QueryClientProvider>,
     );
 
     expect(
-      screen.getByRole("button", { name: "select-managed-account" }),
-    ).toBeEnabled();
-    expect(
-      screen.getByRole("button", { name: "select-native-login" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "select-managed-account" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/API Key/)).not.toBeInTheDocument();
+    expect(screen.getByText("acct-managed")).toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "select-managed-account" }),
-    );
     fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit.mock.calls[0][0].meta?.authBinding).toEqual({
+    const submitted = onSubmit.mock.calls[0][0] as ProviderFormValues;
+    expect(submitted.meta?.authBinding).toEqual({
       source: "managed_account",
       authProvider: "codex_oauth",
       accountId: "acct-managed",
     });
-    expect(onSubmit.mock.calls[0][0].meta?.providerType).toBe("codex_oauth");
-    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty(
-      "codexNativeLoginSelected",
-    );
+    expect(submitted.meta?.providerType).toBe("codex_oauth");
+    expect(JSON.parse(submitted.settingsConfig)).toEqual({
+      auth: {},
+      config: "",
+    });
   });
 
   it.each(["acct-managed", "deleted-account"])(
-    "saves the selected account when the fixed card was bound to %s",
+    "preserves the existing %s binding when editing a fixed Official card",
     async (previousAccountId) => {
       const queryClient = createTestQueryClient();
       const onSubmit = vi.fn();
@@ -321,65 +281,20 @@ describe("ProviderForm Codex Official managed account", () => {
         </QueryClientProvider>,
       );
 
-      if (previousAccountId === "deleted-account") {
-        fireEvent.click(
-          screen.getByRole("button", { name: "select-managed-account" }),
-        );
-      }
+      expect(
+        screen.queryByRole("button", { name: "select-managed-account" }),
+      ).not.toBeInTheDocument();
       fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
       await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
       expect(onSubmit.mock.calls[0][0].meta?.authBinding).toEqual({
         source: "managed_account",
         authProvider: "codex_oauth",
-        accountId: "acct-managed",
+        accountId: previousAccountId,
       });
     },
   );
 
-  it("keeps a category-less managed card Official when it is unbound", async () => {
-    const queryClient = createTestQueryClient();
-    const onSubmit = vi.fn();
-    render(
-      <QueryClientProvider client={queryClient}>
-        <ProviderForm
-          appId="codex"
-          providerId="managed-official"
-          submitLabel="save-provider"
-          onSubmit={onSubmit}
-          onCancel={vi.fn()}
-          initialData={{
-            name: "OpenAI Official (user@example.com)",
-            settingsConfig: { auth: {}, config: "" },
-            meta: {
-              providerType: "codex_oauth",
-              authBinding: {
-                source: "managed_account",
-                authProvider: "codex_oauth",
-                accountId: "acct-managed",
-              },
-            },
-          }}
-        />
-      </QueryClientProvider>,
-    );
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: "select-native-login" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
-    expect(onSubmit.mock.calls[0][0].meta).not.toEqual(
-      expect.objectContaining({ authBinding: expect.anything() }),
-    );
-    expect(onSubmit.mock.calls[0][0].meta?.providerType).toBeUndefined();
-    expect(onSubmit.mock.calls[0][0].presetCategory).toBe("official");
-    expect(onSubmit.mock.calls[0][0]).not.toHaveProperty(
-      "codexNativeLoginSelected",
-    );
-  });
-
-  it("keeps an unmarked legacy Official row on follow-login", async () => {
+  it("keeps an unmarked legacy Official row on follow-login without a login-method picker", async () => {
     const queryClient = createTestQueryClient();
     const onSubmit = vi.fn();
     render(
@@ -406,8 +321,10 @@ describe("ProviderForm Codex Official managed account", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "select-native-login" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "select-native-login" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("未绑定官方账号")).toBeInTheDocument();
+    expect(screen.queryByText("跟随 Codex 登录")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
@@ -459,25 +376,6 @@ describe("ProviderForm Codex Official managed account", () => {
     expect(submittedSettings.config).toContain(
       'base_url = "https://example.com/v1"',
     );
-  });
-
-  it("blocks saving a managed account that requires reauthentication", async () => {
-    authState.codexReauthRequired = true;
-    const onSubmit = vi.fn();
-    renderCodexForm(onSubmit);
-
-    fireEvent.click(screen.getByRole("button", { name: /OpenAI Official/ }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "select-managed-account" }),
-    );
-    fireEvent.click(screen.getByRole("button", { name: "save-provider" }));
-
-    await waitFor(() =>
-      expect(toastMocks.error).toHaveBeenCalledWith(
-        "已绑定账号不存在或需要重新登录",
-      ),
-    );
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("blocks the reauth-required default account when no account is selected", async () => {

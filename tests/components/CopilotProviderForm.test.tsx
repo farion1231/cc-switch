@@ -2,7 +2,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { CopilotProviderForm } from "@/components/providers/forms/CopilotProviderForm";
-import type { ProviderCategory, ProviderMeta } from "@/types";
+import type { ProviderCategory } from "@/types";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
 const fetchModels = vi.hoisted(() => vi.fn());
@@ -14,23 +14,6 @@ beforeAll(() => {
 vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/model-fetch")>()),
   fetchModelsForConfig: fetchModels,
-}));
-
-vi.mock("@/components/providers/forms/CopilotAuthSection", () => ({
-  CopilotAuthSection: ({
-    onAccountSelect,
-    noneOptionLabel,
-  }: {
-    onAccountSelect?: (id: string | null) => void;
-    noneOptionLabel?: string;
-  }) => (
-    <>
-      <span data-testid="copilot-none-option">{noneOptionLabel}</span>
-      <button type="button" onClick={() => onAccountSelect?.("12345")}>
-        bind-account
-      </button>
-    </>
-  ),
 }));
 
 vi.mock("@/components/JsonEditor", () => ({
@@ -65,7 +48,6 @@ const byok = {
 function setup(
   settingsConfig: Record<string, unknown>,
   category: ProviderCategory = "custom",
-  meta?: ProviderMeta,
 ) {
   const onSubmit = vi.fn();
   render(
@@ -73,7 +55,7 @@ function setup(
       <CopilotProviderForm
         appId="copilot"
         providerId="relay"
-        initialData={{ name: "Relay", settingsConfig, category, meta }}
+        initialData={{ name: "Relay", settingsConfig, category }}
         submitLabel="Save"
         onSubmit={onSubmit}
         onCancel={() => {}}
@@ -312,19 +294,41 @@ describe("CopilotProviderForm", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 
-  it("official cards keep only the model and bind an Auth Center account", async () => {
-    const submit = setup(
-      { env: { COPILOT_MODEL: "claude-sonnet-4.6" } },
-      "official",
+  it("official cards keep only the model and preserve bound Auth Center account without a login-method picker", async () => {
+    const onManageAuthAccounts = vi.fn();
+    const onSubmit = vi.fn();
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <CopilotProviderForm
+          appId="copilot"
+          providerId="copilot-official-acct-1"
+          initialData={{
+            name: "GitHub Copilot",
+            settingsConfig: { env: { COPILOT_MODEL: "claude-sonnet-4.6" } },
+            category: "official",
+            meta: {
+              authBinding: {
+                source: "managed_account",
+                authProvider: "github_copilot",
+                accountId: "12345",
+              },
+            },
+          }}
+          submitLabel="Save"
+          onSubmit={onSubmit}
+          onCancel={() => {}}
+          onManageAuthAccounts={onManageAuthAccounts}
+        />
+      </QueryClientProvider>,
     );
     expect(screen.queryByLabelText(/copilot\.form\.baseUrl/)).toBeNull();
     expect(document.getElementById("copilot-provider-id")).toBeNull();
-    // 不绑账号时用的是 Copilot CLI 自己的登录，不是授权中心的默认账号
-    expect(screen.getByTestId("copilot-none-option")).toHaveTextContent(
-      "copilot.form.followCliLogin",
-    );
-    fireEvent.click(screen.getByRole("button", { name: "bind-account" }));
-    const values = await save(submit);
+    expect(screen.queryByRole("combobox", { name: /登录方式/ })).toBeNull();
+    expect(screen.getByText("12345")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "前往授权中心" }));
+    expect(onManageAuthAccounts).toHaveBeenCalledWith("github_copilot");
+
+    const values = await save(onSubmit);
     expect(values.providerKey).toBeUndefined();
     expect(JSON.parse(values.settingsConfig)).toEqual({
       env: { COPILOT_MODEL: "claude-sonnet-4.6" },
@@ -334,5 +338,31 @@ describe("CopilotProviderForm", () => {
       authProvider: "github_copilot",
       accountId: "12345",
     });
+  });
+
+  it("directs adding an official Copilot preset to the Auth Center", async () => {
+    const onAccountLoginChange = vi.fn();
+    const onManageAuthAccounts = vi.fn();
+    render(
+      <QueryClientProvider client={createTestQueryClient()}>
+        <CopilotProviderForm
+          appId="copilot"
+          submitLabel="Add"
+          onSubmit={vi.fn()}
+          onCancel={() => {}}
+          onAccountLoginChange={onAccountLoginChange}
+          onManageAuthAccounts={onManageAuthAccounts}
+        />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /GitHub Copilot/ }));
+    await waitFor(() =>
+      expect(onAccountLoginChange).toHaveBeenCalledWith(true),
+    );
+    expect(screen.queryByRole("button", { name: "Add" })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: "前往授权中心管理账号" }),
+    );
+    expect(onManageAuthAccounts).toHaveBeenCalledWith("github_copilot");
   });
 });

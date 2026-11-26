@@ -89,6 +89,10 @@ export const CodebuddyAccountSection: React.FC<
       );
       await refetchStatus();
       await queryClient.invalidateQueries({ queryKey: CODEBUDDY_LIVE_KEY });
+      await queryClient.invalidateQueries({
+        queryKey: ["providers", "codebuddy"],
+        refetchType: "all",
+      });
     },
     onError: (e) => {
       toast.error(e instanceof Error ? e.message : String(e));

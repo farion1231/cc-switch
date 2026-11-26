@@ -57,6 +57,7 @@ import {
   GptContextWindowHint,
   ModelDropdown,
   NativeConfigEditor,
+  OfficialAccountPresetPanel,
 } from "./shared";
 import {
   FetchedModelPicker,
@@ -446,18 +447,10 @@ export function KimiProviderForm({
         >
           {presetSelector}
           {showAccountLogin && (
-            <div className="space-y-3">
-              <p className="text-body text-fg-2">
-                {t("kimi.oauth.description")}
-              </p>
-              <Button
-                type="button"
-                variant="neutral"
-                onClick={() => onManageAuthAccounts?.("kimi_oauth")}
-              >
-                {t("kimi.oauth.manageAccounts")}
-              </Button>
-            </div>
+            <OfficialAccountPresetPanel
+              authProvider="kimi_oauth"
+              onManageAuthAccounts={onManageAuthAccounts}
+            />
           )}
         </form>
       </Form>

@@ -39,21 +39,24 @@ import {
   type WorkBuddySettingsConfig,
 } from "@/config/workbuddyProviderPresets";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import type { ManagedAuthAccount } from "@/lib/api";
-import { authApi } from "@/lib/api";
-import { WORKBUDDY_STATUS_KEY } from "@/components/providers/workbuddyOfficial";
-import { WorkBuddyOfficialSection } from "./WorkBuddyOfficialSection";
 import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
 import {
   FetchedModelPicker,
   type FetchedModelSelection,
 } from "./FetchedModelPicker";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { usePresetStep } from "./presetStep";
 import {
   fillWorkBuddyModel,
   metadataFilledAnything,
 } from "./modelMetadataFill";
-import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  ModelDropdown,
+  OfficialAccountManagedInfo,
+  OfficialAccountPresetPanel,
+} from "./shared";
 import type { ProviderFormProps } from "./ProviderForm";
 
 const OFFICIAL_PRESET_ID = "official";
@@ -147,6 +150,8 @@ export function WorkBuddyProviderForm({
   showButtons = true,
   onSubmittingChange,
   onSubmitReadyChange,
+  onAccountLoginChange,
+  onManageAuthAccounts,
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
@@ -171,13 +176,19 @@ export function WorkBuddyProviderForm({
         WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
       )?.trim() || null,
   );
-  // 名称默认跟着选中账号的昵称；用户改过名称就不再覆盖
-  const autoName = useRef<string | null>(null);
+  const step = usePresetStep();
+  const isEdit = Boolean(initialData);
+  const isOfficialAccountAdd = !isEdit && isOfficial;
+  const showOfficialAccountAdd =
+    isOfficialAccountAdd && (!step || step.step === "form");
+  useEffect(() => {
+    onAccountLoginChange?.(showOfficialAccountAdd);
+    return () => onAccountLoginChange?.(false);
+  }, [showOfficialAccountAdd, onAccountLoginChange]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // The key is stored on every models.json entry this provider owns, so it is
   // fixed once the provider exists.
-  const isEdit = Boolean(initialData);
   const [providerKey, setProviderKey] = useState(providerId ?? "");
   const { data: existing } = useProvidersQuery("workbuddy");
   const keyTaken =
@@ -223,34 +234,17 @@ export function WorkBuddyProviderForm({
     modelIds.every((id) => id && !takenBy(id)) &&
     new Set(modelIds).size === modelIds.length;
   const urlValid = /^https?:\/\/\S+$/.test(config.url?.trim() ?? "");
-  // 和账号区共用缓存：绑定的号已被删掉时不能保存，要重新选
-  const { data: workbuddyAccounts } = useQuery({
-    queryKey: WORKBUDDY_STATUS_KEY,
-    queryFn: () => authApi.authGetStatus(WORKBUDDY_ACCOUNT_AUTH_PROVIDER),
-    enabled: isOfficial,
-    staleTime: 30_000,
-  });
-  const accountAvailable =
-    accountId !== null &&
-    (workbuddyAccounts?.accounts.some((account) => account.id === accountId) ??
-      false);
-  const ready = isOfficial
-    ? Boolean(name.trim() && accountAvailable)
-    : Boolean(
-        jsonValid &&
-          name.trim() &&
-          (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
-          urlValid &&
-          modelsValid,
-      );
-  const chooseAccount = (account: ManagedAuthAccount) => {
-    setAccountId(account.id);
-    const current = form.getValues("name").trim();
-    if (!current || current === autoName.current) {
-      form.setValue("name", account.login, { shouldDirty: true });
-      autoName.current = account.login;
-    }
-  };
+  const ready = isOfficialAccountAdd
+    ? false
+    : isOfficial
+      ? Boolean(name.trim())
+      : Boolean(
+          jsonValid &&
+            name.trim() &&
+            (isEdit || (providerKey && !keyInvalid && !keyTaken)) &&
+            urlValid &&
+            modelsValid,
+        );
   useEffect(() => {
     onSubmitReadyChange?.(ready);
   }, [ready, onSubmitReadyChange]);
@@ -407,9 +401,7 @@ export function WorkBuddyProviderForm({
     update(next);
     setProviderKey(official ? "" : (selected?.providerKey ?? ""));
     setAccountId(null);
-    autoName.current = null;
     form.reset({
-      // 官方登录卡的名称在选账号时填成昵称
       name: official ? "" : (selected?.name ?? ""),
       notes: "",
       websiteUrl: selected?.websiteUrl ?? "",
@@ -418,6 +410,41 @@ export function WorkBuddyProviderForm({
       settingsConfig: JSON.stringify(next),
     });
   };
+
+  const presetSelector = !initialData && (
+    <ProviderPresetSelector
+      selectedPresetId={presetId}
+      presetEntries={PRESET_ENTRIES}
+      presetCategoryLabels={{
+        custom: t("providerPreset.custom"),
+        cn_official: t("providerForm.categoryCnOfficial"),
+        aggregator: t("providerForm.categoryAggregation"),
+        third_party: t("providerForm.categoryThirdParty"),
+      }}
+      onPresetChange={choosePreset}
+      category={category}
+    />
+  );
+
+  if (isOfficialAccountAdd) {
+    return (
+      <Form {...form}>
+        <form
+          id="provider-form"
+          className="space-y-6"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          {presetSelector}
+          {showOfficialAccountAdd && (
+            <OfficialAccountPresetPanel
+              authProvider={WORKBUDDY_ACCOUNT_AUTH_PROVIDER}
+              onManageAuthAccounts={onManageAuthAccounts}
+            />
+          )}
+        </form>
+      </Form>
+    );
+  }
 
   return (
     <Form {...form}>
@@ -431,17 +458,20 @@ export function WorkBuddyProviderForm({
           setError("");
           try {
             if (isOfficial) {
+              const meta = { ...(initialData?.meta ?? {}) };
+              if (accountId) {
+                meta.authBinding = {
+                  source: "managed_account",
+                  authProvider: WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
+                  accountId,
+                };
+              } else {
+                delete meta.authBinding;
+              }
               await onSubmit({
                 ...identity,
                 name: identity.name.trim(),
-                meta: {
-                  ...initialData?.meta,
-                  authBinding: {
-                    source: "managed_account",
-                    authProvider: WORKBUDDY_ACCOUNT_AUTH_PROVIDER,
-                    accountId: accountId ?? undefined,
-                  },
-                },
+                meta,
                 providerKey: isEdit
                   ? providerId
                   : officialKey(existing?.providers ?? {}),
@@ -476,20 +506,7 @@ export function WorkBuddyProviderForm({
           }
         })}
       >
-        {!initialData && (
-          <ProviderPresetSelector
-            selectedPresetId={presetId}
-            presetEntries={PRESET_ENTRIES}
-            presetCategoryLabels={{
-              custom: t("providerPreset.custom"),
-              cn_official: t("providerForm.categoryCnOfficial"),
-              aggregator: t("providerForm.categoryAggregation"),
-              third_party: t("providerForm.categoryThirdParty"),
-            }}
-            onPresetChange={choosePreset}
-            category={category}
-          />
-        )}
+        {presetSelector}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -546,9 +563,10 @@ export function WorkBuddyProviderForm({
           />
 
           {isOfficial ? (
-            <WorkBuddyOfficialSection
-              value={accountId}
-              onChange={chooseAccount}
+            <OfficialAccountManagedInfo
+              authProvider={WORKBUDDY_ACCOUNT_AUTH_PROVIDER}
+              accountId={accountId}
+              onManageAuthAccounts={onManageAuthAccounts}
             />
           ) : (
             <>

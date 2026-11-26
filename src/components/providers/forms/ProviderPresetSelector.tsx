@@ -29,6 +29,7 @@ import {
 } from "@/config/universalProviderPresets";
 import { cn } from "@/lib/utils";
 import { usePresetStep } from "./presetStep";
+import { officialAuthTargetForPreset } from "./shared";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
@@ -162,6 +163,14 @@ export function ProviderPresetSelector({
   useEffect(() => registerSelector?.(), [registerSelector]);
 
   const pick = (id: string) => {
+    const picked = presetEntries.find((item) => item.id === id);
+    const authTarget = picked
+      ? officialAuthTargetForPreset(step?.appId, picked.preset.category)
+      : null;
+    if (authTarget && step?.openAuthCenter) {
+      step.openAuthCenter(authTarget);
+      return;
+    }
     onPresetChange(id);
     step?.setStep("form");
   };

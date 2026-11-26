@@ -59,7 +59,7 @@ describe("DeepSeek account entry in the DeepSeek Harness add-provider dialog", (
     vi.mocked(dshApi.accountStatus).mockResolvedValue(signedOut);
   });
 
-  it("directs official sign-in to Auth Center without provider fields or an add footer", async () => {
+  it("opens Auth Center directly on official sign-in without an intermediate form or add footer", async () => {
     const onSubmit = vi.fn();
     render(
       <QueryClientProvider client={createTestQueryClient()}>
@@ -75,18 +75,17 @@ describe("DeepSeek account entry in the DeepSeek Harness add-provider dialog", (
     fireEvent.click(
       await screen.findByRole("button", { name: "dsh.account.presetName" }),
     );
-    const manage = await screen.findByRole("button", {
-      name: "dsh.account.manageAccounts",
-    });
-    expect(
-      screen.queryByRole("button", { name: "common.add" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("API Key")).not.toBeInTheDocument();
-
-    fireEvent.click(manage);
     expect(
       await screen.findByRole("region", { name: "DeepSeek Harness" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "common.add" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "provider.form.officialManaged.manageAccounts",
+      }),
+    ).not.toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });

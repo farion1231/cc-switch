@@ -53,6 +53,8 @@ interface AddProviderDialogProps {
   ) => Promise<void> | void;
   /** 从供应商页哪一格打开的，见 ProviderForm 的同名参数 */
   modeView?: AppMode;
+  /** 点击官方登录预设时统一跳转到授权中心并定位到对应分组 */
+  onOpenAuthCenter?: (target: AuthCenterTarget) => void;
 }
 
 export function AddProviderDialog({
@@ -61,6 +63,7 @@ export function AddProviderDialog({
   appId,
   onSubmit,
   modeView,
+  onOpenAuthCenter,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
   // OpenCode and OpenClaw don't support universal providers
@@ -92,9 +95,35 @@ export function AddProviderDialog({
       selectorCount.current -= 1;
     };
   }, []);
+  const [authSettingsTarget, setAuthSettingsTarget] =
+    useState<AuthCenterTarget | null>(null);
+  const closeDialog = useCallback(() => {
+    setAuthSettingsTarget(null);
+    // 表单每次打开都会重新投影；这里清掉，免得下次打开时先用上一次的底。
+    setDraftEditorBase(null);
+    onOpenChange(false);
+  }, [onOpenChange]);
+  const handleOpenAuthCenter = useCallback(
+    (target: AuthCenterTarget) => {
+      if (onOpenAuthCenter) {
+        closeDialog();
+        onOpenAuthCenter(target);
+      } else {
+        setAuthSettingsTarget(target);
+      }
+    },
+    [onOpenAuthCenter, closeDialog],
+  );
   const stepState = useMemo<PresetStepState>(
-    () => ({ appId, step, setStep, host: pickerHost, registerSelector }),
-    [appId, step, pickerHost, registerSelector],
+    () => ({
+      appId,
+      step,
+      setStep,
+      host: pickerHost,
+      registerSelector,
+      openAuthCenter: handleOpenAuthCenter,
+    }),
+    [appId, step, pickerHost, registerSelector, handleOpenAuthCenter],
   );
   const [universalFormOpen, setUniversalFormOpen] = useState(false);
   const [selectedUniversalPreset, setSelectedUniversalPreset] =
@@ -103,8 +132,6 @@ export function AddProviderDialog({
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
   const [stackLayout, setStackLayout] = useState(false);
   const [accountLogin, setAccountLogin] = useState(false);
-  const [authSettingsTarget, setAuthSettingsTarget] =
-    useState<AuthCenterTarget | null>(null);
 
   useEffect(() => {
     setAuthSettingsTarget(null);
@@ -160,13 +187,6 @@ export function AddProviderDialog({
       cancelled = true;
     };
   }, [open, appId, t]);
-
-  const closeDialog = useCallback(() => {
-    setAuthSettingsTarget(null);
-    // 表单每次打开都会重新投影；这里清掉，免得下次打开时先用上一次的底。
-    setDraftEditorBase(null);
-    onOpenChange(false);
-  }, [onOpenChange]);
 
   const handlePanelClose = useCallback(() => {
     if (authSettingsTarget) {
@@ -513,7 +533,7 @@ export function AddProviderDialog({
       onStackLayoutChange={setStackLayout}
       onSubmit={handleSubmit}
       onCancel={closeDialog}
-      onManageAuthAccounts={setAuthSettingsTarget}
+      onManageAuthAccounts={handleOpenAuthCenter}
       onSubmittingChange={setIsFormSubmitting}
       onSubmitReadyChange={handleSubmitReadyChange}
       onAccountLoginChange={setAccountLogin}

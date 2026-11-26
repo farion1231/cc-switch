@@ -94,13 +94,16 @@ const status = (
   accounts,
 });
 
-function renderCard(provider: Provider) {
+function renderCard(
+  provider: Provider,
+  appId: "claude-desktop" | "copilot" = "claude-desktop",
+) {
   const queryClient = createTestQueryClient();
   return render(
     <QueryClientProvider client={queryClient}>
       <ProviderCard
         provider={provider}
-        appId="claude-desktop"
+        appId={appId}
         isCurrent={false}
         presentation={{ chips: [], buttons: [] }}
         onEdit={vi.fn()}
@@ -182,5 +185,56 @@ describe("ProviderCard Copilot account subtitle", () => {
     });
 
     expect(authGetStatus).not.toHaveBeenCalled();
+  });
+
+  it("shows bound GitHub account and model on Copilot CLI official cards", async () => {
+    authGetStatus.mockResolvedValue(
+      status([account("acc-1", "octocat")], "acc-1"),
+    );
+
+    renderCard(
+      {
+        id: "copilot-official-acct-1",
+        name: "Work Copilot",
+        category: "official",
+        settingsConfig: { env: { COPILOT_MODEL: "claude-sonnet-5.5" } },
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "github_copilot",
+            accountId: "acc-1",
+          },
+        },
+      },
+      "copilot",
+    );
+
+    expect(await screen.findByText("octocat")).toBeInTheDocument();
+    expect(screen.getByText("claude-sonnet-5.5")).toBeInTheDocument();
+  });
+
+  it("shortens repeated login to GitHub account when the Copilot CLI card name includes it", async () => {
+    authGetStatus.mockResolvedValue(
+      status([account("acc-1", "octocat")], "acc-1"),
+    );
+
+    renderCard(
+      {
+        id: "copilot-official-acct-1",
+        name: "GitHub Copilot (octocat)",
+        category: "official",
+        settingsConfig: { env: {} },
+        meta: {
+          authBinding: {
+            source: "managed_account",
+            authProvider: "github_copilot",
+            accountId: "acc-1",
+          },
+        },
+      },
+      "copilot",
+    );
+
+    expect(await screen.findByText("GitHub 账号")).toBeInTheDocument();
   });
 });

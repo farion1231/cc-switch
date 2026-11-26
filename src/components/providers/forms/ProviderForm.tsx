@@ -19,7 +19,12 @@ import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
 } from "@/lib/requestOverrides";
-import { providersApi, type AppId, type AuthCenterTarget } from "@/lib/api";
+import {
+  providersApi,
+  type AppId,
+  type AuthCenterTarget,
+  type ManagedAuthProvider,
+} from "@/lib/api";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
 import {
   overlayClaudeProviderFields,
@@ -101,7 +106,11 @@ import {
   toClaudeReasoningEffortChoice,
   type ClaudeReasoningEffortChoice,
 } from "./ClaudeReasoningEffortField";
-import type { DirectModeFormatNotice } from "./shared";
+import {
+  OfficialAccountManagedInfo,
+  OfficialAccountPresetPanel,
+  type DirectModeFormatNotice,
+} from "./shared";
 import {
   claudeStackModelsFromEnv,
   createClaudeStackModelRow,
@@ -116,13 +125,12 @@ import { CodexFormFields } from "./CodexFormFields";
 import { GeminiFormFields } from "./GeminiFormFields";
 import { KimiProviderForm } from "./KimiProviderForm";
 import { CopilotProviderForm } from "./CopilotProviderForm";
-import { AgyAccountSelect } from "./AgyOAuthSection";
-import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
 import { CodebuddyProviderForm } from "./CodebuddyProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
+import { usePresetStep } from "./presetStep";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
 import type { AppMode } from "@/types/proxy";
 import {
@@ -396,6 +404,7 @@ function ProviderFormFull({
   onManageUniversalProviders,
   onManageAuthAccounts,
   onSubmittingChange,
+  onAccountLoginChange,
   initialData,
   showButtons = true,
   isProxyTakeover = false,
@@ -495,7 +504,12 @@ function ProviderFormFull({
     setSelectedCodexAccountId(
       resolveManagedAccountId(initialData?.meta, "codex_oauth"),
     );
-    setHasValidCodexOfficialSelection(true);
+    setSelectedAgyAccountId(
+      resolveManagedAccountId(initialData?.meta, "agy_oauth"),
+    );
+    setSelectedClaudeAccountId(
+      resolveManagedAccountId(initialData?.meta, "claude_official"),
+    );
     setCodexFastMode(initialData?.meta?.codexFastMode ?? false);
     setCodexChatReasoning(initialData?.meta?.codexChatReasoning ?? {});
     setClaudeReasoningEffort(
@@ -730,8 +744,6 @@ function ProviderFormFull({
   const [selectedCodexAccountId, setSelectedCodexAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "codex_oauth"));
-  const [hasValidCodexOfficialSelection, setHasValidCodexOfficialSelection] =
-    useState(true);
   const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
@@ -1092,10 +1104,24 @@ function ProviderFormFull({
     onStackLayoutChange?.(useStackLayout);
     return () => onStackLayoutChange?.(false);
   }, [useStackLayout, onStackLayoutChange]);
-  const requiresExplicitCodexOfficialSelection =
-    isCodexOfficialProvider && !hasValidCodexOfficialSelection;
-  const requiresCodexOauthLogin =
-    isClaudeCodexOauthProvider || isCodexOfficialManagedOauthBound;
+  const requiresCodexOauthLogin = isClaudeCodexOauthProvider;
+  const presetStep = usePresetStep();
+  const officialManagedAuthProvider: ManagedAuthProvider | null =
+    appId === "claude" && category === "official"
+      ? "claude_official"
+      : appId === "codex" && isCodexOfficialProvider
+        ? "codex_oauth"
+        : appId === "agy" && category === "official" && canSwitchAgyAccount()
+          ? "agy_oauth"
+          : null;
+  const isOfficialAccountAdd =
+    !isEditMode && officialManagedAuthProvider !== null;
+  const showOfficialAccountAdd =
+    isOfficialAccountAdd && (!presetStep || presetStep.step === "form");
+  useEffect(() => {
+    onAccountLoginChange?.(showOfficialAccountAdd);
+    return () => onAccountLoginChange?.(false);
+  }, [showOfficialAccountAdd, onAccountLoginChange]);
 
   const {
     templateValues,
@@ -1578,14 +1604,6 @@ function ProviderFormFull({
       toast.error(
         t("copilot.loginRequired", {
           defaultValue: "请先登录 GitHub Copilot",
-        }),
-      );
-      return;
-    }
-    if (requiresExplicitCodexOfficialSelection) {
-      toast.error(
-        t("codexOauth.explicitSelectionRequired", {
-          defaultValue: "请先选择登录方式",
         }),
       );
       return;
@@ -2552,6 +2570,43 @@ function ProviderFormFull({
     />
   );
 
+  const presetSelector = !initialData && (
+    <ProviderPresetSelector
+      selectedPresetId={selectedPresetId}
+      presetEntries={presetEntries}
+      presetCategoryLabels={presetCategoryLabels}
+      onPresetChange={handlePresetChange}
+      onUniversalPresetSelect={onUniversalPresetSelect}
+      onManageUniversalProviders={onManageUniversalProviders}
+      category={category}
+    />
+  );
+
+  if (isOfficialAccountAdd && officialManagedAuthProvider) {
+    return (
+      <Form {...form}>
+        <form
+          id="provider-form"
+          className="space-y-6"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          {presetSelector}
+          {showOfficialAccountAdd && (
+            <OfficialAccountPresetPanel
+              authProvider={officialManagedAuthProvider}
+              onManageAuthAccounts={
+                officialManagedAuthProvider === "agy_oauth" &&
+                !canSwitchAgyAccount()
+                  ? undefined
+                  : onManageAuthAccounts
+              }
+            />
+          )}
+        </form>
+      </Form>
+    );
+  }
+
   return (
     <>
       <Form {...form}>
@@ -2560,17 +2615,7 @@ function ProviderFormFull({
           onSubmit={form.handleSubmit(handleSubmit)}
           className="space-y-6"
         >
-          {!initialData && (
-            <ProviderPresetSelector
-              selectedPresetId={selectedPresetId}
-              presetEntries={presetEntries}
-              presetCategoryLabels={presetCategoryLabels}
-              onPresetChange={handlePresetChange}
-              onUniversalPresetSelect={onUniversalPresetSelect}
-              onManageUniversalProviders={onManageUniversalProviders}
-              category={category}
-            />
-          )}
+          {presetSelector}
 
           <BasicFormFields
             form={form}
@@ -2870,115 +2915,106 @@ function ProviderFormFull({
           )}
 
           {appId === "claude" && category === "official" && (
-            <ClaudeAccountSelect
-              value={selectedClaudeAccountId}
-              onChange={setSelectedClaudeAccountId}
-              onManageAccounts={
-                onManageAuthAccounts
-                  ? () => onManageAuthAccounts("claude_official")
-                  : undefined
-              }
+            <OfficialAccountManagedInfo
+              authProvider="claude_official"
+              accountId={selectedClaudeAccountId}
+              onManageAuthAccounts={onManageAuthAccounts}
             />
           )}
 
           {appId === "codex" && (
-            <CodexFormFields
-              providerId={providerId}
-              isCopilotPreset={isCopilotProvider}
-              isCopilotAuthenticated={isCopilotAuthenticated}
-              selectedGitHubAccountId={selectedGitHubAccountId}
-              onGitHubAccountSelect={setSelectedGitHubAccountId}
-              isXaiOauthPreset={
-                presetProviderType === "xai_oauth" ||
-                initialData?.meta?.providerType === "xai_oauth"
-              }
-              isXaiOauthAuthenticated={isXaiOauthAuthenticated}
-              selectedXaiAccountId={selectedXaiAccountId}
-              onXaiAccountSelect={setSelectedXaiAccountId}
-              codexApiKey={codexApiKey}
-              onApiKeyChange={handleCodexApiKeyChange}
-              category={category}
-              shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
-              websiteUrl={codexWebsiteUrl}
-              isPartner={isCodexPartner}
-              partnerPromotionKey={codexPartnerPromotionKey}
-              isCodexOauthPreset={isCodexOfficialProvider}
-              selectedCodexAccountId={selectedCodexAccountId}
-              onCodexAccountSelect={setSelectedCodexAccountId}
-              onCodexAuthSelectionConfirmed={() =>
-                setHasValidCodexOfficialSelection(true)
-              }
-              onCodexAuthSelectionInvalidated={() =>
-                setHasValidCodexOfficialSelection(false)
-              }
-              onManageAuthAccounts={onManageAuthAccounts}
-              codexOauthSelectionLabel={t("codexOauth.signInMethod")}
-              codexOauthNoneOptionLabel={t("codexOauth.noneOptionLabel")}
-              codexOauthNoneOptionDescription={t(
-                "codex.followCodexLoginDescription",
+            <>
+              <CodexFormFields
+                providerId={providerId}
+                isCopilotPreset={isCopilotProvider}
+                isCopilotAuthenticated={isCopilotAuthenticated}
+                selectedGitHubAccountId={selectedGitHubAccountId}
+                onGitHubAccountSelect={setSelectedGitHubAccountId}
+                isXaiOauthPreset={
+                  presetProviderType === "xai_oauth" ||
+                  initialData?.meta?.providerType === "xai_oauth"
+                }
+                isXaiOauthAuthenticated={isXaiOauthAuthenticated}
+                selectedXaiAccountId={selectedXaiAccountId}
+                onXaiAccountSelect={setSelectedXaiAccountId}
+                codexApiKey={codexApiKey}
+                onApiKeyChange={handleCodexApiKeyChange}
+                category={category}
+                shouldShowApiKeyLink={shouldShowCodexApiKeyLink}
+                websiteUrl={codexWebsiteUrl}
+                isPartner={isCodexPartner}
+                partnerPromotionKey={codexPartnerPromotionKey}
+                isCodexOauthPreset={false}
+                selectedCodexAccountId={selectedCodexAccountId}
+                onCodexAccountSelect={setSelectedCodexAccountId}
+                onManageAuthAccounts={onManageAuthAccounts}
+                shouldShowSpeedTest={shouldShowSpeedTest}
+                codexBaseUrl={codexBaseUrl}
+                onBaseUrlChange={handleCodexBaseUrlChange}
+                isFullUrl={localIsFullUrl}
+                onFullUrlChange={setLocalIsFullUrl}
+                isEndpointModalOpen={isCodexEndpointModalOpen}
+                onEndpointModalToggle={setIsCodexEndpointModalOpen}
+                onCustomEndpointsChange={
+                  isEditMode ? undefined : setDraftCustomEndpoints
+                }
+                autoSelect={endpointAutoSelect}
+                onAutoSelectChange={setEndpointAutoSelect}
+                codexModel={codexModel}
+                onModelChange={handleCodexModelChange}
+                subagentModel={codexSubagentModel}
+                onSubagentModelChange={handleCodexSubagentModelChange}
+                subagentReasoningEffort={codexSubagentReasoningEffort}
+                onSubagentReasoningEffortChange={
+                  handleCodexSubagentReasoningEffortChange
+                }
+                agentMaxThreads={codexAgentMaxThreads}
+                multiAgentV2Total={codexMultiAgentV2Total}
+                onAgentMaxThreadsChange={handleCodexAgentMaxThreadsChange}
+                apiFormat={localCodexApiFormat}
+                onApiFormatChange={handleCodexApiFormatChange}
+                copilotApiFormat={effectiveCodexCopilotApiFormat}
+                onCopilotApiFormatChange={handleCodexCopilotApiFormatChange}
+                anthropicAuthField={localCodexAnthropicAuthField}
+                onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
+                impersonateClaudeCode={localCodexImpersonateClaudeCode}
+                onImpersonateClaudeCodeChange={
+                  setLocalCodexImpersonateClaudeCode
+                }
+                maxOutputTokens={localCodexMaxOutputTokens}
+                onMaxOutputTokensChange={setLocalCodexMaxOutputTokens}
+                codexChatReasoning={codexChatReasoning}
+                onCodexChatReasoningChange={setCodexChatReasoning}
+                promptCacheRouting={promptCacheRouting}
+                onPromptCacheRoutingChange={setPromptCacheRouting}
+                catalogModels={codexCatalogModels}
+                onCatalogModelsChange={setCodexCatalogModels}
+                autoReviewModel={codexAutoReviewModel}
+                onAutoReviewModelChange={setCodexAutoReviewModel}
+                officialSpeedTiers={codexOfficialSpeedTiers}
+                onOfficialSpeedTiersChange={setCodexOfficialSpeedTiers}
+                speedTestEndpoints={speedTestEndpoints}
+                customUserAgent={customUserAgent}
+                onCustomUserAgentChange={setCustomUserAgent}
+                billingMultiplier={billingMultiplier}
+                onBillingMultiplierChange={
+                  supportsBillingMultiplier ? setBillingMultiplier : undefined
+                }
+                localProxyHeadersOverride={localProxyHeadersOverride}
+                onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
+                localProxyBodyOverride={localProxyBodyOverride}
+                onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
+                variant={useStackLayout ? "stack" : "classic"}
+                directModeFormatNotice={directModeFormatNotice}
+              />
+              {isEditMode && isCodexOfficialProvider && (
+                <OfficialAccountManagedInfo
+                  authProvider="codex_oauth"
+                  accountId={selectedCodexAccountId}
+                  onManageAuthAccounts={onManageAuthAccounts}
+                />
               )}
-              codexOauthAllowUnboundSelection
-              codexOauthAllowUnboundSelectionWithoutStatus
-              codexOauthRequireExplicitSelection={
-                requiresExplicitCodexOfficialSelection
-              }
-              shouldShowSpeedTest={shouldShowSpeedTest}
-              codexBaseUrl={codexBaseUrl}
-              onBaseUrlChange={handleCodexBaseUrlChange}
-              isFullUrl={localIsFullUrl}
-              onFullUrlChange={setLocalIsFullUrl}
-              isEndpointModalOpen={isCodexEndpointModalOpen}
-              onEndpointModalToggle={setIsCodexEndpointModalOpen}
-              onCustomEndpointsChange={
-                isEditMode ? undefined : setDraftCustomEndpoints
-              }
-              autoSelect={endpointAutoSelect}
-              onAutoSelectChange={setEndpointAutoSelect}
-              codexModel={codexModel}
-              onModelChange={handleCodexModelChange}
-              subagentModel={codexSubagentModel}
-              onSubagentModelChange={handleCodexSubagentModelChange}
-              subagentReasoningEffort={codexSubagentReasoningEffort}
-              onSubagentReasoningEffortChange={
-                handleCodexSubagentReasoningEffortChange
-              }
-              agentMaxThreads={codexAgentMaxThreads}
-              multiAgentV2Total={codexMultiAgentV2Total}
-              onAgentMaxThreadsChange={handleCodexAgentMaxThreadsChange}
-              apiFormat={localCodexApiFormat}
-              onApiFormatChange={handleCodexApiFormatChange}
-              copilotApiFormat={effectiveCodexCopilotApiFormat}
-              onCopilotApiFormatChange={handleCodexCopilotApiFormatChange}
-              anthropicAuthField={localCodexAnthropicAuthField}
-              onAnthropicAuthFieldChange={setLocalCodexAnthropicAuthField}
-              impersonateClaudeCode={localCodexImpersonateClaudeCode}
-              onImpersonateClaudeCodeChange={setLocalCodexImpersonateClaudeCode}
-              maxOutputTokens={localCodexMaxOutputTokens}
-              onMaxOutputTokensChange={setLocalCodexMaxOutputTokens}
-              codexChatReasoning={codexChatReasoning}
-              onCodexChatReasoningChange={setCodexChatReasoning}
-              promptCacheRouting={promptCacheRouting}
-              onPromptCacheRoutingChange={setPromptCacheRouting}
-              catalogModels={codexCatalogModels}
-              onCatalogModelsChange={setCodexCatalogModels}
-              autoReviewModel={codexAutoReviewModel}
-              onAutoReviewModelChange={setCodexAutoReviewModel}
-              officialSpeedTiers={codexOfficialSpeedTiers}
-              onOfficialSpeedTiersChange={setCodexOfficialSpeedTiers}
-              speedTestEndpoints={speedTestEndpoints}
-              customUserAgent={customUserAgent}
-              onCustomUserAgentChange={setCustomUserAgent}
-              billingMultiplier={billingMultiplier}
-              onBillingMultiplierChange={
-                supportsBillingMultiplier ? setBillingMultiplier : undefined
-              }
-              localProxyHeadersOverride={localProxyHeadersOverride}
-              onLocalProxyHeadersOverrideChange={setLocalProxyHeadersOverride}
-              localProxyBodyOverride={localProxyBodyOverride}
-              onLocalProxyBodyOverrideChange={setLocalProxyBodyOverride}
-              variant={useStackLayout ? "stack" : "classic"}
-              directModeFormatNotice={directModeFormatNotice}
-            />
+            </>
           )}
 
           {usesGeminiStyleForm(appId) && (
@@ -3020,15 +3056,15 @@ function ProviderFormFull({
             />
           )}
 
-          {/* 切号只实现了 macOS、Windows；别的平台上不显示，卡上已有的绑定原样保留 */}
-          {appId === "agy" &&
-            category === "official" &&
-            canSwitchAgyAccount() && (
-              <AgyAccountSelect
-                value={selectedAgyAccountId}
-                onChange={setSelectedAgyAccountId}
-              />
-            )}
+          {appId === "agy" && category === "official" && (
+            <OfficialAccountManagedInfo
+              authProvider="agy_oauth"
+              accountId={selectedAgyAccountId}
+              onManageAuthAccounts={
+                canSwitchAgyAccount() ? onManageAuthAccounts : undefined
+              }
+            />
+          )}
 
           {appId === "opencode" && !isAnyOmoCategory && !isNativeOpencode && (
             <OpenCodeFormFields

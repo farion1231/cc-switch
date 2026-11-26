@@ -29,15 +29,21 @@ import {
 } from "@/config/codebuddyProviderPresets";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { generateUUID } from "@/utils/uuid";
-import { CodebuddyOfficialAccountField } from "./CodebuddyOfficialAccountField";
 import { codebuddyPresetModelSources } from "@/config/presetModelMetadata";
 import { BasicFormFields, REQUIRED_LABEL } from "./BasicFormFields";
-import { ApiKeySection, EndpointField, ModelDropdown } from "./shared";
+import {
+  ApiKeySection,
+  EndpointField,
+  ModelDropdown,
+  OfficialAccountManagedInfo,
+  OfficialAccountPresetPanel,
+} from "./shared";
 import {
   fillCodebuddyModel,
   metadataFilledAnything,
 } from "./modelMetadataFill";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
+import { usePresetStep } from "./presetStep";
 import type { ProviderFormProps } from "./ProviderForm";
 
 const PRESET_ENTRIES = codebuddyProviderPresets.map((preset, index) => ({
@@ -109,6 +115,8 @@ export function CodebuddyProviderForm({
   showButtons = true,
   onSubmittingChange,
   onSubmitReadyChange,
+  onAccountLoginChange,
+  onManageAuthAccounts,
 }: ProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
@@ -134,11 +142,19 @@ export function CodebuddyProviderForm({
         CODEBUDDY_OFFICIAL_AUTH_PROVIDER,
       ),
   );
+  const step = usePresetStep();
+  const isEdit = Boolean(initialData);
+  const isOfficialAccountAdd = !isEdit && isOfficial;
+  const showOfficialAccountAdd =
+    isOfficialAccountAdd && (!step || step.step === "form");
+  useEffect(() => {
+    onAccountLoginChange?.(showOfficialAccountAdd);
+    return () => onAccountLoginChange?.(false);
+  }, [showOfficialAccountAdd, onAccountLoginChange]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   // The key is the model `id` in models.json and the value of `/model`, so it
   // is fixed once the model exists.
-  const isEdit = Boolean(initialData);
   const [modelId, setModelId] = useState(providerId ?? "");
   const { data: existing } = useProvidersQuery("codebuddy");
   const trimmedId = modelId.trim();
@@ -159,28 +175,17 @@ export function CodebuddyProviderForm({
   const name = form.watch("name");
   const url = config.url ?? "";
   const urlInvalid = url.trim() !== "" && !isValidUrl(url);
-  const ready = isOfficial
-    ? Boolean(name.trim() && officialAccountId)
-    : Boolean(
-        jsonValid &&
-          name.trim() &&
-          (isEdit || (trimmedId && !keyInvalid && !keyTaken)) &&
-          url.trim() &&
-          !urlInvalid,
-      );
-  // 卡片名默认用账号名：名字还空着、或还是上次自动填的，就跟着换
-  const autoName = useRef<string | null>(null);
-  const chooseOfficialAccount = useCallback(
-    (accountId: string, login: string) => {
-      setOfficialAccountId(accountId);
-      const current = form.getValues("name").trim();
-      if (!current || current === autoName.current) {
-        autoName.current = login;
-        form.setValue("name", login, { shouldDirty: true });
-      }
-    },
-    [form],
-  );
+  const ready = isOfficialAccountAdd
+    ? false
+    : isOfficial
+      ? Boolean(name.trim())
+      : Boolean(
+          jsonValid &&
+            name.trim() &&
+            (isEdit || (trimmedId && !keyInvalid && !keyTaken)) &&
+            url.trim() &&
+            !urlInvalid,
+        );
   useEffect(() => {
     onSubmitReadyChange?.(ready);
   }, [ready, onSubmitReadyChange]);
@@ -208,9 +213,8 @@ export function CodebuddyProviderForm({
     update({ ...next });
     setModelId(selected?.providerKey ?? "");
     setOfficialAccountId(null);
-    autoName.current = null;
     form.reset({
-      // 官方登录卡的名字等选了账号再填
+      // 官方登录卡在新增步走授权中心统一管理
       name:
         selected?.category === "official"
           ? ""
@@ -292,6 +296,42 @@ export function CodebuddyProviderForm({
   };
   const [expanded, setExpanded] = useState(false);
 
+  const presetSelector = !initialData && (
+    <ProviderPresetSelector
+      selectedPresetId={presetId}
+      presetEntries={PRESET_ENTRIES}
+      presetCategoryLabels={{
+        custom: t("providerPreset.custom"),
+        official: t("providerForm.categoryOfficial"),
+        cn_official: t("providerForm.categoryCnOfficial"),
+        aggregator: t("providerForm.categoryAggregation"),
+        third_party: t("providerForm.categoryThirdParty"),
+      }}
+      onPresetChange={choosePreset}
+      category={category}
+    />
+  );
+
+  if (isOfficialAccountAdd) {
+    return (
+      <Form {...form}>
+        <form
+          id="provider-form"
+          className="space-y-6"
+          onSubmit={(event) => event.preventDefault()}
+        >
+          {presetSelector}
+          {showOfficialAccountAdd && (
+            <OfficialAccountPresetPanel
+              authProvider={CODEBUDDY_OFFICIAL_AUTH_PROVIDER}
+              onManageAuthAccounts={onManageAuthAccounts}
+            />
+          )}
+        </form>
+      </Form>
+    );
+  }
+
   return (
     <Form {...form}>
       <form
@@ -304,18 +344,21 @@ export function CodebuddyProviderForm({
           setError("");
           try {
             if (isOfficial) {
+              const meta = { ...(initialData?.meta ?? {}) };
+              if (officialAccountId) {
+                meta.authBinding = {
+                  source: "managed_account",
+                  authProvider: CODEBUDDY_OFFICIAL_AUTH_PROVIDER,
+                  accountId: officialAccountId,
+                };
+              } else {
+                delete meta.authBinding;
+              }
               await onSubmit({
                 ...identity,
                 name: identity.name.trim(),
                 icon: identity.icon || "codebuddy",
-                meta: {
-                  ...initialData?.meta,
-                  authBinding: {
-                    source: "managed_account",
-                    authProvider: CODEBUDDY_OFFICIAL_AUTH_PROVIDER,
-                    accountId: officialAccountId ?? undefined,
-                  },
-                },
+                meta,
                 providerKey: isEdit
                   ? providerId
                   : `${CODEBUDDY_OFFICIAL_ID_PREFIX}${generateUUID()}`,
@@ -350,21 +393,7 @@ export function CodebuddyProviderForm({
           }
         })}
       >
-        {!initialData && (
-          <ProviderPresetSelector
-            selectedPresetId={presetId}
-            presetEntries={PRESET_ENTRIES}
-            presetCategoryLabels={{
-              custom: t("providerPreset.custom"),
-              official: t("providerForm.categoryOfficial"),
-              cn_official: t("providerForm.categoryCnOfficial"),
-              aggregator: t("providerForm.categoryAggregation"),
-              third_party: t("providerForm.categoryThirdParty"),
-            }}
-            onPresetChange={choosePreset}
-            category={category}
-          />
-        )}
+        {presetSelector}
         {error && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -376,10 +405,10 @@ export function CodebuddyProviderForm({
             className="min-w-0 space-y-6 border-0 p-0 disabled:opacity-50"
           >
             <BasicFormFields form={form} />
-            <CodebuddyOfficialAccountField
+            <OfficialAccountManagedInfo
+              authProvider={CODEBUDDY_OFFICIAL_AUTH_PROVIDER}
               accountId={officialAccountId}
-              onAccountChange={chooseOfficialAccount}
-              preselectCurrent={!isEdit}
+              onManageAuthAccounts={onManageAuthAccounts}
             />
           </fieldset>
         ) : (

@@ -1,6 +1,5 @@
 import { QueryClientProvider } from "@tanstack/react-query";
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import type { ManagedAuthStatus } from "@/lib/api";
@@ -96,14 +95,16 @@ describe("ProviderCard CodeBuddy official sign-in", () => {
     });
   });
 
-  it("asks to choose again when the bound account was removed", async () => {
+  it("warns without offering in-card account switching when the bound account was removed", () => {
     const onEdit = vi.fn();
     const provider = card("9@www.codebuddy.ai");
     renderCard(provider, onEdit);
-    expect(screen.getByText("账号已删除，请重新选择")).toBeInTheDocument();
+    expect(screen.getByText("该账号已从授权中心移除")).toBeInTheDocument();
     expect(screen.queryByText("codebuddy-quota")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "选择账号" }));
-    expect(onEdit).toHaveBeenCalledWith(provider);
+    expect(
+      screen.queryByRole("button", { name: "选择账号" }),
+    ).not.toBeInTheDocument();
+    expect(onEdit).not.toHaveBeenCalled();
   });
 
   // The card ID is the models.json model id; a "-copy" key would be an

@@ -116,6 +116,24 @@ export function useWorkBuddyOfficial(enabled: boolean) {
   );
 
   const running = live?.running ?? false;
+  // 轮询期间如果桌面端新收录或移除账号，自动刷新 WorkBuddy 供应商列表，新号无需手刷即成卡
+  const prevAccountIdsRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!enabled || !status) return;
+    const signature = status.accounts
+      .map((account) => account.id)
+      .sort()
+      .join("\n");
+    if (
+      prevAccountIdsRef.current !== null &&
+      prevAccountIdsRef.current !== signature
+    ) {
+      void queryClient.invalidateQueries({
+        queryKey: ["providers", "workbuddy"],
+      });
+    }
+    prevAccountIdsRef.current = signature;
+  }, [enabled, queryClient, status]);
   // WorkBuddy 刚打开时当前账号的额度就查得到了：别等 5 分钟的轮询
   const wasRunning = useRef(running);
   useEffect(() => {

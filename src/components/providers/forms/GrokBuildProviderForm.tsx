@@ -56,7 +56,11 @@ import { resolveProviderIcon } from "@/utils/providerIcon";
 import { useDraftEditorProjection } from "./hooks/useDraftEditorProjection";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { GrokAccountSelect } from "./GrokOfficialAccount";
+import { usePresetStep } from "./presetStep";
+import {
+  OfficialAccountManagedInfo,
+  OfficialAccountPresetPanel,
+} from "./shared";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
 
@@ -84,6 +88,7 @@ export function GrokBuildProviderForm({
   inactiveFields = [],
   onEditorBaseChange,
   onManageAuthAccounts,
+  onAccountLoginChange,
 }: GrokBuildProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
@@ -103,9 +108,17 @@ export function GrokBuildProviderForm({
     initialData?.category ?? "custom",
   );
   // 官方卡绑定的授权中心 xAI 账号（null = 跟随 Grok CLI 登录）
-  const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
-    string | null
-  >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
+  const [selectedXaiAccountId] = useState<string | null>(() =>
+    resolveManagedAccountId(initialData?.meta, "xai_oauth"),
+  );
+  const step = usePresetStep();
+  const isOfficialAccountAdd = !initialData && category === "official";
+  const showOfficialAccountAdd =
+    isOfficialAccountAdd && (!step || step.step === "form");
+  useEffect(() => {
+    onAccountLoginChange?.(showOfficialAccountAdd);
+    return () => onAccountLoginChange?.(false);
+  }, [showOfficialAccountAdd, onAccountLoginChange]);
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
   );
@@ -478,6 +491,36 @@ export function GrokBuildProviderForm({
 
   const rawConfigError = validateGrokBuildConfig(rawConfig);
 
+  const presetSelector = !initialData && (
+    <ProviderPresetSelector
+      selectedPresetId={selectedPresetId}
+      presetEntries={grokPresetEntries}
+      presetCategoryLabels={presetCategoryLabels}
+      onPresetChange={handlePresetChange}
+      category={category}
+    />
+  );
+
+  if (isOfficialAccountAdd) {
+    return (
+      <Form {...form}>
+        <form
+          id="provider-form"
+          onSubmit={(event) => event.preventDefault()}
+          className="space-y-6"
+        >
+          {presetSelector}
+          {showOfficialAccountAdd && (
+            <OfficialAccountPresetPanel
+              authProvider="xai_oauth"
+              onManageAuthAccounts={onManageAuthAccounts}
+            />
+          )}
+        </form>
+      </Form>
+    );
+  }
+
   return (
     <Form {...form}>
       <form
@@ -485,43 +528,15 @@ export function GrokBuildProviderForm({
         onSubmit={form.handleSubmit(handleSubmit)}
         className="space-y-6"
       >
-        {!initialData && (
-          <ProviderPresetSelector
-            selectedPresetId={selectedPresetId}
-            presetEntries={grokPresetEntries}
-            presetCategoryLabels={presetCategoryLabels}
-            onPresetChange={handlePresetChange}
-            category={category}
-          />
-        )}
+        {presetSelector}
 
         <BasicFormFields form={form} />
 
         {category === "official" && (
-          <GrokAccountSelect
-            value={selectedXaiAccountId}
-            onChange={(accountId, account) => {
-              setSelectedXaiAccountId(accountId);
-              // 新增时名字还是预设名：带上账号，几张官方卡一眼能分清
-              if (!initialData) {
-                const current = form.getValues("name").trim();
-                const presetName = grokBuildOfficialPreset.name;
-                if (
-                  current === presetName ||
-                  current.startsWith(`${presetName} (`)
-                ) {
-                  form.setValue(
-                    "name",
-                    account ? `${presetName} (${account.login})` : presetName,
-                  );
-                }
-              }
-            }}
-            onManageAccounts={
-              onManageAuthAccounts
-                ? () => onManageAuthAccounts("xai_oauth")
-                : undefined
-            }
+          <OfficialAccountManagedInfo
+            authProvider="xai_oauth"
+            accountId={selectedXaiAccountId}
+            onManageAuthAccounts={onManageAuthAccounts}
           />
         )}
 

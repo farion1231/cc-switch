@@ -1,4 +1,4 @@
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 
 use crate::app_config::AppType;
 use crate::commands::agy_account::AgyAccountState;
@@ -472,23 +472,59 @@ pub async fn auth_poll_for_account(
         }
         _ => unreachable!(),
     };
-    if matches!(&result, Ok(Some(_))) {
+    if let Ok(Some(ref account)) = result {
         crate::tray::schedule_tray_status_check(&app);
+        if let Some(app_type) =
+            crate::services::provider::official_account_cards::app_for_auth_provider(auth_provider)
+        {
+            let entry = crate::services::provider::official_account_cards::OfficialAccountEntry {
+                id: account.id.clone(),
+                login: account.login.clone(),
+            };
+            let state = app_state.inner().clone();
+            let sync_app = app_type.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || {
+                if let Err(error) =
+                    crate::services::provider::official_account_cards::clear_dismissed_and_sync_locked(
+                        &state,
+                        &sync_app,
+                        &[entry],
+                    )
+                {
+                    log::warn!("[Auth] 同步官方账号卡片失败: {error}");
+                }
+            })
+            .await;
+            emit_official_cards_updated(&app, &app_type);
+        }
     }
     result
 }
 
+pub(crate) fn emit_official_cards_updated<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    app_type: &AppType,
+) {
+    let _ = app.emit(
+        "official-account-cards-updated",
+        serde_json::json!({ "appType": app_type.as_str() }),
+    );
+}
+
 #[tauri::command(rename_all = "camelCase")]
+#[allow(clippy::too_many_arguments)]
 pub async fn auth_cancel_login(
+    app: tauri::AppHandle,
     auth_provider: String,
     device_code: String,
+    app_state: State<'_, AppState>,
     codex_state: State<'_, CodexOAuthState>,
     agy_state: State<'_, AgyAccountState>,
     codebuddy_state: State<'_, CodebuddyAccountState>,
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<bool, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let cancelled = match auth_provider {
         AUTH_PROVIDER_CODEX_OAUTH => Ok(codex_state.0.cancel_device_flow(&device_code).await),
         AUTH_PROVIDER_AGY_OAUTH => Ok(agy_state.0.cancel_login(&device_code).await),
         // 放弃登录：开始时为了让 CLI 进登录界面写的登出标记也删掉，原来的登录回来
@@ -499,7 +535,75 @@ pub async fn auth_cancel_login(
             .map_err(|e| e.to_string()),
         AUTH_PROVIDER_CLAUDE_OFFICIAL => Ok(claude_state.0.cancel_login(&device_code).await),
         _ => Err("Login cancellation is only supported for Codex OAuth".to_string()),
+    };
+    if matches!(cancelled, Ok(false)) {
+        use crate::services::provider::official_account_cards::{
+            app_for_auth_provider, clear_dismissed_and_sync_locked, OfficialAccountEntry,
+        };
+        if let Some(app_type) = app_for_auth_provider(auth_provider) {
+            let entries: Vec<OfficialAccountEntry> = match auth_provider {
+                AUTH_PROVIDER_CODEX_OAUTH => codex_state
+                    .0
+                    .list_accounts()
+                    .await
+                    .into_iter()
+                    .map(|account| OfficialAccountEntry {
+                        id: account.id,
+                        login: account.login,
+                    })
+                    .collect(),
+                AUTH_PROVIDER_AGY_OAUTH => agy_state
+                    .0
+                    .list()
+                    .await
+                    .into_iter()
+                    .map(|account| OfficialAccountEntry {
+                        login: account.label(),
+                        id: account.id,
+                    })
+                    .collect(),
+                AUTH_PROVIDER_CODEBUDDY_OAUTH => codebuddy_state
+                    .0
+                    .status()
+                    .await
+                    .map(|status| {
+                        status
+                            .accounts
+                            .into_iter()
+                            .map(|account| OfficialAccountEntry {
+                                login: account.label(),
+                                id: account.id,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                AUTH_PROVIDER_CLAUDE_OFFICIAL => claude_state
+                    .0
+                    .list()
+                    .await
+                    .into_iter()
+                    .map(|account| OfficialAccountEntry {
+                        login: account.label(),
+                        id: account.id,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+            if !entries.is_empty() {
+                let state = app_state.inner().clone();
+                let sync_app = app_type.clone();
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    if let Err(error) = clear_dismissed_and_sync_locked(&state, &sync_app, &entries)
+                    {
+                        log::warn!("[Auth] 取消前已提交登录但同步官方账号卡片失败: {error}");
+                    }
+                })
+                .await;
+            }
+            emit_official_cards_updated(&app, &app_type);
+        }
     }
+    cancelled
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -515,12 +619,12 @@ pub async fn auth_get_status(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<ManagedAuthStatus, String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    match auth_provider {
+    let status = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.read().await;
             let status = auth_manager.get_status().await;
             let default_account_id = status.default_account_id.clone();
-            Ok(ManagedAuthStatus {
+            ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated: status.authenticated,
                 default_account_id: default_account_id.clone(),
@@ -532,13 +636,13 @@ pub async fn auth_get_status(
                         map_account(auth_provider, account, default_account_id.as_deref())
                     })
                     .collect(),
-            })
+            }
         }
         AUTH_PROVIDER_CODEX_OAUTH => {
             let auth_manager = &codex_state.0;
             let status = auth_manager.get_status().await;
             let default_account_id = status.default_account_id.clone();
-            Ok(ManagedAuthStatus {
+            ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated: status.authenticated,
                 default_account_id: default_account_id.clone(),
@@ -550,13 +654,13 @@ pub async fn auth_get_status(
                         map_account(auth_provider, account, default_account_id.as_deref())
                     })
                     .collect(),
-            })
+            }
         }
         AUTH_PROVIDER_XAI_OAUTH => {
             let auth_manager = xai_state.0.read().await;
             let status = auth_manager.get_status().await;
             let default_account_id = status.default_account_id.clone();
-            Ok(ManagedAuthStatus {
+            ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated: status.authenticated,
                 default_account_id: default_account_id.clone(),
@@ -566,13 +670,13 @@ pub async fn auth_get_status(
                     .into_iter()
                     .map(|account| map_xai_account(account, default_account_id.as_deref()))
                     .collect(),
-            })
+            }
         }
         // 「默认账号」在这里是 agy 当前登录的那个号
         AUTH_PROVIDER_AGY_OAUTH => {
             let status = agy_state.0.status().await?;
             let current = status.current_account_id;
-            Ok(ManagedAuthStatus {
+            ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated: !status.accounts.is_empty(),
                 default_account_id: current.clone(),
@@ -582,13 +686,13 @@ pub async fn auth_get_status(
                     .into_iter()
                     .map(|account| map_agy_account(account, current.as_deref()))
                     .collect(),
-            })
+            }
         }
         // 「默认账号」是 WorkBuddy 桌面端当前登录的那个号
         AUTH_PROVIDER_WORKBUDDY_ACCOUNT => {
             let status = run_workbuddy(&workbuddy_state.0, |manager| manager.status()).await?;
             let current = status.current_account_id;
-            Ok(ManagedAuthStatus {
+            ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated: !status.accounts.is_empty(),
                 default_account_id: current.clone(),
@@ -598,7 +702,7 @@ pub async fn auth_get_status(
                     .into_iter()
                     .map(|account| map_workbuddy_account(account, current.as_deref()))
                     .collect(),
-            })
+            }
         }
         // 「默认账号」在这里是 CodeBuddy 当前登录的那个号
         AUTH_PROVIDER_CODEBUDDY_OAUTH => {
@@ -608,7 +712,7 @@ pub async fn auth_get_status(
                 .await
                 .map_err(|e| e.to_string())?;
             let current = status.current_account_id;
-            Ok(ManagedAuthStatus {
+            ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated: !status.accounts.is_empty(),
                 default_account_id: current.clone(),
@@ -618,19 +722,172 @@ pub async fn auth_get_status(
                     .into_iter()
                     .map(|account| map_codebuddy_account(account, current.as_deref()))
                     .collect(),
-            })
+            }
         }
         AUTH_PROVIDER_CLAUDE_OFFICIAL => {
             let accounts = claude_state.0.list().await;
-            Ok(ManagedAuthStatus {
+            ManagedAuthStatus {
                 provider: auth_provider.to_string(),
                 authenticated: !accounts.is_empty(),
                 default_account_id: None,
                 migration_error: None,
                 accounts: accounts.into_iter().map(map_claude_account).collect(),
-            })
+            }
         }
         _ => unreachable!(),
+    };
+    Ok(status)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn remove_managed_account_entry(
+    auth_provider: &str,
+    account_id: &str,
+    app_state: &AppState,
+    copilot_state: Option<&CopilotAuthState>,
+    xai_state: Option<&XaiOAuthState>,
+    agy_state: Option<&AgyAccountState>,
+    workbuddy_state: Option<&WorkBuddyAccountState>,
+    codebuddy_state: Option<&CodebuddyAccountState>,
+    claude_state: Option<&ClaudeAccountState>,
+) -> Option<Result<(), String>> {
+    match auth_provider {
+        AUTH_PROVIDER_GITHUB_COPILOT => {
+            let copilot_state = copilot_state?;
+            let auth_manager = copilot_state.0.write().await;
+            Some(
+                auth_manager
+                    .remove_account(account_id)
+                    .await
+                    .map_err(|e| e.to_string()),
+            )
+        }
+        AUTH_PROVIDER_CODEX_OAUTH => {
+            Some(remove_codex_oauth_account_with_switch_lock(app_state, account_id).await)
+        }
+        AUTH_PROVIDER_XAI_OAUTH => {
+            let xai_state = xai_state?;
+            // 方法只要 `&self`（内部有 mutation_lock 等细粒度锁）：拿读锁，让出 Grok CLI 登录时
+            // 的联网刷新不挡住代理和额度查询
+            let auth_manager = xai_state.0.read().await;
+            Some(
+                auth_manager
+                    .remove_account(account_id)
+                    .await
+                    .map_err(|e| e.to_string()),
+            )
+        }
+        // 只删 CC Switch 里的副本，不替 agy 登出
+        AUTH_PROVIDER_AGY_OAUTH => {
+            let agy_state = agy_state?;
+            Some(
+                agy_state
+                    .0
+                    .remove(account_id)
+                    .await
+                    .map_err(|e| e.to_string()),
+            )
+        }
+        // 只删 CC Switch 里的副本，不替 WorkBuddy 登出
+        AUTH_PROVIDER_WORKBUDDY_ACCOUNT => {
+            let workbuddy_state = workbuddy_state?;
+            let target_id = account_id.to_string();
+            Some(
+                run_workbuddy(&workbuddy_state.0, move |manager| {
+                    manager.remove(&target_id)
+                })
+                .await,
+            )
+        }
+        // 只删 CC Switch 里的副本，不替 CodeBuddy 登出
+        AUTH_PROVIDER_CODEBUDDY_OAUTH => {
+            let codebuddy_state = codebuddy_state?;
+            Some(
+                codebuddy_state
+                    .0
+                    .remove(account_id)
+                    .await
+                    .map_err(|e| e.to_string()),
+            )
+        }
+        // 删目录和钥匙串条目（不吊销、不登出）；正在用它的官方卡退回默认登录
+        AUTH_PROVIDER_CLAUDE_OFFICIAL => {
+            let claude_state = claude_state?;
+            if let Err(error) = claude_state.0.remove(account_id).await {
+                return Some(Err(error.to_string()));
+            }
+            Some(
+                crate::services::provider::claude_official::refresh_live_after_account_change(
+                    app_state,
+                    &claude_state.0,
+                )
+                .await,
+            )
+        }
+        _ => None,
+    }
+}
+
+/// Removes the Auth Center account associated with a deleted official card when no remaining
+/// card in `app_type` still references it. Best-effort: failures or missing optional states keep
+/// the `dismissed` marker set and do not fail card deletion.
+pub(crate) async fn remove_official_account_for_deleted_card<R: tauri::Runtime>(
+    app_handle: &tauri::AppHandle<R>,
+    app_state: &AppState,
+    app_type: &AppType,
+    account_id: &str,
+) {
+    let Some(auth_provider) =
+        crate::services::provider::official_account_cards::auth_provider_for_app(app_type)
+    else {
+        return;
+    };
+
+    let copilot_state = app_handle.try_state::<CopilotAuthState>();
+    let xai_state = app_handle.try_state::<XaiOAuthState>();
+    let agy_state = app_handle.try_state::<AgyAccountState>();
+    let workbuddy_state = app_handle.try_state::<WorkBuddyAccountState>();
+    let codebuddy_state = app_handle.try_state::<CodebuddyAccountState>();
+    let claude_state = app_handle.try_state::<ClaudeAccountState>();
+
+    let Some(result) = remove_managed_account_entry(
+        auth_provider,
+        account_id,
+        app_state,
+        copilot_state.as_deref(),
+        xai_state.as_deref(),
+        agy_state.as_deref(),
+        workbuddy_state.as_deref(),
+        codebuddy_state.as_deref(),
+        claude_state.as_deref(),
+    )
+    .await
+    else {
+        return;
+    };
+
+    match result {
+        Ok(()) => {
+            if auth_provider != AUTH_PROVIDER_CODEX_OAUTH {
+                let state = app_state.clone();
+                let app_type = app_type.clone();
+                let account_id = account_id.to_string();
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    crate::services::provider::official_account_cards::clear_dismissed_locked(
+                        &state,
+                        &app_type,
+                        &[account_id],
+                    );
+                })
+                .await;
+            }
+        }
+        Err(error) => {
+            log::warn!(
+                "[OfficialAccountCards] Failed to remove Auth Center account {account_id} for {} after card deletion: {error}",
+                app_type.as_str()
+            );
+        }
     }
 }
 
@@ -649,58 +906,41 @@ pub async fn auth_remove_account(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
-    let result = match auth_provider {
-        AUTH_PROVIDER_GITHUB_COPILOT => {
-            let auth_manager = copilot_state.0.write().await;
-            auth_manager
-                .remove_account(&account_id)
-                .await
-                .map_err(|e| e.to_string())
-        }
-        AUTH_PROVIDER_CODEX_OAUTH => {
-            remove_codex_oauth_account_with_switch_lock(app_state.inner(), &account_id).await
-        }
-        AUTH_PROVIDER_XAI_OAUTH => {
-            // 方法只要 `&self`（内部有 mutation_lock 等细粒度锁）：拿读锁，让出 Grok CLI 登录时
-            // 的联网刷新不挡住代理和额度查询
-            let auth_manager = xai_state.0.read().await;
-            auth_manager
-                .remove_account(&account_id)
-                .await
-                .map_err(|e| e.to_string())
-        }
-        // 只删 CC Switch 里的副本，不替 agy 登出
-        AUTH_PROVIDER_AGY_OAUTH => agy_state
-            .0
-            .remove(&account_id)
-            .await
-            .map_err(|e| e.to_string()),
-        // 只删 CC Switch 里的副本，不替 WorkBuddy 登出
-        AUTH_PROVIDER_WORKBUDDY_ACCOUNT => {
-            run_workbuddy(&workbuddy_state.0, move |manager| {
-                manager.remove(&account_id)
-            })
-            .await
-        }
-        // 只删 CC Switch 里的副本，不替 CodeBuddy 登出
-        AUTH_PROVIDER_CODEBUDDY_OAUTH => codebuddy_state
-            .0
-            .remove(&account_id)
-            .await
-            .map_err(|e| e.to_string()),
-        // 删目录和钥匙串条目（不吊销、不登出）；正在用它的官方卡退回默认登录
-        AUTH_PROVIDER_CLAUDE_OFFICIAL => {
-            claude_state.0.remove(&account_id).await?;
-            crate::services::provider::claude_official::refresh_live_after_account_change(
-                app_state.inner(),
-                &claude_state.0,
-            )
-            .await
-        }
-        _ => unreachable!(),
-    };
+    let result = remove_managed_account_entry(
+        auth_provider,
+        &account_id,
+        app_state.inner(),
+        Some(&*copilot_state),
+        Some(&*xai_state),
+        Some(&*agy_state),
+        Some(&*workbuddy_state),
+        Some(&*codebuddy_state),
+        Some(&*claude_state),
+    )
+    .await
+    .unwrap_or_else(|| unreachable!());
     // 删除账号可能已成功、后续解绑失败，仍检查落盘后的账号标签。
     crate::tray::schedule_tray_status_check(&app);
+    if result.is_ok() {
+        if let Some(app_type) =
+            crate::services::provider::official_account_cards::app_for_auth_provider(auth_provider)
+        {
+            if auth_provider != AUTH_PROVIDER_CODEX_OAUTH {
+                let state = app_state.inner().clone();
+                let removed_ids = vec![account_id];
+                let cleanup_app = app_type.clone();
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    crate::services::provider::official_account_cards::cleanup_removed_accounts(
+                        &state,
+                        &cleanup_app,
+                        &removed_ids,
+                    );
+                })
+                .await;
+            }
+            emit_official_cards_updated(&app, &app_type);
+        }
+    }
     result
 }
 
@@ -720,6 +960,16 @@ pub(crate) async fn remove_codex_oauth_account_with_switch_lock(
         .remove_account(account_id)
         .await
         .map_err(|error| error.to_string())?;
+    let state = app_state.clone();
+    let target_id = account_id.to_string();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        crate::services::provider::official_account_cards::cleanup_removed_accounts_with_switch_lock_held(
+            &state,
+            &AppType::Codex,
+            &[target_id],
+        );
+    })
+    .await;
     app_state
         .db
         .unbind_codex_managed_accounts(&[account_id.to_string()])
@@ -806,28 +1056,57 @@ pub async fn auth_logout(
     claude_state: State<'_, ClaudeAccountState>,
 ) -> Result<(), String> {
     let auth_provider = ensure_auth_provider(&auth_provider)?;
+    let mut removed_ids: Vec<String> = Vec::new();
     let result = match auth_provider {
         AUTH_PROVIDER_GITHUB_COPILOT => {
             let auth_manager = copilot_state.0.write().await;
+            removed_ids = auth_manager
+                .list_accounts()
+                .await
+                .into_iter()
+                .map(|account| account.id)
+                .collect();
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
         AUTH_PROVIDER_CODEX_OAUTH => logout_codex_oauth_with_switch_lock(app_state.inner()).await,
         AUTH_PROVIDER_XAI_OAUTH => {
             // 同 auth_remove_account：只要读锁，联网刷新时不挡住代理和额度查询
             let auth_manager = xai_state.0.read().await;
+            removed_ids = auth_manager
+                .list_accounts()
+                .await
+                .into_iter()
+                .map(|account| account.id)
+                .collect();
             auth_manager.clear_auth().await.map_err(|e| e.to_string())
         }
-        AUTH_PROVIDER_AGY_OAUTH => agy_state
-            .0
-            .remove_all()
-            .await
-            .map(|_| ())
-            .map_err(|e| e.to_string()),
+        AUTH_PROVIDER_AGY_OAUTH => {
+            removed_ids = agy_state
+                .0
+                .list()
+                .await
+                .into_iter()
+                .map(|account| account.id)
+                .collect();
+            agy_state
+                .0
+                .remove_all()
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
         // WorkBuddy 账号只能逐个删除，没有「删除全部」
         AUTH_PROVIDER_WORKBUDDY_ACCOUNT => Err("WorkBuddy 账号请逐个删除".to_string()),
         // CodeBuddy 账号只能逐个删除，没有「删除全部」
         AUTH_PROVIDER_CODEBUDDY_OAUTH => Err("CodeBuddy 账号请逐个删除".to_string()),
         AUTH_PROVIDER_CLAUDE_OFFICIAL => {
+            removed_ids = claude_state
+                .0
+                .list()
+                .await
+                .into_iter()
+                .map(|account| account.id)
+                .collect();
             claude_state.0.remove_all().await?;
             crate::services::provider::claude_official::refresh_live_after_account_change(
                 app_state.inner(),
@@ -838,6 +1117,25 @@ pub async fn auth_logout(
         _ => unreachable!(),
     };
     crate::tray::schedule_tray_status_check(&app);
+    if result.is_ok() {
+        if let Some(app_type) =
+            crate::services::provider::official_account_cards::app_for_auth_provider(auth_provider)
+        {
+            if auth_provider != AUTH_PROVIDER_CODEX_OAUTH && !removed_ids.is_empty() {
+                let state = app_state.inner().clone();
+                let cleanup_app = app_type.clone();
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    crate::services::provider::official_account_cards::cleanup_removed_accounts(
+                        &state,
+                        &cleanup_app,
+                        &removed_ids,
+                    );
+                })
+                .await;
+            }
+            emit_official_cards_updated(&app, &app_type);
+        }
+    }
     result
 }
 
@@ -861,6 +1159,16 @@ pub(crate) async fn logout_codex_oauth_with_switch_lock(
         .clear_auth()
         .await
         .map_err(|error| error.to_string())?;
+    let state = app_state.clone();
+    let cleanup_ids = removed.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        crate::services::provider::official_account_cards::cleanup_removed_accounts_with_switch_lock_held(
+            &state,
+            &AppType::Codex,
+            &cleanup_ids,
+        );
+    })
+    .await;
     app_state
         .db
         .unbind_codex_managed_accounts(&removed)

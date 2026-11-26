@@ -12,11 +12,23 @@ import {
   subscriptionKeys,
 } from "@/lib/query/subscription";
 import type {
+  AppId,
   ManagedAuthAccount,
   ManagedAuthProvider,
   ManagedAuthStatus,
   ManagedAuthDeviceCodeResponse,
 } from "@/lib/api";
+
+export const OFFICIAL_APP_BY_AUTH_PROVIDER: Record<ManagedAuthProvider, AppId> =
+  {
+    claude_official: "claude",
+    codex_oauth: "codex",
+    xai_oauth: "grokbuild",
+    agy_oauth: "agy",
+    github_copilot: "copilot",
+    workbuddy_account: "workbuddy",
+    codebuddy_oauth: "codebuddy",
+  };
 
 type PollingState = "idle" | "polling" | "success" | "error";
 type LoginRequest = {
@@ -81,6 +93,32 @@ export function useManagedAuth(
           : false,
   });
 
+  const invalidateAppProviders = useCallback(
+    () =>
+      queryClient.invalidateQueries({
+        queryKey: ["providers", OFFICIAL_APP_BY_AUTH_PROVIDER[authProvider]],
+        refetchType: "all",
+      }),
+    [authProvider, queryClient],
+  );
+
+  // 后台自动收录/状态轮询新增或移除账号时，同步刷新对应应用的供应商列表（含非活跃挂载的缓存）
+  const prevAccountIdsRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!authStatus) return;
+    const signature = authStatus.accounts
+      .map((account) => account.id)
+      .sort()
+      .join("\n");
+    if (
+      prevAccountIdsRef.current !== null &&
+      prevAccountIdsRef.current !== signature
+    ) {
+      void invalidateAppProviders();
+    }
+    prevAccountIdsRef.current = signature;
+  }, [authStatus, invalidateAppProviders]);
+
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -113,6 +151,7 @@ export function useManagedAuth(
           await queryClient.invalidateQueries({
             queryKey: ["managed-auth-status", authProvider],
           });
+          await invalidateAppProviders();
         }
         return cancelled;
       } catch (e) {
@@ -120,10 +159,11 @@ export function useManagedAuth(
         await queryClient.invalidateQueries({
           queryKey: ["managed-auth-status", authProvider],
         });
+        await invalidateAppProviders();
         return false;
       }
     },
-    [authProvider, queryClient],
+    [authProvider, invalidateAppProviders, queryClient],
   );
 
   const queueBackendCancellation = useCallback(
@@ -228,6 +268,7 @@ export function useManagedAuth(
             setPollingState("success");
             await refetchStatus();
             await queryClient.invalidateQueries({ queryKey });
+            await invalidateAppProviders();
             if (completionGeneration !== flowGenerationRef.current) return;
             onLoginCompleteRef.current?.(newAccount);
             setPollingState("idle");
@@ -302,11 +343,7 @@ export function useManagedAuth(
       await refetchStatus();
     },
     onSettled: async () => {
-      if (authProvider === "codex_oauth") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "codex"],
-        });
-      }
+      await invalidateAppProviders();
       // 移除/登出的 xAI 账号若正是 Grok CLI 当前登录的号，后端会把 CLI 登录让出来：
       // 没绑号的 Grok 官方卡查的就是 CLI 当前登录，要重查
       if (authProvider === "xai_oauth") {
@@ -339,11 +376,7 @@ export function useManagedAuth(
       if (authProvider === "codex_oauth") await refetchStatus();
     },
     onSettled: async () => {
-      if (authProvider === "codex_oauth") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "codex"],
-        });
-      }
+      await invalidateAppProviders();
       // 移除/登出的 xAI 账号若正是 Grok CLI 当前登录的号，后端会把 CLI 登录让出来：
       // 没绑号的 Grok 官方卡查的就是 CLI 当前登录，要重查
       if (authProvider === "xai_oauth") {
