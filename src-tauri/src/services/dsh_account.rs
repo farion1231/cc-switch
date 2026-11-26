@@ -71,6 +71,9 @@ pub struct DshAccountStatus {
     pub top_up_url: Option<String>,
     /// Profile or balance query failure; the login itself is kept.
     pub error: Option<String>,
+    /// Profile and balance were asked for (`status(true)`); false means only the
+    /// local login record was read.
+    pub queried: bool,
 }
 
 enum PlatformError {
@@ -187,8 +190,9 @@ fn validated_origin(issuer: &str) -> Result<&'static str, String> {
     }
 }
 
-/// The shared login plus, when signed in, the account profile and balance.
-pub async fn status() -> Result<DshAccountStatus, String> {
+/// The shared login plus, when signed in and `remote` is true, the account profile
+/// and balance. With `remote` false nothing is sent to Platform (manual-only quota).
+pub async fn status(remote: bool) -> Result<DshAccountStatus, String> {
     let Some((token, issuer)) = crate::dsh_config::account_grant().map_err(|e| e.to_string())?
     else {
         return Ok(DshAccountStatus::default());
@@ -199,8 +203,12 @@ pub async fn status() -> Result<DshAccountStatus, String> {
         usage_url: Some(format!("{origin}/usage")),
         top_up_url: Some(format!("{origin}/top_up")),
         issuer: Some(issuer),
+        queried: remote,
         ..Default::default()
     };
+    if !remote {
+        return Ok(status);
+    }
     let client = crate::proxy::http_client::no_redirect()?;
     let (profile, balance) = tokio::join!(
         platform_request(
@@ -717,7 +725,7 @@ mod tests {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let issuer = format!("http://{}", listener.local_addr().unwrap());
         crate::dsh_config::store_account_grant("test-token", &issuer).unwrap();
-        assert!(status().await.unwrap_err().contains("issuer"));
+        assert!(status(true).await.unwrap_err().contains("issuer"));
         sign_out().await.unwrap();
         assert!(crate::dsh_config::account_grant().unwrap().is_none());
         assert!(
@@ -729,6 +737,29 @@ mod tests {
             Some(value) => std::env::set_var("DSH_HOME", value),
             None => std::env::remove_var("DSH_HOME"),
         }
+    }
+
+    /// Manual-only quota: reading the login must not reach Platform. A fake token sent
+    /// there would come back expired (401) or as a request error.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn local_status_reads_the_login_without_contacting_platform() {
+        let home = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("DSH_HOME");
+        std::env::set_var("DSH_HOME", home.path());
+        crate::dsh_config::store_account_grant("test-token", PLATFORM_ORIGIN).unwrap();
+
+        let status = status(false).await.unwrap();
+
+        match previous {
+            Some(value) => std::env::set_var("DSH_HOME", value),
+            None => std::env::remove_var("DSH_HOME"),
+        }
+        assert!(status.signed_in);
+        assert!(!status.queried);
+        assert!(!status.expired, "Platform was contacted");
+        assert_eq!(status.error, None, "Platform was contacted");
+        assert_eq!(status.profile, None);
     }
 
     #[test]

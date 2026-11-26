@@ -32,6 +32,8 @@ export interface DshAccountStatus {
   topUpUrl: string | null;
   /** 资料或余额没查到；登录本身还在 */
   error: string | null;
+  /** 这次去平台查了资料和余额；false 时只读了本机登录（只手动查询） */
+  queried: boolean;
 }
 
 export interface DshLoginStart {
@@ -42,7 +44,9 @@ export interface DshLoginStart {
 }
 
 export const dshApi = {
-  accountStatus: () => invoke<DshAccountStatus>("dsh_account_status"),
+  /** `remote` 为 false 时不联网，只读本机登录 */
+  accountStatus: (remote: boolean) =>
+    invoke<DshAccountStatus>("dsh_account_status", { remote }),
   /** Web 和 Desktop 同时退出 */
   accountSignOut: () => invoke<void>("dsh_account_sign_out"),
   /** 和 DeepSeek Harness Web 同一套浏览器登录；登录写进 Web 与 Desktop 共用的凭据文件 */

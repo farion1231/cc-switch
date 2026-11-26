@@ -15,6 +15,7 @@ const signedIn: DshAccountStatus = {
   usageUrl: null,
   topUpUrl: null,
   error: null,
+  queried: true,
 };
 
 function renderCard(status: DshAccountStatus) {

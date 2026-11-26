@@ -16,6 +16,8 @@ import {
   useCodebuddyAccountQuota,
 } from "@/lib/query/subscription";
 import { useWorkBuddyAccountQuota } from "@/components/providers/workbuddyQuota";
+import { useDshAccountStatus } from "@/components/providers/DshAccount";
+import KimiAccountQuotaFooter from "@/components/KimiAccountQuotaFooter";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { AutoQuotaToggle } from "@/components/settings/auth/AutoQuotaToggle";
 import { RefreshAllQuotaButton } from "@/components/settings/auth/RefreshAllQuotaButton";
@@ -27,6 +29,16 @@ const mocks = vi.hoisted(() => ({
   codebuddyAccountQuota: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
+  dshAccountStatus: vi.fn(),
+  kimiStatus: vi.fn(),
+  kimiQuota: vi.fn(),
+}));
+vi.mock("@/lib/api/dsh", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/dsh")>()),
+  dshApi: { accountStatus: mocks.dshAccountStatus },
+}));
+vi.mock("@/lib/api/kimiOAuth", () => ({
+  kimiOAuthApi: { status: mocks.kimiStatus, quota: mocks.kimiQuota },
 }));
 vi.mock("@/lib/api/subscription", () => ({
   subscriptionApi: { getClaudeAccountQuota: mocks.getClaudeAccountQuota },
@@ -87,6 +99,18 @@ describe("manual-only official quota (#8990)", () => {
       queriedAt: 1,
     });
     mocks.getSettings.mockReset();
+    mocks.dshAccountStatus.mockReset().mockResolvedValue({
+      signedIn: true,
+      expired: false,
+      wallets: [],
+      bonusWallets: [],
+    });
+    mocks.kimiStatus.mockReset().mockResolvedValue({
+      accounts: [],
+      currentAccountId: null,
+      primaryHidden: false,
+    });
+    mocks.kimiQuota.mockReset().mockResolvedValue(quota);
     mocks.saveSettings.mockReset().mockResolvedValue(true);
   });
 
@@ -297,5 +321,66 @@ describe("manual-only official quota (#8990)", () => {
         officialQuotaManualOnly: true,
       }),
     );
+  });
+
+  // `dsh_account_status(remote)` and `kimi_oauth_status(identify)` only contact
+  // DeepSeek / Kimi when their flag is true.
+  it("keeps the DeepSeek balance query off the network until a refresh click", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    const { result } = renderHook(() => useDshAccountStatus(), {
+      wrapper: wrapperFor(newClient()),
+    });
+    await waitFor(() => expect(result.current.data?.signedIn).toBe(true));
+    expect(mocks.dshAccountStatus.mock.calls).toEqual([[false]]);
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+    expect(mocks.dshAccountStatus).toHaveBeenLastCalledWith(true);
+  });
+
+  it("queries the DeepSeek balance on its own when automatic queries are on", async () => {
+    mocks.getSettings.mockResolvedValue({});
+    const { result } = renderHook(() => useDshAccountStatus(), {
+      wrapper: wrapperFor(newClient()),
+    });
+    await waitFor(() => expect(result.current.data?.signedIn).toBe(true));
+    expect(mocks.dshAccountStatus.mock.calls).toEqual([[true]]);
+  });
+
+  it("lets Refresh all query the DeepSeek balance when automatic queries are off", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    function Row() {
+      const { data } = useDshAccountStatus();
+      return <span>{data ? "shown" : "pending"}</span>;
+    }
+    render(
+      <>
+        <Row />
+        <RefreshAllQuotaButton />
+      </>,
+      { wrapper: wrapperFor(newClient()) },
+    );
+    await screen.findByText("shown");
+    fireEvent.click(
+      screen.getByRole("button", { name: zh.authCenter.quota.refreshAll }),
+    );
+    await waitFor(() =>
+      expect(mocks.dshAccountStatus).toHaveBeenLastCalledWith(true),
+    );
+  });
+
+  it("does not ask Kimi for account identities from a card while automatic queries are off", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    render(
+      <KimiAccountQuotaFooter accountId="kimi-a" name="Kimi" isCurrent />,
+      {
+        wrapper: wrapperFor(newClient()),
+      },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(mocks.kimiQuota).not.toHaveBeenCalled();
+    for (const call of mocks.kimiStatus.mock.calls)
+      expect(call).toEqual([false]);
   });
 });

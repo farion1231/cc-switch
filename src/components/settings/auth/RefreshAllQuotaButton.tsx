@@ -7,7 +7,10 @@ import {
 } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { DSH_ACCOUNT_STATUS_KEY } from "@/components/providers/DshAccount";
+import {
+  DSH_ACCOUNT_STATUS_KEY,
+  markDshForceRefresh,
+} from "@/components/providers/DshAccount";
 import {
   WORKBUDDY_QUOTA_KEY,
   markWorkBuddyQuotaForceRefresh,
@@ -61,6 +64,7 @@ export function RefreshAllQuotaButton() {
       disabled={fetching}
       onClick={() => {
         markCodebuddyQuotaForceRefresh();
+        markDshForceRefresh();
         markWorkBuddyQuotaForceRefresh();
         void Promise.all(
           queryClient

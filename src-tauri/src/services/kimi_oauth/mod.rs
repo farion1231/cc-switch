@@ -644,10 +644,14 @@ impl KimiOAuthManager {
         }
     }
 
-    pub async fn status(&self) -> Result<KimiOAuthStatus, String> {
+    /// `identify` asks Kimi for the nickname of accounts whose token changed; with it
+    /// false nothing is sent to Kimi (manual-only quota).
+    pub async fn status(&self, identify: bool) -> Result<KimiOAuthStatus, String> {
         let home = kimi_config::data_dir();
         let store = self.store();
-        account::identify_accounts(&home, &store).await;
+        if identify {
+            account::identify_accounts(&home, &store).await;
+        }
         accounts_status(&home, &store)
     }
 

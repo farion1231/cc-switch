@@ -5,6 +5,7 @@ import { useKimiAccountQuota } from "@/lib/query/subscription";
 import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import { useQuotaPolicy } from "@/lib/query/quotaPolicy";
 import { KIMI_OAUTH_STATUS_KEY } from "@/components/providers/forms/hooks/useKimiOAuth";
 
 interface KimiAccountQuotaFooterProps {
@@ -41,10 +42,13 @@ const KimiAccountQuotaFooter: React.FC<KimiAccountQuotaFooterProps> = ({
 
   // 卡片名里的昵称来自账号身份缓存，而缓存要查过账号状态才有。没进过授权中心时
   // 这里顺带查一次，查到昵称后重新拉供应商列表，卡片就能显示是哪个号。
+  // 只手动查询时不联网查昵称。
+  const { autoAllowed, manualOnly } = useQuotaPolicy();
   const { data: status } = useQuery({
     queryKey: KIMI_OAUTH_STATUS_KEY,
-    queryFn: kimiOAuthApi.status,
+    queryFn: () => kimiOAuthApi.status(autoAllowed),
     staleTime: 5 * 60_000,
+    enabled: autoAllowed || manualOnly,
   });
   const nickname = status?.accounts.find(
     (account) => account.id === accountId,

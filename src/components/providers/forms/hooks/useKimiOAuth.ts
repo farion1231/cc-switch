@@ -9,6 +9,7 @@ import {
 import { deliverLoginLink } from "@/lib/authLoginLink";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { toast } from "@/lib/toast";
+import { useQuotaPolicy } from "@/lib/query/quotaPolicy";
 
 export const KIMI_OAUTH_STATUS_KEY = ["kimi-oauth-status"];
 const STATUS_KEY = KIMI_OAUTH_STATUS_KEY;
@@ -16,10 +17,13 @@ const STATUS_KEY = KIMI_OAUTH_STATUS_KEY;
 export function useKimiOAuth() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  // 账号昵称要联网问 Kimi；只手动查询时只列本机保存的账号
+  const { autoAllowed, manualOnly } = useQuotaPolicy();
   const status = useQuery({
     queryKey: STATUS_KEY,
-    queryFn: kimiOAuthApi.status,
+    queryFn: () => kimiOAuthApi.status(autoAllowed),
     refetchInterval: 30_000,
+    enabled: autoAllowed || manualOnly,
   });
   const [flow, setFlow] = useState<KimiLoginStart | null>(null);
   const [starting, setStarting] = useState(false);

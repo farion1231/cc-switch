@@ -33,7 +33,9 @@ export interface KimiLoginStart {
 }
 
 export const kimiOAuthApi = {
-  status: () => invoke<KimiOAuthStatus>("kimi_oauth_status"),
+  /** `identify` 为 false 时不联网查账号昵称（只手动查询） */
+  status: (identify: boolean) =>
+    invoke<KimiOAuthStatus>("kimi_oauth_status", { identify }),
   start: (region: KimiRegion, accountId?: string) =>
     invoke<KimiLoginStart>("kimi_oauth_start", {
       region,

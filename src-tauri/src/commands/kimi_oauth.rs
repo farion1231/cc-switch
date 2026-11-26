@@ -8,9 +8,10 @@ use tauri::State;
 
 #[tauri::command]
 pub async fn kimi_oauth_status(
+    identify: bool,
     state: State<'_, KimiOAuthManager>,
 ) -> Result<KimiOAuthStatus, String> {
-    state.status().await
+    state.status(identify).await
 }
 
 #[tauri::command(rename_all = "camelCase")]
