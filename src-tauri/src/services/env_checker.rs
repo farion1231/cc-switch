@@ -110,13 +110,14 @@ fn check_system_env(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String>
 fn check_shell_configs(keywords: &[EnvKeyword]) -> Result<Vec<EnvConflict>, String> {
     let mut conflicts = Vec::new();
 
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let home = crate::config::get_home_dir();
+    let home = home.display();
     let config_files = vec![
-        format!("{}/.bashrc", home),
-        format!("{}/.bash_profile", home),
-        format!("{}/.zshrc", home),
-        format!("{}/.zprofile", home),
-        format!("{}/.profile", home),
+        format!("{home}/.bashrc"),
+        format!("{home}/.bash_profile"),
+        format!("{home}/.zshrc"),
+        format!("{home}/.zprofile"),
+        format!("{home}/.profile"),
         "/etc/profile".to_string(),
         "/etc/bashrc".to_string(),
     ];
