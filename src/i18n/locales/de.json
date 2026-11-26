@@ -5361,7 +5361,7 @@
     },
     "autoQuota": {
       "title": "Kontingent automatisch abfragen",
-      "description": "Wenn deaktiviert, werden offizielle Kontokontingente nur beim Klicken auf Aktualisieren abgefragt: Das Öffnen des Auth-Centers, geplante Kartenaktualisierungen und das Überfahren des Tray-Symbols senden keine Anfragen an offizielle Dienste."
+      "description": "Wenn deaktiviert, werden offizielle Kontokontingente nur beim Klicken auf Aktualisieren abgefragt: Das Öffnen des Auth-Centers, geplante Kartenaktualisierungen und das Überfahren des Tray-Symbols fragen sie nicht ab. DeepSeek-Kontoguthaben werden zusammen mit dem Anmeldestatus angezeigt und sind von diesem Schalter nicht betroffen."
     }
   },
   "kimi": {

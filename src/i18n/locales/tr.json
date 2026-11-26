@@ -5290,7 +5290,7 @@
     },
     "autoQuota": {
       "title": "Kotayı otomatik sorgula",
-      "description": "Kapalıyken resmi hesap kotaları yalnızca yenile düğmesine tıkladığınızda sorgulanır: Yetkilendirme Merkezi’ni açmak, kartların zamanlanmış yenilemeleri ve tepsi simgesinin üzerine gelmek resmi hizmetlere istek göndermez."
+      "description": "Kapalıyken resmi hesap kotaları yalnızca yenile düğmesine tıkladığınızda sorgulanır: Yetkilendirme Merkezi’ni açmak, kartların zamanlanmış yenilemeleri ve tepsi simgesinin üzerine gelmek kotaları sorgulamaz. DeepSeek hesap bakiyeleri oturum durumuyla birlikte gösterildiğinden bu anahtardan etkilenmez."
     }
   },
   "kimi": {

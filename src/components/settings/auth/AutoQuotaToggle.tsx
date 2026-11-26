@@ -9,7 +9,8 @@ import { ToggleCard } from "./ToggleCard";
 
 /**
  * 「自动查询额度」（#8990）：关掉后官方账号的额度只在点 ↻ /「全部刷新」时查，打开授权中心、
- * 供应商卡片定时刷新、悬停托盘都不再自动发请求——网络代理还没就绪时不会意外直连官方服务。
+ * 供应商卡片定时刷新、悬停托盘都不再自动查额度——网络代理还没就绪时不会意外直连官方服务。
+ * DeepSeek 账号的余额和登录状态是同一个请求，不归这个开关管，文案里写明。
  * 存在设置里（托盘在后端也要读）。
  */
 export function AutoQuotaToggle() {
@@ -41,7 +42,7 @@ export function AutoQuotaToggle() {
       })}
       description={t("authCenter.autoQuota.description", {
         defaultValue:
-          "关掉后，官方账号的额度只在你点刷新时查询：打开授权中心、卡片定时刷新和悬停托盘都不会自动向官方服务发请求。",
+          "关掉后，官方账号的额度只在你点刷新时查询，打开授权中心、卡片定时刷新和悬停托盘都不会自动去查。DeepSeek 账号的余额和登录状态一起显示，不受这个开关影响。",
       })}
       checked={settings?.officialQuotaManualOnly !== true}
       disabled={!settings || saving}
