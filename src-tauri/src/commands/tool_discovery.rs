@@ -1115,14 +1115,48 @@ fn first_abs_path_line(raw: &str) -> Option<&str> {
     raw.lines().map(str::trim).find(|l| l.starts_with('/'))
 }
 
-/// 从 `env` 输出里取 `PATH=` 那行的值。要求值以 `/` 开头——PATH 首段必是绝对路径，
-/// 这条约束顺带跳过"某个多行值的环境变量恰好有一行以 `PATH=` 开头"的污染，
-/// 与 `first_abs_path_line` 对交互式 shell 噪音的容错同理。
 #[cfg(not(target_os = "windows"))]
-fn path_line_from_env_output(raw: &str) -> Option<&str> {
-    raw.lines()
-        .filter_map(|line| line.strip_prefix("PATH="))
-        .find(|value| value.starts_with('/'))
+const LOGIN_ENV_MARKER: &str = "\0__CC_SWITCH_ENV__\0";
+
+#[cfg(not(target_os = "windows"))]
+#[derive(Default)]
+pub(super) struct LoginShellEnv {
+    pub(super) path: Option<String>,
+    pub(super) vars: Vec<(String, String)>,
+}
+
+#[cfg(not(target_os = "windows"))]
+fn parse_login_shell_env_output(raw: &str) -> Option<LoginShellEnv> {
+    let (_, records) = raw.split_once(LOGIN_ENV_MARKER)?;
+    let mut env = LoginShellEnv::default();
+    for (key, value) in records
+        .split('\0')
+        .filter_map(|entry| entry.split_once('='))
+    {
+        if !value.starts_with('/') {
+            continue;
+        }
+        match key {
+            "PATH" => env.path = Some(value.to_owned()),
+            "VP_HOME" | "VP_BIN_DIR" | "VP_DATA_DIR" | "VP_CACHE_DIR" | "XDG_DATA_HOME"
+            | "XDG_CONFIG_HOME" | "XDG_CACHE_HOME" | "XDG_STATE_HOME" => {
+                env.vars.push((key.to_owned(), value.to_owned()));
+            }
+            _ => {}
+        }
+    }
+    Some(env)
+}
+
+/// 只补齐当前进程环境里缺失的登录 shell 变量，避免覆盖终端启动（如 `pnpm dev`）或测试里
+/// 显式设置的会话覆盖；调用方再通过 `apply_extra_env` 覆盖应用配置目录等强约束变量。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn apply_login_shell_vars(cmd: &mut std::process::Command, vars: &[(String, String)]) {
+    for (key, value) in vars {
+        if std::env::var_os(key).is_none() {
+            cmd.env(key, value);
+        }
+    }
 }
 
 /// 合并两段 PATH：`primary` 全部保留在前，`extra` 中未出现过的段按序追加。
@@ -1140,32 +1174,10 @@ pub(crate) fn merge_path_segments(primary: &str, extra: &str) -> String {
     merged.join(":")
 }
 
-/// 用与 `resolve_path_default` 相同的登录 shell 解析用户的真实 PATH，
-/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本，也供
-/// `run_detected_tool_command_with_timeout` 注入给运行时调用的 CLI。
-///
-/// **要解决的不对称**：探测阶段（`try_get_version` / `resolve_path_default`）跑的是
-/// `$SHELL -lic`，会读 `.zshrc`/`.zprofile`，看得到 nvm / homebrew / volta；而执行阶段
-/// 是非登录 `bash -c`，继承的是 launchd 给 GUI App 的 PATH，通常只有
-/// `/usr/bin:/bin:/usr/sbin:/sbin`。锚定命令自己用绝对路径调用执行体，本不受这条影响
-/// ——但有两类漏网：
-/// 1. **执行体在内部再 spawn 第三方 CLI**：`grok update` 靠 `npm view` 查最新版本
-///    （见 `grok_native_update_command`），npm 又是 `#!/usr/bin/env node` 脚本；
-///    未来任何 self-update 内部调 node/git/python 同理。
-/// 2. **install 分支的 `<官方 installer> || npm i -g <pkg>@latest`**：`||` 右侧是裸命令，
-///    窄 PATH 下必然 exit 127，等于没有兜底。
-///
-/// 把执行阶段的 PATH 拉平到探测阶段的水平，一次消除这两类。
-///
-/// **用 `/usr/bin/env` 而不是 `echo $PATH`**：`$PATH` 在 fish 里是 list 类型，
-/// `"$PATH"` 展开成空格分隔而非冒号分隔；`env` 打印的则是子进程的真实环境，
-/// 任何 shell 下格式都正确。写绝对路径又绕过了 alias / function / PATH 三重不确定性
-/// （交互式 shell 会加载用户 alias）。
-///
-/// 解析不到（含超过 `deadline`）时返回 `None`，调用方保持原有行为（不注入），
-/// 不引入新的失败模式。
+/// 从登录 shell 读取 PATH 和 Vite+ 的目录配置，供 GUI 启动的 CLI 子进程使用。
+/// Homebrew 安装的 Vite+ shim 缺少这些目录时，可能把 `pi list` 当成 `vp list`（#9960）。
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
+pub(super) fn login_shell_env(deadline: Option<CommandDeadline>) -> Option<LoginShellEnv> {
     use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
@@ -1174,9 +1186,14 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg("/usr/bin/env")
-        // 与 `resolve_path_default` 相同：交互式 rc 不能读到继承来的 stdin，
-        // 也不能因持有控制终端被作业控制停住。
+        // ENVIRON includes exported variables and preserves fish's colon-separated PATH.
+        // NUL separates records even on macOS versions without env -0.
+        .arg(
+            r#"exec /usr/bin/env awk 'BEGIN {
+            printf "%c__CC_SWITCH_ENV__%c", 0, 0
+            for (key in ENVIRON) printf "%s=%s%c", key, ENVIRON[key], 0
+        }'"#,
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1186,21 +1203,26 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
     if !out.status.success() {
         return None;
     }
-    let raw = decode_command_output(&out.stdout);
-    Some(path_line_from_env_output(&raw)?.to_string())
+    parse_login_shell_env_output(&decode_command_output(&out.stdout))
 }
 
-/// [`login_shell_path`] 的进程级缓存：GUI 启动后 PATH 不会再变，解析一次、全进程共用
-/// （MCP 连通性检测、Codex 模型目录探测）。限时 10 秒，免得卡住的 shell 配置让每次调用都等；
-/// 第一次调用会阻塞，异步代码里放进 `spawn_blocking`。
+/// [`login_shell_env`] 的进程级缓存：GUI 启动后登录 shell 环境不会再变，解析一次、全进程共用。
+/// 限时 10 秒，免得卡住的 shell 配置让每次调用都等；第一次调用会阻塞，异步代码里放进 `spawn_blocking`。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn cached_login_shell_env() -> Option<&'static LoginShellEnv> {
+    static LOGIN_SHELL_ENV: std::sync::LazyLock<Option<LoginShellEnv>> =
+        std::sync::LazyLock::new(|| {
+            login_shell_env(CommandDeadline::from_timeout(Some(
+                std::time::Duration::from_secs(10),
+            )))
+        });
+    LOGIN_SHELL_ENV.as_ref()
+}
+
+/// [`login_shell_env`] 的 PATH 视图（MCP 连通性检测、Codex 模型目录探测复用）。
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn cached_login_shell_path() -> Option<String> {
-    static LOGIN_SHELL_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
-        login_shell_path(CommandDeadline::from_timeout(Some(
-            std::time::Duration::from_secs(10),
-        )))
-    });
-    LOGIN_SHELL_PATH.clone()
+    cached_login_shell_env().and_then(|env| env.path.clone())
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1393,6 +1415,9 @@ pub(super) fn run_probe_version_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(env) = cached_login_shell_env() {
+        apply_login_shell_vars(&mut cmd, &env.vars);
+    }
     isolate_child_process_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| e.to_string())?;
     wait_child_output(
@@ -1516,7 +1541,7 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
     let current_path = install_probe_base_path(
-        cached_login_shell_path().as_deref(),
+        cached_login_shell_env().and_then(|env| env.path.as_deref()),
         &effective_path_os().unwrap_or_default(),
     );
 
