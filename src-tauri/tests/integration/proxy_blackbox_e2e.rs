@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use cc_switch_lib::{AppState, AppType, Provider, ProviderMeta, ProviderService};
+use cc_switch_lib::{mode, AppState, AppType, Provider, ProviderMeta};
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -152,7 +152,9 @@ async fn e2e_sse_trickle_and_batched_events_stream_and_log_usage() {
     let state = create_test_state().expect("create test state");
 
     // 恶意上游 1：逐 2 字节慢速切分 SSE（跨多字节 UTF-8 中文和 \n\n 事件边界）
-    let trickle_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind trickle");
+    let trickle_listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind trickle");
     let trickle_addr = trickle_listener.local_addr().unwrap();
     let trickle_task = tokio::spawn(async move {
         let (mut socket, _) = trickle_listener.accept().await.expect("accept trickle");
@@ -343,7 +345,9 @@ async fn e2e_sse_trickle_and_batched_events_stream_and_log_usage() {
     let _ = burst_task.await;
 }
 
-/// 2. 并发竞态不变量：旧请求在飞行途中发生故障转移时，不得覆盖用户已手动切换的新路由。
+/// 2. 并发竞态不变量（无头模式下真实触发 failover 路由写回）：
+///    - 场景 A：旧请求在飞行途中发生故障转移时，不得覆盖用户已手动切换的新路由（#9946）；
+///    - 场景 B（正向对照）：无并发手切的新请求发生故障转移时，无 `tauri::AppHandle` 也必须真实写回新路由。
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn e2e_stale_failover_does_not_overwrite_manual_provider_switch() {
@@ -356,23 +360,30 @@ async fn e2e_stale_failover_does_not_overwrite_manual_provider_switch() {
     let p1_entered = Arc::new(Notify::new());
     let (p1_release_tx, p1_release_rx) = oneshot::channel::<()>();
 
-    // p1: 收到请求后挂起，等用户手动切走后再返回 500 触发故障转移
+    // p1: 第一次请求挂起，等用户手动切走后再返回 500；后续请求直接返回 500
     let p1_listener = TcpListener::bind("127.0.0.1:0").await.expect("bind p1");
     let p1_addr = p1_listener.local_addr().unwrap();
     let p1_entered_srv = p1_entered.clone();
     let p1_task = tokio::spawn(async move {
-        let (mut socket, _) = p1_listener.accept().await.expect("accept p1");
-        read_http_request_head(&mut socket).await;
-        p1_entered_srv.notify_one();
-        let _ = p1_release_rx.await;
-        let body = r#"{"type":"error","error":{"type":"api_error","message":"p1 boom"}}"#;
-        let resp = format!(
-            "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-            body.len(),
-            body
-        );
-        let _ = socket.write_all(resp.as_bytes()).await;
-        let _ = socket.shutdown().await;
+        let mut release_rx = Some(p1_release_rx);
+        loop {
+            let Ok((mut socket, _)) = p1_listener.accept().await else {
+                break;
+            };
+            read_http_request_head(&mut socket).await;
+            if let Some(rx) = release_rx.take() {
+                p1_entered_srv.notify_one();
+                let _ = rx.await;
+            }
+            let body = r#"{"type":"error","error":{"type":"api_error","message":"p1 boom"}}"#;
+            let resp = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = socket.write_all(resp.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        }
     });
 
     // p2: 故障转移队列里的备选节点（健康，返回 from-p2）
@@ -450,6 +461,10 @@ async fn e2e_stale_failover_does_not_overwrite_manual_provider_switch() {
         .expect("queue p3");
 
     let (proxy_base, _) = start_proxy_on(&state, "127.0.0.1", true, 1, 5).await;
+    // 进入真实代理模式，使 FailoverSwitchManager 真正走到 record_failover_route 写回路径
+    mode::controller::enter(&state, &AppType::Claude, false)
+        .await
+        .expect("enter claude proxy mode");
 
     let client = reqwest::Client::builder()
         .no_proxy()
@@ -473,22 +488,13 @@ async fn e2e_stale_failover_does_not_overwrite_manual_provider_switch() {
             .expect("stale request send")
     });
 
-    // 2) 等旧请求确实进入 p1 后，模拟用户在飞行途中关闭自动故障转移并手动切到 p3
+    // 2) 等旧请求确实进入 p1 后，模拟用户手动切路由到 p3（保持 auto_failover_enabled = true）
     tokio::time::timeout(Duration::from_secs(3), p1_entered.notified())
         .await
         .expect("p1 should receive in-flight request");
-    let mut manual_cfg = state
-        .db
-        .get_proxy_config_for_app(&AppType::Claude)
+    mode::controller::set_route(&state, &AppType::Claude, "p3")
         .await
-        .expect("get claude proxy cfg");
-    manual_cfg.auto_failover_enabled = false;
-    state
-        .db
-        .update_proxy_config_for_app(manual_cfg)
-        .await
-        .expect("disable auto failover");
-    ProviderService::switch(&state, AppType::Claude, "p3").expect("manual switch to p3");
+        .expect("manual set_route to p3");
 
     // 3) 放行 p1 返回 500，旧请求故障转移到 p2 并完成
     let _ = p1_release_tx.send(());
@@ -503,35 +509,53 @@ async fn e2e_stale_failover_does_not_overwrite_manual_provider_switch() {
     // 给异步 failover switch 任务留出落地时间
     tokio::time::sleep(Duration::from_millis(250)).await;
 
-    // 4) 核心不变量：DB 当前供应商与后续真实请求都必须停留在用户手选的 p3，绝不能被旧请求改写回 p2
-    let current = state
-        .db
-        .get_current_provider(&AppType::Claude)
-        .expect("read current provider");
+    // 4) 场景 A 断言：代理路由必须停留在用户手选的 p3，绝不能被旧请求的故障转移结果改写回 p2
     assert_eq!(
-        current.as_deref(),
+        mode::current::mode_state(&AppType::Claude)
+            .proxy_route
+            .as_deref(),
         Some("p3"),
-        "stale failover overwrote manual switch to p3"
+        "stale failover overwrote manual proxy_route to p3"
     );
 
-    let follow_up = client
+    // 5) 场景 B 正向对照：切回 p1 后发一个全新请求（期间无手切），验证无 AppHandle 时故障转移写回确实生效
+    mode::controller::set_route(&state, &AppType::Claude, "p1")
+        .await
+        .expect("reset route to p1");
+    let fresh_resp = client
         .post(format!("{proxy_base}/v1/messages"))
         .json(&json!({
             "model": "claude-sonnet-4-5",
             "max_tokens": 32,
             "stream": false,
-            "messages": [{"role": "user", "content": "after-manual-switch"}]
+            "messages": [{"role": "user", "content": "fresh-failover"}]
         }))
         .send()
         .await
-        .expect("follow-up request");
-    assert_eq!(follow_up.status(), 200);
-    let follow_up_body = follow_up.text().await.unwrap();
-    assert!(
-        follow_up_body.contains("from-p3"),
-        "follow-up request was hijacked away from p3, got: {follow_up_body}"
+        .expect("fresh failover request");
+    assert_eq!(fresh_resp.status(), 200);
+    assert!(fresh_resp.text().await.unwrap().contains("from-p2"));
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < deadline {
+        if mode::current::mode_state(&AppType::Claude)
+            .proxy_route
+            .as_deref()
+            == Some("p2")
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        mode::current::mode_state(&AppType::Claude)
+            .proxy_route
+            .as_deref(),
+        Some("p2"),
+        "headless failover writeback must persist p2 when no manual switch intervened"
     );
 
+    let _ = mode::controller::exit(&state, &AppType::Claude).await;
     let _ = state.proxy_service.stop().await;
     p1_task.abort();
     p2_task.abort();
@@ -636,9 +660,8 @@ async fn e2e_non_loopback_proxy_rejects_forged_host_header() {
         let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .expect("connect proxy");
-        let req = format!(
-            "GET /health HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n"
-        );
+        let req =
+            format!("GET /health HTTP/1.1\r\nHost: {host_header}\r\nConnection: close\r\n\r\n");
         stream.write_all(req.as_bytes()).await.unwrap();
         let mut resp = String::new();
         let _ = stream.read_to_string(&mut resp).await;

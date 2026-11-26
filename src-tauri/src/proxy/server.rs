@@ -73,15 +73,25 @@ impl ProxyState {
 }
 
 impl ProxyServer {
+    #[cfg(test)]
     pub fn new(
         config: ProxyConfig,
         db: Arc<Database>,
         app_handle: Option<tauri::AppHandle>,
     ) -> Self {
+        Self::new_with_failover_state(config, db, app_handle, None)
+    }
+
+    pub(crate) fn new_with_failover_state(
+        config: ProxyConfig,
+        db: Arc<Database>,
+        app_handle: Option<tauri::AppHandle>,
+        failover_state: Option<super::failover_switch::HeadlessAppStateHandle>,
+    ) -> Self {
         // 创建共享的 ProviderRouter（熔断器状态将跨所有请求保持）
         let provider_router = Arc::new(ProviderRouter::new(db.clone()));
-        // 创建故障转移切换管理器
-        let failover_manager = Arc::new(FailoverSwitchManager::new());
+        // 创建故障转移切换管理器（解耦桌面 AppHandle，允许无头模式下执行真实路由回写）
+        let failover_manager = Arc::new(FailoverSwitchManager::with_headless_state(failover_state));
 
         let state = ProxyState {
             db,

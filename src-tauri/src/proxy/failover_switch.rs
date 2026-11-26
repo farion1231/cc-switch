@@ -5,7 +5,11 @@
 //! - 托盘菜单更新
 //! - 前端事件发射
 
-use crate::{error::AppError, store::AppState};
+use crate::{
+    error::AppError,
+    services::proxy::WeakProxyService,
+    store::{AppState, WeakAppState},
+};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -13,13 +17,36 @@ use tauri::{Emitter, Manager};
 use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 
+/// 无 `tauri::AppHandle` 时用于还原 `AppState` 的弱引用句柄（避免 `ProxyService -> ProxyServer -> AppState -> ProxyService` 强引用环）
+#[derive(Clone)]
+pub(crate) struct HeadlessAppStateHandle {
+    state: WeakAppState,
+    proxy_service: WeakProxyService,
+}
+
+impl HeadlessAppStateHandle {
+    pub(crate) fn new(state: WeakAppState, proxy_service: WeakProxyService) -> Self {
+        Self {
+            state,
+            proxy_service,
+        }
+    }
+
+    pub(crate) fn upgrade(&self) -> Option<AppState> {
+        let proxy_service = self.proxy_service.upgrade()?;
+        self.state.upgrade(proxy_service)
+    }
+}
+
 /// 故障转移切换管理器
 ///
-/// 负责处理故障转移成功后的供应商切换，确保 UI 能够直观反映当前使用的供应商。
+/// 负责处理故障转移成功后的供应商切换，确保 UI 与持久化路由状态保持一致。
 #[derive(Clone, Default)]
 pub struct FailoverSwitchManager {
     /// 正在处理中的切换（同一应用、供应商和请求路由版本）
     pending_switches: Arc<RwLock<HashSet<String>>>,
+    /// 可选的弱引用应用状态：让纯路由写回脱离对 `tauri::AppHandle` 的硬依赖
+    headless_state: Option<HeadlessAppStateHandle>,
     #[cfg(test)]
     test_switch: Option<TestSwitch>,
 }
@@ -32,8 +59,18 @@ struct TestSwitch {
 }
 
 impl FailoverSwitchManager {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn with_headless_state(headless_state: Option<HeadlessAppStateHandle>) -> Self {
+        Self {
+            pending_switches: Arc::new(RwLock::new(HashSet::new())),
+            headless_state,
+            #[cfg(test)]
+            test_switch: None,
+        }
     }
 
     /// Supply the application state without a desktop runtime and observe the real writeback.
@@ -113,7 +150,17 @@ impl FailoverSwitchManager {
         }
 
         let app_state = app_handle.and_then(|app| app.try_state::<AppState>());
-        let state = app_state.as_ref().map(|state| state.inner());
+        let headless_state = if app_state.is_none() {
+            self.headless_state
+                .as_ref()
+                .and_then(HeadlessAppStateHandle::upgrade)
+        } else {
+            None
+        };
+        let state = app_state
+            .as_ref()
+            .map(|state| state.inner())
+            .or(headless_state.as_ref());
         #[cfg(test)]
         let state = state.or_else(|| self.test_switch.as_ref().map(|test| &test.state));
 
