@@ -4983,9 +4983,9 @@
       "disableAria": "Turn off the {{count}} selected Skills in",
       "uninstall": "Uninstall"
     },
-    "piColumnTitle": "Pi counts a Skill as enabled when its folder exists in ~/.pi/agent/skills",
+    "piColumnTitle": "Pi also reads ~/.agents/skills, so unchecked skills in that path are still directly available",
     "piHelpTitle": "How Pi counts as enabled",
-    "piHelp": "Whether the folder exists in ~/.pi/agent/skills.",
+    "piHelp": "Pi also reads ~/.agents/skills, so unchecked skills in that path are still directly available.",
     "pop": {
       "onlyApp": "Show only ones enabled in {{app}}",
       "showAll": "Show all Skills"

@@ -4983,9 +4983,9 @@
       "disableAria": "選択した {{count}} 件の Skill をこのアプリでオフ",
       "uninstall": "アンインストール"
     },
-    "piColumnTitle": "Pi は ~/.pi/agent/skills にそのフォルダーがあるかで判定します",
+    "piColumnTitle": "Pi は ~/.agents/skills も読み込むため、未選択でもそのパスにあるスキルはそのまま利用できます",
     "piHelpTitle": "Pi の有効の判定",
-    "piHelp": "~/.pi/agent/skills にそのフォルダーがあるかどうかです。",
+    "piHelp": "Pi は ~/.agents/skills も読み込むため、未選択でもそのパスにあるスキルはそのまま利用できます。",
     "pop": {
       "onlyApp": "{{app}} で有効なものだけ表示",
       "showAll": "すべての Skill を表示"

@@ -4983,9 +4983,9 @@
       "disableAria": "선택한 스킬 {{count}}개를 비활성화할 앱",
       "uninstall": "제거"
     },
-    "piColumnTitle": "Pi는 ~/.pi/agent/skills에 폴더가 있으면 해당 스킬이 활성화된 것으로 간주합니다",
+    "piColumnTitle": "Pi는 ~/.agents/skills도 읽으므로 선택되지 않았더라도 해당 경로에 있는 스킬은 바로 사용할 수 있습니다",
     "piHelpTitle": "Pi의 활성화 판단 기준",
-    "piHelp": "~/.pi/agent/skills에 폴더가 있는지 여부입니다.",
+    "piHelp": "Pi는 ~/.agents/skills도 읽으므로 선택되지 않았더라도 해당 경로에 있는 스킬은 바로 사용할 수 있습니다.",
     "pop": {
       "onlyApp": "{{app}}에서 활성화된 항목만 표시",
       "showAll": "모든 스킬 표시"
