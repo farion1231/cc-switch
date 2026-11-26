@@ -367,7 +367,7 @@ Sağlayıcı yönetimi, MCP/İstemler/Skills, yerel yönlendirme ve yük devri v
 | MiniMax Code | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
-| CodeBuddy Code | Birlikte | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
+| CodeBuddy | Birlikte | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **Geçiş**: aynı anda yalnızca bir sağlayıcı etkindir; **Birlikte**: birden fazla sağlayıcı aynı anda aracın kendi yapılandırmasına yazılır ve birini aracın içinden seçersiniz.
 - **Yerel Yönlendirme**: CC Switch istekleri makinenizde iletir ve API biçimlerini dönüştürür; aşağıdaki [Yerel Yönlendirme ve Yük Devretme](#yerel-yönlendirme-ve-yük-devretme) bölümüne bakın. Claude Desktop sağlayıcıları "Doğrudan" veya "Model Eşleme" kullanabilir; "Model Eşleme" ile istekler yerel yönlendirmeden geçer.
@@ -406,7 +406,7 @@ Sağlayıcı yönetimi, MCP/İstemler/Skills, yerel yönlendirme ve yük devri v
 
 ### MCP, İstemler ve Skills
 
-- **Birleşik MCP paneli** — Tüm MCP sunucularını tek yerden yönetin, her birinin hangi araçlarla eşitleneceğini seçin (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy Code), her aracın mevcut yapılandırmalarını içe aktarın ve Deep Link ile içe aktarın
+- **Birleşik MCP paneli** — Tüm MCP sunucularını tek yerden yönetin, her birinin hangi araçlarla eşitleneceğini seçin (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy), her aracın mevcut yapılandırmalarını içe aktarın ve Deep Link ile içe aktarın
 - **İstemler** — Markdown düzenleyicili, araç başına bir istem kitaplığı; bir istemi etkinleştirmek onu aracın istem dosyasına (CLAUDE.md / AGENTS.md / GEMINI.md) yazar ve dosyanın mevcut içeriği önce kitaplığa kaydedilir, böylece hiçbir şey kaybolmaz. Pi ayrıca SYSTEM.md, APPEND_SYSTEM.md ve istem şablonlarını düzenleyebilir
 - **Skills** — skills.sh'de arayın veya GitHub depolarından ya da ZIP dosyalarından tek tıkla kurun; güncellemeleri denetleyin ve tümünü tek tıkla güncelleyin; her araca otomatik olarak, yalnızca sembolik bağlarla veya yalnızca kopyalarla eşitleyin; isteğe bağlı olarak `~/.agents/skills` içinde saklayabilirsiniz
 - Her üç panel de aramayı destekler; MCP ve Skills ayrıca araç başına tek seferde etkinleştirilip devre dışı bırakılabilir; sağlayıcılar, MCP sunucuları ve istemler içerik alanında tam sayfa düzenlenir ve kaydedilmemiş değişikliklerle ayrılmadan önce uyarılırsınız

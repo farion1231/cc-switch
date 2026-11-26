@@ -20,6 +20,11 @@ use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use std::future::Future;
 use std::sync::OnceLock;
 
+/// An async action to run immediately before a protocol converter emits a
+/// successful terminal event. Errors, truncation, and client cancellation do
+/// not run this hook.
+pub type SuccessTerminalHook = Box<dyn FnOnce() -> futures::future::BoxFuture<'static, ()> + Send>;
+
 /// Our own header case map: maps lowercase header name → original wire-casing bytes.
 ///
 /// This is a backup mechanism independent of hyper's internal `HeaderCaseMap` (which is
@@ -101,6 +106,10 @@ pub enum ProxyResponse {
         headers: http::HeaderMap,
         stream: std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>>,
     },
+    WithSuccessTerminalHook {
+        response: Box<ProxyResponse>,
+        hook: SuccessTerminalHook,
+    },
 }
 
 impl ProxyResponse {
@@ -124,11 +133,28 @@ impl ProxyResponse {
         }
     }
 
+    pub fn with_success_terminal_hook(self, hook: SuccessTerminalHook) -> Self {
+        Self::WithSuccessTerminalHook {
+            response: Box::new(self),
+            hook,
+        }
+    }
+
+    /// Remove the optional semantic completion callback before a response is
+    /// consumed by a converter.
+    pub fn take_success_terminal_hook(self) -> (Self, Option<SuccessTerminalHook>) {
+        match self {
+            Self::WithSuccessTerminalHook { response, hook } => (*response, Some(hook)),
+            response => (response, None),
+        }
+    }
+
     pub fn status(&self) -> http::StatusCode {
         match self {
             Self::Hyper(r) => r.status(),
             Self::Reqwest(r) => r.status(),
             Self::Buffered { status, .. } | Self::Streamed { status, .. } => *status,
+            Self::WithSuccessTerminalHook { response, .. } => response.status(),
         }
     }
 
@@ -137,6 +163,7 @@ impl ProxyResponse {
             Self::Hyper(r) => r.headers(),
             Self::Reqwest(r) => r.headers(),
             Self::Buffered { headers, .. } | Self::Streamed { headers, .. } => headers,
+            Self::WithSuccessTerminalHook { response, .. } => response.headers(),
         }
     }
 
@@ -176,6 +203,9 @@ impl ProxyResponse {
     /// 而不是先收满再比较——否则超大明文 body 仍会完整进入内存，限制形同虚设。
     pub async fn bytes_with_limit(self, max_bytes: usize) -> Result<Bytes, ProxyError> {
         match self {
+            Self::WithSuccessTerminalHook { response, .. } => {
+                Box::pin(response.bytes_with_limit(max_bytes)).await
+            }
             Self::Buffered { body, .. } => {
                 // 调用方已把 body 完整缓冲，无法中途截停，只能事后比较
                 if body.len() > max_bytes {
@@ -202,10 +232,13 @@ impl ProxyResponse {
     }
 
     /// Consume the response and return a byte-chunk stream (for SSE pass-through).
-    pub fn bytes_stream(self) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    pub fn bytes_stream(
+        self,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = Result<Bytes, std::io::Error>> + Send>> {
         use futures::StreamExt;
 
         match self {
+            Self::WithSuccessTerminalHook { response, .. } => response.bytes_stream(),
             Self::Hyper(r) => {
                 let body = r.into_body();
                 let stream = futures::stream::unfold(body, |mut body| async {
@@ -557,6 +590,83 @@ async fn connect_direct(host: &str, port: u16) -> Result<tokio::net::TcpStream, 
     Ok(io.into_inner())
 }
 
+/// Maximum number of response header lines accepted from an HTTP CONNECT proxy.
+const MAX_CONNECT_HEADER_LINES: usize = 64;
+/// Maximum total bytes accepted for an HTTP CONNECT proxy response header block.
+const MAX_CONNECT_HEADER_BYTES: usize = 16 * 1024;
+
+/// Percent-decode RFC 3986 userinfo (`username`/`password`) before Basic Base64 encoding.
+fn percent_decode_userinfo(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_nibble(bytes[i + 1]), hex_nibble(bytes[i + 2])) {
+                decoded.push((hi << 4) | lo);
+                i += 3;
+                continue;
+            }
+        }
+        decoded.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+async fn read_connect_line_bounded<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    max_bytes: usize,
+) -> Result<Option<String>, ProxyError> {
+    use tokio::io::AsyncBufReadExt;
+
+    let mut line = Vec::new();
+    loop {
+        let available = reader
+            .fill_buf()
+            .await
+            .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT read failed: {e}")))?;
+        if available.is_empty() {
+            if line.is_empty() {
+                return Ok(None);
+            }
+            return Err(ProxyError::ForwardFailed(
+                "Proxy closed connection mid-header during CONNECT".into(),
+            ));
+        }
+
+        if let Some(pos) = available.iter().position(|&b| b == b'\n') {
+            let take = pos + 1;
+            if line.len().saturating_add(take) > max_bytes {
+                return Err(ProxyError::ForwardFailed(
+                    "Proxy CONNECT response headers exceeded size limit".into(),
+                ));
+            }
+            line.extend_from_slice(&available[..take]);
+            reader.consume(take);
+            return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+        }
+
+        let len = available.len();
+        if line.len().saturating_add(len) > max_bytes {
+            return Err(ProxyError::ForwardFailed(
+                "Proxy CONNECT response headers exceeded size limit".into(),
+            ));
+        }
+        line.extend_from_slice(available);
+        reader.consume(len);
+    }
+}
+
 /// Establish a connection through an HTTP CONNECT proxy tunnel.
 ///
 /// 1. Connect TCP to the proxy server (TLS-wrapped when `https://` proxy)
@@ -569,7 +679,13 @@ async fn connect_via_proxy(
     target_port: u16,
 ) -> Result<ProxyStream, ProxyError> {
     use base64::Engine;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::io::{AsyncWriteExt, BufReader};
+
+    if target_host.contains('\r') || target_host.contains('\n') {
+        return Err(ProxyError::ForwardFailed(
+            "Invalid target host for CONNECT".into(),
+        ));
+    }
 
     let parsed = url::Url::parse(proxy_url)
         .map_err(|e| ProxyError::ForwardFailed(format!("Invalid proxy URL: {e}")))?;
@@ -581,10 +697,14 @@ async fn connect_via_proxy(
         .port()
         .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
 
-    // Build Proxy-Authorization header if credentials are present
-    let proxy_auth = if !parsed.username().is_empty() {
-        let password = parsed.password().unwrap_or("");
-        let credentials = format!("{}:{}", parsed.username(), password);
+    // Build Proxy-Authorization header if credentials are present (RFC 3986 percent-decoded)
+    let proxy_auth = if !parsed.username().is_empty() || parsed.password().is_some() {
+        let username = percent_decode_userinfo(parsed.username());
+        let password = parsed
+            .password()
+            .map(percent_decode_userinfo)
+            .unwrap_or_default();
+        let credentials = format!("{username}:{password}");
         let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
         Some(format!("Proxy-Authorization: Basic {encoded}\r\n"))
     } else {
@@ -630,17 +750,22 @@ async fn connect_via_proxy(
         .await
         .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT flush failed: {e}")))?;
 
-    // Read the proxy's response status line
+    // Read the proxy's response status line with a hard byte bound
     let mut reader = BufReader::new(&mut stream);
-    let mut status_line = String::new();
-    reader
-        .read_line(&mut status_line)
-        .await
-        .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT read failed: {e}")))?;
+    let mut remaining_bytes = MAX_CONNECT_HEADER_BYTES;
+    let status_line = read_connect_line_bounded(&mut reader, remaining_bytes)
+        .await?
+        .ok_or_else(|| {
+            ProxyError::ForwardFailed("Proxy closed connection before CONNECT status line".into())
+        })?;
+    remaining_bytes = remaining_bytes.saturating_sub(status_line.len());
 
-    // Expect "HTTP/1.1 200 ..." or "HTTP/1.0 200 ..."
-    if !status_line.contains(" 200 ") {
-        if status_line.contains(" 407 ") {
+    // Expect "HTTP/1.1 200 ..." or "HTTP/1.0 200" (reason phrase optional per RFC 9110)
+    let mut status_parts = status_line.split_whitespace();
+    let http_version = status_parts.next().unwrap_or("");
+    let status_code = status_parts.next().unwrap_or("");
+    if !http_version.starts_with("HTTP/1.") || status_code != "200" {
+        if http_version.starts_with("HTTP/1.") && status_code == "407" {
             return Err(ProxyError::AuthError(format!(
                 "Proxy authentication required (407): {}",
                 status_line.trim()
@@ -652,15 +777,23 @@ async fn connect_via_proxy(
         )));
     }
 
-    // Drain remaining response headers (until empty line)
+    // Drain remaining response headers (until empty line), bounded by line count, total bytes, and EOF
+    let mut header_lines = 0usize;
     loop {
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .await
-            .map_err(|e| ProxyError::ForwardFailed(format!("CONNECT header read: {e}")))?;
-        if line.trim().is_empty() {
+        let Some(line) = read_connect_line_bounded(&mut reader, remaining_bytes).await? else {
+            return Err(ProxyError::ForwardFailed(
+                "Proxy closed connection before end of CONNECT headers".into(),
+            ));
+        };
+        remaining_bytes = remaining_bytes.saturating_sub(line.len());
+        if line == "\r\n" || line == "\n" {
             break;
+        }
+        header_lines += 1;
+        if header_lines > MAX_CONNECT_HEADER_LINES {
+            return Err(ProxyError::ForwardFailed(
+                "Proxy CONNECT response exceeded maximum header line count".into(),
+            ));
         }
     }
     // BufReader might have buffered data; drop it to get raw stream back.
@@ -2063,6 +2196,151 @@ mod tests {
             server.accepted(),
             1,
             "a bodyless response dropped unread must be reused"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_via_proxy_decodes_percent_encoded_credentials() {
+        use base64::Engine;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(&mut socket);
+            let mut auth_header = None;
+            loop {
+                let mut line = String::new();
+                let n = reader.read_line(&mut line).await.unwrap();
+                if n == 0 || line.trim().is_empty() {
+                    break;
+                }
+                if let Some(rest) = line.strip_prefix("Proxy-Authorization: ") {
+                    auth_header = Some(rest.trim().to_string());
+                }
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                .await
+                .unwrap();
+            auth_header
+        });
+
+        let proxy_url = format!("http://user%40corp:p%40ss%3Aword%231@127.0.0.1:{port}");
+        let _stream = connect_via_proxy(&proxy_url, "api.example.com", 443)
+            .await
+            .unwrap();
+        let captured = server.await.unwrap().expect("Proxy-Authorization header");
+        let expected = format!(
+            "Basic {}",
+            base64::engine::general_purpose::STANDARD.encode("user@corp:p@ss:word#1")
+        );
+        assert_eq!(
+            captured, expected,
+            "Proxy-Authorization must base64-encode percent-decoded user:pass"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_via_proxy_rejects_premature_eof_and_excessive_headers() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        async fn drain_connect_request(socket: &mut tokio::net::TcpStream) {
+            let mut reader = BufReader::new(socket);
+            loop {
+                let mut line = String::new();
+                let n = reader.read_line(&mut line).await.unwrap_or(0);
+                if n == 0 || line.trim().is_empty() {
+                    break;
+                }
+            }
+        }
+
+        // 1. Proxy sends 200 status line then closes socket without blank header terminator.
+        let eof_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let eof_port = eof_listener.local_addr().unwrap().port();
+        let eof_server = tokio::spawn(async move {
+            let (mut socket, _) = eof_listener.accept().await.unwrap();
+            drain_connect_request(&mut socket).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 Connection Established\r\nX-Test: 1\r\n")
+                .await;
+            let _ = socket.shutdown().await;
+        });
+        let eof_res = connect_via_proxy(
+            &format!("http://127.0.0.1:{eof_port}"),
+            "api.example.com",
+            443,
+        )
+        .await;
+        let _ = eof_server.await;
+        assert!(
+            eof_res.is_err(),
+            "CONNECT response ending at EOF before blank line must be rejected"
+        );
+
+        // 2. Proxy floods excessive CONNECT response headers.
+        let flood_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let flood_port = flood_listener.local_addr().unwrap().port();
+        let flood_server = tokio::spawn(async move {
+            let (mut socket, _) = flood_listener.accept().await.unwrap();
+            drain_connect_request(&mut socket).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 Connection Established\r\n")
+                .await;
+            for i in 0..200 {
+                if socket
+                    .write_all(format!("X-Flood-{i}: value\r\n").as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            let _ = socket.write_all(b"\r\n").await;
+        });
+        let flood_res = connect_via_proxy(
+            &format!("http://127.0.0.1:{flood_port}"),
+            "api.example.com",
+            443,
+        )
+        .await;
+        let _ = flood_server.await;
+        assert!(
+            flood_res.is_err(),
+            "CONNECT response with excessive header lines must be rejected"
+        );
+
+        // 3. Proxy sends an oversized single header line (> MAX_CONNECT_HEADER_BYTES).
+        let huge_listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let huge_port = huge_listener.local_addr().unwrap().port();
+        let huge_server = tokio::spawn(async move {
+            let (mut socket, _) = huge_listener.accept().await.unwrap();
+            drain_connect_request(&mut socket).await;
+            let mut payload = b"HTTP/1.1 200 OK\r\nX-Huge: ".to_vec();
+            payload.resize(MAX_CONNECT_HEADER_BYTES + 1024, b'A');
+            payload.extend_from_slice(b"\r\n\r\n");
+            let _ = socket.write_all(&payload).await;
+        });
+        let huge_res = connect_via_proxy(
+            &format!("http://127.0.0.1:{huge_port}"),
+            "api.example.com",
+            443,
+        )
+        .await;
+        let _ = huge_server.await;
+        assert!(
+            huge_res.is_err(),
+            "CONNECT response exceeding total header byte limit must be rejected"
         );
     }
 }

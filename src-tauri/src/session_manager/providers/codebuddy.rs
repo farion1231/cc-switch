@@ -1,4 +1,4 @@
-//! CodeBuddy Code sessions: `<config>/projects/<sanitized cwd>/<sessionId>.jsonl`.
+//! CodeBuddy sessions: `<config>/projects/<sanitized cwd>/<sessionId>.jsonl`.
 //!
 //! Every line is one event carrying `id`, `parentId`, `timestamp` (ms), `sessionId`
 //! and `cwd`. Conversation events are `message` (`role` user | assistant, `content`
@@ -329,7 +329,7 @@ pub fn load_messages(path: &Path) -> Result<Vec<SessionMessage>, String> {
 mod tests {
     use super::*;
 
-    // Synthetic transcript in CodeBuddy Code 2.164's event shape.
+    // Synthetic transcript in CodeBuddy CLI 2.164's event shape.
     const SESSION: &str = r#"{"type":"session-meta","id":"m0","sessionId":"0f3c-41aa","timestamp":1791900000000,"meta":{}}
 {"id":"u1","parentId":null,"timestamp":1791900000100,"sessionId":"0f3c-41aa","cwd":"/work/proj","type":"message","role":"user","content":[{"type":"input_text","text":"list the txt files"}],"providerData":{"agent":"cli"}}
 {"id":"r1","parentId":"u1","timestamp":1791900000200,"sessionId":"0f3c-41aa","cwd":"/work/proj","type":"reasoning","content":[],"rawContent":[{"type":"reasoning_text","text":"Use a glob."}],"providerData":{"messageId":"msg1","stepSeq":1,"model":"hy4-preview"}}

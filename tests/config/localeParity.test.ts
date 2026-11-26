@@ -2,26 +2,17 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import de from "@/i18n/locales/de.json";
 import en from "@/i18n/locales/en.json";
-import ja from "@/i18n/locales/ja.json";
-import ko from "@/i18n/locales/ko.json";
-import ru from "@/i18n/locales/ru.json";
-import tr from "@/i18n/locales/tr.json";
-import zhTW from "@/i18n/locales/zh-TW.json";
-import zh from "@/i18n/locales/zh.json";
 
-// All eight UI languages are maintained together: every English key must exist
-// in every other locale, with the same interpolation variables and tags.
-const locales = [
-  ["zh", zh],
-  ["zh-TW", zhTW],
-  ["ja", ja],
-  ["ko", ko],
-  ["tr", tr],
-  ["ru", ru],
-  ["de", de],
-] as const;
+// Include every translation file, so adding a locale immediately tests its
+// keys, interpolation variables, and rich-text tags against English.
+const localeFiles = import.meta.glob<unknown>("../../src/i18n/locales/*.json", {
+  eager: true,
+  import: "default",
+});
+const locales = Object.entries(localeFiles)
+  .map(([file, tree]) => [path.basename(file, ".json"), tree] as const)
+  .filter(([name]) => name !== "en");
 
 function flattenStrings(
   value: unknown,

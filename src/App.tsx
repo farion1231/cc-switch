@@ -34,6 +34,7 @@ import { settingsApi } from "@/lib/api/settings";
 import type { AppId, ProviderSwitchEvent } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
+import { useCopilotVscodeSyncNotifications } from "@/hooks/useCopilotVscodeSyncStatus";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
 import { hermesApi } from "@/lib/api/hermes";
@@ -281,6 +282,7 @@ function App() {
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
+  useCopilotVscodeSyncNotifications(settingsData?.copilotVscode);
   // Windows 一律去掉系统标题栏，用页头里的应用内窗口按钮；Linux 由设置决定
   const useAppWindowControls =
     isWindows() || (isLinux() && (settingsData?.useAppWindowControls ?? false));
@@ -1346,6 +1348,9 @@ function App() {
         provider.id,
         Object.keys(providers),
       );
+      duplicatedProvider.addToLive = false;
+    } else if (activeApp === "agy") {
+      // Copy the launch profile without switching the global agy login.
       duplicatedProvider.addToLive = false;
     } else if (activeApp === "copilot") {
       // 自带模型卡的 id 就是 providers.json 里的供应商名，副本另起一个；官方卡仍用随机 id。

@@ -235,7 +235,7 @@
         "account": "Account",
         "accountFollow": "Follow agy's current sign-in",
         "accountMissing": "An account not on this computer",
-        "accountHelp": "With an account selected, Open Terminal first switches agy's sign-in to it (this applies globally: agy sessions started afterwards use it). Add accounts in the Auth Center."
+        "accountHelp": "Saving a new account binding switches the sign-in for new agy sessions. Opening a terminal from this card also switches to its bound account. Add accounts in the Auth Center."
       },
       "gemini": {
         "model": "Model",
@@ -917,6 +917,14 @@
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
     "useAppWindowControls": "Enable app-level window controls",
     "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
+    "copilotVscode": {
+      "enable": "Apply to VS Code Copilot extension",
+      "description": "Automatically apply the CLI's added models and API keys to all detected VS Code profiles. Provider changes sync automatically.",
+      "pending": "VS Code model sync pending",
+      "pendingDescription": "VS Code may still use the previous configuration. Retry to sync the latest changes.",
+      "noTargets": "No VS Code configuration found. Start VS Code once, then try again.",
+      "failed": "Failed to sync VS Code Copilot"
+    },
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
@@ -1540,7 +1548,7 @@
     "selectSessionLabel": "Select {{title}}",
     "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
-    "codebuddyDeleteHint": "Manage this session in CodeBuddy Code: background jobs, teammates and file history refer to its transcript",
+    "codebuddyDeleteHint": "Manage this session in CodeBuddy: background jobs, teammates and file history refer to its transcript",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
     "bucketYesterday": "Yesterday",
@@ -2049,6 +2057,7 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "e.g. company.ghe.com",
+    "autoModelName": "GitHub Copilot Auto",
     "form": {
       "officialTitle": "Uses Copilot CLI's GitHub sign-in",
       "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",
@@ -4051,7 +4060,29 @@
     "reachableSlow": "{{providerName}} reachable but slow ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} unreachable: {{message}}",
     "unreachableHint": "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
+    "hint": {
+      "blocked": "The system refused the connection. This usually means a firewall or security software is blocking CC Switch. Allow CC Switch network access in your firewall; local network addresses need it too.",
+      "refused": "The address is reachable, but nothing is listening on that port. Make sure the service is running and the port is correct.",
+      "timeout": "The connection timed out. Check your network and the address; a firewall or security software may also be dropping the connection silently.",
+      "dns": "The domain name could not be resolved. Check the domain in the address for typos, and check your network and DNS.",
+      "tls": "The HTTPS connection failed (certificate or handshake error). Check whether the address should use http or https, and whether the server certificate is valid."
+    },
     "error": "{{providerName}} check error: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "Couldn't check for CC Switch updates",
+      "description": "At startup CC Switch contacts dl.ccswitch.io (with github.com as a fallback) to look for a new version, and this time it failed: {{detail}}. Nothing else is affected; if your network or firewall blocks it, you can ignore this."
+    },
+    "modelsDevSyncFailed": {
+      "title": "Couldn't sync model pricing",
+      "description": "CC Switch periodically fetches model prices from models.dev to calculate usage costs, and this time it failed: {{detail}}. Nothing else is affected."
+    },
+    "networkError": "couldn't reach the server",
+    "mute": "Don't show again",
+    "disableModelsDevSync": "Turn off auto sync",
+    "modelsDevSyncDisabled": "Model pricing auto sync is off. You can turn it back on under Usage Statistics → Model Pricing.",
+    "disableFailed": "Couldn't turn it off: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",
@@ -4672,6 +4703,7 @@
     },
     "updatedAt": "Updated {{time}}",
     "clickToRefresh": "Click to check again",
+    "manualIdle": "Click refresh to query quota",
     "resetCredits": {
       "label": "Resets",
       "left": "Resets left: {{count}}",
@@ -5187,7 +5219,7 @@
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
-      "codebuddyHelp": "The official sign-in for CodeBuddy Code (both the China and international sites). To switch accounts, create a \"CodeBuddy Official Sign-in\" card for the account in the provider list and click Add. \"Add account\" opens a terminal running codebuddy and adds the account here once you finish; if CodeBuddy is already signed in, it's signed out for now and can be restored if you give up. CodeBuddy refreshes its own tokens.",
+      "codebuddyHelp": "The official sign-in for CodeBuddy (both the China and international sites). To switch accounts, choose \"Switch CodeBuddy to this account\" in the account's … menu, or add the \"CodeBuddy Official Sign-in\" card linked to it in the provider list. \"Add account\" opens a terminal running codebuddy and adds the account here once you finish; if CodeBuddy is already signed in, it's signed out for now and can be restored if you give up. CodeBuddy refreshes its own tokens.",
       "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, choose “Switch WorkBuddy to this account” in the account's … menu, or add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
@@ -5234,7 +5266,6 @@
       "reauthed": "Signed in again as {{login}}."
     },
     "quota": {
-      "updating": "Updating…",
       "loading": "Checking quota…",
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}",
@@ -5266,6 +5297,7 @@
       "pendingNote": "Opened codebuddy in a terminal. Follow the prompts to sign in (type /login if no sign-in screen appears); the account is added here once you finish.",
       "reopenTerminal": "Reopen terminal",
       "removeNote": "Only removes CC Switch's copy. CodeBuddy stays signed in.",
+      "localOnly": "Account copies are kept only on this computer and are not synced. Add accounts again on another computer.",
       "quota": {
         "credits": "Credits",
         "enterprise": "Enterprise",
@@ -5327,6 +5359,10 @@
     "openBrowser": {
       "title": "Open the browser when signing in",
       "description": "Turn this off to only copy the sign-in link and open it in a browser of your choice — handy when you keep accounts in separate browser profiles."
+    },
+    "autoQuota": {
+      "title": "Query quota automatically",
+      "description": "When off, official account quotas are only queried when you click refresh: opening the Auth Center, scheduled card refreshes and hovering the tray won't query them. DeepSeek account balances are shown with the sign-in status and aren't affected by this switch."
     }
   },
   "kimi": {
@@ -5426,7 +5462,7 @@
   "codebuddy": {
     "empty": {
       "title": "No custom models yet",
-      "description": "CodeBuddy's official models are managed by CodeBuddy Code itself. To switch official accounts, create a \"CodeBuddy Official Sign-in\" card for the account and click Add here. Custom models already in ~/.codebuddy/models.json appear here automatically. Use the + button in the top-right corner to add a preset or custom model."
+      "description": "CodeBuddy's official models are managed by CodeBuddy itself. To switch official accounts, create a \"CodeBuddy Official Sign-in\" card for the account and click Add here. Custom models already in ~/.codebuddy/models.json appear here automatically. Use the + button in the top-right corner to add a preset or custom model."
     },
     "modelsHint": "The model ID is the id written to models.json and the name you pick in /model, usually the endpoint's model name. It can't be changed once added. The display name is the same value as Name above.",
     "modelIdDuplicate": "This model ID is already in use",
@@ -5437,7 +5473,7 @@
     "apiKeyPlaceholder": "Enter an API key, or reference an environment variable as ${MY_API_KEY}",
     "maxInputTokens": "Max input tokens",
     "maxOutputTokens": "Max output tokens",
-    "jsonHint": "One model entry in models.json (its id comes from Model ID above). CodeBuddy Code reloads the file on its own after you save.",
+    "jsonHint": "One model entry in models.json (its id comes from Model ID above). CodeBuddy reloads the file on its own after you save.",
     "official": {
       "presetName": "CodeBuddy Official Sign-in",
       "account": "Account",
@@ -5451,6 +5487,8 @@
       "adding": "Adding…",
       "added": "Added {{name}}. CodeBuddy is now signed in to this account; a running CodeBuddy switches automatically, and new sessions use it too.",
       "addFailed": "Couldn't add: {{error}}",
+      "switched": "CodeBuddy is now signed in to {{name}}. A running CodeBuddy switches automatically, and new sessions use it too.",
+      "switchFailed": "Couldn't switch: {{error}}",
       "removeHint": "CodeBuddy can only be signed in to one account at a time. Add another official card to switch."
     },
     "login": {

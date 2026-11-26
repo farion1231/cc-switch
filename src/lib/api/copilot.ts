@@ -46,6 +46,12 @@ export interface CopilotModel {
   supports_parallel_tool_calls?: boolean;
   supports_vision?: boolean;
   reasoning_effort?: CopilotReasoningEffort[];
+  billing?: { auto_discount?: number };
+}
+
+export interface CopilotModelOptions {
+  models: CopilotModel[];
+  autoRoutingSupported: boolean;
 }
 
 /**
@@ -53,8 +59,8 @@ export interface CopilotModel {
  *
  * @returns 可用模型列表
  */
-export async function copilotGetModels(): Promise<CopilotModel[]> {
-  return invoke<CopilotModel[]>("copilot_get_models");
+export async function copilotGetModels(): Promise<CopilotModelOptions> {
+  return invoke<CopilotModelOptions>("copilot_get_models");
 }
 
 /**
@@ -125,8 +131,8 @@ export async function copilotCliSignedInAccount(): Promise<CopilotCliSignedInAcc
  */
 export async function copilotGetModelsForAccount(
   accountId: string,
-): Promise<CopilotModel[]> {
-  return invoke<CopilotModel[]>("copilot_get_models_for_account", {
+): Promise<CopilotModelOptions> {
+  return invoke<CopilotModelOptions>("copilot_get_models_for_account", {
     accountId,
   });
 }

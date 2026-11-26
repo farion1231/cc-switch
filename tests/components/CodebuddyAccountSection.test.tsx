@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   importCurrent: vi.fn(),
   openTerminal: vi.fn(),
   quota: vi.fn(),
+  setDefault: vi.fn(),
 }));
 
 vi.mock("@/components/providers/forms/hooks/useManagedAuth", () => ({
@@ -35,6 +36,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
       codebuddyAccountImportCurrent: mocks.importCurrent,
       codebuddyAccountOpenLoginTerminal: mocks.openTerminal,
       codebuddyAccountQuota: mocks.quota,
+      authSetDefaultAccount: mocks.setDefault,
     },
   };
 });
@@ -97,6 +99,7 @@ const quotaResult = (extra = {}) => ({
   total: 200,
   remaining: 150,
   used: 50,
+  expiries: null,
   error: null,
   queriedAt: Date.now(),
   ...extra,
@@ -109,11 +112,13 @@ describe("CodebuddyAccountSection", () => {
     mocks.importCurrent.mockReset();
     mocks.openTerminal.mockReset();
     mocks.quota.mockReset();
+    mocks.setDefault.mockReset();
+    mocks.setDefault.mockResolvedValue(undefined);
     mocks.live.mockResolvedValue(liveState("collected"));
     mocks.quota.mockResolvedValue(quotaResult());
   });
 
-  it("lists accounts with their site and leaves switching to the provider list", async () => {
+  it("lists accounts with their site and switches CodeBuddy from the account menu", async () => {
     const auth = baseAuth();
     auth.accounts = [
       account("100", "www.codebuddy.cn", "alice"),
@@ -133,17 +138,37 @@ describe("CodebuddyAccountSection", () => {
     const current = screen.getByText("alice").parentElement!;
     expect(within(current).getByText("CodeBuddy 在用")).toBeInTheDocument();
     expect(screen.getAllByText(/国内版/).length).toBeGreaterThan(0);
-    expect(screen.getByText(/UID 300/)).toBeInTheDocument();
+    // 名字各不相同：和 WorkBuddy 一样不显示 UID
+    expect(screen.queryByText(/UID/)).not.toBeInTheDocument();
+    // 底部说明副本只在本机
+    expect(screen.getByText(/账号副本只保存在这台电脑上/)).toBeInTheDocument();
     expect(screen.getByText(/登录已过期，需要重新登录/)).toBeInTheDocument();
 
     // 分组没有「删除全部账号」：只能逐个删除
     expect(
-      screen.queryByRole("button", { name: "CodeBuddy Code 的更多操作" }),
+      screen.queryByRole("button", { name: "CodeBuddy 的更多操作" }),
     ).not.toBeInTheDocument();
 
-    // 切换改在供应商列表的官方登录卡上做，账号菜单里只剩重新登录、删除
+    // 和 WorkBuddy 一样，账号菜单里能把 CodeBuddy 切到这个号（走通用切号命令）
     await userEvent.click(
       screen.getByRole("button", { name: "carol 的更多操作" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: /删除/ }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("menuitem", { name: "切换 CodeBuddy 到这个账号" }),
+    );
+    await waitFor(() =>
+      expect(mocks.setDefault).toHaveBeenCalledWith(
+        "codebuddy_oauth",
+        "300@www.codebuddy.ai",
+      ),
+    );
+
+    // 正在用的号不给切换
+    await userEvent.click(
+      screen.getByRole("button", { name: "alice 的更多操作" }),
     );
     expect(
       await screen.findByRole("menuitem", { name: /删除/ }),
@@ -151,7 +176,6 @@ describe("CodebuddyAccountSection", () => {
     expect(
       screen.queryByRole("menuitem", { name: /切换/ }),
     ).not.toBeInTheDocument();
-    expect(auth.setDefaultAccount).not.toHaveBeenCalled();
   });
 
   it("offers to collect an uncollected sign-in", async () => {
@@ -321,6 +345,21 @@ describe("CodebuddyAccountSection", () => {
     expect(auth.reauthAccount).toHaveBeenCalledWith("100@www.codebuddy.cn");
   });
 
+  it("shows the UID only to tell accounts with the same name apart", async () => {
+    const auth = baseAuth();
+    auth.accounts = [
+      account("100", "www.codebuddy.cn", "131****9287"),
+      account("200", "www.codebuddy.cn", "131****9287"),
+      account("300", "www.codebuddy.cn", "carol"),
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    render(<CodebuddyAccountSection />);
+
+    expect(screen.getByText(/UID 100/)).toBeInTheDocument();
+    expect(screen.getByText(/UID 200/)).toBeInTheDocument();
+    expect(screen.queryByText(/UID 300/)).not.toBeInTheDocument();
+  });
+
   it("shows each account's plan and credits, and refreshes past the cache", async () => {
     const auth = baseAuth();
     auth.accounts = [
@@ -335,9 +374,22 @@ describe("CodebuddyAccountSection", () => {
             credentialStatus: "refresh_pending",
             planName: null,
           })
-        : quotaResult(),
+        : quotaResult({
+            expiries: [
+              { credits: 120, expiresAt: Date.now() + 6 * 86_400_000 },
+              { credits: 30, expiresAt: Date.now() + 20 * 86_400_000 },
+            ],
+          }),
     );
     render(<CodebuddyAccountSection />);
+
+    // 和 WorkBuddy 一样：积分下面另起一行写最早到期的积分（多笔时可点开逐条看）
+    expect(
+      await screen.findByText("workbuddy.quota.expiry"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "workbuddy.quota.expiryShowAll" }),
+    ).toBeInTheDocument();
 
     // 套餐在账号行第二行，额度行标签只写「积分」
     expect(await screen.findByText(/体验版/)).toBeInTheDocument();

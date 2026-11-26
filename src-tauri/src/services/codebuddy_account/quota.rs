@@ -1,8 +1,11 @@
 //! CodeBuddy 账号的套餐与积分（只读查询）。
 //!
-//! CodeBuddy Code CLI 自己不显示额度；同一套账号体系下 WorkBuddy / CodeBuddy 桌面端读额度用的是
+//! CodeBuddy CLI 自己不显示额度；同一套账号体系下 WorkBuddy / CodeBuddy 桌面端读额度用的是
 //! `POST {站点}/billing/meter/get-user-resource-summary`（个人）和
 //! `POST {站点}/v2/billing/meter/get-enterprise-user-usage`（企业），两个都是空 body 的查询。
+//! 个人号再按汇总里有哪类套餐查 free / paid 套餐明细，补上各资源包的到期时间（请求与解析和
+//! WorkBuddy 共用，见 `workbuddy_account::quota::package_detail_requests`）；明细查不到只少到期行，
+//! 不算这次失败。企业号的到期时间就是本周期结束（`cycleEndTime`）。
 //! 站点按凭据里的 `auth.domain` 定（国内版 `www.codebuddy.cn`，国际版 `www.codebuddy.ai`），
 //! 请求头和 CLI 一致：`Authorization: Bearer`、`X-User-Id`、`X-Domain`、`X-Product`
 //! （不带 `X-Product` 会被拒成「请求不合法」）。
@@ -16,6 +19,9 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::services::subscription::CredentialStatus;
+use crate::services::workbuddy_account::quota::{
+    enterprise_cycle_expiry, package_detail_requests, parse_package_expiries, WorkBuddyCreditExpiry,
+};
 
 /// 同一个账号查过之后这么久内直接用缓存（手动刷新除外）。
 pub(super) const QUOTA_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
@@ -52,6 +58,9 @@ pub struct CodebuddyQuota {
     pub total: f64,
     pub remaining: f64,
     pub used: f64,
+    /// 还有剩余的各资源包各自什么时候到期，按到期先后排（不会过期的在最后）；
+    /// `None` 表示这次没查到套餐明细（只有总量）
+    pub expiries: Option<Vec<WorkBuddyCreditExpiry>>,
     pub error: Option<String>,
     pub queried_at: Option<i64>,
 }
@@ -68,6 +77,7 @@ impl CodebuddyQuota {
             total: 0.0,
             remaining: 0.0,
             used: 0.0,
+            expiries: None,
             error: Some(message.into()),
             queried_at: Some(chrono::Utc::now().timestamp_millis()),
         }
@@ -84,6 +94,7 @@ impl CodebuddyQuota {
             total: credits.total,
             remaining: credits.remaining,
             used: credits.used,
+            expiries: credits.expiries,
             error: None,
             queried_at: Some(chrono::Utc::now().timestamp_millis()),
         }
@@ -183,6 +194,7 @@ pub(super) struct Credits {
     pub total: f64,
     pub remaining: f64,
     pub used: f64,
+    pub expiries: Option<Vec<WorkBuddyCreditExpiry>>,
 }
 
 /// 数字或数字字符串（后端积分给的是 `"123.45"` 这样的字符串）；认不出、负数都按 0。
@@ -256,11 +268,12 @@ pub(super) fn parse_personal(body: &[u8]) -> ParseOutcome {
         total,
         remaining,
         used,
+        expiries: None,
     })
 }
 
 /// 企业账号：`limit_num`（-1 不限量）和 `used_num`；老字段 `limitNum` / `credit` 也认。
-pub(super) fn parse_enterprise(body: &[u8]) -> ParseOutcome {
+pub(super) fn parse_enterprise(body: &[u8], now: i64) -> ParseOutcome {
     let data = match envelope(body) {
         Ok(Some(data)) => data,
         Ok(None) => return ParseOutcome::Rejected("CodeBuddy 没有返回额度".into()),
@@ -281,19 +294,126 @@ pub(super) fn parse_enterprise(body: &[u8]) -> ParseOutcome {
         amount(data.get("limit_num").or_else(|| data.get("limitNum")))
     };
     let used = amount(data.get("used_num").or_else(|| data.get("credit")));
+    let remaining = if unlimited {
+        0.0
+    } else {
+        (total - used).max(0.0)
+    };
     ParseOutcome::Ok(Credits {
         plan_name: None,
         is_paid: true,
         enterprise: true,
         unlimited,
         total,
-        remaining: if unlimited {
-            0.0
-        } else {
-            (total - used).max(0.0)
-        },
+        remaining,
         used,
+        expiries: Some(
+            enterprise_cycle_expiry(&data, remaining, unlimited, now)
+                .into_iter()
+                .collect(),
+        ),
     })
+}
+
+/// 用账号副本里的令牌 POST 一次，请求头和 CLI 一致。网络错误、401、回包太大都换成对应的失败结果。
+async fn post(
+    creds: &QuotaCredentials,
+    base: &str,
+    path: &str,
+    body: &Value,
+    lang: &str,
+) -> Result<(reqwest::StatusCode, bytes::Bytes), CodebuddyQuota> {
+    let mut request = crate::proxy::http_client::get()
+        .post(format!("{base}{path}"))
+        .timeout(REQUEST_TIMEOUT)
+        .bearer_auth(&creds.access_token)
+        .header("X-User-Id", &creds.uid)
+        .header("X-Product", "SaaS")
+        .header(reqwest::header::ACCEPT, "application/json")
+        .header(reqwest::header::ACCEPT_LANGUAGE, lang)
+        .header(
+            reqwest::header::USER_AGENT,
+            format!("cc-switch/{}", env!("CARGO_PKG_VERSION")),
+        )
+        .json(body);
+    if let Some(domain) = creds.domain.as_deref() {
+        request = request.header("X-Domain", domain);
+    }
+    if let Some(enterprise_id) = creds.enterprise_id.as_deref() {
+        request = request
+            .header("X-Enterprise-Id", enterprise_id)
+            .header("X-Tenant-Id", enterprise_id);
+    }
+
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            // reqwest 的错误里只有地址，没有请求头
+            log::warn!("[CodebuddyAccount] 查询额度失败: {error}");
+            return Err(CodebuddyQuota::failed(
+                CredentialStatus::Valid,
+                if error.is_timeout() {
+                    "查询 CodeBuddy 额度超时".to_string()
+                } else {
+                    "连不上 CodeBuddy，没查到额度".to_string()
+                },
+            ));
+        }
+    };
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(CodebuddyQuota::failed(
+            CredentialStatus::Expired,
+            "CodeBuddy 登录已失效",
+        ));
+    }
+    match response.bytes().await {
+        Ok(body) if body.len() <= MAX_BODY => Ok((status, body)),
+        Ok(_) => Err(CodebuddyQuota::failed(
+            CredentialStatus::Valid,
+            "CodeBuddy 返回的内容太大",
+        )),
+        Err(error) => {
+            log::warn!("[CodebuddyAccount] 读取额度响应失败: {error}");
+            Err(CodebuddyQuota::failed(
+                CredentialStatus::Valid,
+                "没读到 CodeBuddy 的响应",
+            ))
+        }
+    }
+}
+
+/// 个人号各资源包的到期时间：按汇总里出现的套餐查明细。任何一步失败都返回 `None`（只少到期行）。
+async fn fetch_expiries(
+    creds: &QuotaCredentials,
+    base: &str,
+    summary: &[u8],
+    lang: &str,
+) -> Option<Vec<WorkBuddyCreditExpiry>> {
+    let mut bodies = Vec::new();
+    let requests = package_detail_requests(summary, chrono::Local::now().naive_local().date());
+    for (path, body) in requests {
+        match post(creds, base, path, &body, lang).await {
+            Ok((status, body)) if status.is_success() => bodies.push(body.to_vec()),
+            Ok((status, _)) => {
+                log::warn!(
+                    "[CodebuddyAccount] 查积分到期时间失败: HTTP {}",
+                    status.as_u16()
+                );
+                return None;
+            }
+            Err(failed) => {
+                log::warn!(
+                    "[CodebuddyAccount] 查积分到期时间失败: {}",
+                    failed.error.unwrap_or_default()
+                );
+                return None;
+            }
+        }
+    }
+    parse_package_expiries(&bodies, chrono::Utc::now().timestamp_millis())
+        .map_err(|error| log::warn!("[CodebuddyAccount] 积分到期时间认不出: {error}"))
+        .ok()
 }
 
 /// 发一次只读查询。不续期、不重试。
@@ -310,64 +430,22 @@ pub(super) async fn fetch(creds: &QuotaCredentials, lang: &str) -> CodebuddyQuot
     } else {
         PERSONAL_SUMMARY_PATH
     };
-    let mut request = crate::proxy::http_client::get()
-        .post(format!("{base}{path}"))
-        .timeout(REQUEST_TIMEOUT)
-        .bearer_auth(&creds.access_token)
-        .header("X-User-Id", &creds.uid)
-        .header("X-Product", "SaaS")
-        .header(reqwest::header::ACCEPT, "application/json")
-        .header(reqwest::header::ACCEPT_LANGUAGE, lang)
-        .header(
-            reqwest::header::USER_AGENT,
-            format!("cc-switch/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .json(&serde_json::json!({}));
-    if let Some(domain) = creds.domain.as_deref() {
-        request = request.header("X-Domain", domain);
-    }
-    if let Some(enterprise_id) = creds.enterprise_id.as_deref() {
-        request = request
-            .header("X-Enterprise-Id", enterprise_id)
-            .header("X-Tenant-Id", enterprise_id);
-    }
-
-    let response = match request.send().await {
+    let (status, body) = match post(creds, &base, path, &serde_json::json!({}), lang).await {
         Ok(response) => response,
-        Err(error) => {
-            // reqwest 的错误里只有地址，没有请求头
-            log::warn!("[CodebuddyAccount] 查询额度失败: {error}");
-            return CodebuddyQuota::failed(
-                CredentialStatus::Valid,
-                if error.is_timeout() {
-                    "查询 CodeBuddy 额度超时".to_string()
-                } else {
-                    "连不上 CodeBuddy，没查到额度".to_string()
-                },
-            );
-        }
-    };
-    let status = response.status();
-    if status == reqwest::StatusCode::UNAUTHORIZED {
-        return CodebuddyQuota::failed(CredentialStatus::Expired, "CodeBuddy 登录已失效");
-    }
-    let body = match response.bytes().await {
-        Ok(body) if body.len() <= MAX_BODY => body,
-        Ok(_) => {
-            return CodebuddyQuota::failed(CredentialStatus::Valid, "CodeBuddy 返回的内容太大")
-        }
-        Err(error) => {
-            log::warn!("[CodebuddyAccount] 读取额度响应失败: {error}");
-            return CodebuddyQuota::failed(CredentialStatus::Valid, "没读到 CodeBuddy 的响应");
-        }
+        Err(failed) => return failed,
     };
     let outcome = if enterprise {
-        parse_enterprise(&body)
+        parse_enterprise(&body, chrono::Utc::now().timestamp_millis())
     } else {
         parse_personal(&body)
     };
     match outcome {
-        ParseOutcome::Ok(credits) if status.is_success() => CodebuddyQuota::ok(credits),
+        ParseOutcome::Ok(mut credits) if status.is_success() => {
+            if !enterprise {
+                credits.expiries = fetch_expiries(creds, &base, &body, lang).await;
+            }
+            CodebuddyQuota::ok(credits)
+        }
         ParseOutcome::Ok(_) => {
             CodebuddyQuota::failed(CredentialStatus::Valid, format!("HTTP {}", status.as_u16()))
         }

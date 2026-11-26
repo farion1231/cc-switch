@@ -26,6 +26,7 @@ import {
   codebuddyQuotaLang,
 } from "@/components/settings/auth/AccountQuota";
 import { useQuotaPlansByKey } from "@/lib/query/accountPlans";
+import { useCodebuddyAccountSwitch } from "@/lib/query/codebuddy";
 
 /** 账号 id 是 `<uid>@<domain>`。 */
 const uidOf = (id: string) => {
@@ -38,9 +39,9 @@ interface CodebuddyAccountSectionProps {
 }
 
 /**
- * 授权中心的 CodeBuddy Code 账号组。CodeBuddy 只有一份全局登录（凭据文件），「在用」就是它现在
- * 登着的那个号。这里只管账号（收录、终端登录、删除、额度）；切换在供应商列表里：给账号建一张
- * 「CodeBuddy 官方登录」卡，点卡片上的「添加」。删账号只删 CC Switch 的副本。
+ * 授权中心的 CodeBuddy 账号组。CodeBuddy 只有一份全局登录（凭据文件），「在用」就是它现在
+ * 登着的那个号。切换账号：账号 ⋯ 里的「切换 CodeBuddy 到这个账号」，或供应商列表里「添加」
+ * 绑定了这个账号的「CodeBuddy 官方登录」卡（两边落到同一个 `switch_to`）。删账号只删 CC Switch 的副本。
  * 「添加账号」在已登录时会先确认，再让 CodeBuddy 暂时退出登录（见 `useCodebuddyLogin`）。
  */
 export const CodebuddyAccountSection: React.FC<
@@ -68,6 +69,7 @@ export const CodebuddyAccountSection: React.FC<
     "codebuddy_oauth",
     defaultAccountId,
   );
+  const { switchToAccount, switching } = useCodebuddyAccountSwitch();
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
   // 账号表变了（终端登录收录、删除）或 CodeBuddy 换了号时凭据文件的状态也跟着变
@@ -112,6 +114,12 @@ export const CodebuddyAccountSection: React.FC<
     (data) => (data as { planName?: string | null }).planName,
   );
 
+  // UID 只用来区分同名账号（比如两个号昵称一样），和 WorkBuddy 一样平时不显示
+  const loginCounts = new Map<string, number>();
+  for (const account of accounts) {
+    loginCounts.set(account.login, (loginCounts.get(account.login) ?? 0) + 1);
+  }
+
   const rows: GroupAccountRow[] = accounts.map((account) => {
     const uid = uidOf(account.id);
     const date = signedInDate(account.authenticated_at, i18n.language);
@@ -119,7 +127,9 @@ export const CodebuddyAccountSection: React.FC<
       account.requires_reauth ? null : plans[account.id],
       regionLabel(account.github_domain),
     ];
-    if (account.login !== uid) details.push(`UID ${uid}`);
+    if (account.login !== uid && (loginCounts.get(account.login) ?? 0) > 1) {
+      details.push(`UID ${uid}`);
+    }
     if (account.requires_reauth) {
       details.push(
         t("authCenter.codebuddy.expiredNote", {
@@ -188,11 +198,11 @@ export const CodebuddyAccountSection: React.FC<
   return (
     <ManagedAccountsGroup
       slug="codebuddy"
-      name="CodeBuddy Code"
+      name="CodeBuddy"
       iconName="codebuddy"
       help={t("authCenter.group.codebuddyHelp", {
         defaultValue:
-          "CodeBuddy Code 的官方登录（国内版、国际版都在这里）。要切换账号，在供应商列表里给账号建一张「CodeBuddy 官方登录」卡并点「添加」。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
+          "CodeBuddy 的官方登录（国内版、国际版都在这里）。要切换账号，在账号的「…」里选「切换 CodeBuddy 到这个账号」，或在供应商列表里添加绑定了它的「CodeBuddy 官方登录」卡。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
       })}
       helpSide={helpSide}
       accounts={rows}
@@ -210,10 +220,20 @@ export const CodebuddyAccountSection: React.FC<
       defaultLabel={t("authCenter.codebuddy.current", {
         defaultValue: "CodeBuddy 在用",
       })}
+      setDefaultLabel={t("authCenter.switchAppTo", {
+        defaultValue: "切换 {{app}} 到这个账号",
+        app: "CodeBuddy",
+      })}
+      onSetDefault={(accountId) => {
+        const login =
+          accounts.find((account) => account.id === accountId)?.login ??
+          accountId;
+        switchToAccount(accountId, login);
+      }}
+      settingDefault={switching}
       canReauth
       // 在终端里用同一个号重新登录，收录时替换旧副本
       onReauth={(accountId) => login.requestLogin(accountId)}
-      settingDefault={false}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
       }
@@ -234,6 +254,12 @@ export const CodebuddyAccountSection: React.FC<
         onReopen: login.reopenTerminal,
       }}
     >
+      <p className="m-0 border-t border-border py-2.5 pe-3 ps-4 text-caption text-fg-2">
+        {t("authCenter.codebuddy.localOnly", {
+          defaultValue:
+            "账号副本只保存在这台电脑上，不会随云同步，换电脑后需要重新收录。",
+        })}
+      </p>
       <CodebuddyLoginConfirmDialog {...login.confirmDialogProps} />
       <ManagedAccountRemoveDialog
         target={removeTarget}

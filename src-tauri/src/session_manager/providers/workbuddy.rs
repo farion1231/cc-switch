@@ -1,6 +1,6 @@
 //! WorkBuddy 会话：`<data dir>/projects/<sanitized cwd>/<sessionId>.jsonl`。
 //!
-//! 引擎是 CodeBuddy Code，每行一个事件，带 `id` / `parentId` / `timestamp`（毫秒）/
+//! 引擎是 CodeBuddy，每行一个事件，带 `id` / `parentId` / `timestamp`（毫秒）/
 //! `sessionId` / `cwd`：
 //! - `message`：`role` 为 user / assistant，`content` 是 `{type, text}` 数组
 //!   （`input_text` / `output_text`）；用户消息把真实提问包在 `<user_query>` 里，前面是

@@ -16,6 +16,10 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
 import {
+  agyAuthStatusQuery,
+  invalidateAgyLoginCaches,
+} from "@/lib/query/subscription";
+import {
   canSwitchAgyAccount,
   resolveManagedAccountId,
 } from "@/lib/authBinding";
@@ -251,8 +255,7 @@ export function OpenTerminalDialog({
       ? resolveManagedAccountId(provider.meta, "agy_oauth")
       : null;
   const { data: agyStatus } = useQuery({
-    queryKey: ["managed-auth-status", "agy_oauth"],
-    queryFn: () => authApi.authGetStatus("agy_oauth"),
+    ...agyAuthStatusQuery,
     enabled: boundAgyAccount !== null,
   });
   const canUseCurrentAgyLogin = boundAgyAccount !== null && isLinux();
@@ -320,11 +323,6 @@ export function OpenTerminalDialog({
       writeSkipPermissions(appId, skipPermissions);
       writeExtraArgs(appId, args);
       toast.success(t("provider.terminalOpened"));
-      if (agyWillSwitch) {
-        void queryClient.invalidateQueries({
-          queryKey: ["managed-auth-status", "agy_oauth"],
-        });
-      }
       onClose();
     } catch (error) {
       console.error("[OpenTerminalDialog] Failed to open terminal", error);
@@ -333,6 +331,10 @@ export function OpenTerminalDialog({
         t("provider.terminalOpenFailed") + (message ? `: ${message}` : ""),
       );
       setOpening(false);
+    } finally {
+      if (boundAgyAccount && !useCurrentAgyLogin) {
+        void invalidateAgyLoginCaches(queryClient);
+      }
     }
   };
 

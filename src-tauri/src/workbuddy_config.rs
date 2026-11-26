@@ -1,6 +1,6 @@
 //! WorkBuddy（腾讯）的自定义模型配置：`~/.workbuddy/models.json`。
 //!
-//! WorkBuddy 桌面端内置 CodeBuddy Code 引擎，启动引擎时把 `CODEBUDDY_CONFIG_DIR` 指到
+//! WorkBuddy 桌面端内置 CodeBuddy 引擎，启动引擎时把 `CODEBUDDY_CONFIG_DIR` 指到
 //! 自己的数据目录（默认 `~/.workbuddy`，可用 `WORKBUDDY_CONFIG_DIR` 覆盖），所以它和
 //! CodeBuddy 的 `~/.codebuddy` 互不共享。文件格式：
 //!

@@ -1,4 +1,4 @@
-//! CodeBuddy Code (Tencent) user-level custom models: `~/.codebuddy/models.json`.
+//! CodeBuddy (Tencent) user-level custom models: `~/.codebuddy/models.json`.
 //!
 //! Each CC Switch provider owns exactly one entry of the native `models` array; the
 //! provider key is the model `id`. Every other entry, `availableModels` and any unknown
@@ -21,10 +21,10 @@ use std::{
 /// Serializes CC Switch's own read-modify-write cycles on `models.json`.
 static MODELS_LOCK: Mutex<()> = Mutex::new(());
 
-/// Prefix CodeBuddy Code shows for models.json entries (e.g. in `--help` and `/model`).
+/// Prefix CodeBuddy shows for models.json entries (e.g. in `--help` and `/model`).
 const CUSTOM_MODEL_PREFIX: &str = "custom-local:";
 
-/// `CODEBUDDY_CONFIG_DIR` relocates CodeBuddy Code's configuration and data files.
+/// `CODEBUDDY_CONFIG_DIR` relocates CodeBuddy's configuration and data files.
 pub(crate) fn data_dir() -> PathBuf {
     explicit_data_dir(std::env::var("CODEBUDDY_CONFIG_DIR").ok().as_deref())
         .unwrap_or_else(|| get_home_dir().join(".codebuddy"))
@@ -60,7 +60,7 @@ fn read_document(path: &Path) -> Result<JsoncDocument, AppError> {
     if source.trim().is_empty() {
         return JsoncDocument::parse("{}");
     }
-    // CodeBuddy Code parses models.json as strict JSON and ignores the whole file
+    // CodeBuddy parses models.json as strict JSON and ignores the whole file
     // otherwise (verified with 2.164: one `//` comment hides every custom model).
     serde_json::from_str::<Value>(source).map_err(|_| {
         AppError::Config(

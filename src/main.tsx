@@ -26,6 +26,7 @@ import {
   MODELS_DEV_SYNC_CONFIG_QUERY_KEY,
   syncModelsDevPricingOnStartup,
 } from "./lib/modelsDevAutoSync";
+import { notifyBackgroundTaskFailed } from "@/lib/backgroundTaskNotice";
 import { initializeWindowActivity } from "@/lib/windowActivity";
 import { initializeInputModality } from "@/lib/inputModality";
 import { initializeInterfacePrefs } from "@/lib/interfacePrefs";
@@ -173,8 +174,9 @@ async function bootstrap() {
       }
     })
     .catch((error) => {
-      // 离线或 models.dev 暂时不可用不应阻塞应用启动。
+      // 离线或 models.dev 暂时不可用不应阻塞应用启动，但要说清楚是哪个请求失败了。
       reportFrontendError("models_dev_startup_sync", error);
+      notifyBackgroundTaskFailed("modelsDevSync", error);
       void queryClient.invalidateQueries({
         queryKey: MODELS_DEV_SYNC_CONFIG_QUERY_KEY,
       });

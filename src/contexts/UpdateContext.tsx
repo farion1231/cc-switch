@@ -11,6 +11,7 @@ import type { ReadyUpdate, UpdateInfo } from "../lib/updater";
 import { UPDATE_READY_EVENT, checkForUpdate } from "../lib/updater";
 import { settingsApi } from "../lib/api/settings";
 import { extractErrorMessage } from "../utils/errorUtils";
+import { notifyBackgroundTaskFailed } from "../lib/backgroundTaskNotice";
 
 interface UpdateContextValue {
   // 更新状态
@@ -169,7 +170,9 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
       recheckedVersionRef.current !== readyVersion
     ) {
       recheckedVersionRef.current = readyVersion;
-      checkUpdate().catch(console.error);
+      checkUpdate().catch((err) =>
+        notifyBackgroundTaskFailed("updateCheck", err),
+      );
     }
   }, [readyVersion, updateInfo?.availableVersion, checkUpdate]);
 
@@ -217,7 +220,9 @@ export function UpdateProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // 延迟1秒后检查，避免影响启动体验
     const timer = setTimeout(() => {
-      checkUpdate().catch(console.error);
+      checkUpdate().catch((err) =>
+        notifyBackgroundTaskFailed("updateCheck", err),
+      );
     }, 1000);
 
     return () => clearTimeout(timer);

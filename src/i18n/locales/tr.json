@@ -235,7 +235,7 @@
         "account": "Hesap",
         "accountFollow": "agy'nin mevcut oturum açma hesabını kullan",
         "accountMissing": "Bu bilgisayarda bulunmayan hesap",
-        "accountHelp": "Bir hesap seçildiğinde Terminal Aç, önce agy'nin oturumunu bu hesaba geçirir (bu değişiklik genel olarak geçerlidir: bundan sonra başlatılan agy oturumları bu hesabı kullanır). Hesapları Kimlik Doğrulama Merkezi'ne ekleyin."
+        "accountHelp": "Yeni bir hesap bağlantısı kaydedildiğinde yeni agy oturumları bu hesabı kullanır. Bu karttan terminal açıldığında da bağlı hesaba geçilir. Hesapları Kimlik Doğrulama Merkezi'nden ekleyin."
       },
       "gemini": {
         "model": "Model",
@@ -917,6 +917,14 @@
     "minimizeToTrayDescription": "İşaretlendiğinde kapat düğmesine basıldığında sistem tepsisinde gizlenir, aksi halde uygulama doğrudan çıkar.",
     "useAppWindowControls": "Uygulama düzeyinde pencere kontrollerini etkinleştir",
     "useAppWindowControlsDescription": "Uygulama başlığındaki yerleşik küçültme, büyütme/geri yükleme ve kapatma düğmelerini kullanın.",
+    "copilotVscode": {
+      "enable": "VS Code Copilot uzantısına uygula",
+      "description": "CLI'ye eklenen modelleri ve API anahtarlarını algılanan tüm VS Code profillerine otomatik uygular. Sağlayıcı değişiklikleri de otomatik eşitlenir.",
+      "pending": "VS Code model eşitlemesi bekliyor",
+      "pendingDescription": "VS Code önceki yapılandırmayı kullanıyor olabilir. Son değişiklikleri eşitlemek için yeniden deneyin.",
+      "noTargets": "VS Code yapılandırması bulunamadı. VS Code'u bir kez başlatıp yeniden deneyin.",
+      "failed": "VS Code Copilot eşitlenemedi"
+    },
     "enableClaudePluginIntegration": "Claude Code uzantısına uygula",
     "enableClaudePluginIntegrationDescription": "Etkinleştirildiğinde VS Code Claude Code uzantı sağlayıcısı bu uygulamayla geçiş yapacak",
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
@@ -1469,7 +1477,7 @@
     "selectSessionLabel": "{{title}}'yi seçin",
     "agyDeleteHint": "Çalışma zamanı durumunu da kaldırmak için bu oturumu Antigravity'de silin.",
     "mcodeDeleteHint": "MiniMax Code'de silin",
-    "codebuddyDeleteHint": "Bu oturumu CodeBuddy Code'da yönetin: arka plan işleri, ekip üyeleri ve dosya geçmişi bu kayda başvurur",
+    "codebuddyDeleteHint": "Bu oturumu CodeBuddy'da yönetin: arka plan işleri, ekip üyeleri ve dosya geçmişi bu kayda başvurur",
     "groupMeta": "{{count}} oturumları · {{time}}",
     "bucketToday": "Bugün",
     "bucketYesterday": "Dün",
@@ -1939,6 +1947,7 @@
     "directModeFormatSwitch": "Bu biçim doğrudan modda çalışmaz; Bu kartı kullanmak için yönlendirmeye veya Birleştirme'ya geçin."
   },
   "copilot": {
+    "autoModelName": "GitHub Copilot Auto",
     "automaticFormat": "Yönlendirme tarafından otomatik seçilir",
     "automaticFormatHint": "Yönlendirme, her model için Copilot üst akış biçimini seçer; elle belirlenen biçim ayarları yok sayılır.",
     "authSection": "GitHub Copilot Kimlik Doğrulaması",
@@ -3980,7 +3989,29 @@
     "reachableSlow": "{{providerName}}'ye ulaşılabilir ancak yavaş ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}}'ye ulaşılamıyor: {{message}}",
     "unreachableHint": "Bağlantı kurulamadı (DNS / bağlantı / TLS / zaman aşımı). base_url'yi ve ağınızı kontrol edin.",
+    "hint": {
+      "blocked": "Sistem bağlantıyı reddetti. Bu genellikle bir güvenlik duvarının ya da güvenlik yazılımının CC Switch'i engellediği anlamına gelir. Güvenlik duvarında CC Switch'in ağ erişimine izin verin; yerel ağ adreslerine bağlanmak için de gereklidir.",
+      "refused": "Adrese ulaşılabiliyor ama bu bağlantı noktasında çalışan bir hizmet yok. Hizmetin başlatıldığından ve bağlantı noktasının doğru olduğundan emin olun.",
+      "timeout": "Bağlantı zaman aşımına uğradı. Ağınızı ve adresi kontrol edin; bir güvenlik duvarı ya da güvenlik yazılımı bağlantıyı yanıt vermeden engelliyor da olabilir.",
+      "dns": "Alan adı çözümlenemedi. Adresteki alan adında yazım hatası olup olmadığını, ağınızı ve DNS'i kontrol edin.",
+      "tls": "HTTPS bağlantısı başarısız oldu (sertifika ya da el sıkışma hatası). Adresin http mi https mi kullanması gerektiğini ve sunucu sertifikasının geçerli olup olmadığını kontrol edin."
+    },
     "error": "{{providerName}} kontrol hatası: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "CC Switch güncellemeleri denetlenemedi",
+      "description": "CC Switch başlangıçta yeni sürüm olup olmadığını dl.ccswitch.io'ya (yedek olarak github.com'a) sorar; bu sefer başarısız oldu: {{detail}}. Diğer özellikler etkilenmez; ağınız ya da güvenlik duvarınız bunu engelliyorsa yok sayabilirsiniz."
+    },
+    "modelsDevSyncFailed": {
+      "title": "Model fiyatları eşitlenemedi",
+      "description": "CC Switch kullanım maliyetlerini hesaplamak için model fiyatlarını düzenli olarak models.dev'den alır; bu sefer başarısız oldu: {{detail}}. Diğer özellikler etkilenmez."
+    },
+    "networkError": "sunucuya ulaşılamadı",
+    "mute": "Bir daha gösterme",
+    "disableModelsDevSync": "Otomatik eşitlemeyi kapat",
+    "modelsDevSyncDisabled": "Model fiyatlarının otomatik eşitlenmesi kapatıldı. Kullanım İstatistikleri → Model Fiyatlandırması bölümünden yeniden açabilirsiniz.",
+    "disableFailed": "Kapatılamadı: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Yönlendirme Ana Anahtarı",
@@ -4601,6 +4632,7 @@
     },
     "updatedAt": "{{time}} tarihinde güncellendi",
     "clickToRefresh": "Tekrar kontrol etmek için tıklayın",
+    "manualIdle": "Kotayı sorgulamak için yenile düğmesine tıklayın",
     "resetCredits": {
       "label": "Sıfırlanma",
       "left": "Kalan sıfırlama: {{count}}",
@@ -5116,7 +5148,7 @@
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
-      "codebuddyHelp": "CodeBuddy Code'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için sağlayıcı listesinde hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup Ekle'ye tıklayın. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
+      "codebuddyHelp": "CodeBuddy'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için hesabın … menüsünden \"CodeBuddy için bu hesaba geç\" seçeneğini kullanın ya da sağlayıcı listesinde bu hesaba bağlı \"CodeBuddy Resmi Oturum\" kartını ekleyin. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
       "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
@@ -5163,7 +5195,6 @@
       "reauthed": "{{login}} olarak tekrar oturum açıldı."
     },
     "quota": {
-      "updating": "Güncelleniyor…",
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin",
@@ -5195,6 +5226,7 @@
       "pendingNote": "codebuddy bir terminalde açıldı. Oturum açmak için yönergeleri izleyin (oturum açma ekranı çıkmazsa /login yazın); bitince hesap buraya eklenir.",
       "reopenTerminal": "Terminali yeniden aç",
       "removeNote": "Yalnızca CC Switch'teki kopyayı siler. CodeBuddy oturumu açık kalır.",
+      "localOnly": "Hesap kopyaları yalnızca bu bilgisayarda saklanır ve eşitlenmez. Başka bir bilgisayarda hesapları yeniden ekleyin.",
       "quota": {
         "credits": "Kredi",
         "enterprise": "Kurumsal",
@@ -5256,6 +5288,10 @@
     "openBrowser": {
       "title": "Oturum açarken tarayıcıyı aç",
       "description": "Yalnızca oturum açma bağlantısını kopyalayıp istediğiniz tarayıcıda açmak için kapatın; hesapları ayrı tarayıcı profillerinde tutuyorsanız kullanışlıdır."
+    },
+    "autoQuota": {
+      "title": "Kotayı otomatik sorgula",
+      "description": "Kapalıyken resmi hesap kotaları yalnızca yenile düğmesine tıkladığınızda sorgulanır: Yetkilendirme Merkezi’ni açmak, kartların zamanlanmış yenilemeleri ve tepsi simgesinin üzerine gelmek kotaları sorgulamaz. DeepSeek hesap bakiyeleri oturum durumuyla birlikte gösterildiğinden bu anahtardan etkilenmez."
     }
   },
   "kimi": {
@@ -5355,7 +5391,7 @@
   "codebuddy": {
     "empty": {
       "title": "Henüz özel model yok",
-      "description": "CodeBuddy'nin resmi modelleri CodeBuddy Code tarafından yönetilir. Resmi hesaplar arasında geçiş için hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup burada Ekle'ye tıklayın. ~/.codebuddy/models.json içinde zaten bulunan özel modeller burada otomatik olarak görünür. Ön ayar veya özel model eklemek için sağ üst köşedeki + düğmesini kullanın."
+      "description": "CodeBuddy'nin resmi modelleri CodeBuddy tarafından yönetilir. Resmi hesaplar arasında geçiş için hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup burada Ekle'ye tıklayın. ~/.codebuddy/models.json içinde zaten bulunan özel modeller burada otomatik olarak görünür. Ön ayar veya özel model eklemek için sağ üst köşedeki + düğmesini kullanın."
     },
     "modelsHint": "Model kimliği models.json'a yazılan id ve /model içinde seçtiğiniz addır; genellikle uç noktanın model adıdır ve eklendikten sonra değiştirilemez. Görünen ad, yukarıdaki İsim ile aynı değerdir.",
     "modelIdDuplicate": "Bu model kimliği zaten kullanılıyor",
@@ -5366,7 +5402,7 @@
     "apiKeyPlaceholder": "API anahtarını girin veya ${MY_API_KEY} ile bir ortam değişkenine başvurun",
     "maxInputTokens": "Maksimum giriş token",
     "maxOutputTokens": "Maksimum çıkış token",
-    "jsonHint": "models.json içindeki tek bir model girdisi (id yukarıdaki Model kimliğinden gelir). Kaydettikten sonra CodeBuddy Code dosyayı kendisi yeniden yükler.",
+    "jsonHint": "models.json içindeki tek bir model girdisi (id yukarıdaki Model kimliğinden gelir). Kaydettikten sonra CodeBuddy dosyayı kendisi yeniden yükler.",
     "official": {
       "presetName": "CodeBuddy Resmi Oturum",
       "account": "Hesap",
@@ -5380,6 +5416,8 @@
       "adding": "Ekleniyor…",
       "added": "{{name}} eklendi. CodeBuddy artık bu hesapla oturum açtı; çalışan CodeBuddy otomatik geçiş yapar, yeni oturumlar da bunu kullanır.",
       "addFailed": "Eklenemedi: {{error}}",
+      "switched": "CodeBuddy artık {{name}} ile oturum açtı; çalışan CodeBuddy otomatik geçiş yapar, yeni oturumlar da bunu kullanır.",
+      "switchFailed": "Geçiş yapılamadı: {{error}}",
       "removeHint": "CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin."
     },
     "login": {

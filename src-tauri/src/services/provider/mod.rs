@@ -179,6 +179,7 @@ pub struct ProviderService;
 /// Native provider lists refresh saved rows as well as reading them. Keep the
 /// entire snapshot/readback under the same per-app lock as provider mutations,
 /// so an in-flight list cannot restore a deleted row or overwrite a newer edit.
+/// Antigravity also uses this lock while a provider save changes its native login.
 fn lock_native_provider_operations(
     state: &AppState,
     app_type: &AppType,
@@ -191,6 +192,7 @@ fn lock_native_provider_operations(
             | AppType::Copilot
             | AppType::WorkBuddy
             | AppType::Codebuddy
+            | AppType::Agy
     )
     .then(|| {
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))

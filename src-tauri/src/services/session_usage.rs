@@ -192,7 +192,7 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
                 crate::services::session_usage_workbuddy::sync_workbuddy_usage,
             ),
             (
-                "CodeBuddy Code",
+                "CodeBuddy",
                 crate::services::session_usage_codebuddy::sync_codebuddy_usage,
             ),
             (

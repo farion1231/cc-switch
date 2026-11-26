@@ -1,5 +1,6 @@
-//! CodeBuddy Code 官方账号的状态与专用命令（列号、删号走授权中心的通用 `auth_*` 命令；
-//! 切号由供应商列表里官方登录卡的「添加」发起，见 [`codebuddy_account_switch_provider`]）。
+//! CodeBuddy 官方账号的状态与专用命令（列号、删号走授权中心的通用 `auth_*` 命令；
+//! 切号由供应商列表里官方登录卡的「添加」发起，见 [`codebuddy_account_switch_provider`]；
+//! 授权中心账号「⋯」里的切号走通用的 `auth_set_default_account`，两边落到同一个 `switch_to`）。
 
 use std::sync::Arc;
 

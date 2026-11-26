@@ -619,6 +619,411 @@ fn anthropic_to_gemini_keeps_consecutive_user_messages_without_split_tool_result
 }
 
 #[test]
+fn signature_replay_retains_evicted_calls_after_seventy_turns() {
+    for synthesized in [false, true] {
+        let store = GeminiShadowStore::default();
+        let mut messages = vec![json!({ "role": "user", "content": "Inspect the files" })];
+        for i in 0..70 {
+            let id = if synthesized {
+                format!("{SYNTHESIZED_ID_PREFIX}{i}")
+            } else {
+                format!("call_{i}")
+            };
+            let args = json!({ "pattern": format!("file-{i}.rs") });
+            let signature = format!("sig-{i}");
+            store.record_assistant_turn(
+                "prov",
+                "sess",
+                json!({ "parts": [{
+                "functionCall": { "id": id, "name": "Glob", "args": args },
+                "thoughtSignature": signature
+            }] }),
+                vec![GeminiToolCallMeta::new(
+                    Some(id.as_str()),
+                    "Glob",
+                    args.clone(),
+                    Some(signature.as_str()),
+                )],
+            );
+            messages.push(json!({
+                "role": "assistant",
+                "content": [{ "type": "tool_use", "id": id, "name": "Glob", "input": args }]
+            }));
+            messages.push(json!({
+                "role": "user",
+                "content": [{ "type": "tool_result", "tool_use_id": id, "content": "ok" }]
+            }));
+        }
+        assert_eq!(
+            store.get_session("prov", "sess", []).unwrap().turns.len(),
+            64
+        );
+
+        let result = anthropic_to_gemini_with_shadow(
+            json!({ "model": "gemini-3.8-flash", "messages": messages }),
+            Some(&store),
+            Some("prov"),
+            Some("sess"),
+        )
+        .unwrap();
+
+        for i in 0..70 {
+            let part = &result["contents"][1 + i * 2]["parts"][0];
+            if synthesized {
+                assert!(part["functionCall"].get("id").is_none());
+                assert!(
+                    result["contents"][2 + i * 2]["parts"][0]["functionResponse"]
+                        .get("id")
+                        .is_none()
+                );
+            } else {
+                assert_eq!(part["functionCall"]["id"], format!("call_{i}"));
+            }
+            assert_eq!(
+                part["functionCall"]["args"]["pattern"],
+                format!("file-{i}.rs")
+            );
+            assert_eq!(part["thoughtSignature"], format!("sig-{i}"));
+            assert!(part["functionCall"].get("thoughtSignature").is_none());
+        }
+    }
+}
+
+#[test]
+fn signature_replay_does_not_expand_a_partial_parallel_turn() {
+    let store = GeminiShadowStore::default();
+    store.record_assistant_turn("prov", "sess", json!({ "parts": [
+        { "functionCall": { "id": "first", "name": "Glob", "args": {} }, "thoughtSignature": "real-signature" },
+        { "functionCall": { "id": "second", "name": "Glob", "args": {} } }
+    ] }), vec![
+        GeminiToolCallMeta::new(Some("first"), "Glob", json!({}), Some("real-signature")),
+        GeminiToolCallMeta::new(Some("second"), "Glob", json!({}), None::<&str>),
+    ]);
+    let result = anthropic_to_gemini_with_shadow(json!({
+        "model": "gemini-3.8-flash", "messages": [{
+            "role": "assistant", "content": [{ "type": "tool_use", "id": "second", "name": "Glob", "input": {} }]
+        }]
+    }), Some(&store), Some("prov"), Some("sess")).unwrap();
+    let parts = result["contents"][0]["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0]["functionCall"]["id"], "second");
+    assert_eq!(
+        parts[0]["thoughtSignature"],
+        "skip_thought_signature_validator"
+    );
+}
+
+#[test]
+fn signature_replay_does_not_replace_text_with_a_cached_tool_call() {
+    let store = GeminiShadowStore::default();
+    store.record_assistant_turn("prov", "sess", json!({ "parts": [{
+        "functionCall": { "id": "call_1", "name": "Glob", "args": {} }, "thoughtSignature": "real-signature"
+    }] }), vec![GeminiToolCallMeta::new(Some("call_1"), "Glob", json!({}), Some("real-signature"))]);
+    let result = anthropic_to_gemini_with_shadow(json!({
+        "model": "gemini-3.8-flash", "messages": [{ "role": "assistant", "content": "Local summary" }]
+    }), Some(&store), Some("prov"), Some("sess")).unwrap();
+    assert_eq!(
+        result["contents"][0]["parts"],
+        json!([{ "text": "Local summary" }])
+    );
+}
+
+#[test]
+fn signature_replay_never_substitutes_a_different_call() {
+    let store = GeminiShadowStore::with_limits(8, 4);
+    store.record_assistant_turn(
+        "prov", "sess",
+        json!({ "parts": [{
+            "functionCall": { "id": "other_call", "name": "Glob", "args": { "pattern": "other.rs" } },
+            "thoughtSignature": "other-signature"
+        }] }),
+        vec![GeminiToolCallMeta::new(
+            Some("other_call"), "Glob", json!({ "pattern": "other.rs" }), Some("other-signature"),
+        )],
+    );
+    let result = anthropic_to_gemini_with_shadow(
+        json!({ "model": "gemini-3.8-flash", "messages": [{
+            "role": "assistant",
+            "content": [{ "type": "tool_use", "id": "original_call", "name": "Glob", "input": { "pattern": "original.rs" } }]
+        }, {
+            "role": "user",
+            "content": [{ "type": "tool_result", "tool_use_id": "original_call", "content": "ok" }]
+        }] }),
+        Some(&store), Some("prov"), Some("sess"),
+    ).unwrap();
+    let part = &result["contents"][0]["parts"][0];
+    assert_eq!(part["functionCall"]["id"], "original_call");
+    assert_eq!(part["functionCall"]["args"]["pattern"], "original.rs");
+    assert_eq!(part["thoughtSignature"], "skip_thought_signature_validator");
+}
+
+#[test]
+fn signature_fallback_is_limited_to_current_turn_and_first_parallel_call() {
+    let input = json!({
+        "model": "gemini-3.8-flash",
+        "messages": [
+            { "role": "assistant", "content": [{ "type": "tool_use", "id": "old", "name": "Glob", "input": {} }] },
+            { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "old", "content": "old result" }] },
+            { "role": "user", "content": "Start a new task" },
+            { "role": "assistant", "content": [
+                { "type": "text", "text": "Searching" },
+                { "type": "tool_use", "id": "first", "name": "Glob", "input": {} },
+                { "type": "tool_use", "id": "parallel", "name": "Glob", "input": {} }
+            ] },
+            { "role": "user", "content": [
+                { "type": "tool_result", "tool_use_id": "first", "content": "first result" },
+                { "type": "tool_result", "tool_use_id": "parallel", "content": "parallel result" }
+            ] },
+            { "role": "assistant", "content": [{ "type": "tool_use", "id": "next", "name": "Read", "input": {} }] },
+            { "role": "user", "content": [{ "type": "tool_result", "tool_use_id": "next", "content": "next result" }] }
+        ]
+    });
+    let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
+    assert!(result["contents"][0]["parts"][0]
+        .get("thoughtSignature")
+        .is_none());
+    assert!(result["contents"][3]["parts"][0]
+        .get("thoughtSignature")
+        .is_none());
+    assert_eq!(
+        result["contents"][3]["parts"][1]["thoughtSignature"],
+        "skip_thought_signature_validator"
+    );
+    assert!(result["contents"][3]["parts"][2]
+        .get("thoughtSignature")
+        .is_none());
+    assert_eq!(
+        result["contents"][5]["parts"][0]["thoughtSignature"],
+        "skip_thought_signature_validator"
+    );
+}
+
+#[test]
+fn signature_fallback_keeps_tool_results_with_text_in_the_current_turn() {
+    for notice_first in [false, true] {
+        let tool_result = json!({
+            "type": "tool_result", "tool_use_id": "first", "content": "Empty result"
+        });
+        let notice = json!({ "type": "text", "text": "Client tool execution notice" });
+        let mixed_content = if notice_first {
+            vec![notice, tool_result]
+        } else {
+            vec![tool_result, notice]
+        };
+        let input = json!({
+            "model": "gemini-3.8-flash",
+            "messages": [
+                { "role": "user", "content": "Inspect the fixture" },
+                { "role": "assistant", "content": [{
+                    "type": "tool_use", "id": "first", "name": "Glob", "input": {}
+                }] },
+                { "role": "user", "content": mixed_content },
+                { "role": "assistant", "content": [{
+                    "type": "tool_use", "id": "next", "name": "Read", "input": {}
+                }] },
+                { "role": "user", "content": [
+                    { "type": "tool_result", "tool_use_id": "next", "content": "Fixture contents" },
+                    { "type": "text", "text": "Another client notice" }
+                ] }
+            ]
+        });
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
+        let model_turns: Vec<_> = result["contents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|content| content["role"] == "model")
+            .collect();
+        assert_eq!(model_turns.len(), 2);
+        for (turn, id) in model_turns.iter().zip(["first", "next"]) {
+            let part = &turn["parts"][0];
+            assert_eq!(part["functionCall"]["id"], id);
+            assert_eq!(
+                part["thoughtSignature"], GEMINI_SKIP_THOUGHT_SIGNATURE,
+                "notice_first={notice_first}, call={id}"
+            );
+        }
+    }
+}
+
+#[test]
+fn signature_fallback_keeps_tool_results_with_media_in_the_current_turn() {
+    for media in [
+        json!({ "type": "image", "source": {
+            "type": "base64", "media_type": "image/png", "data": "aW1hZ2U="
+        } }),
+        json!({ "type": "document", "source": {
+            "type": "base64", "media_type": "application/pdf", "data": "cGRm"
+        } }),
+    ] {
+        let input = json!({
+            "model": "gemini-3.8-flash",
+            "messages": [
+                { "role": "user", "content": "Inspect the fixture" },
+                { "role": "assistant", "content": [{
+                    "type": "tool_use", "id": "first", "name": "Read", "input": {}
+                }] },
+                { "role": "user", "content": [
+                    { "type": "tool_result", "tool_use_id": "first", "content": "Fixture output" },
+                    media
+                ] }
+            ]
+        });
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
+        assert_eq!(
+            result["contents"][1]["parts"][0]["thoughtSignature"],
+            GEMINI_SKIP_THOUGHT_SIGNATURE
+        );
+        assert_eq!(
+            result["contents"][2]["parts"][0]["functionResponse"]["id"],
+            "first"
+        );
+        assert!(result["contents"][3]["parts"][0]
+            .get("inlineData")
+            .is_some());
+    }
+}
+
+#[test]
+fn signature_fallback_applies_only_to_gemini_three_or_later() {
+    for (model, needs_signature) in [
+        ("gemini-2.5-pro", false),
+        ("claude-opus-5", false),
+        ("gemini-pro", false),
+        ("gemini-3.8-flash", true),
+        ("google/Gemini-4-Argon", true),
+        ("models/gemini-10-flash", true),
+    ] {
+        let input = json!({ "model": model, "messages": [{
+            "role": "assistant", "content": [{ "type": "tool_use", "id": "call_1", "name": "Glob", "input": {} }]
+        }] });
+        let result = anthropic_to_gemini_with_shadow(input, None, None, None).unwrap();
+        assert_eq!(
+            result["contents"][0]["parts"][0]
+                .get("thoughtSignature")
+                .is_some(),
+            needs_signature,
+            "{model}"
+        );
+    }
+}
+
+#[test]
+fn shadow_rebuild_preserves_tool_signatures_across_steps() {
+    for ids in [
+        ["call_glob".to_string(), "call_read".to_string()],
+        [synthesize_tool_call_id(), synthesize_tool_call_id()],
+    ] {
+        let store = GeminiShadowStore::with_limits(8, 4);
+        for (id, name, signature) in [(&ids[0], "Glob", "sig-glob"), (&ids[1], "Read", "sig-read")]
+        {
+            // Exercise reconstruction from metadata instead of replaying
+            // complete Gemini parts, which already have the right shape.
+            store.record_assistant_turn(
+                "prov",
+                "sess",
+                Value::Null,
+                vec![GeminiToolCallMeta::new(
+                    Some(id.as_str()),
+                    name,
+                    json!({}),
+                    Some(signature),
+                )],
+            );
+        }
+
+        let input = json!({
+            "messages": [
+                { "role": "user", "content": "Find and read the Rust files" },
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use", "id": ids[0], "name": "Glob",
+                        "input": { "pattern": "**/*.rs" }
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{ "type": "tool_result", "tool_use_id": ids[0], "content": "src/lib.rs" }]
+                },
+                {
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use", "id": ids[1], "name": "Read",
+                        "input": { "file_path": "src/lib.rs" }
+                    }]
+                },
+                {
+                    "role": "user",
+                    "content": [{ "type": "tool_result", "tool_use_id": ids[1], "content": "fn main() {}" }]
+                }
+            ]
+        });
+
+        let result =
+            anthropic_to_gemini_with_shadow(input, Some(&store), Some("prov"), Some("sess"))
+                .unwrap();
+
+        for (index, id, signature) in [(1, &ids[0], "sig-glob"), (3, &ids[1], "sig-read")] {
+            let part = &result["contents"][index]["parts"][0];
+            assert_eq!(part["thoughtSignature"], signature);
+            assert!(part["functionCall"].get("thoughtSignature").is_none());
+            let expected_id = (!is_synthesized_tool_call_id(id)).then(|| json!(id));
+            assert_eq!(part["functionCall"].get("id"), expected_id.as_ref());
+            assert_eq!(
+                result["contents"][index + 1]["parts"][0]["functionResponse"].get("id"),
+                expected_id.as_ref()
+            );
+        }
+    }
+}
+
+#[test]
+fn shadow_rebuild_keeps_parallel_signature_on_original_part() {
+    let store = GeminiShadowStore::with_limits(8, 4);
+    store.record_assistant_turn(
+        "prov",
+        "sess",
+        Value::Null,
+        vec![
+            GeminiToolCallMeta::new(Some("call_rs"), "Glob", json!({}), Some("sig-parallel")),
+            GeminiToolCallMeta::new(Some("call_ts"), "Glob", json!({}), None::<&str>),
+        ],
+    );
+    let input = json!({
+        "messages": [{
+            "role": "assistant",
+            "content": [
+                { "type": "text", "text": "Searching both file types" },
+                { "type": "tool_use", "id": "call_rs", "name": "Glob", "input": { "pattern": "**/*.rs" } },
+                { "type": "tool_use", "id": "call_ts", "name": "Glob", "input": { "pattern": "**/*.ts" } }
+            ]
+        }, {
+            "role": "user",
+            "content": [
+                { "type": "tool_result", "tool_use_id": "call_rs", "content": "src/lib.rs" },
+                { "type": "tool_result", "tool_use_id": "call_ts", "content": "src/index.ts" }
+            ]
+        }]
+    });
+
+    let result =
+        anthropic_to_gemini_with_shadow(input, Some(&store), Some("prov"), Some("sess")).unwrap();
+
+    assert_eq!(
+        result["contents"][0]["parts"],
+        json!([
+            { "text": "Searching both file types" },
+            {
+                "functionCall": { "id": "call_rs", "name": "Glob", "args": { "pattern": "**/*.rs" } },
+                "thoughtSignature": "sig-parallel"
+            },
+            { "functionCall": { "id": "call_ts", "name": "Glob", "args": { "pattern": "**/*.ts" } } }
+        ])
+    );
+}
+
+#[test]
 fn anthropic_to_gemini_moves_mixed_tool_result_image_to_native_part() {
     let input = json!({
         "messages": [
@@ -1911,7 +2316,9 @@ fn non_stream_shadow_id_matches_client_visible_id() {
         "client-facing id must be synthesized for no-id Gemini responses"
     );
 
-    let snapshot = store.get_session("prov", "sess").expect("shadow recorded");
+    let snapshot = store
+        .get_session("prov", "sess", [])
+        .expect("shadow recorded");
     // (c) tool_calls metadata must agree with the client-visible id.
     let shadow_tool_call_id = snapshot.turns[0].tool_calls[0]
         .id
@@ -2096,7 +2503,7 @@ fn non_stream_preserves_original_gemini_id_when_present() {
     )
     .unwrap();
     assert_eq!(response["content"][0]["id"], "call_real_1");
-    let snapshot = store.get_session("prov", "sess").unwrap();
+    let snapshot = store.get_session("prov", "sess", []).unwrap();
     assert_eq!(
         snapshot.turns[0].tool_calls[0].id.as_deref(),
         Some("call_real_1")
