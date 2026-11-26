@@ -1,0 +1,84 @@
+name: Build macOS app (fork)
+
+on:
+  push:
+    branches:
+      - fix/claude-desktop-auto-routing
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-macos-fork-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build macOS (${{ matrix.arch }})
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: Apple Silicon
+            target: aarch64-apple-darwin
+          - arch: Intel
+            target: x86_64-apple-darwin
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Read pinned Rust toolchain
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(sed -nE 's/^channel *= *"([^"]+)".*/\1/p' rust-toolchain.toml)
+          test -n "$channel"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+          targets: ${{ matrix.target }}
+
+      - name: Setup pnpm
+        env:
+          COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+        run: |
+          corepack enable
+          corepack install
+          pnpm --version
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build unsigned macOS app
+        run: pnpm tauri build --target ${{ matrix.target }} --bundles app --no-sign --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Package app
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          app=$(find "src-tauri/target/$TARGET/release/bundle/macos" -maxdepth 1 -name '*.app' -type d | head -1)
+          test -n "$app"
+          mkdir -p release-assets
+          ditto -c -k --sequesterRsrc --keepParent "$app" "release-assets/CC-Switch-macos-$TARGET.zip"
+          shasum -a 256 "release-assets/CC-Switch-macos-$TARGET.zip" > "release-assets/CC-Switch-macos-$TARGET.zip.sha256"
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: CC-Switch-macos-${{ matrix.target }}
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
