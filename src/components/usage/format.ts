@@ -260,11 +260,21 @@ export function formatMoneyTick(value: unknown, display: MoneyDisplay): string {
 /** 输出少于这个数的请求（工具调用这类）不算速度：0.1 秒回 15 个 token 会算出离谱的数。 */
 export const SPEED_MIN_OUTPUT_TOKENS = 100;
 
+/** 速度上限（tok/s）：超过该值属于整包突发或异常计时，不计入速度。 */
+export const SPEED_MAX_TPS = 10_000;
+
 interface OutputTokensPerSecondInput {
   outputTokens: unknown;
   latencyMs: unknown;
   firstTokenMs?: unknown;
   dataSource?: unknown;
+  statusCode?: unknown;
+}
+
+function isSuccessStatusOrUnset(statusCode: unknown): boolean {
+  if (statusCode == null) return true;
+  const code = parseFiniteNumber(statusCode);
+  return code != null && code >= 200 && code < 300;
 }
 
 /**
@@ -278,7 +288,9 @@ export function getGenerationMs(
   if (isSessionLogRequest(log)) return null;
   const latencyMs = parseFiniteNumber(log.latencyMs);
   const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
-  if (latencyMs == null || firstTokenMs == null) return null;
+  if (latencyMs == null || firstTokenMs == null || firstTokenMs < 0) {
+    return null;
+  }
   const generationMs = latencyMs - firstTokenMs;
   return generationMs > 0 ? generationMs : null;
 }
@@ -287,15 +299,47 @@ export function getGenerationMs(
 // 同一个网络包里，窗口只剩几毫秒，算出来的是传输突发而不是生成速度。
 export const SPEED_MIN_GENERATION_MS = 100;
 
-/** 这条请求能不能算速度：输出不少于 100 token，且生成时间不短于 100 毫秒。 */
-export function isSpeedEligible(log: OutputTokensPerSecondInput): boolean {
+/**
+ * 判断一条已达输出门槛、且带首字计时的成功路由请求是否因为传输突发/中转缓冲而被排除。
+ */
+export function isSpeedBurstExcluded(log: OutputTokensPerSecondInput): boolean {
+  if (isSessionLogRequest(log) || !isSuccessStatusOrUnset(log.statusCode)) {
+    return false;
+  }
   const outputTokens = parseFiniteNumber(log.outputTokens);
+  const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
+  const generationMs = getGenerationMs(log);
+  if (
+    outputTokens == null ||
+    outputTokens < SPEED_MIN_OUTPUT_TOKENS ||
+    firstTokenMs == null ||
+    firstTokenMs < 0
+  ) {
+    return false;
+  }
+  if (generationMs == null || generationMs < SPEED_MIN_GENERATION_MS) {
+    return true;
+  }
+  return outputTokens * 1000 > SPEED_MAX_TPS * generationMs;
+}
+
+/**
+ * 这条请求能不能算速度（与后端 `speed_eligible_sql` 同口径）：
+ * 成功的路由请求、输出 ≥ 100 token、生成时间 ≥ 100ms、速度 ≤ 10,000 tok/s。
+ */
+export function isSpeedEligible(log: OutputTokensPerSecondInput): boolean {
+  if (!isSuccessStatusOrUnset(log.statusCode)) return false;
+  const outputTokens = parseFiniteNumber(log.outputTokens);
+  const firstTokenMs = parseFiniteNumber(log.firstTokenMs);
   const generationMs = getGenerationMs(log);
   return (
     outputTokens != null &&
     outputTokens >= SPEED_MIN_OUTPUT_TOKENS &&
+    firstTokenMs != null &&
+    firstTokenMs >= 0 &&
     generationMs != null &&
-    generationMs >= SPEED_MIN_GENERATION_MS
+    generationMs >= SPEED_MIN_GENERATION_MS &&
+    outputTokens * 1000 <= SPEED_MAX_TPS * generationMs
   );
 }
 
@@ -330,11 +374,13 @@ export function isSessionLogRequest(log: { dataSource?: unknown }): boolean {
 
 /**
  * 这条请求能不能估速度（和后端 `speed_estimate_eligible_sql` 同口径）：会话日志导入、
- * 输出不少于 200 token、估算耗时不短于 1 秒。推出了首字的也照样按整段耗时算。
+ * 成功请求、输出不少于 200 token、估算耗时不短于 1 秒、估算速度不超过 10,000 tok/s。
+ * 推出了首字的也照样按整段耗时算。
  */
 export function isSpeedEstimateEligible(
   log: OutputTokensPerSecondInput,
 ): boolean {
+  if (!isSuccessStatusOrUnset(log.statusCode)) return false;
   const outputTokens = parseFiniteNumber(log.outputTokens);
   const latencyMs = parseFiniteNumber(log.latencyMs);
   return (
@@ -342,7 +388,8 @@ export function isSpeedEstimateEligible(
     outputTokens != null &&
     outputTokens >= SPEED_ESTIMATE_MIN_OUTPUT_TOKENS &&
     latencyMs != null &&
-    latencyMs >= SPEED_ESTIMATE_MIN_DURATION_MS
+    latencyMs >= SPEED_ESTIMATE_MIN_DURATION_MS &&
+    outputTokens * 1000 <= SPEED_MAX_TPS * latencyMs
   );
 }
 

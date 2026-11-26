@@ -88,6 +88,12 @@ describe("RequestDetailPanel", () => {
     expect(screen.getByText("usage.detail.speedTooFew")).toBeInTheDocument();
   });
 
+  it("explains why buffered burst outputs have no speed", () => {
+    renderWith(log({ outputTokens: 2_000, latencyMs: 350, firstTokenMs: 200 }));
+
+    expect(screen.getByText("usage.detail.speedBurst")).toBeInTheDocument();
+  });
+
   it("shows an estimated speed and duration for session logs", () => {
     renderWith(
       log({

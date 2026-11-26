@@ -1,4 +1,4 @@
-//! CodeBuddy Code user-scope MCP servers (`{"mcpServers": {...}}`).
+//! CodeBuddy user-scope MCP servers (`{"mcpServers": {...}}`).
 //!
 //! CodeBuddy reads exactly one user-scope file: the first that exists of
 //! `<config>/.mcp.json`, `<config>/mcp.json` (deprecated) and
@@ -247,7 +247,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         Ok(count)
     } else {
         Err(AppError::InvalidInput(format!(
-            "Imported {count} CodeBuddy Code MCP servers; skipped {}. Native configurations were preserved.",
+            "Imported {count} CodeBuddy MCP servers; skipped {}. Native configurations were preserved.",
             skipped.join("; ")
         )))
     }

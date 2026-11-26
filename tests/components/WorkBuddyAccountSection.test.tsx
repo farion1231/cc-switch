@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
   toastWarning: vi.fn(),
+  toastInfo: vi.fn(),
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -23,7 +24,7 @@ vi.mock("@/lib/toast", () => ({
     success: mocks.toastSuccess,
     error: mocks.toastError,
     warning: mocks.toastWarning,
-    info: vi.fn(),
+    info: mocks.toastInfo,
   },
 }));
 
@@ -148,11 +149,17 @@ describe("WorkBuddyAccountSection", () => {
     expect(mocks.quota).toHaveBeenCalledWith("u-1", false);
     expect(mocks.quota).toHaveBeenCalledWith("u-2", false);
 
-    // ↻ 跳过缓存
+    // ↻ 跳过缓存；WorkBuddy 没在运行、只拿回上次结果时说明原因，不然看着像点了没反应
+    expect(mocks.toastInfo).not.toHaveBeenCalled();
     await userEvent.click(
       screen.getByRole("button", { name: "刷新 u-1 的额度" }),
     );
     await waitFor(() => expect(mocks.quota).toHaveBeenCalledWith("u-1", true));
+    await waitFor(() =>
+      expect(mocks.toastInfo).toHaveBeenCalledWith(
+        "workbuddy.quota.staleNotRunning",
+      ),
+    );
   });
 
   it("marks the account WorkBuddy uses", async () => {

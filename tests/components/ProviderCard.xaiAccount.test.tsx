@@ -141,6 +141,25 @@ describe("ProviderCard xAI OAuth account subtitle", () => {
     expect(screen.queryByText(XAI_URL)).not.toBeInTheDocument();
   });
 
+  it("falls back to the xAI account when the legacy Copilot template has no account", async () => {
+    authGetStatus.mockImplementation(async (provider) =>
+      provider === "github_copilot"
+        ? { accounts: [], default_account_id: null }
+        : status([account("xai-1", "grok@x.ai")], "xai-1"),
+    );
+    const provider = xaiProvider("xai-1");
+    provider.meta!.usage_script = {
+      enabled: true,
+      language: "javascript",
+      code: "",
+      templateType: "github_copilot",
+    };
+
+    renderCard(provider);
+
+    expect(await screen.findByText("grok@x.ai")).toBeInTheDocument();
+  });
+
   it("falls back to the default account when the provider is unbound", async () => {
     authGetStatus.mockResolvedValue(
       status(

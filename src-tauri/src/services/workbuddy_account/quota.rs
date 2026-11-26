@@ -618,39 +618,68 @@ async fn fetch<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         .ok_or_else(|| FetchError::Failed("额度接口回包为空".into()))
 }
 
-/// 汇总里出现了哪类套餐，就查哪个明细接口（WorkBuddy 对只有免费套餐的号也不查 paid）。
+/// 查各资源包到期时间要发的套餐明细请求。
 async fn fetch_expiries<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
     reader: &mut BufReader<R>,
     channel: &str,
     summary: &[u8],
 ) -> Result<Vec<WorkBuddyCreditExpiry>, FetchError> {
-    let codes = summary_package_codes(summary);
-    let has_any = |group: &[&str]| codes.iter().any(|code| group.contains(&code.as_str()));
     let mut bodies = Vec::new();
-    if has_any(FREE_PACKAGE_CODES) {
-        let (start, end) = slice_period(chrono::Local::now().naive_local().date());
-        let body = json!({
-            "PageNumber": 1,
-            "PageSize": PACKAGES_PAGE_SIZE,
-            "PackageCodes": FREE_PACKAGE_CODES,
-            "Status": PACKAGE_STATUSES,
-            "SlicePeriodStartTime": start,
-            "SlicePeriodEndTime": end,
-        });
-        bodies.push(fetch(writer, reader, channel, 3, FREE_PACKAGES_PATH, body).await?);
-    }
-    if has_any(PAID_PACKAGE_CODES) {
-        let body = json!({
-            "PageNumber": 1,
-            "PageSize": PACKAGES_PAGE_SIZE,
-            "PackageCodes": PAID_PACKAGE_CODES,
-            "Status": PACKAGE_STATUSES,
-            "NeedRenewInfo": true,
-        });
-        bodies.push(fetch(writer, reader, channel, 4, PAID_PACKAGES_PATH, body).await?);
+    let requests = package_detail_requests(summary, chrono::Local::now().naive_local().date());
+    for (id, (path, body)) in (3..).zip(requests) {
+        bodies.push(fetch(writer, reader, channel, id, path, body).await?);
     }
     parse_packages(&bodies, chrono::Utc::now().timestamp_millis())
+}
+
+/// 汇总里出现了哪类套餐，就查哪个明细接口（WorkBuddy 对只有免费套餐的号也不查 paid），
+/// 返回要 POST 的路径和请求体。CodeBuddy 账号和 WorkBuddy 共用这套计费后端，也用它查到期时间。
+pub(crate) fn package_detail_requests(
+    summary: &[u8],
+    today: chrono::NaiveDate,
+) -> Vec<(&'static str, Value)> {
+    let codes = summary_package_codes(summary);
+    let has_any = |group: &[&str]| codes.iter().any(|code| group.contains(&code.as_str()));
+    let mut requests = Vec::new();
+    if has_any(FREE_PACKAGE_CODES) {
+        let (start, end) = slice_period(today);
+        requests.push((
+            FREE_PACKAGES_PATH,
+            json!({
+                "PageNumber": 1,
+                "PageSize": PACKAGES_PAGE_SIZE,
+                "PackageCodes": FREE_PACKAGE_CODES,
+                "Status": PACKAGE_STATUSES,
+                "SlicePeriodStartTime": start,
+                "SlicePeriodEndTime": end,
+            }),
+        ));
+    }
+    if has_any(PAID_PACKAGE_CODES) {
+        requests.push((
+            PAID_PACKAGES_PATH,
+            json!({
+                "PageNumber": 1,
+                "PageSize": PACKAGES_PAGE_SIZE,
+                "PackageCodes": PAID_PACKAGE_CODES,
+                "Status": PACKAGE_STATUSES,
+                "NeedRenewInfo": true,
+            }),
+        ));
+    }
+    requests
+}
+
+/// [`parse_packages`] 给别的模块用：错误换成一句话。
+pub(crate) fn parse_package_expiries(
+    bodies: &[Vec<u8>],
+    now: i64,
+) -> Result<Vec<WorkBuddyCreditExpiry>, String> {
+    parse_packages(bodies, now).map_err(|error| match error {
+        FetchError::Failed(message) => message,
+        other => format!("{other:?}"),
+    })
 }
 
 /// 当天 0 点到 23:59:59（本地时间，同 WorkBuddy 的 `buildSlicePeriodRange`）。
@@ -734,12 +763,7 @@ pub(super) fn parse_enterprise_usage(
     } else {
         (limit, (limit - used).max(0.0))
     };
-    let expiries = billing_time(field(["cycleEndTime", "cycle_end_time"]))
-        .filter(|at| !unlimited && remaining > 0.0 && at - queried_at < NEVER_EXPIRES_AFTER_MS)
-        .map(|expires_at| WorkBuddyCreditExpiry {
-            credits: remaining,
-            expires_at: Some(expires_at),
-        });
+    let expiries = enterprise_cycle_expiry(data, remaining, unlimited, queried_at);
     Ok(WorkBuddyQuotaSnapshot {
         plan_name: None,
         is_paid: true,
@@ -750,6 +774,25 @@ pub(super) fn parse_enterprise_usage(
         queried_at,
         expiries: Some(expiries.into_iter().collect()),
     })
+}
+
+/// 企业号剩余的限额到本周期结束（`cycleEndTime`）作废，记成一笔到期；不限额、没剩余时没有。
+/// CodeBuddy 的企业号查的是同一个接口，也用它。
+pub(crate) fn enterprise_cycle_expiry(
+    data: &Value,
+    remaining: f64,
+    unlimited: bool,
+    queried_at: i64,
+) -> Option<WorkBuddyCreditExpiry> {
+    ["cycleEndTime", "cycle_end_time"]
+        .into_iter()
+        .find_map(|name| data.get(name))
+        .and_then(|value| billing_time(Some(value)))
+        .filter(|at| !unlimited && remaining > 0.0 && at - queried_at < NEVER_EXPIRES_AFTER_MS)
+        .map(|expires_at| WorkBuddyCreditExpiry {
+            credits: remaining,
+            expires_at: Some(expires_at),
+        })
 }
 
 /// 业务码为 0 时取 `data`，否则报错。

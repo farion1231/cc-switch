@@ -29,7 +29,7 @@ import type { GlobalPage, SettingsSection, View } from "@/lib/navigation";
 import { isAppPage } from "@/lib/navigation";
 import { SkillsIcon } from "@/components/BrandIcons";
 import { useUpdate } from "@/contexts/UpdateContext";
-import { sidebarWidth, useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
+import { useSidebarCollapsed } from "@/hooks/useSidebarCollapsed";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import { useSettingsQuery } from "@/lib/query";
 import {
@@ -69,14 +69,14 @@ type DirectoryProps = SidebarProps & { collapsed: boolean };
 
 /**
  * 主导航（v7）：顶条 44 → 应用列表（唯一滚动的区域）→ 全局 6 项（贴底）→ 底栏「应用 · 设置」。
- * 进入设置后整条侧栏换成设置目录。收起时是 72px 的图标轨；
+ * 进入设置后整条侧栏换成设置目录。收起时按界面密度收成紧凑 / 舒适图标轨（见 useSidebarCollapsed）；
  * 展开 / 收起时宽度一步到位，边缘的滑动由盖板的 transform 动画画出（见 useSidebarCollapsed），文字不换行、被裁掉而不是挤成两行。
  * 收起时各行只剩图标，名字由 HoverTip 从右侧报；展开时文字可见，不再挂提示。
  */
 export function Sidebar(props: SidebarProps) {
   const { t } = useTranslation();
   const navRef = useRef<HTMLElement>(null);
-  const { collapsed, toggle } = useSidebarCollapsed(navRef);
+  const { collapsed, toggle, width } = useSidebarCollapsed(navRef);
   const { view } = props;
   const inSettings = view === "settings";
 
@@ -87,7 +87,7 @@ export function Sidebar(props: SidebarProps) {
       className={cn(
         "relative flex h-full shrink-0 flex-col overflow-hidden whitespace-nowrap border-e border-border bg-sidebar text-body text-fg-1",
       )}
-      style={{ width: sidebarWidth(collapsed) }}
+      style={{ width }}
     >
       <a
         href="#main-content"
@@ -327,7 +327,7 @@ function MainDirectory({
       <div
         className={cn(
           "h-px shrink-0 bg-border",
-          collapsed ? "mx-[18px] my-1.5" : "mx-4 mb-1.5 mt-0.5",
+          collapsed ? "mx-auto my-1.5 w-rail-item" : "mx-4 mb-1.5 mt-0.5",
         )}
       />
 
@@ -351,7 +351,7 @@ function MainDirectory({
       <div
         className={cn(
           "my-1.5 h-px shrink-0 bg-border",
-          collapsed ? "mx-[18px]" : "mx-4",
+          collapsed ? "mx-auto w-rail-item" : "mx-4",
         )}
       />
 
@@ -454,7 +454,7 @@ function AppNavItem({
           aria-label={tip}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "mx-auto flex h-8 w-rail-item shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
           )}
         >
@@ -615,7 +615,7 @@ function NavItem({
           aria-label={title ?? accessibleName}
           aria-current={selected ? "page" : undefined}
           className={cn(
-            "mx-auto flex h-8 w-12 shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
+            "mx-auto flex h-8 w-rail-item shrink-0 items-center justify-center rounded-control transition-colors hover:bg-subtle",
             selected && "bg-selected hover:bg-selected",
           )}
         >

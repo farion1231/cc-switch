@@ -5,7 +5,7 @@
 //! - 托盘菜单更新
 //! - 前端事件发射
 
-use crate::error::AppError;
+use crate::{error::AppError, store::AppState};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -16,15 +16,12 @@ use tokio::sync::RwLock;
 /// 负责处理故障转移成功后的供应商切换，确保 UI 能够直观反映当前使用的供应商。
 #[derive(Clone, Default)]
 pub struct FailoverSwitchManager {
-    /// 正在处理中的切换（key = "app_type:provider_id"）
+    /// 正在处理中的切换（同一应用、供应商和请求路由版本）
     pending_switches: Arc<RwLock<HashSet<String>>>,
 }
-
 impl FailoverSwitchManager {
     pub fn new() -> Self {
-        Self {
-            pending_switches: Arc::new(RwLock::new(HashSet::new())),
-        }
+        Self::default()
     }
 
     /// 尝试执行故障转移切换
@@ -42,8 +39,9 @@ impl FailoverSwitchManager {
         provider_id: &str,
         provider_name: &str,
         queue_revision: u64,
+        route_revision: u64,
     ) -> Result<bool, AppError> {
-        let switch_key = format!("{app_type}:{provider_id}:{queue_revision}");
+        let switch_key = format!("{app_type}:{provider_id}:{queue_revision}:{route_revision}");
 
         // 去重检查：如果相同切换已在进行中，跳过
         {
@@ -63,6 +61,7 @@ impl FailoverSwitchManager {
                 provider_id,
                 provider_name,
                 queue_revision,
+                route_revision,
             )
             .await;
 
@@ -82,6 +81,7 @@ impl FailoverSwitchManager {
         provider_id: &str,
         provider_name: &str,
         queue_revision: u64,
+        route_revision: u64,
     ) -> Result<bool, AppError> {
         // 只有处于代理模式的应用才允许执行故障转移切换
         let Ok(app_enum) = app_type.parse::<crate::app_config::AppType>() else {
@@ -92,29 +92,32 @@ impl FailoverSwitchManager {
             return Ok(false);
         }
 
+        let app_state = app_handle.and_then(|app| app.try_state::<AppState>());
+        let state = app_state.as_ref().map(|state| state.inner());
         let mut switched = false;
+        if let Some(state) = state {
+            // 只换代理的路由，不写客户端文件。
+            let result = crate::mode::controller::record_failover_route(
+                state,
+                &app_enum,
+                provider_id,
+                queue_revision,
+                route_revision,
+            )
+            .await;
+            switched = result.map_err(AppError::Message)?;
+            if !switched {
+                return Ok(false);
+            }
+            log::info!("[FO-001] 切换: {app_type} → {provider_name}");
 
-        if let Some(app) = app_handle {
-            if let Some(app_state) = app.try_state::<crate::store::AppState>() {
-                // 只换代理的路由，不写客户端文件。
-                switched = crate::mode::controller::record_failover_route(
-                    app_state.inner(),
-                    &app_enum,
-                    provider_id,
-                    queue_revision,
-                )
-                .await
-                .map_err(AppError::Message)?;
-
-                if !switched {
-                    return Ok(false);
-                }
-                log::info!("[FO-001] 切换: {app_type} → {provider_name}");
-
-                // Linux 重建原生菜单，其它平台通知托盘面板（不挂原生菜单）
+            // Linux 重建原生菜单，其它平台通知托盘面板（不挂原生菜单）
+            if let Some(app) = app_handle {
                 crate::tray::refresh_tray_menu(app);
             }
+        }
 
+        if let Some(app) = app_handle {
             // 发射事件到前端
             let event_data = serde_json::json!({
                 "appType": app_type,

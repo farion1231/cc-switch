@@ -614,7 +614,7 @@ fn quota_reports_business_errors() {
 #[test]
 fn quota_parses_enterprise_usage() {
     let quota::ParseOutcome::Ok(credits) =
-        quota::parse_enterprise(br#"{"code":0,"data":{"limit_num":1000,"used_num":250}}"#)
+        quota::parse_enterprise(br#"{"code":0,"data":{"limit_num":1000,"used_num":250}}"#, 0)
     else {
         panic!("should parse");
     };
@@ -625,12 +625,54 @@ fn quota_parses_enterprise_usage() {
     );
 
     let quota::ParseOutcome::Ok(credits) =
-        quota::parse_enterprise(br#"{"code":0,"data":{"limitNum":-1,"credit":12}}"#)
+        quota::parse_enterprise(br#"{"code":0,"data":{"limitNum":-1,"credit":12}}"#, 0)
     else {
         panic!("should parse");
     };
     assert!(credits.unlimited);
     assert_eq!((credits.total, credits.used), (0.0, 12.0));
+}
+
+#[test]
+fn quota_enterprise_remaining_expires_at_cycle_end() {
+    // 2026-12-31 23:59:59 北京时间
+    let expires_at = 1_798_732_799_000;
+    let now = expires_at - 86_400_000;
+    let body = br#"{"code":0,"data":{"limit_num":1000,"used_num":250,"cycleEndTime":"2026-12-31 23:59:59"}}"#;
+    let quota::ParseOutcome::Ok(credits) = quota::parse_enterprise(body, now) else {
+        panic!("should parse");
+    };
+    let expiries = credits.expiries.expect("enterprise expiry");
+    assert_eq!(expiries.len(), 1);
+    assert_eq!(
+        (expiries[0].credits, expiries[0].expires_at),
+        (750.0, Some(expires_at))
+    );
+
+    // 不限额：没有会作废的剩余
+    let body =
+        br#"{"code":0,"data":{"limitNum":-1,"credit":12,"cycleEndTime":"2026-12-31 23:59:59"}}"#;
+    let quota::ParseOutcome::Ok(credits) = quota::parse_enterprise(body, now) else {
+        panic!("should parse");
+    };
+    assert_eq!(credits.expiries, Some(vec![]));
+}
+
+#[test]
+fn quota_package_details_follow_summary_plans() {
+    use crate::services::workbuddy_account::quota::package_detail_requests;
+    let day = chrono::NaiveDate::from_ymd_opt(2026, 11, 24).unwrap();
+    // 只有体验版、拉新包（都是免费套餐）：只查 free 明细，带当天的切片区间
+    let summary = br#"{"code":0,"data":{"Packages":[{"PackageCode":"TCACA_code_008_cfWoLwvjU4"},{"PackageCode":"TCACA_code_030_BjSt89qTvr"}]}}"#;
+    let requests = package_detail_requests(summary, day);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0].0,
+        "/billing/meter/get-user-resource-free-packages"
+    );
+    assert_eq!(requests[0].1["SlicePeriodStartTime"], "2026-11-24 00:00:00");
+    // 汇总里没有套餐：不发明细请求
+    assert!(package_detail_requests(br#"{"code":0,"data":{}}"#, day).is_empty());
 }
 
 #[test]

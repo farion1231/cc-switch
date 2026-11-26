@@ -51,6 +51,7 @@ pub struct RequestContext {
     /// 这里使用本地 settings 的设备级 current provider。
     /// 代理模式下如果实际使用的 provider 与此不一致，会触发切换以确保 UI 始终准确。
     pub current_provider_id: String,
+    pub(crate) route_revision: u64,
     /// 请求中的模型名称
     pub request_model: String,
     /// 实际发往上游的模型名（路由接管/模型映射后的真值，forward 成功后回填）。
@@ -105,6 +106,7 @@ impl RequestContext {
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
         let queue_revision = state.db.failover_queue_revision();
+        let route_revision = state.db.route_revision(&app_type);
 
         // 从数据库读取应用级代理配置（per-app）
         let mut app_config = state
@@ -246,6 +248,7 @@ impl RequestContext {
             providers,
             queue_revision,
             current_provider_id,
+            route_revision,
             request_model,
             outbound_model: None,
             tag,
@@ -330,7 +333,9 @@ impl RequestContext {
         .stack_request(self.is_stack)
         .failover_chain(self.app_config.auto_failover_enabled)
         .queue_revision(self.queue_revision)
+        .route_revision(self.route_revision)
         .privacy_filter(self.privacy_filter_config.clone())
+        .copilot_auto_sessions(state.copilot_auto_sessions.clone())
     }
 
     /// 获取 Provider 列表（用于故障转移）

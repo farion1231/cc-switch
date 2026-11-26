@@ -249,7 +249,7 @@ fn delete_session_source(
     }
     if provider_id == "codebuddy" {
         return Err(
-            "Manage this session in CodeBuddy Code: background jobs, teammates and file history refer to its transcript"
+            "Manage this session in CodeBuddy: background jobs, teammates and file history refer to its transcript"
                 .into(),
         );
     }

@@ -496,6 +496,9 @@ pub struct AppSettings {
     /// 是否启用 Claude 插件联动
     #[serde(default)]
     pub enable_claude_plugin_integration: bool,
+    /// Device-local destinations for the Copilot CLI to VS Code model projection.
+    #[serde(default)]
+    pub copilot_vscode: crate::copilot_vscode::SyncSettings,
     /// 是否跳过 Claude Code 初次安装确认
     #[serde(default)]
     pub skip_claude_onboarding: bool,
@@ -621,6 +624,10 @@ pub struct AppSettings {
     /// 授权中心和托盘一起变；余额、Credits、重置次数不受影响（#8024）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_display: Option<String>,
+    /// 官方账号额度只在手动刷新时查询（授权中心开关，#8990）：开着时界面不自动查，托盘
+    /// 悬停也不刷新官方账号额度；第三方余额脚本不受影响
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub official_quota_manual_only: bool,
 
     // ===== 主页面显示的应用 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -758,6 +765,7 @@ impl Default for AppSettings {
             minimize_to_tray_on_close: true,
             use_app_window_controls: false,
             enable_claude_plugin_integration: false,
+            copilot_vscode: Default::default(),
             skip_claude_onboarding: false,
             launch_on_startup: false,
             silent_startup: false,
@@ -792,6 +800,7 @@ impl Default for AppSettings {
             common_config_confirmed: None,
             language: None,
             quota_display: None,
+            official_quota_manual_only: false,
             visible_apps: None,
             app_order: None,
             claude_config_dir: None,

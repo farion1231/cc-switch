@@ -1,4 +1,4 @@
-//! Import CodeBuddy Code's per-request usage from its session transcripts.
+//! Import CodeBuddy's per-request usage from its session transcripts.
 //!
 //! Each model request (one `providerData.stepSeq` of an assistant turn) reports its
 //! usage once, on the record that ends the step: the assistant `message`, or the
@@ -190,10 +190,9 @@ fn sync_projects_with_cursors(
             .unwrap_or(0);
         match sync_file(db, &path, parent_session.as_deref(), &key, modified, offset) {
             Ok(part) => result.merge(part),
-            Err(error) => result.errors.push(format!(
-                "CodeBuddy Code session {}: {error}",
-                path.display()
-            )),
+            Err(error) => result
+                .errors
+                .push(format!("CodeBuddy session {}: {error}", path.display())),
         }
     }
     Ok(result)

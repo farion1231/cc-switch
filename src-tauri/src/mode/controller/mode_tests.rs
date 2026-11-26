@@ -604,13 +604,16 @@ async fn failover_moves_the_route_without_writing_client_files() {
     )
     .await;
     enter(&state, &AppType::Claude, false).await.expect("enter");
-    let app = &AppType::Claude;
-    state.db.add_to_failover_queue(app, "b").unwrap();
-    state.db.set_auto_failover_enabled_sync(app, true).unwrap();
+    let app = AppType::Claude;
+    state.db.add_to_failover_queue(&app, "b").unwrap();
+    let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
+    config.auto_failover_enabled = true;
+    state.db.update_proxy_config_for_app(config).await.unwrap();
+    let queue_revision = state.db.failover_queue_revision();
+    let route_revision = state.db.route_revision(&app);
     let before = settled_bytes();
-
     assert!(
-        record_failover_route(&state, app, "b", state.db.failover_queue_revision())
+        record_failover_route(&state, &app, "b", queue_revision, route_revision)
             .await
             .expect("record failover")
     );
@@ -632,27 +635,183 @@ async fn an_old_failover_response_cannot_restore_a_removed_queue_member() {
         state.db.add_to_failover_queue(app, id).unwrap();
     }
     state.db.set_auto_failover_enabled_sync(app, true).unwrap();
-    let old = state.db.failover_queue_revision();
+    let old_queue_revision = state.db.failover_queue_revision();
+    let route_revision = state.db.route_revision(app);
     state
         .proxy_service
         .remove_from_failover_queue(app, "kimi")
         .await
         .unwrap();
-    assert!(!record_failover_route(&state, app, "kimi", old)
-        .await
-        .unwrap());
+    assert!(
+        !record_failover_route(&state, app, "kimi", old_queue_revision, route_revision)
+            .await
+            .unwrap()
+    );
     assert_eq!(in_use(&state, app).as_deref(), Some("a"));
-
     state.db.add_to_failover_queue(app, "kimi").unwrap();
-    assert!(!record_failover_route(&state, app, "kimi", old)
-        .await
-        .unwrap());
-    let fresh = state.db.failover_queue_revision();
-    assert!(record_failover_route(&state, app, "kimi", fresh)
-        .await
-        .unwrap());
+    assert!(
+        !record_failover_route(&state, app, "kimi", old_queue_revision, route_revision)
+            .await
+            .unwrap()
+    );
+    let fresh_queue_revision = state.db.failover_queue_revision();
+    assert!(
+        record_failover_route(&state, app, "kimi", fresh_queue_revision, route_revision)
+            .await
+            .unwrap()
+    );
     assert_eq!(in_use(&state, app).as_deref(), Some("kimi"));
     exit(&state, app).await.unwrap();
+}
+
+#[tokio::test]
+#[serial]
+async fn in_flight_failover_cannot_override_a_manual_route_while_enabled() {
+    check_in_flight_failover_preserves_manual_route(false).await;
+}
+
+#[tokio::test]
+#[serial]
+async fn in_flight_failover_cannot_override_a_manual_route_after_disabling() {
+    check_in_flight_failover_preserves_manual_route(true).await;
+}
+
+async fn check_in_flight_failover_preserves_manual_route(disable_failover: bool) {
+    use crate::proxy::{
+        forwarder::ForwardBody, handler_context::RequestContext, server::ProxyState,
+    };
+    use axum::{http::StatusCode, routing::post, Json, Router};
+    use std::time::Duration;
+    use tokio::sync::Notify;
+
+    // 应用启动时会安装 rustls provider；测试进程里手动装一次（同 forwarder 测试）。
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let _home = Home::new();
+    seed_settings(USER_SETTINGS);
+    let reached_b = Arc::new(Notify::new());
+    let release_b = Arc::new(Notify::new());
+    let response = || Json(json!({"id":"msg_test","type":"message","content":[],"usage":{}}));
+    let upstream = Router::new()
+        .route(
+            "/a/v1/messages",
+            post(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+        )
+        .route(
+            "/b/v1/messages",
+            post({
+                let reached_b = reached_b.clone();
+                let release_b = release_b.clone();
+                move || {
+                    let reached_b = reached_b.clone();
+                    let release_b = release_b.clone();
+                    async move {
+                        reached_b.notify_one();
+                        release_b.notified().await;
+                        response()
+                    }
+                }
+            }),
+        )
+        .route("/c/v1/messages", post(move || async move { response() }));
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let upstream = tokio::spawn(async move { axum::serve(listener, upstream).await.unwrap() });
+
+    let app = AppType::Claude;
+    let rows = ["a", "b", "c"].map(|id| claude(id, &format!("{origin}/{id}"), json!({})));
+    let state = state_with(app.clone(), &rows, "a").await;
+    enter(&state, &app, false).await.unwrap();
+    for id in ["a", "b"] {
+        state.db.add_to_failover_queue(&app, id).unwrap();
+    }
+    let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
+    config.auto_failover_enabled = true;
+    config.max_retries = 1;
+    state.db.update_proxy_config_for_app(config).await.unwrap();
+    let queue_revision = state.db.failover_queue_revision();
+    let route_revision = state.db.route_revision(&app);
+    let proxy = ProxyState::for_test(state.db.clone());
+    let body = json!({"model":"claude-sonnet-4-6","messages":[]});
+    let headers = axum::http::HeaderMap::new();
+    let context = || {
+        RequestContext::new(
+            &proxy,
+            &body,
+            &headers,
+            app.clone(),
+            "Claude",
+            "claude",
+            None,
+        )
+    };
+    let forward = async |ctx: &RequestContext| {
+        ctx.create_forwarder(&proxy)
+            .forward_with_retry(
+                &app,
+                http::Method::POST,
+                "/v1/messages",
+                ForwardBody::from_parsed(body.clone(), bytes::Bytes::from(body.to_string())),
+                headers.clone(),
+                http::Extensions::new(),
+                ctx.get_providers(),
+            )
+            .await
+            .map_err(|failure| failure.error)
+            .expect("forward request")
+    };
+    let old_context = context().await.unwrap();
+    assert_eq!(old_context.current_provider_id, "a");
+    assert!(old_context.app_config.auto_failover_enabled);
+    let switch = async {
+        reached_b.notified().await;
+        if disable_failover {
+            let _guard = lock_settled(&state, &app).await.unwrap();
+            let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
+            config.auto_failover_enabled = false;
+            state.db.update_proxy_config_for_app(config).await.unwrap();
+        }
+        set_route(&state, &app, "c").await.unwrap();
+        release_b.notify_one();
+    };
+    let (old_response, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(forward(&old_context), switch)
+    })
+    .await
+    .expect("B receives the old request before C is selected");
+    assert_eq!(old_response.provider.id, "b");
+    assert_eq!(old_response.response.status(), StatusCode::OK);
+
+    assert!(
+        !record_failover_route(&state, &app, "b", queue_revision, route_revision)
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        mode(&app).proxy_route.as_deref(),
+        Some("c"),
+        "B's success cannot replace C"
+    );
+
+    let new_context = context().await.unwrap();
+    assert_eq!(
+        new_context.app_config.auto_failover_enabled,
+        !disable_failover
+    );
+    if !disable_failover {
+        release_b.notify_one();
+    }
+    let next = tokio::time::timeout(Duration::from_secs(10), forward(&new_context))
+        .await
+        .expect("forward the next request");
+    if disable_failover {
+        assert_eq!(next.provider.id, "c");
+    } else {
+        assert_eq!(next.provider.id, "b");
+    }
+    exit(&state, &app).await.unwrap();
+    upstream.abort();
 }
 
 #[tokio::test]
@@ -4401,15 +4560,18 @@ async fn a_failover_finishing_after_entering_stack_mode_is_dropped() {
     let _home = Home::new();
     seed_settings(USER_SETTINGS);
     let state = state_with(AppType::Claude, &stack_rows(), "a").await;
-    let app = &AppType::Claude;
-    state.db.add_to_failover_queue(app, "kimi").unwrap();
-    state.db.set_auto_failover_enabled_sync(app, true).unwrap();
-    enter(&state, &AppType::Claude, true).await.expect("enter");
+    let app = AppType::Claude;
+    enter(&state, &app, false).await.expect("enter route");
+    let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
+    config.auto_failover_enabled = true;
+    state.db.update_proxy_config_for_app(config).await.unwrap();
+    state.db.add_to_failover_queue(&app, "kimi").unwrap();
+    let queue_revision = state.db.failover_queue_revision();
+    let route_revision = state.db.route_revision(&app);
+    enter(&state, &app, true).await.expect("enter Stack");
     let before = settled_bytes();
-
-    // 进入 Stack 模式之前发出的路由请求，这时才转移到 kimi 成功。
     assert!(
-        !record_failover_route(&state, app, "kimi", state.db.failover_queue_revision())
+        !record_failover_route(&state, &app, "kimi", queue_revision, route_revision)
             .await
             .expect("record failover")
     );
@@ -4437,12 +4599,13 @@ async fn enabling_failover_cannot_move_the_default_in_stack_mode() {
     failpoint::crash_at(None);
     assert!(!crate::mode::stack::stack_mode_now(&AppType::Claude));
 
-    {
-        let _guard = lock_settled(&state, &AppType::Claude).await.unwrap();
-        switch_route_for_failover_locked(&state, &AppType::Claude, "kimi")
+    let switch = async {
+        let _guard = lock_settled(&state, &AppType::Claude)
             .await
-            .expect_err("stack mode");
-    }
+            .map_err(String::from)?;
+        switch_route_for_failover_locked(&state, &AppType::Claude, "kimi").await
+    };
+    switch.await.expect_err("stack mode");
     assert!(crate::mode::stack::stack_mode_now(&AppType::Claude));
     assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
 
@@ -4450,12 +4613,10 @@ async fn enabling_failover_cannot_move_the_default_in_stack_mode() {
     enter(&state, &AppType::Claude, false)
         .await
         .expect("routing");
-    {
-        let _guard = lock_settled(&state, &AppType::Claude).await.unwrap();
-        switch_route_for_failover_locked(&state, &AppType::Claude, "kimi")
-            .await
-            .expect("switch");
-    }
+    let _guard = lock_settled(&state, &AppType::Claude).await.unwrap();
+    switch_route_for_failover_locked(&state, &AppType::Claude, "kimi")
+        .await
+        .expect("switch");
     assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("kimi"));
     state.proxy_service.stop().await.unwrap();
 }

@@ -2,6 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { useCodebuddyAccountQuota } from "@/lib/query/subscription";
 import { codebuddyQuotaState } from "@/components/settings/auth/AccountQuota";
+import { ManualQuotaIdle } from "@/components/SubscriptionQuotaFooter";
 import { QuotaLines } from "@/components/quota/QuotaLines";
 import { failedLines } from "@/components/quota/quotaRules";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
@@ -13,7 +14,8 @@ interface CodebuddyAccountQuotaFooterProps {
 
 /**
  * CodeBuddy 官方登录卡右侧的套餐积分：查卡片绑定的那个号（不用先切号），
- * 和授权中心那一行共用同一份查询；卡片上写成一行「套餐名 剩余积分」。
+ * 和授权中心那一行共用同一份查询；卡片上写成一行「套餐名 剩余积分」，有会到期的积分时
+ * 第二行写最早到期的那笔（和 WorkBuddy 官方卡一样，不带「到期」标签）。
  */
 const CodebuddyAccountQuotaFooter: React.FC<
   CodebuddyAccountQuotaFooterProps
@@ -27,7 +29,12 @@ const CodebuddyAccountQuotaFooter: React.FC<
     isError,
     error,
     refresh,
+    manualIdle,
   } = useCodebuddyAccountQuota(accountId, lang);
+  // 只手动查询、还没查过：写一句「点刷新查询额度」，首次手动加载期间也留着让 ↻ 转圈
+  if (!quota && !isError && manualIdle) {
+    return <ManualQuotaIdle inline loading={loading} refetch={refresh} />;
+  }
   const state =
     !quota && isError
       ? {
@@ -41,10 +48,11 @@ const CodebuddyAccountQuotaFooter: React.FC<
       ? failedLines(t, state.reason)
       : state.kind === "note"
         ? [{ key: "note", left: -2, tone: "muted" as const, text: state.text }]
-        : state.rows.map(({ label, line }) => ({
-            ...line,
-            text: `${label} ${line.text}`,
-          }));
+        : state.rows.map(({ label, line }) =>
+            line.key === "codebuddy_expiry"
+              ? line
+              : { ...line, text: `${label} ${line.text}` },
+          );
   return (
     <QuotaLines
       lines={lines}

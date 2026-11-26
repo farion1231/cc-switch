@@ -164,8 +164,9 @@ pub async fn set_auto_failover_enabled(
     log::info!(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );
-
-    let guard = crate::mode::controller::lock_settled(state.inner(), &app_enum).await?;
+    let guard = crate::mode::controller::lock_settled(state.inner(), &app_enum)
+        .await
+        .map_err(|e| e.to_string())?;
 
     if enabled && !crate::mode::current::is_proxy(&app_enum) {
         return Err("需要先让该应用进入路由模式，再开启故障转移".to_string());

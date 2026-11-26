@@ -1178,7 +1178,7 @@ pub(crate) async fn switch_route_for_failover_locked(
     let target =
         provider(state, app, provider_id)?.ok_or_else(|| format!("供应商不存在: {provider_id}"))?;
     reject_unsupported_official(app, &target)?;
-    if settled_stack(app)?.enabled {
+    if current::is_proxy(app) && settled_stack(app)?.enabled {
         return Err(
             "聚合模式不做故障转移，请先换回路由模式 (The Aggregation mode has no failover; switch back to the routing mode first)"
                 .to_string(),
@@ -1711,6 +1711,7 @@ pub async fn record_failover_route(
     app: &AppType,
     provider_id: &str,
     queue_revision: u64,
+    route_revision: u64,
 ) -> Result<bool, String> {
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
     let mode = current::mode_state(app);
@@ -1724,12 +1725,13 @@ pub async fn record_failover_route(
         );
         return Ok(false);
     }
-    if !state
-        .db
-        .get_proxy_config_for_app(app)
-        .await?
-        .auto_failover_enabled
+    if state.db.route_revision(app) != route_revision
         || state.db.failover_queue_revision() != queue_revision
+        || !state
+            .db
+            .get_proxy_config_for_app(app)
+            .await?
+            .auto_failover_enabled
     {
         return Ok(false);
     }

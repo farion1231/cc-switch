@@ -1,4 +1,4 @@
-//! CodeBuddy Code 的官方账号：在 CC Switch 里收录、切换。
+//! CodeBuddy 的官方账号：在 CC Switch 里收录、切换。
 //!
 //! CodeBuddy 只有一份全局登录：`<数据目录>/CodeBuddyExtension/Data/Public/auth/` 下的
 //! `Tencent-Cloud.coding-copilot.info`（明文 JSON，0600；国内版、国际版共用，靠 `auth.domain`

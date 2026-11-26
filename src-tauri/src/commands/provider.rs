@@ -3,12 +3,13 @@ use tauri::{Emitter, Manager, State};
 
 use super::run_db_task;
 use crate::app_config::AppType;
+use crate::commands::agy_account::AgyAccountState;
 use crate::commands::copilot::CopilotAuthState;
 use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta};
 use crate::provider_kind::ProviderKind;
-use crate::services::provider::{EditorSave, EditorView};
+use crate::services::provider::{agy_direct, EditorSave, EditorView};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
@@ -80,6 +81,14 @@ pub async fn add_provider(
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
+        if app_type == AppType::Agy && add_to_live {
+            return agy_direct::save_from_editor(
+                state.inner(),
+                &app_handle.state::<AgyAccountState>().0,
+                provider,
+            )
+            .map_err(|e| e.to_string());
+        }
         ProviderService::add_from_editor(state.inner(), app_type, provider, add_to_live, editorSave)
             .map_err(|e| e.to_string())
     })
@@ -100,6 +109,14 @@ pub async fn update_provider(
         let state = app_handle
             .try_state::<AppState>()
             .ok_or_else(|| "应用状态不可用".to_string())?;
+        if app_type == AppType::Agy && originalId.as_ref().is_none_or(|id| id == &provider.id) {
+            return agy_direct::save_from_editor(
+                state.inner(),
+                &app_handle.state::<AgyAccountState>().0,
+                provider,
+            )
+            .map_err(|e| e.to_string());
+        }
         ProviderService::update_from_editor(
             state.inner(),
             app_type,

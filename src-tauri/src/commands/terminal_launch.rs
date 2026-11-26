@@ -191,7 +191,11 @@ pub async fn open_provider_terminal(
     let mut launch = match app_type {
         AppType::Agy => {
             if !(cfg!(target_os = "linux") && agyUseCurrentLogin == Some(true)) {
-                switch_agy_to_bound_account(&agy_accounts.0, provider).await?;
+                crate::services::provider::agy_direct::switch_to_bound_account(
+                    &agy_accounts.0,
+                    provider,
+                )
+                .await?;
             }
             agy_terminal_launch(provider)?
         }
@@ -661,52 +665,6 @@ fn claude_account_terminal_launch(config_dir: Option<PathBuf>) -> ProviderLaunch
         batch_vars: Vec::new(),
         cleanup: Vec::new(),
     }
-}
-
-/// 官方卡绑了授权中心的账号时，先把 agy 的全局登录切到它（已经是它就不写）。没绑的卡跟着
-/// agy 当前的登录走。不能切号的平台忽略绑定，照常打开。
-async fn switch_agy_to_bound_account(
-    accounts: &crate::services::agy_account::AgyAccountManager,
-    provider: &crate::provider::Provider,
-) -> Result<(), String> {
-    if !crate::services::provider::agy_direct::is_official(provider) {
-        return Ok(());
-    }
-    let Some(account_id) = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.managed_account_id_for("agy_oauth"))
-        .filter(|id| !id.trim().is_empty())
-    else {
-        return Ok(());
-    };
-    if !crate::services::agy_account::keychain::supported() {
-        log::info!("[AgyAccount] 这个平台不能切号，忽略卡片绑定的账号");
-        return Ok(());
-    }
-    if !accounts
-        .list()
-        .await
-        .iter()
-        .any(|account| account.id == account_id)
-    {
-        return Err(crate::error::AppError::localized(
-            "agy.account.bound_missing",
-            format!(
-                "「{}」绑定的 Antigravity 账号不在这台电脑的授权中心里：请先在授权中心添加它，或编辑这张卡改选账号",
-                provider.name
-            ),
-            format!(
-                "The Antigravity account bound to \"{}\" is not in this computer's Auth Center. Add it there, or edit the card to choose another account.",
-                provider.name
-            ),
-        )
-        .to_string());
-    }
-    accounts
-        .switch_to(&account_id)
-        .await
-        .map_err(|error| error.to_string())
 }
 
 /// Antigravity CLI：官方登录卡跑 `agy`，卡上设了模型就加 `--model`（只对这次会话生效）；

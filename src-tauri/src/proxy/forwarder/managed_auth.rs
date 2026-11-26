@@ -9,15 +9,13 @@ impl RequestForwarder {
         &self,
         provider: &Provider,
     ) -> Result<String, ProxyError> {
-        let Some(app_handle) = &self.app_handle else {
+        let Some(auth) = self.copilot_auth() else {
             log::error!("[Copilot] AppHandle 不可用");
             return Err(ProxyError::AuthError(
                 "GitHub Copilot 认证不可用（无 AppHandle）".to_string(),
             ));
         };
-        let copilot_state = app_handle.state::<CopilotAuthState>();
-        let copilot_auth: tokio::sync::RwLockReadGuard<'_, CopilotAuthManager> =
-            copilot_state.0.read().await;
+        let copilot_auth = auth.read().await;
 
         // 从 provider.meta 获取关联的 GitHub 账号 ID（多账号支持）
         let account_id = provider

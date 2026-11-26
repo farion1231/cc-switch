@@ -196,7 +196,7 @@ ${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
 bun install -g @oh-my-pi/pi-coding-agent@latest
 # GitHub Copilot CLI
 npm i -g @github/copilot@latest
-# CodeBuddy Code
+# CodeBuddy
 npm i -g @tencent-ai/codebuddy-code@latest`;
 
 const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
@@ -227,7 +227,7 @@ ${AGY_WINDOWS_INSTALL_COMMAND}
 bun install -g @oh-my-pi/pi-coding-agent@latest
 # GitHub Copilot CLI
 npm i -g @github/copilot@latest
-# CodeBuddy Code
+# CodeBuddy
 npm i -g @tencent-ai/codebuddy-code@latest`;
 
 export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
@@ -249,7 +249,7 @@ export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   agy: "Antigravity CLI",
   omp: "Oh My Pi",
   copilot: "GitHub Copilot CLI",
-  codebuddy: "CodeBuddy Code",
+  codebuddy: "CodeBuddy",
 };
 
 // 后端返回的 tool 是 string；这里收敛唯一的 ToolName 断言与兜底，供升级确认

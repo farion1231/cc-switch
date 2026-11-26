@@ -421,18 +421,26 @@ pub fn commit_target(
     }
     // 模式、写入记录和 Stack 模型在同一次状态文件写入里落定。
     if target.state.is_some() || target.written.is_some() || target.stack.is_some() {
+        let mut route_changed = false;
         state::update(store, |live| {
             let entry = live.apps.entry(app.to_string()).or_default();
             if let Some(mode) = &target.state {
+                route_changed |= entry.mode != mode.mode
+                    || entry.attached != mode.attached
+                    || entry.proxy_route != mode.proxy_route;
                 entry.set_mode_state(mode.clone());
             }
             if let Some(written) = &target.written {
                 entry.written = Some(written.clone());
             }
             if let Some(stack) = &target.stack {
+                route_changed |= entry.stack.enabled != stack.enabled;
                 entry.stack = stack.clone();
             }
         })?;
+        if let (true, Ok(app)) = (route_changed, app.parse()) {
+            db.advance_route_revision(&app);
+        }
     }
     if let Some(mode) = &target.state {
         mirror_proxy_flag(db, app, mode.is_proxy())?;

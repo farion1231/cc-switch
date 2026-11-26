@@ -290,6 +290,8 @@ export interface CodebuddyQuota {
   total: number;
   remaining: number;
   used: number;
+  /** 还有剩余的各资源包各自什么时候到期，按到期先后排；null 表示这次没查到套餐明细 */
+  expiries: WorkBuddyCreditExpiry[] | null;
   error: string | null;
   queriedAt: number | null;
 }
