@@ -77,6 +77,9 @@ jobs:
               - "src-tauri/src/config.rs"
               - "src-tauri/src/error.rs"
               - "src-tauri/src/hermes_config.rs"
+              - "src-tauri/src/opencode_config.rs"
+              - "src-tauri/src/services/opencode_wsl_snapshot.rs"
+              - "src-tauri/src/services/session_usage_opencode.rs"
               - "src-tauri/src/sync_utils.rs"
               - "src-tauri/src/session_manager/**"
               - "src-tauri/src/lib.rs"
@@ -394,6 +397,24 @@ jobs:
           if ($testList -notcontains "${testName}: test") { throw "Hermes WSL test not discovered" }
           & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run OpenCode snapshots inside WSL2
+        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        env:
+          CC_SWITCH_WSL_DISTRO: Ubuntu-24.04
+        shell: pwsh
+        run: |
+          $tests = @(
+            "session_manager::providers::opencode::tests::wsl2_snapshot_reads_live_wal",
+            "services::session_usage_opencode::tests::wsl2_live_usage_snapshot_reference"
+          )
+          $testList = & $env:CC_SWITCH_TEST_EXE --list --ignored
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($testName in $tests) {
+            if ($testList -notcontains "${testName}: test") { throw "OpenCode WSL test not discovered: $testName" }
+            & $env:CC_SWITCH_TEST_EXE $testName --ignored --exact --nocapture
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
 
   # 分支保护里唯一的必过检查。各 job 按路径分流会被跳过，不能逐个设成必过（被跳过的永远等不到结果），
   # 所以由这个 job 汇总：每个上游 job 要么成功、要么被跳过，失败或取消即拦下。

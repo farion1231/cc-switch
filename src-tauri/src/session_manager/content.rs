@@ -480,8 +480,17 @@ fn read_sqlite_cell(
             .map(str::to_string)
             .ok_or_else(|| NOT_TEXT.to_string());
     }
+    #[cfg(windows)]
+    let read_db = if provider_id == "opencode" {
+        crate::services::opencode_wsl_snapshot::read_db_path(db)
+            .map_err(|error| format!("无法准备 OpenCode WSL 快照: {error}"))?
+    } else {
+        db.to_path_buf()
+    };
+    #[cfg(not(windows))]
+    let read_db = db.to_path_buf();
     let conn = Connection::open_with_flags(
-        db,
+        &read_db,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|_| "无法打开会话数据库".to_string())?;

@@ -41,6 +41,21 @@ impl SqliteRevisions {
         let SourceLocation::Sqlite { db, session_id } = &source.location else {
             return Err("Expected a SQLite session source".into());
         };
+        // Windows cannot lock a live WSL SQLite database. Compute the revision
+        // from the local snapshot instead of opening the live database through
+        // 9P; the snapshot is refreshed only when the live DB/WAL changes.
+        #[cfg(windows)]
+        if source.provider_id == "opencode" && crate::session_manager::opencode_wsl::is_wsl(db) {
+            let read_db = crate::services::opencode_wsl_snapshot::read_db_path(db)
+                .map_err(|error| format!("Cannot prepare OpenCode WSL snapshot: {error}"))?;
+            let conn = Connection::open_with_flags(
+                read_db,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(|e| e.to_string())?;
+            return revision(&conn, &source.provider_id, session_id)
+                .map_err(|e| format!("Cannot read session revision: {e}"));
+        }
         let result = (|| -> Result<StoredFingerprint, String> {
             if !self.databases.contains_key(db) {
                 let fingerprint =
