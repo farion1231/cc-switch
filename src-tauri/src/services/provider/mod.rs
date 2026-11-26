@@ -312,7 +312,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let _env = EnvVars::new()
             .set("CC_SWITCH_TEST_HOME", temp.path())
-            .set("HOME", temp.path());
+            .set("HOME", temp.path())
+            // Hermes resolves its default directory from LOCALAPPDATA on
+            // Windows, not from the home override used by the rest of the app.
+            .set("LOCALAPPDATA", temp.path())
+            .set("HERMES_HOME", temp.path().join(".hermes"));
         // Settings are process-global and may contain a real developer's
         // directory overrides. Reset them for the test home, then restore the
         // cache before the environment guard removes that home.

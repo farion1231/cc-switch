@@ -12,17 +12,13 @@ use super::utils::{parse_timestamp_to_ms, path_basename, truncate_summary, ScanS
 
 const PROVIDER_ID: &str = "opencode";
 
-/// Return the OpenCode base directory (`$XDG_DATA_HOME/opencode`).
+/// Return the OpenCode base data directory.
 ///
-/// Respects `XDG_DATA_HOME` on all platforms; falls back to
-/// `~/.local/share/opencode/`.
+/// Path resolution is shared with the usage importer: a configured OpenCode
+/// directory (including a WSL UNC path on Windows) must resolve sessions and
+/// the SQLite database from the same data root.
 pub(crate) fn get_opencode_base_dir() -> PathBuf {
-    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
-        if !xdg.is_empty() {
-            return PathBuf::from(xdg).join("opencode");
-        }
-    }
-    crate::config::get_home_dir().join(".local/share/opencode")
+    crate::opencode_config::get_opencode_data_dir()
 }
 
 /// Return the OpenCode JSON storage directory (legacy flat-file layout).
@@ -178,13 +174,32 @@ fn scan_sessions_sqlite() -> Vec<SessionMeta> {
 }
 
 fn scan_sessions_sqlite_with_status(status: &mut ScanStatus) -> Vec<SessionMeta> {
-    let db_path = get_opencode_db_path();
-    if status.metadata(&db_path).is_none() {
+    scan_sessions_sqlite_from_path(&get_opencode_db_path(), status)
+}
+
+#[cfg(all(test, windows))]
+fn scan_sessions_sqlite_at(db_path: &Path) -> Vec<SessionMeta> {
+    scan_sessions_sqlite_from_path(db_path, &mut ScanStatus::default())
+}
+
+fn scan_sessions_sqlite_from_path(db_path: &Path, status: &mut ScanStatus) -> Vec<SessionMeta> {
+    let read_db = match opencode_read_db_path(db_path) {
+        Ok(path) => path,
+        Err(error) => {
+            log::warn!(
+                "Failed to prepare OpenCode database {}: {error}",
+                db_path.display()
+            );
+            status.incomplete = true;
+            return Vec::new();
+        }
+    };
+    if status.metadata(&read_db).is_none() {
         return Vec::new();
     }
 
     let conn = match Connection::open_with_flags(
-        &db_path,
+        &read_db,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     ) {
         Ok(c) => c,
@@ -201,11 +216,24 @@ fn scan_sessions_sqlite_with_status(status: &mut ScanStatus) -> Vec<SessionMeta>
     } else {
         OpenCodeSchema::V1
     };
+    // Source paths stay on the live WSL database so deletion/validation still
+    // target the real database, while reads use the local snapshot.
     let db_display = db_path.display().to_string();
 
     match schema {
         OpenCodeSchema::V1 => scan_sessions_sqlite_v1(&conn, &db_display, status),
         OpenCodeSchema::V2 => scan_sessions_sqlite_v2(&conn, &db_display, status),
+    }
+}
+
+fn opencode_read_db_path(db_path: &Path) -> Result<PathBuf, String> {
+    #[cfg(windows)]
+    {
+        crate::services::opencode_wsl_snapshot::read_db_path(db_path)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(db_path.to_path_buf())
     }
 }
 
@@ -428,9 +456,10 @@ fn read_json(path: &Path) -> Option<Value> {
 pub fn load_messages_sqlite(source: &str) -> Result<Vec<SessionMessage>, String> {
     let (db_path, session_id) = parse_sqlite_source(source)
         .ok_or_else(|| format!("Invalid SQLite source reference: {source}"))?;
+    let read_db = opencode_read_db_path(&db_path)?;
 
     let conn = Connection::open_with_flags(
-        &db_path,
+        &read_db,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|e| format!("Failed to open OpenCode database: {e}"))?;
@@ -754,6 +783,11 @@ pub fn delete_session_sqlite(session_id: &str, source: &str) -> Result<bool, Str
         return Err("SQLite path does not match expected OpenCode database".to_string());
     }
 
+    #[cfg(windows)]
+    if crate::session_manager::opencode_wsl::is_wsl(&db_path) {
+        return crate::session_manager::opencode_wsl::delete_session(&db_path, session_id);
+    }
+
     let conn =
         Connection::open(&db_path).map_err(|e| format!("Failed to open OpenCode database: {e}"))?;
 
@@ -1038,6 +1072,7 @@ fn remove_dir_all_if_exists(path: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::EnvVars;
     use rusqlite::Connection;
     use std::sync::{Mutex, OnceLock};
     use tempfile::tempdir;
@@ -1193,6 +1228,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn scan_sessions_sqlite_reads_temp_database() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
@@ -1205,6 +1241,7 @@ mod tests {
         let base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&base_dir).expect("create base dir");
         let db_path = base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &db_path);
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema(&conn);
 
@@ -1312,6 +1349,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn delete_session_sqlite_removes_session() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
@@ -1324,6 +1362,7 @@ mod tests {
         let base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&base_dir).expect("create base dir");
         let db_path = base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &db_path);
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema(&conn);
 
@@ -1383,6 +1422,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn delete_session_sqlite_rejects_foreign_db_path() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
@@ -1395,6 +1435,7 @@ mod tests {
         let expected_base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&expected_base_dir).expect("create expected base dir");
         let expected_db_path = expected_base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &expected_db_path);
         Connection::open(&expected_db_path).expect("create expected sqlite db");
 
         let db_path = temp.path().join("foreign.db");
@@ -1445,6 +1486,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn scan_sessions_sqlite_v2_reads_temp_database() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
@@ -1457,6 +1499,7 @@ mod tests {
         let base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&base_dir).expect("create base dir");
         let db_path = base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &db_path);
         let conn = Connection::open(&db_path).expect("open sqlite db");
         // V1 tables also exist (empty) after migration
         create_sqlite_schema(&conn);
@@ -1550,6 +1593,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn delete_session_sqlite_v2_removes_session() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
@@ -1562,6 +1606,7 @@ mod tests {
         let base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&base_dir).expect("create base dir");
         let db_path = base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &db_path);
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema_v2(&conn);
 
@@ -1658,6 +1703,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn mixed_v1_v2_database_scans_loads_and_deletes_post_migration_v1_sessions() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
             return;
@@ -1670,6 +1716,7 @@ mod tests {
         let base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&base_dir).expect("create base dir");
         let db_path = base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &db_path);
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema(&conn);
         create_sqlite_schema_v2(&conn);
@@ -1786,6 +1833,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     #[allow(deprecated)]
     fn session_in_both_tables_continued_in_v1_reads_newer_v1_messages_and_meta() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
@@ -1799,6 +1847,7 @@ mod tests {
         let base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&base_dir).expect("create base dir");
         let db_path = base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &db_path);
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema(&conn);
         create_sqlite_schema_v2(&conn);
@@ -1879,6 +1928,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     #[allow(deprecated)]
     fn session_in_both_tables_v1_metadata_update_only_preserves_newer_v2_messages() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
@@ -1892,6 +1942,7 @@ mod tests {
         let base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&base_dir).expect("create base dir");
         let db_path = base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &db_path);
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema(&conn);
         create_sqlite_schema_v2(&conn);
@@ -1978,6 +2029,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     #[allow(deprecated)]
     fn interrupted_migration_incomplete_phase_does_not_hide_unmigrated_v1_sessions() {
         if crate::config::sqlite_unsupported_in_temp_dir() {
@@ -1991,6 +2043,7 @@ mod tests {
         let base_dir = temp.path().join("opencode");
         std::fs::create_dir_all(&base_dir).expect("create base dir");
         let db_path = base_dir.join("opencode.db");
+        let _db_env = EnvVars::new().set("OPENCODE_DB", &db_path);
         let conn = Connection::open(&db_path).expect("open sqlite db");
         create_sqlite_schema(&conn);
         create_sqlite_schema_v2(&conn);
@@ -2075,5 +2128,91 @@ mod tests {
         } else {
             std::env::remove_var("XDG_DATA_HOME");
         }
+    }
+
+    /// Diagnostic reference only: requires a real Windows host and WSL2 distro.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    #[serial_test::serial]
+    fn wsl2_snapshot_reads_live_wal() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::process::{Command, Stdio};
+
+        let distro = std::env::var("CC_SWITCH_WSL_DISTRO").expect("WSL distro");
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let native_path = format!(
+            "/tmp/ccswitch-opencode-snapshot-{}-{unique}.db",
+            std::process::id()
+        );
+        let mut writer = Command::new("wsl.exe")
+            .args(["--distribution", &distro, "--exec", "python3", "-u", "-c"])
+            .arg(
+                r#"import sqlite3,sys,os
+p=sys.argv[1]
+c=sqlite3.connect(p,isolation_level=None)
+c.execute('PRAGMA journal_mode=WAL')
+c.execute('PRAGMA wal_autocheckpoint=0')
+c.execute('CREATE TABLE session_v2 (id TEXT PRIMARY KEY,title TEXT,directory TEXT,time_created INTEGER,time_updated INTEGER)')
+c.execute('CREATE TABLE session_message (id TEXT PRIMARY KEY,session_id TEXT,type TEXT,seq INTEGER,time_created INTEGER,time_updated INTEGER,data TEXT)')
+c.execute("INSERT INTO session_v2 VALUES('ses_wsl','WSL session','/tmp/project',100,200)")
+c.execute("INSERT INTO session_message VALUES('msg_wsl','ses_wsl','assistant',1,100,200,?)",('{"tokens":{"input":10,"output":2},"model":{"id":"wsl-model"},"time":{"created":100,"completed":200},"content":[{"type":"text","text":"wsl answer"}]}',))
+print('ready',flush=True)
+for action in sys.stdin:
+    action=action.strip()
+    if action=='second':
+        c.execute("INSERT INTO session_message VALUES('msg_wsl_2','ses_wsl','assistant',2,200,300,?)",('{"tokens":{"input":3,"output":1},"model":{"id":"wsl-model"},"time":{"created":200,"completed":300},"content":[{"type":"text","text":"wsl second"}]}',))
+    elif action=='exit': break
+    print(action,flush=True)
+c.close()
+for suffix in ('','-wal','-shm'):
+    try: os.unlink(p+suffix)
+    except FileNotFoundError: pass
+"#,
+            )
+            .arg(&native_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("WSL Python writer");
+        let mut output = BufReader::new(writer.stdout.take().unwrap());
+        let mut line = String::new();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "ready");
+
+        let local_home = tempdir().expect("local snapshot cache home");
+        let _env = EnvVars::new().set("CC_SWITCH_TEST_HOME", local_home.path());
+        let unc = PathBuf::from(format!(
+            r"\\wsl.localhost\{}{}",
+            distro,
+            native_path.replace('/', "\\")
+        ));
+        let sessions = scan_sessions_sqlite_at(&unc);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "ses_wsl");
+        assert_eq!(sessions[0].title.as_deref(), Some("WSL session"));
+        assert!(sessions[0]
+            .source_path
+            .as_deref()
+            .is_some_and(|source| source.contains("ses_wsl")));
+
+        let source = format!("sqlite:{}:ses_wsl", unc.display());
+        let messages = load_messages_sqlite(&source).expect("load WSL snapshot messages");
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].content.contains("wsl answer"));
+
+        writeln!(writer.stdin.as_mut().unwrap(), "second").unwrap();
+        line.clear();
+        output.read_line(&mut line).unwrap();
+        assert_eq!(line.trim(), "second");
+        let messages = load_messages_sqlite(&source).expect("refresh WSL snapshot");
+        assert_eq!(messages.len(), 2, "WAL write must be visible");
+
+        writeln!(writer.stdin.as_mut().unwrap(), "exit").unwrap();
+        assert!(writer.wait().unwrap().success());
     }
 }

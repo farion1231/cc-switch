@@ -3,6 +3,8 @@ pub mod content;
 #[cfg(windows)]
 pub(crate) mod hermes_wsl;
 pub mod model;
+#[cfg(windows)]
+pub(crate) mod opencode_wsl;
 pub mod providers;
 pub mod search;
 mod search_revision;
