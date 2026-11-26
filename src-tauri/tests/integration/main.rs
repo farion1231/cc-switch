@@ -22,7 +22,6 @@ mod profile_roundtrip;
 mod prompt_live_sync;
 mod provider_commands;
 mod provider_service;
-mod proxy_blackbox_e2e;
 mod proxy_commands;
 mod skill_sync;
 mod workbuddy_commands;
