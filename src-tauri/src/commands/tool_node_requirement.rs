@@ -18,10 +18,9 @@ pub struct NodeRequirementGap {
 pub(super) async fn update_node_gap(
     client: &reqwest::Client,
     tool: &str,
+    package: &str,
     target: &str,
 ) -> Option<NodeRequirementGap> {
-    // OpenCode 2.x 是另一个包；目标版本决定查哪个包的 `engines.node`。
-    let package = npm_package_for_version(tool, Some(target))?.name;
     // MiniMax Code 的官方 installer 在系统 Node 不达标时会自带一份 Node。
     if tool == "mcode" {
         return None;
@@ -34,6 +33,39 @@ pub(super) async fn update_node_gap(
     let current = tokio::task::spawn_blocking(move || update_node_version(&owned))
         .await
         .ok()??;
+    node_gap_for_version(client, package, target, current).await
+}
+
+pub(super) async fn selected_npm_update_node_gap(
+    client: &reqwest::Client,
+    tool: &str,
+    launcher: PathBuf,
+    real: PathBuf,
+    target: &str,
+) -> Option<NodeRequirementGap> {
+    if tool == "mcode" {
+        return None;
+    }
+    let tool = tool.to_string();
+    let (package, current) = tokio::task::spawn_blocking(move || {
+        let (_, manifest) =
+            npm_global_package(&tool, &launcher, &real, cfg!(target_os = "windows"))?;
+        let name = manifest.get("name")?.as_str()?;
+        let package = npm_package_candidates(&tool).find(|candidate| *candidate == name)?;
+        let npm = tool_lifecycle_command::selected_npm_executable(&launcher)?;
+        Some((package, node_version_near(npm.parent()?)?))
+    })
+    .await
+    .ok()??;
+    node_gap_for_version(client, package, target, current).await
+}
+
+async fn node_gap_for_version(
+    client: &reqwest::Client,
+    package: &str,
+    target: &str,
+    current: String,
+) -> Option<NodeRequirementGap> {
     let required = fetch_engines_node(client, package, target).await?;
     match node_range_satisfied(&required, &current) {
         Some(false) => Some(NodeRequirementGap { required, current }),
@@ -43,7 +75,19 @@ pub(super) async fn update_node_gap(
 
 /// 执行升级前的检查：目标是 `latest`（`npm i -g <pkg>@latest` 与各家 self-update 的稳定通道）。
 pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
-    let Some(package) = tool_spec(tool).npm_package else {
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return Ok(());
+    }
+    let version = if tool == "opencode" {
+        tokio::task::spawn_blocking(|| local_tool_version("opencode"))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let Some(package) = tool_version::npm_package_for_version(tool, version.as_deref()) else {
         return Ok(());
     };
     let client = crate::proxy::http_client::get();
@@ -53,7 +97,7 @@ pub(super) async fn ensure_update_node(tool: &str) -> Result<(), String> {
     else {
         return Ok(());
     };
-    match update_node_gap(&client, tool, &latest).await {
+    match update_node_gap(&client, tool, package, &latest).await {
         Some(gap) => {
             let name = tool_spec(tool).display_name;
             Err(format!(
@@ -79,16 +123,16 @@ fn update_node_version(tool: &str) -> Option<String> {
         return None;
     }
 
-    let sibling = Path::new(&inst.path)
-        .parent()
-        .map(|dir| {
-            dir.join(if cfg!(target_os = "windows") {
-                "node.exe"
-            } else {
-                "node"
-            })
-        })
-        .filter(|node| node.is_file());
+    node_version_near(Path::new(&inst.path).parent()?)
+}
+
+fn node_version_near(bin: &Path) -> Option<String> {
+    let sibling = bin.join(if cfg!(target_os = "windows") {
+        "node.exe"
+    } else {
+        "node"
+    });
+    let sibling = sibling.is_file().then_some(sibling);
     let node = match sibling {
         Some(node) => node,
         None => resolve_path_default(
@@ -103,7 +147,12 @@ fn update_node_version(tool: &str) -> Option<String> {
     let path = prepend_search_dir_to_path(dir, &effective_path_os().unwrap_or_default());
     #[cfg(target_os = "windows")]
     let path = format!("{};{}", dir.display(), effective_path_string());
-    let output = run_probe_version_command(&node, &path).ok()?;
+    let output = run_probe_version_command(
+        &node,
+        &path,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -265,6 +314,29 @@ fn comparator(op: &str, parts: &[u64]) -> Option<Vec<Bound>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn selected_npm_bins_probe_their_own_node_versions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        for version in ["22.23.2", "24.16.0"] {
+            let bin = temp.path().join(version);
+            std::fs::create_dir(&bin).unwrap();
+            let npm = bin.join("npm");
+            std::fs::write(&npm, "").unwrap();
+            let node = bin.join("node");
+            std::fs::write(&node, format!("#!/bin/sh\nprintf 'v{version}\\n'\n")).unwrap();
+            std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let selected = tool_lifecycle_command::selected_npm_executable(&bin.join("codex"));
+            assert_eq!(selected.as_deref(), Some(npm.as_path()));
+            assert_eq!(
+                node_version_near(selected.as_deref().unwrap().parent().unwrap()).as_deref(),
+                Some(version),
+            );
+        }
+    }
 
     #[test]
     fn common_engine_ranges() {

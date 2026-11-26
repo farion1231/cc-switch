@@ -31,6 +31,7 @@ pub(super) fn build_tool_lifecycle_command(
     tools: &[&str],
     action: ToolLifecycleAction,
     wsl_shell_by_tool: Option<&HashMap<String, WslShellPreferenceInput>>,
+    confirmed_update: Option<&str>,
 ) -> Result<String, String> {
     let mut lines = Vec::new();
 
@@ -63,6 +64,7 @@ pub(super) fn build_tool_lifecycle_command(
             action,
             pref.and_then(|p| p.wsl_shell.as_deref()),
             pref.and_then(|p| p.wsl_shell_flag.as_deref()),
+            confirmed_update,
         )?;
         lines.push(line);
 
@@ -301,6 +303,186 @@ fn codex_standalone_install(bin_path: &str, real_target: &str) -> Option<CodexSt
         })
 }
 
+pub(super) fn is_standalone_codex(launcher: &Path, real: &Path) -> bool {
+    codex_standalone_install(&launcher.to_string_lossy(), &real.to_string_lossy()).is_some()
+}
+
+/// These native updaters write to a fixed location in the current user's home.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn is_standard_curl_install(tool: &str, real: &Path) -> bool {
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+    match tool {
+        "claude" => real.parent().is_some_and(|dir| {
+            home.join(".local/share/claude/versions")
+                .canonicalize()
+                .is_ok_and(|versions| versions == dir)
+        }),
+        "opencode" => home
+            .join(".opencode/bin/opencode")
+            .canonicalize()
+            .is_ok_and(|entry| entry == real),
+        _ => false,
+    }
+}
+
+fn omp_distro_owned_path(path: &Path) -> bool {
+    (path.starts_with("/usr") && !path.starts_with("/usr/local"))
+        || ["/bin", "/sbin", "/lib", "/lib64"]
+            .iter()
+            .any(|root| path.starts_with(root))
+}
+
+pub(super) fn omp_update_directory(launcher: &Path) -> Option<PathBuf> {
+    if !launcher.is_absolute() {
+        return None;
+    }
+    #[cfg(target_os = "windows")]
+    let launcher = windows_shell_compatible_path(launcher);
+    let directory = launcher.parent()?.to_owned();
+    if directory
+        .to_str()?
+        .contains(if cfg!(windows) { ';' } else { ':' })
+    {
+        return None;
+    }
+    Some(directory)
+}
+
+/// Keep inherited PATH literal (including quoted Windows entries). No shell parses it.
+pub(super) fn omp_update_path(
+    directory: &Path,
+    inherited: &std::ffi::OsStr,
+) -> Option<std::ffi::OsString> {
+    let mut path = std::env::join_paths([directory]).ok()?;
+    path.push(if cfg!(windows) { ";" } else { ":" });
+    path.push(inherited);
+    Some(path)
+}
+
+#[cfg(any(target_os = "windows", test))]
+pub(super) fn omp_native_update_process(
+    launcher: &Path,
+    home: &Path,
+    inherited: &std::ffi::OsStr,
+) -> Option<std::process::Command> {
+    let directory = omp_update_directory(launcher)?;
+    let mut command = std::process::Command::new(launcher);
+    command
+        .arg("update")
+        .current_dir(home)
+        .env("PATH", omp_update_path(&directory, inherited)?);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    Some(command)
+}
+
+fn omp_native_update_command(bin_path: &str, home: &Path) -> Option<String> {
+    let directory = omp_update_directory(Path::new(bin_path))?;
+    #[cfg(not(target_os = "windows"))]
+    return Some(format!(
+        "cd {} && PATH={}:\"$PATH\" {} update",
+        shell_single_quote(&home.to_string_lossy()),
+        shell_single_quote(directory.to_str()?),
+        shell_single_quote(bin_path)
+    ));
+    #[cfg(target_os = "windows")]
+    {
+        let _ = (directory, home);
+        // Preview only. The validated plan executes as native argv, never a batch script.
+        Some(format!("{} update", win_double_quote(bin_path)))
+    }
+}
+
+fn omp_managed_path(path: &Path) -> bool {
+    let normalized = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    omp_distro_owned_path(path)
+        || path.with_extension("shim").is_file()
+        || path.with_extension("bunx").is_file()
+        || matches!(
+            infer_install_source(path),
+            "npm" | "pnpm" | "bun" | "mise" | "volta" | "nvm" | "fnm" | "nix" | "scoop"
+        )
+        || [
+            "/node_modules/",
+            "/cellar/",
+            "/caskroom/",
+            "/nix/store/",
+            "/.bun/",
+            "/.volta/",
+            "/.local/share/mise/",
+            "/.local/share/pnpm/",
+        ]
+        .iter()
+        .any(|marker| normalized.contains(marker))
+}
+
+/// Native installers allow PI_INSTALL_DIR. Reject manager-owned paths at every
+/// link in the chain, including directory links; use only for checks and updates.
+pub(super) fn is_omp_standalone_install(launcher: &Path, real: &Path) -> bool {
+    if !launcher.is_absolute()
+        || !launcher.file_name().is_some_and(|name| {
+            name.eq_ignore_ascii_case("omp") || name.eq_ignore_ascii_case("omp.exe")
+        })
+        || !is_native_executable(real)
+        || launcher.canonicalize().ok().as_deref() != Some(real)
+        || omp_managed_path(real)
+    {
+        return false;
+    }
+    let mut path = launcher.to_owned();
+    for _ in 0..64 {
+        if omp_managed_path(&path)
+            || npm_global_package("omp", &path, real, cfg!(target_os = "windows")).is_some()
+        {
+            return false;
+        }
+        let mut prefix = PathBuf::new();
+        let mut components = path.components();
+        let mut redirect = None;
+        while let Some(component) = components.next() {
+            match component {
+                std::path::Component::ParentDir => {
+                    let _ = prefix.pop();
+                }
+                std::path::Component::CurDir => {}
+                component => prefix.push(component.as_os_str()),
+            }
+            let candidate = prefix.join(components.as_path());
+            if omp_managed_path(&candidate)
+                || npm_global_package("omp", &candidate, real, cfg!(target_os = "windows"))
+                    .is_some()
+            {
+                return false;
+            }
+            if let Ok(target) = std::fs::read_link(&prefix) {
+                let target = if target.is_absolute() {
+                    target
+                } else {
+                    let Some(parent) = prefix.parent() else {
+                        return false;
+                    };
+                    parent.join(target)
+                };
+                redirect = Some(target.join(components.as_path()));
+                break;
+            }
+        }
+        match redirect {
+            Some(target) => path = target,
+            None => return true,
+        }
+    }
+    false
+}
+
 /// 重跑官方 installer 升级独立安装那一处。显式传 `CODEX_INSTALL_DIR` / `CODEX_HOME`
 /// 写回探测到的位置（实测自定义目录时会原地升级、不在默认目录多装一份）；
 /// `CODEX_NON_INTERACTIVE=1` 与 `codex update` 自己重跑 installer 时的做法一致。
@@ -486,10 +668,61 @@ fn wsl_tool_action_shell_command(tool: &str, action: ToolLifecycleAction) -> Opt
                 Some(command)
             }
         }
+        ToolLifecycleAction::Update if tool == "opencode" => bare_official_update_command(tool),
         ToolLifecycleAction::Update => {
             tool_action_shell_command_for_shell(tool, action, LifecycleCommandShell::Posix)
         }
     }
+}
+
+pub(super) fn update_confirmation_token(
+    tool: &str,
+    command: &str,
+    installs: &[ToolInstallation],
+) -> String {
+    use sha2::{Digest, Sha256};
+    let mut entries: Vec<_> = installs.iter().collect();
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut digest = Sha256::new();
+    digest.update(tool.as_bytes());
+    digest.update([0]);
+    digest.update(command.as_bytes());
+    for entry in entries {
+        digest.update([0]);
+        digest.update(entry.path.as_bytes());
+        digest.update([0]);
+        digest.update(entry.real.as_os_str().as_encoded_bytes());
+        digest.update([u8::from(entry.is_path_default)]);
+    }
+    format!("{:x}", digest.finalize())
+}
+
+fn checked_update_command(
+    tool: &str,
+    installs: &[ToolInstallation],
+    confirmed_update: Option<&str>,
+) -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    if tool == "omp"
+        && !default_install(installs).is_some_and(|install| {
+            // The existing Bun shim route remains available. This immutable layout
+            // decision cannot turn into a standalone preview during a later FS read.
+            install.source == "bun" && infer_install_source(Path::new(&install.path)) == "bun"
+        })
+    {
+        return Err("Select and confirm the detected Oh My Pi installation to update it.".into());
+    }
+    let command = match resolve_update_command(tool, installs) {
+        UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
+        UpdateCommand::Unmanaged => return Err(unmanaged_update_error(tool, installs)),
+    };
+    if installs.len() >= 2 || confirmed_update.is_some() {
+        let current = update_confirmation_token(tool, &command, installs);
+        if confirmed_update != Some(current.as_str()) {
+            return Err("The installation changed or needs review. Check the installed versions and confirm the update again.".to_string());
+        }
+    }
+    Ok(command)
 }
 
 fn build_tool_action_line(
@@ -497,6 +730,7 @@ fn build_tool_action_line(
     action: ToolLifecycleAction,
     wsl_shell: Option<&str>,
     wsl_shell_flag: Option<&str>,
+    confirmed_update: Option<&str>,
 ) -> Result<String, String> {
     #[cfg(target_os = "windows")]
     {
@@ -508,6 +742,14 @@ fn build_tool_action_line(
         //    后者在 Windows target 给 hermes 返回 PowerShell installer,且 Windows batch
         //    语义也不适合跨 wsl.exe;这里统一替换为 POSIX 版安装/更新命令。
         if let Some(distro) = wsl_distro_for_tool(tool) {
+            if confirmed_update.is_some() {
+                return Err(
+                    "The installation environment changed. Confirm the update again.".into(),
+                );
+            }
+            if tool == "opencode" && matches!(action, ToolLifecycleAction::Update) {
+                return Err("Run the OpenCode WSL update separately.".into());
+            }
             let command = wsl_tool_action_shell_command(tool, action)
                 .ok_or_else(|| format!("Unsupported tool action target: {tool}"))?;
             return build_wsl_tool_action_line(&distro, &command, wsl_shell, wsl_shell_flag);
@@ -520,12 +762,7 @@ fn build_tool_action_line(
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
-                match resolve_update_command(tool, &installs) {
-                    UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
-                    UpdateCommand::Unmanaged => {
-                        return Err(unmanaged_update_error(tool, &installs));
-                    }
-                }
+                checked_update_command(tool, &installs, confirmed_update)?
             }
             ToolLifecycleAction::Install => {
                 static_fallback_command_for(tool, ToolLifecycleAction::Install)
@@ -551,11 +788,17 @@ fn build_tool_action_line(
         let command = match action {
             ToolLifecycleAction::Update => {
                 let installs = enumerate_tool_installations(tool);
-                match resolve_update_command(tool, &installs) {
-                    UpdateCommand::Anchored(command) | UpdateCommand::Static(command) => command,
-                    UpdateCommand::Unmanaged => {
-                        return Err(unmanaged_update_error(tool, &installs));
-                    }
+                let command = checked_update_command(tool, &installs, confirmed_update)?;
+                if confirmed_update.is_some() {
+                    let target = default_install(&installs)
+                        .ok_or("The confirmed update target is unavailable.")?;
+                    format!(
+                        r#"[[ {} -ef {} ]] || {{ echo 'The confirmed update target changed.' >&2; exit 1; }}; {command}"#,
+                        shell_single_quote(&target.path),
+                        shell_single_quote(&target.real.to_string_lossy()),
+                    )
+                } else {
+                    command
                 }
             }
             ToolLifecycleAction::Install => install_command_for(tool),
@@ -642,10 +885,58 @@ fn brew_token_from_path(real: &str, marker: &str) -> Option<String> {
     let mut segs = real.split('/');
     while let Some(seg) = segs.next() {
         if seg.eq_ignore_ascii_case(marker) {
-            return segs.next().filter(|s| !s.is_empty()).map(|s| s.to_string());
+            return segs
+                .next()
+                .filter(|s| {
+                    s.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+                        && s.bytes()
+                            .all(|ch| ch.is_ascii_alphanumeric() || b"-.+_@".contains(&ch))
+                })
+                .map(str::to_owned);
         }
     }
     None
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(super) struct HomebrewInstallation {
+    pub brew: PathBuf,
+    pub kind: &'static str,
+    pub token: String,
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(super) fn homebrew_installation(real: &Path) -> Option<HomebrewInstallation> {
+    let directory = real.ancestors().find(|path| {
+        path.file_name().is_some_and(|name| {
+            name.eq_ignore_ascii_case("Cellar") || name.eq_ignore_ascii_case("Caskroom")
+        })
+    })?;
+    let kind = if directory.file_name()?.eq_ignore_ascii_case("Caskroom") {
+        "cask"
+    } else {
+        "formula"
+    };
+    let real = real.to_str()?;
+    let token = if kind == "cask" {
+        brew_cask_from_path(real)?
+    } else {
+        brew_formula_from_path(real)?
+    };
+    if !token
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphanumeric)
+        || !token
+            .bytes()
+            .all(|ch| ch.is_ascii_alphanumeric() || b"-.+_@".contains(&ch))
+    {
+        return None;
+    }
+
+    let brew = directory.parent()?.join("bin/brew");
+    brew.is_file()
+        .then_some(HomebrewInstallation { brew, kind, token })
 }
 
 /// Cellar formula 或 Caskroom cask 都由 Homebrew 拥有，升级必须走 brew，
@@ -661,7 +952,7 @@ pub(super) fn is_brew_managed_path(real: &str) -> bool {
 /// copied instead of symlinked. Checking the real target additionally supports
 /// a custom `$GROK_BIN_DIR` on POSIX, whose launcher still points into the
 /// standard downloads directory.
-fn is_grok_native_install(bin_path: &str, real_target: &str) -> bool {
+pub(super) fn is_grok_native_install(bin_path: &str, real_target: &str) -> bool {
     [bin_path, real_target].iter().any(|path| {
         let normalized = path.replace('\\', "/").to_ascii_lowercase();
         normalized.contains("/.grok/bin/") || normalized.contains("/.grok/downloads/grok-")
@@ -736,7 +1027,7 @@ fn kimi_upgrade_ignores_yes(version: Option<&str>) -> bool {
 /// 先看真身：POSIX 用户自建的软链（如 `~/.local/bin/kimi`）指回安装目录时，installer
 /// 必须写回真身所在的那处；Windows 的真身是 canonicalize 出的 `\\?\` verbatim 路径，
 /// 交给 installer 前还原。纯字符串、不碰 fs。
-fn kimi_native_install_root(bin_path: &str, real_target: &str) -> Option<String> {
+pub(super) fn kimi_native_install_root(bin_path: &str, real_target: &str) -> Option<String> {
     let normalized_real = real_target.replace('\\', "/").to_ascii_lowercase();
     if normalized_real.contains("/node_modules/") {
         return None;
@@ -764,6 +1055,28 @@ fn kimi_native_install_root(bin_path: &str, real_target: &str) -> Option<String>
         (!root.is_empty()).then_some(root)
     });
     root
+}
+
+pub(super) fn kimi_install_dir(home: Option<&Path>) -> Option<PathBuf> {
+    std::env::var_os("KIMI_INSTALL_DIR")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.map(|path| path.join(".kimi-code")))
+}
+
+pub(super) fn is_kimi_script_install(launcher: &Path, real: &Path, expected: &Path) -> bool {
+    launcher
+        .to_str()
+        .zip(real.to_str())
+        .and_then(|(launcher, real)| kimi_native_install_root(launcher, real))
+        .map(PathBuf::from)
+        .is_some_and(|root| {
+            root == expected
+                || root
+                    .canonicalize()
+                    .ok()
+                    .is_some_and(|root| expected.canonicalize().ok() == Some(root))
+        })
 }
 
 /// 旧版 Kimi Code（见 `KIMI_UPGRADE_YES_MIN_VERSION`）的升级命令：跳过会假成功的
@@ -804,27 +1117,250 @@ pub(super) fn mcode_receipt_install_root(entry: &str, layout: McodeLayout) -> Op
     same_dir.then(|| prefix.to_string())
 }
 
-/// Pi 官方独立安装器把入口放在 `<agentDir>/bin/`（同目录含 `pi-launcher.js`），
-/// 并在 `<agentDir>/install/managed-install.json` 写入 `"kind": "pi-managed-install"`。
+// Reference releases-v1 launcher emitted by the official installer, verified
+// against the isolated Pi1.6.1 payload. Compare executable statements below;
+// harmless comment/indent changes do not change the dispatch identity.
+#[cfg(not(target_os = "windows"))]
+const PI_RELEASE_SHELL_LAUNCHER: &str = r#"#!/bin/sh
+case "$0" in
+  */*) pi_launcher="$0" ;;
+  *) pi_launcher=$(command -v "$0") || exit 127 ;;
+esac
+while [ -L "$pi_launcher" ]; do
+  pi_link=$(readlink "$pi_launcher") || exit 1
+  case "$pi_link" in
+    /*) pi_launcher="$pi_link" ;;
+    *) pi_launcher=${pi_launcher%/*}/$pi_link ;;
+  esac
+done
+pi_bin_dir=${pi_launcher%/*}
+pi_agent_dir=${pi_bin_dir%/*}
+pi_current_file=$pi_agent_dir/install/current-version
+if ! IFS= read -r pi_current_version < "$pi_current_file"; then
+  printf 'Could not read managed Pi version from %s.\n' "$pi_current_file" >&2
+  exit 1
+fi
+case "$pi_current_version" in
+  ""|.|..|*[!0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz._+-]*)
+    printf 'Managed Pi version file is invalid: %s\n' "$pi_current_file" >&2
+    exit 1
+    ;;
+esac
+pi_release_dir=$pi_agent_dir/install/releases/$pi_current_version
+pi_release_bin=$pi_release_dir/node_modules/.bin/pi
+if [ ! -x "$pi_release_bin" ]; then
+  printf 'Managed Pi executable is missing: %s\n' "$pi_release_bin" >&2
+  exit 1
+fi
+# Node.js installed by the Pi installer is not added to shell profiles, so put
+# it on PATH for pi's shebang and for child processes: npm in pi update and
+# commands run through pi's bash tool.
+pi_node_bin=${XDG_DATA_HOME:-$HOME/.local/share}/pi-node/current/bin
+if [ -x "$pi_node_bin/node" ]; then
+  PATH=$pi_node_bin:$PATH
+  export PATH
+fi
+PI_MANAGED_INSTALL_ROOT=$pi_agent_dir/install
+export PI_MANAGED_INSTALL_ROOT
+exec "$pi_release_bin" "$@"
+"#;
+
+/// Recognize both the original JS launcher and the current releases-v1 shell
+/// launcher. A directory name alone does not establish installer ownership.
 pub(super) fn is_pi_managed_install(entry: &str) -> bool {
-    let Some(bin_dir) = Path::new(entry).parent() else {
+    // Preserve the original lexical and canonical sidecar/receipt recognition
+    // for JS launchers; only the shell layout must follow shell dispatch paths.
+    let legacy = |path: &Path| {
+        // A leftover JS sidecar must not bypass dispatch checks for the new
+        // shell launcher after an in-place upgrade.
+        if pi_install_text(path, 16 * 1024).is_some_and(|text| {
+            text.lines().any(|line| {
+                line.trim_matches([' ', '\t'])
+                    == "pi_current_file=$pi_agent_dir/install/current-version"
+            })
+        }) {
+            return false;
+        }
+        path.parent()
+            .filter(|bin| bin.join("pi-launcher.js").is_file())
+            .and_then(Path::parent)
+            .and_then(pi_managed_receipt)
+            .is_some()
+    };
+    if legacy(Path::new(entry)) || std::fs::canonicalize(entry).is_ok_and(|path| legacy(&path)) {
+        return true;
+    }
+    #[cfg(not(target_os = "windows"))]
+    let entry = {
+        // The shell resolves links on the launcher itself, but preserves directory
+        // aliases. Match that dispatch path rather than canonicalizing parents.
+        let mut path = PathBuf::from(entry);
+        if !path.is_absolute() {
+            return false;
+        }
+        for depth in 0..=32 {
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                return false;
+            };
+            if !metadata.file_type().is_symlink() {
+                break;
+            }
+            if depth == 32 {
+                return false;
+            }
+            let Ok(link) = std::fs::read_link(&path) else {
+                return false;
+            };
+            path = if link.is_absolute() {
+                link
+            } else {
+                path.parent().unwrap_or_else(|| Path::new("/")).join(link)
+            };
+        }
+        path
+    };
+    #[cfg(target_os = "windows")]
+    let entry = PathBuf::from(entry);
+    let Some(bin_dir) = entry.parent() else {
         return false;
     };
-    if !bin_dir.join("pi-launcher.js").is_file() {
-        return false;
-    }
     let Some(agent_dir) = bin_dir.parent() else {
         return false;
     };
-    let Ok(text) = std::fs::read_to_string(agent_dir.join("install").join("managed-install.json"))
-    else {
+    #[cfg(not(target_os = "windows"))]
+    let marker = agent_dir.join("install/managed-install.json");
+    let Some(receipt) = pi_managed_receipt(agent_dir) else {
         return false;
     };
-    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
-    serde_json::from_str::<serde_json::Value>(text)
-        .ok()
-        .and_then(|v| v.get("kind")?.as_str().map(|s| s == "pi-managed-install"))
-        .unwrap_or(false)
+    #[cfg(target_os = "windows")]
+    {
+        drop(receipt);
+        false
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let verify = || -> Option<()> {
+            if receipt.get("schemaVersion")?.as_u64()? != 1
+                || receipt.get("layout")?.as_str()? != "releases-v1"
+            {
+                return None;
+            }
+            use std::os::unix::fs::PermissionsExt;
+            let entry_metadata = std::fs::metadata(&entry).ok()?;
+            if !entry_metadata.is_file() || entry_metadata.permissions().mode() & 0o111 == 0 {
+                return None;
+            }
+            let launcher = pi_install_text(&entry, 16 * 1024)?;
+            let statements = launcher
+                .split('\n')
+                .map(|line| line.trim_matches([' ', '\t']))
+                .filter(|line| !line.is_empty() && !line.starts_with('#'));
+            let reference = PI_RELEASE_SHELL_LAUNCHER
+                .split('\n')
+                .map(|line| line.trim_matches([' ', '\t']))
+                .filter(|line| !line.is_empty() && !line.starts_with('#'));
+            if !launcher.starts_with("#!/bin/sh\n") || !statements.eq(reference) {
+                return None;
+            }
+            let agent_root = std::fs::canonicalize(agent_dir).ok()?;
+            let managed_root = std::fs::canonicalize(agent_dir.join("install")).ok()?;
+            let releases_root = std::fs::canonicalize(agent_dir.join("install/releases")).ok()?;
+            let marker = std::fs::canonicalize(marker).ok()?;
+            let current = std::fs::canonicalize(agent_dir.join("install/current-version")).ok()?;
+            for (child, parent) in [
+                (&managed_root, &agent_root),
+                (&releases_root, &managed_root),
+                (&marker, &managed_root),
+                (&current, &managed_root),
+            ] {
+                if child == parent || !child.starts_with(parent) {
+                    return None;
+                }
+            }
+            let version = pi_install_current_version(&current)?;
+            if version.is_empty()
+                || matches!(version.as_str(), "." | "..")
+                || !version
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
+            {
+                return None;
+            }
+            let release = agent_dir.join("install/releases").join(&version);
+            let release_root = std::fs::canonicalize(&release).ok()?;
+            let package = tool_spec("pi").npm_package?;
+            let package_dir = release.join("node_modules").join(package);
+            let owner = std::fs::canonicalize(&package_dir).ok()?;
+            let manifest_path = std::fs::canonicalize(package_dir.join("package.json")).ok()?;
+            let bin_root = std::fs::canonicalize(release.join("node_modules/.bin")).ok()?;
+            for (child, parent) in [
+                (&release_root, &releases_root),
+                (&owner, &release_root),
+                (&manifest_path, &owner),
+                (&bin_root, &release_root),
+            ] {
+                if child == parent || !child.starts_with(parent) {
+                    return None;
+                }
+            }
+            let manifest: serde_json::Value =
+                serde_json::from_str(&pi_install_text(&manifest_path, 128 * 1024)?).ok()?;
+            if manifest.get("name")?.as_str()? != package
+                || manifest.get("version")?.as_str()? != version
+            {
+                return None;
+            }
+            let target = std::fs::canonicalize(release.join("node_modules/.bin/pi")).ok()?;
+            let metadata = std::fs::metadata(&target).ok()?;
+            if !metadata.is_file()
+                || metadata.permissions().mode() & 0o111 == 0
+                || !target.starts_with(owner)
+            {
+                return None;
+            }
+            Some(())
+        };
+        verify().is_some()
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn pi_install_current_version(path: &Path) -> Option<String> {
+    use std::io::{BufRead, Read};
+    if !std::fs::metadata(path).is_ok_and(|meta| meta.is_file()) {
+        return None;
+    }
+    let file = std::fs::File::open(path).ok()?;
+    let mut line = Vec::new();
+    std::io::BufReader::with_capacity(256, file.take(257))
+        .read_until(b'\n', &mut line)
+        .ok()?;
+    if line.len() > 256 || line.pop()? != b'\n' {
+        return None;
+    }
+    String::from_utf8(line).ok()
+}
+
+fn pi_managed_receipt(agent_dir: &Path) -> Option<serde_json::Value> {
+    let text = pi_install_text(&agent_dir.join("install/managed-install.json"), 128 * 1024)?;
+    let receipt: serde_json::Value =
+        serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(&text)).ok()?;
+    (receipt.get("kind").and_then(serde_json::Value::as_str) == Some("pi-managed-install"))
+        .then_some(receipt)
+}
+
+fn pi_install_text(path: &Path, limit: u64) -> Option<String> {
+    use std::io::Read;
+    if !std::fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.len() <= limit) {
+        return None;
+    }
+    let mut text = String::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(limit + 1)
+        .read_to_string(&mut text)
+        .ok()?;
+    (text.len() as u64 <= limit).then_some(text)
 }
 
 /// 含空格才用 POSIX 单引号包一层,否则保持裸路径——命令展示更干净。
@@ -983,9 +1519,14 @@ fn npm_scripts_env_prefix(pkg: &str) -> String {
 
 #[cfg(not(target_os = "windows"))]
 fn anchored_official_update_command(tool: &str, bin_path: &str) -> Option<String> {
-    tool_spec(tool)
-        .official_update_args
-        .map(|args| format!("{} {args}", quote_path_if_spaced(bin_path)))
+    tool_spec(tool).official_update_args.map(|args| {
+        let executable = if tool == "pi" {
+            shell_single_quote(bin_path)
+        } else {
+            quote_path_if_spaced(bin_path)
+        };
+        format!("{executable} {args}")
+    })
 }
 
 #[cfg(target_os = "windows")]
@@ -1228,6 +1769,10 @@ pub(super) fn anchored_command_from_paths(
 ) -> Option<String> {
     let real_lower = real_target.to_ascii_lowercase();
 
+    if tool == "omp" && is_omp_standalone_install(Path::new(bin_path), Path::new(real_target)) {
+        return omp_native_update_command(bin_path, &crate::config::get_home_dir());
+    }
+
     // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
     if tool == "hermes" || tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
@@ -1369,6 +1914,9 @@ pub(super) fn anchored_command_from_paths(
     bin_path: &str,
     real_target: &str,
 ) -> Option<String> {
+    if tool == "omp" && is_omp_standalone_install(Path::new(bin_path), Path::new(real_target)) {
+        return omp_native_update_command(bin_path, &crate::config::get_home_dir());
+    }
     // Antigravity 原生二进制自升级（Homebrew cask 也标了 auto_updates，`brew upgrade` 默认跳过它）。
     if tool == "hermes" || tool == "agy" {
         return anchored_official_update_command(tool, bin_path);
@@ -1413,6 +1961,11 @@ pub(super) fn installs_anchored_command(
     installs: &[ToolInstallation],
 ) -> Option<String> {
     let inst = default_install(installs)?;
+    // The managed Pi launcher supplies its own release root and Node runtime.
+    // A global npm fallback would install a second copy instead of updating it.
+    if tool == "pi" {
+        return plan_selected_tool_update(tool, inst).map(|plan| plan.command);
+    }
     let real = inst.real.to_string_lossy();
     // Codex 平台分发包损坏自愈：主包在但平台二进制缺失时 codex 跑不起来
     // （runnable=false），此时正常锚定的 `npm i -g @latest` 是 no-op 修不好——改用
@@ -1438,15 +1991,6 @@ pub(super) fn installs_anchored_command(
             return Some(mcode_installer_update_command(&root));
         }
     }
-    // Pi 官方独立安装器（读 fs，故不放进纯函数 `anchored_command_from_paths`）：
-    // 原地走 `<bin_path> update`，绝不回退全局 npm 另装第二份。
-    if tool == "pi"
-        && [inst.path.as_str(), real.as_ref()]
-            .into_iter()
-            .any(is_pi_managed_install)
-    {
-        return anchored_official_update_command(tool, &inst.path);
-    }
     // 版本号来自 `--version` 探测，所以放在这里而不是纯路径的 `anchored_command_from_paths`。
     if tool == "kimi" && kimi_upgrade_ignores_yes(inst.version.as_deref()) {
         if let Some(cmd) = kimi_legacy_update_command(&inst.path, &real) {
@@ -1454,6 +1998,207 @@ pub(super) fn installs_anchored_command(
         }
     }
     anchored_command_from_paths(tool, &inst.path, &real)
+}
+
+pub(super) fn npm_prerelease_requires_manual_update(
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+    version: Option<&str>,
+) -> bool {
+    npm_global_package(tool, launcher, real, cfg!(target_os = "windows")).is_some_and(
+        |(_, manifest)| {
+            version
+                .or_else(|| manifest.get("version").and_then(serde_json::Value::as_str))
+                .is_some_and(tool_version::version_is_prerelease)
+        },
+    )
+}
+
+/// Shared eligibility for default and explicitly selected installation updates.
+fn installation_update_is_manual(tool: &str, install: &ToolInstallation) -> bool {
+    (tool == "opencode" && install.source == "desktop")
+        || desktop_managed_codex_cli(tool, &install.real)
+        || npm_prerelease_requires_manual_update(
+            tool,
+            Path::new(&install.path),
+            &install.real,
+            install.version.as_deref(),
+        )
+        || (tool == "opencode"
+            && tool_version::npm_package_for_version(tool, install.version.as_deref())
+                == Some(OPENCODE_V2_NPM_PACKAGE)
+            && opencode_update_is_manual(
+                std::env::consts::OS,
+                Some((Path::new(&install.path), &install.real)),
+            ))
+}
+
+/// Build a preview only when the updater and its installation root are known.
+pub(super) fn plan_selected_tool_update(
+    tool: &str,
+    install: &ToolInstallation,
+) -> Option<ToolUpdatePlan> {
+    #[cfg(target_os = "windows")]
+    if wsl_distro_for_tool(tool).is_some() {
+        return None;
+    }
+    if installation_update_is_manual(tool, install) {
+        return None;
+    }
+    let launcher = Path::new(&install.path);
+    let repair_codex = tool == "codex" && !install.runnable && install.exited_with_error;
+    let (source, command) = if let Some(manager) = verified_volta_manager(launcher) {
+        (
+            "volta",
+            volta_owned_update_command(tool, &manager, install.version.as_deref())?,
+        )
+    } else {
+        selected_tool_update_command(tool, launcher, &install.real, repair_codex)?
+    };
+    Some(ToolUpdatePlan {
+        tool: tool.to_string(),
+        path: install.path.clone(),
+        real_path: install.real.to_str()?.to_owned(),
+        version: install.version.clone(),
+        source: source.to_owned(),
+        command,
+    })
+}
+
+fn selected_tool_update_command(
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+    repair_codex: bool,
+) -> Option<(&'static str, String)> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        if is_brew_managed_path(real.to_str()?) {
+            let install = homebrew_installation(real)?;
+
+            return Some((
+                "homebrew",
+                format!(
+                    "{} upgrade --{}{} {}",
+                    shell_single_quote(install.brew.to_str()?),
+                    install.kind,
+                    if tool == "agy" && install.kind == "cask" && install.token == "antigravity-cli"
+                    {
+                        " --greedy"
+                    } else {
+                        ""
+                    },
+                    shell_single_quote(&install.token),
+                ),
+            ));
+        }
+    }
+
+    if tool == "omp" && is_omp_standalone_install(launcher, real) {
+        return Some((
+            "curl",
+            omp_native_update_command(launcher.to_str()?, &crate::config::get_home_dir())?,
+        ));
+    }
+
+    if tool == "pi" && is_pi_managed_install(launcher.to_str()?) {
+        return Some((
+            "curl",
+            anchored_official_update_command(tool, launcher.to_str()?)?,
+        ));
+    }
+
+    if tool == "codex" {
+        if let Some(install) = codex_standalone_install(launcher.to_str()?, real.to_str()?) {
+            return Some(("curl", codex_installer_update_command(&install)));
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    if is_standard_curl_install(tool, real) {
+        let args = match tool {
+            "claude" => "update",
+            "opencode" => "upgrade --method curl",
+            _ => return None,
+        };
+        return Some((
+            "curl",
+            format!("{} {args}", shell_single_quote(launcher.to_str()?)),
+        ));
+    }
+
+    let (prefix, manifest) = npm_global_package(tool, launcher, real, cfg!(target_os = "windows"))?;
+    let name = manifest.get("name")?.as_str()?;
+    let package = npm_package_candidates(tool).find(|candidate| *candidate == name)?;
+    let npm = selected_npm_executable(launcher)?;
+    let args = if package == OPENCODE_V2_NPM_PACKAGE {
+        " --ignore-scripts=false --allow-scripts=@opencode/cli"
+    } else {
+        tool_spec(tool).npm_install_args
+    };
+    #[cfg(not(target_os = "windows"))]
+    let command = {
+        let prefix = shell_single_quote(prefix.to_str()?);
+        let npm_prefix = format!(
+            "PATH={}:\"$PATH\" {}",
+            shell_single_quote(npm.parent()?.to_str()?),
+            shell_single_quote(npm.to_str()?),
+        );
+        let install = format!(
+            "{npm_prefix} install -g --prefix {prefix} --engine-strict --include=optional {}{args}",
+            shell_single_quote(&format!("{package}@latest")),
+        );
+        if repair_codex {
+            let target = shell_single_quote(&format!("{package}@latest"));
+            let package = shell_single_quote(package);
+            // Stage a runnable replacement and cache its packages before
+            // touching the existing prefix. Reinstall from that cache offline.
+            format!(
+                r#"probe=$(mktemp -d {prefix}/lib/node_modules/@openai/.cc-switch-codex-repair.XXXXXXXX) || exit 1
+trap 'rm -rf -- "$probe"' EXIT
+mkdir -p -- "$probe/lib/node_modules" &&
+{npm_prefix} install -g --prefix "$probe" --cache "$probe/cache" --engine-strict --include=optional {target}{args} &&
+PATH={}:"$PATH" "$probe/bin/codex" --version &&
+( {npm_prefix} uninstall -g --prefix {prefix} {package} || true; {install} --offline --cache "$probe/cache" )"#,
+                shell_single_quote(npm.parent()?.to_str()?),
+            )
+        } else {
+            install
+        }
+    };
+    #[cfg(target_os = "windows")]
+    let command = {
+        if repair_codex {
+            return None;
+        }
+        format!(
+            "{} install -g --prefix {} --engine-strict --include=optional {package}@latest{args}",
+            win_quote_path_for_batch(windows_shell_compatible_path(&npm).to_str()?),
+            win_quote_path_for_batch(windows_shell_compatible_path(&prefix).to_str()?),
+        )
+    };
+    Some(("npm", command))
+}
+
+/// Resolve the npm executable used by the update command for this installation.
+pub(super) fn selected_npm_executable(launcher: &Path) -> Option<PathBuf> {
+    let bin = launcher.parent()?;
+    #[cfg(not(target_os = "windows"))]
+    let npm = bin.join("npm");
+    #[cfg(target_os = "windows")]
+    let npm = bin.join("npm.cmd");
+    // Use the Node toolchain alongside this installation where available.
+    // For custom npm prefixes the explicit prefix still pins the destination.
+    if npm.is_file() {
+        Some(npm)
+    } else {
+        locate_default_tool(
+            "npm",
+            CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+        )
+        .ok()
+    }
 }
 
 /// 静态命令（= 平台可安全静默执行的官方 CLI 自升级 || `npm i -g <pkg>@latest` /
@@ -1483,16 +2228,121 @@ pub(super) enum UpdateCommand {
     Unmanaged,
 }
 
+pub(super) fn verified_wsl_opencode_npm_owner<'a>(
+    entry: &'a str,
+    real: &str,
+) -> Option<(&'a str, &'static str)> {
+    let prefix = entry
+        .strip_suffix("/bin/opencode")
+        .filter(|prefix| prefix.starts_with('/'))?;
+    let package = ["opencode-ai", OPENCODE_V2_NPM_PACKAGE]
+        .into_iter()
+        .find(|package| real.starts_with(&format!("{prefix}/lib/node_modules/{package}/")))?;
+    Some((prefix, package))
+}
+
+pub(super) fn opencode_update_is_manual(env: &str, installation: Option<(&Path, &Path)>) -> bool {
+    if env == "wsl" {
+        return installation.is_none_or(|(entry, real)| {
+            verified_wsl_opencode_npm_owner(&entry.to_string_lossy(), &real.to_string_lossy())
+                .is_none()
+        });
+    }
+    env == "windows"
+        || (env == "linux"
+            && installation.is_some_and(|(entry, real)| {
+                let is_system_path = |path: &Path| {
+                    let path = path.to_string_lossy();
+                    path.starts_with("/usr/bin/") || path.starts_with("/usr/lib/")
+                };
+                (is_system_path(entry) || is_system_path(real))
+                    && !real.to_string_lossy().contains("/node_modules/")
+            }))
+}
+
+fn volta_owned_update_command(tool: &str, manager: &Path, local: Option<&str>) -> Option<String> {
+    let package = tool_version::volta_package_for_version(tool, local)?;
+    let root = effective_volta_home()?;
+    render_volta_update_command(package, manager, &root)
+}
+
+fn render_volta_update_command(package: &str, manager: &Path, root: &Path) -> Option<String> {
+    // Reject the original OS strings before Windows normalization can replace
+    // unpaired UTF-16 surrogates through a lossy extended-path conversion.
+    manager.to_str()?;
+    root.to_str()?;
+    #[cfg(not(target_os = "windows"))]
+    {
+        Some(format!(
+            "VOLTA_HOME={} {} install {package}@latest",
+            shell_single_quote(root.to_str()?),
+            shell_single_quote(manager.to_str()?)
+        ))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let encoded_path =
+            STANDARD.encode(windows_shell_compatible_path(manager).to_str()?.as_bytes());
+        let encoded_root =
+            STANDARD.encode(windows_shell_compatible_path(root).to_str()?.as_bytes());
+        let script = format!(
+            "$ErrorActionPreference = 'Stop'; $env:VOLTA_HOME = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_root}')); $manager = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_path}')); & $manager install '{package}@latest'; exit $LASTEXITCODE"
+        );
+        Some(format!(
+            "powershell -NoProfile -NonInteractive -EncodedCommand {}",
+            powershell_encoded_command(&script)
+        ))
+    }
+}
+
 pub(super) fn resolve_update_command(tool: &str, installs: &[ToolInstallation]) -> UpdateCommand {
-    // OpenCode Desktop 自己更新它带的命令行；npm 升级只会另装一份。
-    if tool == "opencode" && default_install(installs).is_some_and(|inst| inst.source == "desktop")
+    let default = default_install(installs);
+    if default.is_some_and(|install| installation_update_is_manual(tool, install)) {
+        return UpdateCommand::Unmanaged;
+    }
+    #[cfg(target_os = "macos")]
+    if tool == "codex"
+        && default.is_none()
+        && crate::codex_config::codex_macos_desktop_installation().is_some()
     {
         return UpdateCommand::Unmanaged;
+    }
+    // Volta's shim may live in Homebrew's Cellar. Update the selected npm
+    // package, never the formula that supplied the manager/template.
+    if let Some(install) = default {
+        if let Some(manager) = verified_volta_manager(Path::new(&install.path)) {
+            return volta_owned_update_command(tool, &manager, install.version.as_deref())
+                .map(UpdateCommand::Anchored)
+                .unwrap_or(UpdateCommand::Unmanaged);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    if let Some(install) =
+        default.filter(|install| install.real.to_str().is_some_and(is_brew_managed_path))
+    {
+        return plan_selected_tool_update(tool, install)
+            .map(|plan| UpdateCommand::Anchored(plan.command))
+            .unwrap_or(UpdateCommand::Unmanaged);
+    }
+    // A native Copilot binary has no verified self-updater here. A sibling npm
+    // must not make installing a second copy look like updating this one.
+    if tool == "copilot" && default.is_some_and(is_unmanaged_native_install) {
+        return UpdateCommand::Unmanaged;
+    }
+    // These managers have independent global stores. Never let an app's generic
+    // self-updater or an npm fallback guess which installation to replace.
+    if let Some(install) =
+        default.filter(|install| tool == "pi" || matches!(install.source.as_str(), "yarn" | "vite"))
+    {
+        return plan_selected_tool_update(tool, install)
+            .map(|plan| UpdateCommand::Anchored(plan.command))
+            .unwrap_or(UpdateCommand::Unmanaged);
     }
     if let Some(command) = installs_anchored_command(tool, installs) {
         return UpdateCommand::Anchored(command);
     }
-    if default_install(installs).is_some_and(is_unmanaged_native_install) {
+    if installs.len() >= 2 || default.is_some_and(is_unmanaged_native_install) {
         return UpdateCommand::Unmanaged;
     }
     UpdateCommand::Static(static_fallback_command(tool))
@@ -1642,6 +2492,853 @@ pub(super) fn is_conflicting(installs: &[ToolInstallation]) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn volta_extended_paths_reject_unpaired_surrogates_before_normalization() {
+        use std::os::windows::ffi::OsStringExt;
+        let mut units: Vec<u16> = r"\\?\C:\Volta\".encode_utf16().collect();
+        units.push(0xd800);
+        let invalid = PathBuf::from(std::ffi::OsString::from_wide(&units));
+        let valid = Path::new(r"C:\Volta\bin\volta.exe");
+        assert!(render_volta_update_command("@github/copilot", valid, &invalid).is_none());
+        assert!(
+            render_volta_update_command("@github/copilot", &invalid, Path::new(r"C:\Volta"))
+                .is_none()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn volta_non_unicode_paths_decline_automatic_updates() {
+        use std::os::unix::ffi::OsStringExt;
+        let invalid = PathBuf::from(std::ffi::OsString::from_vec(b"/tmp/volta-\xff".to_vec()));
+        let valid = Path::new("/tmp/volta/bin/volta");
+        assert!(render_volta_update_command("@github/copilot", valid, &invalid).is_none());
+        assert!(
+            render_volta_update_command("@github/copilot", &invalid, Path::new("/tmp/volta"))
+                .is_none()
+        );
+        assert!(
+            render_volta_update_command("@github/copilot", valid, Path::new("/tmp/volta"))
+                .is_some()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_shell_release_receipt_requires_matching_package_and_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let agent = temp.path().join("custom-agent");
+        let bin = agent.join("bin");
+        let install = agent.join("install");
+        let modules = install.join("releases/1.6.1/node_modules");
+        let package = modules.join("@earendil-works/pi-coding-agent");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(package.join("dist")).unwrap();
+        std::fs::create_dir_all(modules.join(".bin")).unwrap();
+        let launcher = bin.join("pi");
+        std::fs::write(&launcher, PI_RELEASE_SHELL_LAUNCHER).unwrap();
+        std::fs::write(
+            install.join("managed-install.json"),
+            r#"{"kind":"pi-managed-install","schemaVersion":1,"layout":"releases-v1"}"#,
+        )
+        .unwrap();
+        std::fs::write(install.join("current-version"), "1.6.1\n").unwrap();
+        let manifest = package.join("package.json");
+        std::fs::write(
+            &manifest,
+            r#"{"name":"@earendil-works/pi-coding-agent","version":"1.6.1"}"#,
+        )
+        .unwrap();
+        let cli = package.join("dist/cli.js");
+        std::fs::write(&cli, "fixture payload").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let link = modules.join(".bin/pi");
+        std::os::unix::fs::symlink(&cli, &link).unwrap();
+        assert!(is_pi_managed_install(launcher.to_str().unwrap()));
+        let modified = PI_RELEASE_SHELL_LAUNCHER.replace(
+            "pi_release_bin=$pi_release_dir/node_modules/.bin/pi",
+            "pi_release_bin=/outside/pi",
+        );
+        std::fs::write(&launcher, modified).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::write(
+            &launcher,
+            PI_RELEASE_SHELL_LAUNCHER.replace(
+                "# Node.js installed",
+                "# Updated comment: Node.js installed",
+            ),
+        )
+        .unwrap();
+        assert!(is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::write(
+            &launcher,
+            PI_RELEASE_SHELL_LAUNCHER.replace(
+                "pi_agent_dir=${pi_bin_dir%/*}",
+                "\u{a0}pi_agent_dir=${pi_bin_dir%/*}",
+            ),
+        )
+        .unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::write(&launcher, PI_RELEASE_SHELL_LAUNCHER).unwrap();
+        let alias = temp.path().join("alias");
+        std::os::unix::fs::symlink(&launcher, &alias).unwrap();
+        assert!(is_pi_managed_install(alias.to_str().unwrap()));
+        let same_agent_alias = agent.join("cli");
+        std::os::unix::fs::symlink(&bin, &same_agent_alias).unwrap();
+        assert!(is_pi_managed_install(
+            same_agent_alias.join("pi").to_str().unwrap()
+        ));
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let alias_root = temp.path().join("alias-root");
+        std::fs::create_dir_all(&alias_root).unwrap();
+        std::os::unix::fs::symlink(&bin, alias_root.join("bin")).unwrap();
+        let directory_alias = alias_root.join("bin/pi");
+        assert!(!is_pi_managed_install(directory_alias.to_str().unwrap()));
+        std::fs::write(bin.join("pi-launcher.js"), "// leftover from old installer").unwrap();
+        assert!(!is_pi_managed_install(directory_alias.to_str().unwrap()));
+        assert!(is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::remove_file(bin.join("pi-launcher.js")).unwrap();
+        assert!(selected_tool_update_command("pi", &directory_alias, &launcher, false).is_none());
+        assert!(!tool_discovery::additional_script_install(
+            "pi",
+            &directory_alias,
+            &launcher
+        ));
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let unmanaged = temp.path().join("unmanaged/bin/pi");
+        std::fs::create_dir_all(unmanaged.parent().unwrap()).unwrap();
+        std::fs::write(&unmanaged, PI_RELEASE_SHELL_LAUNCHER).unwrap();
+        std::fs::remove_file(&launcher).unwrap();
+        std::os::unix::fs::symlink(&unmanaged, &launcher).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::remove_file(&launcher).unwrap();
+        std::fs::write(&launcher, PI_RELEASE_SHELL_LAUNCHER).unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let external_install = temp.path().join("external-install");
+        std::fs::rename(&install, &external_install).unwrap();
+        std::os::unix::fs::symlink(&external_install, &install).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::remove_file(&install).unwrap();
+        std::fs::rename(external_install, &install).unwrap();
+        let borrowed = temp.path().join("borrowed-package.json");
+        std::fs::copy(&manifest, &borrowed).unwrap();
+        std::fs::remove_file(&manifest).unwrap();
+        std::os::unix::fs::symlink(&borrowed, &manifest).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::remove_file(&manifest).unwrap();
+        std::fs::copy(borrowed, &manifest).unwrap();
+        let inst = ToolInstallation {
+            path: launcher.to_string_lossy().into_owned(),
+            real: launcher.clone(),
+            source: "curl".into(),
+            version: Some("1.6.1".into()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            is_path_default: true,
+        };
+        let plan = plan_selected_tool_update("pi", &inst).unwrap();
+        assert_eq!(plan.source, "curl");
+        assert!(plan.command.ends_with(" update") && !plan.command.contains("npm"));
+        std::fs::write(install.join("current-version"), "../outside").unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::write(install.join("current-version"), "1.6.1").unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::write(install.join("current-version"), " 1.6.1\n").unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::write(
+            install.join("current-version"),
+            format!("1.6.1\n{}", "ignored trailing data".repeat(40)),
+        )
+        .unwrap();
+        assert!(is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::write(install.join("current-version"), "1.6.1\n").unwrap();
+        std::fs::write(&manifest, r#"{"name":"unrelated","version":"1.6.1"}"#).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::write(
+            &manifest,
+            r#"{"name":"@earendil-works/pi-coding-agent","version":"1.6.1"}"#,
+        )
+        .unwrap();
+        let external = temp.path().join("external-package");
+        std::fs::create_dir_all(external.join("dist")).unwrap();
+        std::fs::copy(&manifest, external.join("package.json")).unwrap();
+        std::fs::write(external.join("dist/cli.js"), "external payload").unwrap();
+        std::fs::remove_dir_all(&package).unwrap();
+        std::os::unix::fs::symlink(&external, &package).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+        std::fs::remove_file(&package).unwrap();
+        std::fs::create_dir_all(package.join("dist")).unwrap();
+        std::fs::copy(external.join("package.json"), &manifest).unwrap();
+        std::fs::write(&cli, "fixture payload").unwrap();
+        std::fs::remove_file(&link).unwrap();
+        let outside = temp.path().join("unrelated");
+        std::fs::write(&outside, "unrelated payload").unwrap();
+        std::os::unix::fs::symlink(outside, link).unwrap();
+        assert!(!is_pi_managed_install(launcher.to_str().unwrap()));
+    }
+
+    #[test]
+    fn volta_update_package_respects_runtime_and_known_release_line() {
+        assert!(tool_version::volta_package_for_version("omp", Some("19.2.1")).is_none());
+        assert!(tool_version::volta_package_for_version("opencode", None).is_none());
+        assert!(tool_version::volta_package_for_version("opencode", Some("broken")).is_none());
+        assert_eq!(
+            tool_version::volta_package_for_version("opencode", Some("2.4.2")),
+            Some(OPENCODE_V2_NPM_PACKAGE)
+        );
+        assert_eq!(
+            tool_version::volta_package_for_version("opencode", Some("1.19.6")),
+            Some("opencode-ai")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn volta_shim_symlink_uses_its_template_manager() {
+        let temp = tempfile::tempdir().unwrap();
+        let template = temp.path().join("Cellar/volta/2.0.2/bin");
+        let bin = temp.path().join("custom-data/bin");
+        std::fs::create_dir_all(&template).unwrap();
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(template.join("volta-shim"), b"MZshim").unwrap();
+        std::fs::write(template.join("volta"), "fixture manager").unwrap();
+        let launcher = bin.join("copilot");
+        std::os::unix::fs::symlink(template.join("volta-shim"), &launcher).unwrap();
+        assert_eq!(
+            verified_volta_manager(&launcher),
+            Some(std::fs::canonicalize(template.join("volta")).unwrap())
+        );
+        let inst = ToolInstallation {
+            path: launcher.to_string_lossy().into_owned(),
+            real: template.join("volta-shim"),
+            source: "volta".into(),
+            version: Some("0.0.400".into()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            is_path_default: true,
+        };
+        let plan = plan_selected_tool_update("copilot", &inst).unwrap();
+        assert_eq!(plan.source, "volta");
+        let UpdateCommand::Anchored(command) = resolve_update_command("copilot", &[inst]) else {
+            panic!("Missing template manager route");
+        };
+        assert!(!command.contains(&format!(
+            "VOLTA_HOME={}",
+            shell_single_quote(bin.parent().unwrap().to_str().unwrap())
+        )));
+        assert!(command.contains(&shell_single_quote(
+            std::fs::canonicalize(template.join("volta"))
+                .unwrap()
+                .to_str()
+                .unwrap()
+        )));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn volta_windows_launch_failure_is_not_success() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("custom/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for name in ["copilot.exe", "volta-shim.exe", "volta.exe"] {
+            std::fs::write(bin.join(name), b"MZnot an executable").unwrap();
+        }
+        let launcher = bin.join("copilot.exe");
+        let inst = ToolInstallation {
+            path: launcher.to_string_lossy().into_owned(),
+            real: launcher,
+            source: "volta".into(),
+            version: None,
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            is_path_default: true,
+        };
+        let UpdateCommand::Anchored(command) = resolve_update_command("copilot", &[inst]) else {
+            panic!("No fixture route");
+        };
+        let encoded = command.split_whitespace().last().unwrap();
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded])
+            .output()
+            .unwrap();
+        assert!(
+            !output.status.success(),
+            "failed manager launch was reported as success: {output:?}"
+        );
+    }
+
+    #[test]
+    fn volta_native_copilot_keeps_its_verified_manager_route() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("tools(v2)’/custom-toolchain/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let native = bin.join(if cfg!(windows) {
+            "copilot.exe"
+        } else {
+            "copilot"
+        });
+        let volta = bin.join(if cfg!(windows) { "volta.exe" } else { "volta" });
+        std::fs::write(&native, b"MZ\0\0").unwrap();
+        let shim = bin.join(if cfg!(windows) {
+            "volta-shim.exe"
+        } else {
+            "volta-shim"
+        });
+        std::fs::write(&shim, b"MZ\0\0").unwrap();
+        std::fs::write(&volta, "fixture manager").unwrap();
+        std::fs::write(
+            bin.join(if cfg!(windows) { "npm.cmd" } else { "npm" }),
+            "wrong fallback",
+        )
+        .unwrap();
+        let inst = ToolInstallation {
+            path: native.to_string_lossy().into_owned(),
+            real: native,
+            source: "volta".into(),
+            version: Some("0.0.400".into()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            is_path_default: true,
+        };
+        let UpdateCommand::Anchored(command) =
+            resolve_update_command("copilot", std::slice::from_ref(&inst))
+        else {
+            panic!("Volta route was lost")
+        };
+        #[cfg(target_os = "windows")]
+        let command = {
+            use base64::{engine::general_purpose::STANDARD, Engine as _};
+            let bytes = STANDARD
+                .decode(command.split_whitespace().last().unwrap())
+                .unwrap();
+            String::from_utf16(
+                &bytes
+                    .chunks_exact(2)
+                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
+        };
+        assert!(command.contains("install"));
+        assert!(command.contains("@github/copilot") && !command.contains("npm"));
+        assert!(!command.contains(&format!(
+            "VOLTA_HOME={}",
+            shell_single_quote(bin.parent().unwrap().to_str().unwrap())
+        )));
+        #[cfg(target_os = "windows")]
+        assert!(command.contains("$ErrorActionPreference = 'Stop'"));
+        #[cfg(not(target_os = "windows"))]
+        assert!(command.contains(&shell_single_quote(volta.to_str().unwrap())));
+        assert!(verified_volta_manager(Path::new(&inst.path)).is_some());
+        // A standalone binary beside a genuine manager is not a Volta shim.
+        std::fs::write(&inst.real, b"MZstandalone vendor binary").unwrap();
+        assert!(verified_volta_manager(Path::new(&inst.path)).is_none());
+        assert!(matches!(
+            resolve_update_command("copilot", std::slice::from_ref(&inst)),
+            UpdateCommand::Unmanaged
+        ));
+        std::fs::write(&inst.real, b"MZ\0\0").unwrap();
+        let unrelated = temp.path().join("volta/.local/bin/copilot");
+        std::fs::create_dir_all(unrelated.parent().unwrap()).unwrap();
+        std::fs::write(
+            unrelated
+                .parent()
+                .unwrap()
+                .join(if cfg!(windows) { "volta.exe" } else { "volta" }),
+            "unrelated manager",
+        )
+        .unwrap();
+        assert!(verified_volta_manager(&unrelated).is_none());
+        std::fs::remove_file(volta).unwrap();
+        assert!(matches!(
+            resolve_update_command("copilot", &[inst]),
+            UpdateCommand::Unmanaged
+        ));
+    }
+
+    #[test]
+    fn native_copilot_does_not_fall_back_to_a_sibling_npm() {
+        let temp = tempfile::tempdir().unwrap();
+        let native = temp.path().join(if cfg!(windows) {
+            "copilot.exe"
+        } else {
+            "copilot"
+        });
+        std::fs::write(&native, b"MZ\0\0").unwrap();
+        std::fs::write(
+            temp.path()
+                .join(if cfg!(windows) { "npm.cmd" } else { "npm" }),
+            "fixture npm",
+        )
+        .unwrap();
+        let inst = ToolInstallation {
+            path: native.to_string_lossy().into_owned(),
+            real: native,
+            source: "system".into(),
+            version: Some("0.0.400".into()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            is_path_default: true,
+        };
+        assert!(matches!(
+            resolve_update_command("copilot", &[inst]),
+            UpdateCommand::Unmanaged
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pi_update_keeps_metacharacters_in_the_selected_launcher_literal() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join("pi$HOME;not-a-command");
+        std::fs::write(&bin, "#!/bin/sh\nprintf '%s' \"$1\"\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let command = anchored_official_update_command("pi", bin.to_str().unwrap()).unwrap();
+        let output = std::process::Command::new("/bin/bash")
+            .args(["-c", &command])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(output.stdout, b"update");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn confirmed_upgrade_rejects_a_changed_default_installation() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = temp.path().join("first");
+        let second = temp.path().join("second");
+        let installation = |prefix: &Path, is_path_default| ToolInstallation {
+            path: prefix.join("bin/gemini").to_str().unwrap().into(),
+            real: prefix.join("Cellar/gemini-cli/1.0.0/bin/gemini"),
+            version: Some("1.0.0".into()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            source: "homebrew".into(),
+            is_path_default,
+        };
+        let mut installs = [installation(&first, true), installation(&second, false)];
+        assert_eq!(
+            resolve_update_command("gemini", &installs),
+            UpdateCommand::Unmanaged
+        );
+        for prefix in [&first, &second] {
+            std::fs::create_dir_all(prefix.join("bin")).unwrap();
+            std::fs::write(prefix.join("bin/brew"), "#!/bin/sh\n").unwrap();
+        }
+        let command = match resolve_update_command("gemini", &installs) {
+            UpdateCommand::Anchored(command) => command,
+            other => panic!("Expected an anchored command, got {other:?}"),
+        };
+        let confirmed = update_confirmation_token("gemini", &command, &installs);
+        assert_eq!(
+            checked_update_command("gemini", &installs, Some(&confirmed)),
+            Ok(command)
+        );
+        assert!(checked_update_command("gemini", &installs, None).is_err());
+        installs[0].is_path_default = false;
+        installs[1].is_path_default = true;
+        assert!(checked_update_command("gemini", &installs, Some(&confirmed)).is_err());
+        assert!(checked_update_command("gemini", &installs[1..], Some(&confirmed)).is_err());
+    }
+
+    #[test]
+    fn wsl_opencode_requires_a_verified_npm_owner() {
+        let entry = Path::new("/home/test/.local/bin/opencode");
+        assert!(opencode_update_is_manual(
+            "wsl",
+            Some((entry, Path::new("/opt/distro/opencode")))
+        ));
+        assert!(!opencode_update_is_manual(
+            "wsl",
+            Some((
+                entry,
+                Path::new("/home/test/.local/lib/node_modules/@opencode/cli/bin/opencode")
+            ))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn antigravity_cask_uses_homebrew_including_auto_updating_casks() {
+        let root = tempfile::tempdir().unwrap();
+        let brew = root.path().join("bin/brew");
+        std::fs::create_dir_all(brew.parent().unwrap()).unwrap();
+        std::fs::write(&brew, "").unwrap();
+        let real = root.path().join("Caskroom/antigravity-cli/1.0/bin/agy");
+        let launcher = root.path().join("bin/agy");
+        let (source, command) =
+            selected_tool_update_command("agy", &launcher, &real, false).unwrap();
+        assert_eq!(source, "homebrew");
+        assert!(command.contains(" upgrade --cask --greedy 'antigravity-cli'"));
+        assert!(command.starts_with(&shell_single_quote(brew.to_str().unwrap())));
+        assert!(!command.contains("agy update"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn omp_updater_resolves_the_selected_copy_before_the_path_default() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let chosen = root.path().join("chosen 'quoted/omp");
+        let default = root.path().join("default/omp");
+        for entry in [&chosen, &default] {
+            std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+            std::fs::write(entry, "#!/bin/sh\ncommand -v omp\n").unwrap();
+            std::fs::set_permissions(entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let command = omp_native_update_command(chosen.to_str().unwrap(), root.path()).unwrap();
+        let path = format!(
+            "{}:{}",
+            default.parent().unwrap().display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let output = std::process::Command::new("sh")
+            .args(["-c", &command])
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            chosen.to_str().unwrap()
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_omp_legacy_preserves_bun_but_never_executes_a_standalone_preview() {
+        let root = tempfile::tempdir().unwrap();
+        let launcher = root.path().join(".bun/bin/omp.exe");
+        let package = root
+            .path()
+            .join(".bun/install/global/node_modules/@oh-my-pi/pi-coding-agent");
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&package).unwrap();
+        let real = package.join("cli.js");
+        std::fs::write(&real, "// Bun CLI").unwrap();
+        let install = ToolInstallation {
+            path: launcher.to_string_lossy().into_owned(),
+            real,
+            version: Some("1.0.0".into()),
+            source: "bun".into(),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            is_path_default: true,
+        };
+        assert!(plan_selected_tool_update("omp", &install).is_none());
+        for present in [false, true] {
+            if present {
+                std::fs::write(&launcher, b"MZfixture").unwrap();
+            }
+            assert!(
+                checked_update_command("omp", std::slice::from_ref(&install), None)
+                    .unwrap()
+                    .contains("update")
+            );
+        }
+        let mut native = install;
+        native.path = root
+            .path()
+            .join("native/omp.exe")
+            .to_string_lossy()
+            .into_owned();
+        native.source = "system".into();
+        native.real = PathBuf::from(&native.path);
+        for present in [false, true] {
+            if present {
+                std::fs::create_dir_all(native.real.parent().unwrap()).unwrap();
+                std::fs::write(&native.real, b"MZfixture").unwrap();
+            }
+            assert!(checked_update_command("omp", std::slice::from_ref(&native), None).is_err());
+        }
+    }
+
+    #[test]
+    fn native_omp_process_has_literal_argv_and_no_shell_length_limit() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home ^%PATH% '‘’“”");
+        let launcher = home.join(if cfg!(windows) { "omp.exe" } else { "omp" });
+        let inherited = std::ffi::OsString::from("x".repeat(9000));
+        let command = omp_native_update_process(&launcher, &home, &inherited).unwrap();
+        assert_eq!(command.get_program(), launcher.as_os_str());
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [std::ffi::OsStr::new("update")]
+        );
+        assert_eq!(command.get_current_dir(), Some(home.as_path()));
+        let path = command
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .unwrap()
+            .1
+            .unwrap();
+        assert!(path.to_string_lossy().ends_with(&"x".repeat(9000)));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_omp_update_preserves_literal_percent_and_selected_path() {
+        let root = tempfile::tempdir().unwrap();
+        let home = root.path().join("home ^%PATH% '‘’“”");
+        let chosen = home.join("chosen%PATH%").join("omp.exe");
+        let default = root.path().join("Tools & Utilities");
+        std::fs::create_dir_all(chosen.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(&default).unwrap();
+        // The WSL2 nightly deliberately puts TEMP/TMP on a UNC share. MSVC's
+        // manifest linker needs native storage; execution below still uses UNC.
+        let native_build = [
+            std::env::var_os("RUNNER_TEMP").map(PathBuf::from),
+            std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Temp")),
+            std::env::var_os("SystemRoot").map(|p| PathBuf::from(p).join("Temp")),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|path| windows_shell_compatible_path(&path))
+        .filter(|path| path.is_absolute() && !path.to_string_lossy().starts_with("\\\\"))
+        .find_map(|path| {
+            tempfile::Builder::new()
+                .prefix("ccs_omp_native_")
+                .tempdir_in(path)
+                .ok()
+        })
+        .expect(
+            "a writable native Windows temporary directory is required for the fixture compiler",
+        );
+        let source = native_build.path().join("fixture.rs");
+        let executable = native_build.path().join("omp.exe");
+        std::fs::write(
+            &source,
+            r#"fn main() {
+            println!("{}", std::env::current_exe().unwrap().display());
+            println!("{}", std::env::current_dir().unwrap().display());
+            println!("{}", std::env::var("PATH").unwrap());
+            std::process::exit(7);
+        }"#,
+        )
+        .unwrap();
+        let compiler =
+            std::process::Command::new(std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into()))
+                .arg(&source)
+                .arg("-o")
+                .arg(&executable)
+                .current_dir(native_build.path())
+                .env("TEMP", native_build.path())
+                .env("TMP", native_build.path())
+                .output()
+                .unwrap();
+        assert!(compiler.status.success(), "{compiler:?}");
+        std::fs::copy(&executable, &chosen).unwrap();
+        let quoted_default = format!("\"{}\"", default.display());
+        let path = format!(
+            "{};{}",
+            quoted_default,
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let output = omp_native_update_process(&chosen, &home, std::ffi::OsStr::new(&path))
+            .unwrap()
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(7), "{output:?}");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<_> = stdout.lines().collect();
+        let normalized = |path: &Path| {
+            windows_shell_compatible_path(path)
+                .to_string_lossy()
+                .to_ascii_lowercase()
+        };
+        assert_eq!(normalized(Path::new(lines[0])), normalized(&chosen));
+        assert_eq!(normalized(Path::new(lines[1])), normalized(&home));
+        assert!(lines[2].starts_with(&format!("{};", chosen.parent().unwrap().display())));
+        assert!(lines[2].contains(&quoted_default));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn linked_npm_native_omp_keeps_its_verified_package_owner() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let package = root.path().join("linked-package");
+        let prefix = root.path().join("prefix");
+        let launcher = prefix.join("bin/omp");
+        let real = package.join("omp");
+        let owner = prefix.join("lib/node_modules/@oh-my-pi/pi-coding-agent");
+        std::fs::create_dir_all(&package).unwrap();
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(owner.parent().unwrap()).unwrap();
+        std::fs::write(
+            package.join("package.json"),
+            r#"{"name":"@oh-my-pi/pi-coding-agent","version":"1.0.0"}"#,
+        )
+        .unwrap();
+        std::fs::write(&real, b"\x7fELFfixture").unwrap();
+        symlink(&package, &owner).unwrap();
+        symlink(&real, &launcher).unwrap();
+        let npm = prefix.join("bin/npm");
+        std::fs::write(&npm, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let real = real.canonicalize().unwrap();
+        assert!(npm_global_package("omp", &launcher, &real, false).is_some());
+        assert!(!is_omp_standalone_install(&launcher, &real));
+        let (source, command) =
+            selected_tool_update_command("omp", &launcher, &real, false).unwrap();
+        assert_eq!(source, "npm");
+        assert!(command.contains("@oh-my-pi/pi-coding-agent@latest"));
+        let project_link = root.path().join("project/node_modules/.bin/omp");
+        std::fs::create_dir_all(project_link.parent().unwrap()).unwrap();
+        symlink(&real, &project_link).unwrap();
+        assert!(npm_global_package("omp", &project_link, &real, false).is_none());
+        assert!(!is_omp_standalone_install(&project_link, &real));
+        assert!(selected_tool_update_command("omp", &project_link, &real, false).is_none());
+        let proxy = root.path().join("proxy/bin/omp");
+        std::fs::create_dir_all(proxy.parent().unwrap()).unwrap();
+        symlink(&project_link, &proxy).unwrap();
+        assert!(!is_omp_standalone_install(&proxy, &real));
+        std::fs::remove_file(&proxy).unwrap();
+        symlink(&launcher, &proxy).unwrap();
+        assert!(!is_omp_standalone_install(&proxy, &real));
+        std::fs::remove_file(&proxy).unwrap();
+        symlink("../../prefix/bin/omp", &proxy).unwrap();
+        assert!(!is_omp_standalone_install(&proxy, &real));
+        let directory_proxy = root.path().join("directory-proxy");
+        symlink(project_link.parent().unwrap(), &directory_proxy).unwrap();
+        assert!(!is_omp_standalone_install(
+            &directory_proxy.join("omp"),
+            &real
+        ));
+    }
+
+    #[test]
+    fn distro_omp_binaries_do_not_use_standalone_release_metadata() {
+        for path in [
+            "/usr/bin/omp",
+            "/usr/lib/omp/omp",
+            "/bin/omp",
+            "/usr/share/omp/omp",
+        ] {
+            assert!(omp_distro_owned_path(Path::new(path)));
+        }
+        for path in ["/usr/local/bin/omp", "/home/me/custom/bin/omp"] {
+            assert!(!omp_distro_owned_path(Path::new(path)));
+        }
+    }
+
+    #[test]
+    fn omp_binary_release_detection_supports_custom_installer_directories() {
+        let root = tempfile::tempdir().unwrap();
+        for (directory, expected) in [
+            (".local/bin", true),
+            ("custom/bin", true),
+            ("Cellar/omp/1/bin", false),
+            ("lib/node_modules/omp", false),
+            ("AppData/Local/mise/installs/omp/bin", false),
+            ("nix/store/omp/bin", false),
+            ("scoop/shims", false),
+            ("scoop/apps/oh-my-pi/current", false),
+        ] {
+            let entry =
+                root.path()
+                    .join(directory)
+                    .join(if cfg!(windows) { "omp.exe" } else { "omp" });
+            std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+            std::fs::write(&entry, b"\x7fELFfixture").unwrap();
+            let real = entry.canonicalize().unwrap();
+            assert_eq!(
+                is_omp_standalone_install(&entry, &real),
+                expected,
+                "{directory}"
+            );
+            if expected {
+                for extension in ["bunx", "shim"] {
+                    std::fs::write(entry.with_extension(extension), b"manager shim metadata")
+                        .unwrap();
+                    assert!(!is_omp_standalone_install(&entry, &real));
+                    std::fs::remove_file(entry.with_extension(extension)).unwrap();
+                }
+            }
+            if expected {
+                let install = ToolInstallation {
+                    path: entry.to_string_lossy().into_owned(),
+                    real: real.clone(),
+                    version: Some("1.0.0".into()),
+                    source: "system".into(),
+                    runnable: true,
+                    error: None,
+                    exited_with_error: false,
+                    is_path_default: false,
+                };
+                let plan = plan_selected_tool_update("omp", &install)
+                    .expect("secondary native copy must have a reviewed update plan");
+                assert_eq!(plan.path, install.path);
+                assert_eq!(plan.real_path, real.to_string_lossy());
+                assert_eq!(plan.source, "curl");
+                assert!(plan.command.contains(entry.to_str().unwrap()));
+                assert!(!plan.command.contains("--stable") && !plan.command.contains("--canary"));
+            }
+            std::fs::write(&entry, b"#!/bin/sh\n").unwrap();
+            assert!(!is_omp_standalone_install(&entry, &real));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn selected_npm_updates_match_the_reviewed_package_and_repair_mode() {
+        let fixture = tempfile::tempdir().unwrap();
+        let bin = fixture.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("npm"), "").unwrap();
+
+        for (tool, package, repair) in [
+            ("codex", "@openai/codex", true),
+            ("opencode", OPENCODE_V2_NPM_PACKAGE, false),
+        ] {
+            let package_dir = fixture.path().join("lib/node_modules").join(package);
+            std::fs::create_dir_all(&package_dir).unwrap();
+            std::fs::write(
+                package_dir.join("package.json"),
+                serde_json::json!({"name": package, "version": "2.0.0"}).to_string(),
+            )
+            .unwrap();
+            let script = package_dir.join("cli.js");
+            std::fs::write(&script, "").unwrap();
+            let launcher = bin.join(tool);
+            std::os::unix::fs::symlink(&script, &launcher).unwrap();
+            let real = script.canonicalize().unwrap();
+            let (_, command) =
+                selected_tool_update_command(tool, &launcher, &real, repair).unwrap();
+            assert!(command.contains(&format!("{package}@latest")));
+            if repair {
+                assert!(
+                    command.contains("/lib/node_modules/@openai/.cc-switch-codex-repair.XXXXXXXX")
+                );
+                let probe = command.find(r#""$probe/bin/codex" --version"#).unwrap();
+                let uninstall = command.find("uninstall -g --prefix").unwrap();
+                assert!(probe < uninstall);
+                assert!(command[probe..uninstall].contains("&&"));
+                assert_eq!(command.matches("--prefix").count(), 3);
+                assert!(command[uninstall..].contains(r#"--offline --cache "$probe/cache""#));
+            } else {
+                assert!(command.contains("--allow-scripts=@opencode/cli"));
+                assert!(!command.contains("--allow-scripts=opencode-ai"));
+            }
+        }
+    }
+
     #[test]
     fn pi_managed_install_anchors_to_self_update() {
         let dir = tempfile::tempdir().unwrap();
@@ -1684,6 +3381,27 @@ mod tests {
         );
         assert!(expected.ends_with(" update") && !expected.contains("npm"));
 
+        #[cfg(unix)]
+        {
+            let alias_root = dir.path().join("legacy-alias");
+            std::fs::create_dir_all(&alias_root).unwrap();
+            std::os::unix::fs::symlink(&bin_dir, alias_root.join("bin")).unwrap();
+            let alias = alias_root.join("bin/pi");
+            assert!(is_pi_managed_install(alias.to_str().unwrap()));
+            assert!(tool_discovery::additional_script_install(
+                "pi", &alias, &entry
+            ));
+            assert!(selected_tool_update_command("pi", &alias, &entry, false).is_some());
+        }
+
+        // Preserve the legacy parser's single-BOM acceptance boundary.
+        std::fs::write(
+            install_dir.join("managed-install.json"),
+            "\u{feff}\u{feff}{\"kind\":\"pi-managed-install\"}",
+        )
+        .unwrap();
+        assert!(!is_pi_managed_install(&entry_str));
+
         // Wrong kind or missing launcher/metadata must not match.
         std::fs::write(
             install_dir.join("managed-install.json"),
@@ -1721,16 +3439,30 @@ mod tests {
             ),
             UpdateCommand::Unmanaged
         );
-        assert_ne!(
-            resolve_update_command(
-                "opencode",
-                &[
-                    install("desktop/opencode-cli.exe", "desktop", false),
-                    install("/tmp/node_modules/opencode-ai/bin/opencode", "system", true),
-                ]
-            ),
-            UpdateCommand::Unmanaged
-        );
+
+        let desktop = install("desktop/opencode-cli.exe", "desktop", false);
+        let prefix = tempfile::tempdir().unwrap();
+        let bin = if cfg!(windows) {
+            prefix.path().to_owned()
+        } else {
+            prefix.path().join("bin")
+        };
+        std::fs::create_dir_all(&bin).unwrap();
+        let launcher = bin.join(if cfg!(windows) {
+            "opencode.cmd"
+        } else {
+            "opencode"
+        });
+        std::fs::write(&launcher, "").unwrap();
+        std::fs::write(bin.join(if cfg!(windows) { "npm.cmd" } else { "npm" }), "").unwrap();
+        let standalone = install(launcher.to_str().unwrap(), "npm", true);
+        let UpdateCommand::Anchored(command) =
+            resolve_update_command("opencode", &[desktop, standalone])
+        else {
+            panic!("expected an update anchored to the standalone installation");
+        };
+        assert!(command.contains(bin.to_str().unwrap()));
+        assert!(!command.contains("opencode-cli.exe"));
     }
 
     #[test]
@@ -2028,6 +3760,17 @@ mod tests {
         ] {
             assert_eq!(codex_standalone_install(bin, real), None, "{bin}");
         }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn opencode_v2_npm_upgrade_keeps_the_selected_package() {
+        let bin = "/home/test/.nvm/versions/node/v24/bin/opencode";
+        let real = "/home/test/.nvm/versions/node/v24/lib/node_modules/@opencode/cli/bin/opencode";
+        let command = anchored_command_from_paths("opencode", bin, real).unwrap();
+        assert!(command.contains("npm_config_allow_scripts=@opencode/cli"));
+        assert!(command.contains("npm i -g @opencode/cli@latest"));
+        assert!(!command.contains("opencode-ai"));
     }
 
     #[cfg(target_os = "windows")]

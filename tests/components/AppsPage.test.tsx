@@ -1,3 +1,4 @@
+import { vi, expect, it, describe } from "vitest";
 import {
   act,
   fireEvent,
@@ -5,122 +6,26 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
+import type { DragEndEvent } from "@dnd-kit/core";
 import { APP_IDS } from "@/config/appSpecs";
 import {
-  card,
-  createToolState,
+  mocks,
   deferred,
-  isReady,
-  mountApps,
-  registerScrollIntoViewStub,
-  renderApps,
   report,
-  resetAppsPageMocks,
-  updateAllButton,
+  missing,
+  outdated,
+  card,
+  isReady,
+  rowApps,
   updateButton,
+  mountApps,
+  renderApps,
+  updateAllButton,
 } from "./appsPageTestHelpers";
-
-const mocks = vi.hoisted(() => ({
-  getToolVersions: vi.fn(),
-  getConfigStatus: vi.fn(async () => ({
-    exists: true,
-    path: "/home/me/.workbuddy",
-  })),
-  probeToolInstallations: vi.fn(),
-  listToolInstallations: vi.fn(),
-  runToolLifecycleAction: vi.fn(),
-  prepareToolUninstall: vi.fn(),
-  copyText: vi.fn(),
-  info: vi.fn(),
-  success: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  settings: {} as {
-    visibleApps?: Record<string, boolean>;
-    appOrder?: string[];
-  },
-  updateSettings: vi.fn(),
-  autoSaveSettings: vi.fn(async () => null),
-  dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
-  desktopStatus: { supported: true, installed: true, configured: true },
-}));
-
-vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
-vi.mock("@/lib/api/providers", () => ({
-  providersApi: {
-    getClaudeDesktopStatus: async () => mocks.desktopStatus,
-  },
-}));
-vi.mock("@/hooks/useSettings", () => ({
-  useSettings: () => ({
-    settings: mocks.settings,
-    updateSettings: mocks.updateSettings,
-    autoSaveSettings: mocks.autoSaveSettings,
-  }),
-}));
-vi.mock("@dnd-kit/core", async () => {
-  const actual =
-    await vi.importActual<typeof import("@dnd-kit/core")>("@dnd-kit/core");
-  return {
-    ...actual,
-    DndContext: (props: DndContextProps) => {
-      if (props.onDragEnd) mocks.dragEndHandlers.push(props.onDragEnd);
-      return <actual.DndContext {...props} />;
-    },
-  };
-});
-vi.mock("sonner", () => ({ toast: mocks }));
-vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
-
-const state = createToolState();
-const { outdated, missing } = state;
-
-/** 某一组里各行的应用 ID，按显示顺序。 */
-function rowApps(region: string) {
-  return Array.from(
-    screen
-      .getByRole("region", { name: region })
-      .querySelectorAll<HTMLElement>("[data-tool-row]"),
-    (row) => row.dataset.toolRow,
-  );
-}
-
-registerScrollIntoViewStub();
-
-beforeEach(() => {
-  resetAppsPageMocks(mocks, state);
-});
+import type { ToolVersions } from "./appsPageTestHelpers";
+import userEvent from "@testing-library/user-event";
 
 describe("AppsPage layout, grouping and diagnostics", () => {
-  it("waits for Codex loading even while the check-updates label is hidden in the DOM", async () => {
-    const getVersions = mocks.getToolVersions.getMockImplementation()!;
-    const codexReady = deferred<void>();
-    mocks.getToolVersions.mockImplementation(async (tools: string[]) => {
-      if (tools.includes("codex")) await codexReady.promise;
-      return getVersions(tools);
-    });
-    // Finish the first dynamic import before starting a DOM wait. Under the full
-    // suite, transforming AppsPage can take longer than findByText's timeout.
-    await import("@/components/apps/AppsPage");
-    const loading = renderApps();
-    expect(await screen.findByText("appsPage.checkUpdates")).toHaveAttribute(
-      "aria-hidden",
-      "true",
-    );
-    expect(
-      screen.queryByRole("button", { name: "appsPage.checkUpdates" }),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", { name: "appsPage.checking" }),
-    ).toBeDisabled();
-    await act(async () => codexReady.resolve());
-    await loading;
-    expect(updateButton("Codex")).toBeEnabled();
-  });
-
   it("offers uninstall for installed tools and keeps missing tools installable", async () => {
     missing.add("codex");
     await renderApps();
@@ -173,6 +78,94 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the verified npm package version even when the CLI cannot run", async () => {
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      ((await getVersions(tools)) as ToolVersions).map((info) =>
+        info.name === "claude"
+          ? {
+              ...info,
+              version: null,
+              installed_but_broken: true,
+              error: "Error: missing optional dependency",
+            }
+          : info,
+      ),
+    );
+    mocks.getToolInstallationReports.mockImplementation(
+      async (tools: string[]) =>
+        tools.map((tool) =>
+          report(
+            tool,
+            tool === "claude"
+              ? {
+                  package_version: "2.1.318",
+                  installs: [
+                    {
+                      path: "/opt/homebrew/bin/claude",
+                      version: null,
+                      runnable: false,
+                      error: "Error: missing optional dependency",
+                      source: "npm",
+                      is_path_default: true,
+                    },
+                  ],
+                }
+              : {},
+          ),
+        ),
+    );
+    await renderApps();
+    expect(await card("Claude Code").findByText("2.1.318")).toBeInTheDocument();
+    expect(card("Claude Code").getByText("npm")).toBeInTheDocument();
+    expect(
+      card("Claude Code").getByText("appsPage.notRunnable"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the signed Claude Desktop bundle separately from Claude Code", async () => {
+    missing.add("claude");
+    mocks.getOfficialClaudeDesktopInstallation.mockResolvedValue({
+      path: "/Applications/Claude.app",
+      version: "1.2.3",
+    });
+    await renderApps();
+    expect(
+      await card("Claude Desktop").findByText("Official"),
+    ).toBeInTheDocument();
+    expect(card("Claude Desktop").getByText("1.2.3")).toBeInTheDocument();
+    expect(
+      card("Claude Desktop").getByText("/Applications/Claude.app"),
+    ).toBeInTheDocument();
+    expect(
+      card("Claude Desktop").queryByRole("button", {
+        name: "settings.toolUpdate",
+      }),
+    ).toBeNull();
+    expect(rowApps("appsPage.sectionNotInstalled")).toContain("claude");
+  });
+
+  it("detects the official WorkBuddy bundle before configuration exists", async () => {
+    mocks.getConfigStatus.mockResolvedValueOnce({
+      exists: false,
+      path: "/home/me/.workbuddy",
+    });
+    mocks.getOfficialWorkbuddyInstallation.mockResolvedValue({
+      path: "/Applications/WorkBuddy.app",
+      version: "5.11.3",
+    });
+    await renderApps();
+    expect(await card("WorkBuddy").findByText("5.11.3")).toBeInTheDocument();
+    expect(card("WorkBuddy").getByText("Official")).toBeInTheDocument();
+    expect(
+      card("WorkBuddy").queryByRole("button", { name: "settings.toolInstall" }),
+    ).toBeNull();
+    expect(
+      card("WorkBuddy").queryByRole("button", { name: "settings.toolUpdate" }),
+    ).toBeNull();
+    expect(rowApps("appsPage.sectionInstalled")).toContain("workbuddy");
+  });
+
   it("puts Claude Desktop under not installed when it is not on this machine", async () => {
     mocks.desktopStatus = {
       supported: true,
@@ -181,6 +174,132 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     };
     await renderApps();
     expect(rowApps("appsPage.sectionNotInstalled")).toEqual(["claude-desktop"]);
+  });
+
+  it.each([
+    ["Macintosh", "https://claude.com/download"],
+    ["Windows NT 10.0", "https://claude.com/download"],
+    [
+      "X11; Linux x86_64",
+      "https://code.claude.com/docs/en/desktop-linux#install",
+    ],
+  ])(
+    "opens Claude Desktop install options from its app row on %s",
+    async (userAgent, downloadUrl) => {
+      const platform = vi
+        .spyOn(navigator, "userAgent", "get")
+        .mockReturnValue(userAgent);
+      try {
+        mocks.desktopStatus = {
+          supported: true,
+          installed: false,
+          configured: false,
+        };
+        await renderApps();
+        expect(rowApps("appsPage.sectionNotInstalled")).toEqual([
+          "claude-desktop",
+        ]);
+        fireEvent.click(
+          card("Claude Desktop").getByRole("button", {
+            name: "settings.toolInstall",
+          }),
+        );
+        const dialog = within(screen.getByRole("dialog"));
+        expect(
+          dialog.getByRole("heading", { name: "Claude Desktop" }),
+        ).toBeVisible();
+        fireEvent.click(
+          dialog.getByRole("button", { name: "appsPage.installOfficialSite" }),
+        );
+        expect(mocks.openExternal).toHaveBeenLastCalledWith(downloadUrl);
+        expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+      } finally {
+        platform.mockRestore();
+      }
+    },
+    15000,
+  );
+
+  const alphabeticalOrder = [
+    "agy",
+    "claude",
+    "claude-desktop",
+    "codebuddy",
+    "codex",
+    "dsh",
+    "gemini",
+    "copilot",
+    "grokbuild",
+    "hermes",
+    "kimi",
+    "mcode",
+    "omp",
+    "openclaw",
+    "opencode",
+    "pi",
+    "workbuddy",
+  ];
+
+  it("sorts each installation section by app name by default", async () => {
+    missing.add("opencode").add("codex");
+    await renderApps();
+    expect(rowApps("appsPage.sectionInstalled")).toEqual(
+      alphabeticalOrder.filter((app) => !missing.has(app)),
+    );
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual([
+      "codex",
+      "opencode",
+    ]);
+  });
+
+  it("lets users apply alphabetical order to a saved app order", async () => {
+    mocks.settings = {
+      appOrder: ["workbuddy", ...APP_IDS.filter((app) => app !== "workbuddy")],
+    };
+    const user = userEvent.setup();
+    await renderApps();
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    expect(
+      screen.queryByRole("menuitem", { name: "appsPage.sortByName" }),
+    ).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.sortByName" }),
+    );
+    expect(mocks.autoSaveSettings).toHaveBeenCalledWith({
+      appOrder: alphabeticalOrder,
+    });
+  });
+
+  it("refreshes desktop installation status with the Apps page refresh", async () => {
+    mocks.desktopStatus = {
+      supported: true,
+      installed: false,
+      configured: false,
+    };
+    mocks.getConfigStatus.mockResolvedValueOnce({
+      exists: false,
+      path: "/home/me/.workbuddy",
+    });
+    await renderApps();
+    expect(rowApps("appsPage.sectionNotInstalled")).toEqual([
+      "claude-desktop",
+      "workbuddy",
+    ]);
+    mocks.desktopStatus = {
+      supported: true,
+      installed: true,
+      configured: false,
+    };
+    fireEvent.click(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    );
+    await waitFor(() => {
+      expect(rowApps("appsPage.sectionInstalled")).toContain("claude-desktop");
+      expect(rowApps("appsPage.sectionInstalled")).toContain("workbuddy");
+    });
   });
 
   it("orders rows by the saved app order within each section", async () => {
@@ -236,12 +355,12 @@ describe("AppsPage layout, grouping and diagnostics", () => {
       } as unknown as DragEndEvent);
     });
     const next = [
+      "agy",
       "claude-desktop",
+      "codebuddy",
       "codex",
       "claude",
-      ...APP_IDS.filter(
-        (app) => !["claude", "claude-desktop", "codex"].includes(app),
-      ),
+      ...alphabeticalOrder.slice(alphabeticalOrder.indexOf("codex") + 1),
     ];
     expect(mocks.updateSettings).toHaveBeenCalledWith({ appOrder: next });
     expect(mocks.autoSaveSettings).toHaveBeenCalledWith({ appOrder: next });
@@ -271,16 +390,9 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     ).toBeEnabled();
   });
 
-  it("lists CodeBuddy last, like the sidebar, and upgrades it on its own", async () => {
+  it("upgrades CodeBuddy on its own", async () => {
     outdated.add("codebuddy");
-    const view = await renderApps();
-    const names = Array.from(
-      view.container.querySelectorAll("[data-tool-row]"),
-      (row) => row.textContent ?? "",
-    );
-    const codebuddy = names.findIndex((name) => name.includes("CodeBuddy"));
-    expect(codebuddy).toBe(names.length - 1);
-    expect(names[codebuddy - 1]).toContain("WorkBuddy");
+    await renderApps();
     expect(card("CodeBuddy").getByText("1.0.0")).toBeInTheDocument();
 
     fireEvent.click(updateButton("CodeBuddy"));
@@ -304,11 +416,11 @@ describe("AppsPage layout, grouping and diagnostics", () => {
         name: "settings.toolInstall",
       }),
     );
-    await waitFor(() =>
-      expect(
-        mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
-      ).toEqual([["codebuddy"]]),
-    );
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(
+      dialog.getByText(/npm install -g @tencent-ai\/codebuddy-code/),
+    ).toBeInTheDocument();
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
   });
 
   it("withholds the upgrade when the new version needs a newer Node and leaves it out of update all", async () => {
@@ -342,7 +454,6 @@ describe("AppsPage layout, grouping and diagnostics", () => {
       mocks.runToolLifecycleAction.mock.calls.map(([tools]) => tools),
     ).toEqual([["codex"], ["gemini"]]);
   });
-
   it("shows diagnosed conflicts on the row, refreshes the install report and says so", async () => {
     vi.resetModules();
     const install = (path: string, isDefault: boolean) => ({
@@ -377,13 +488,18 @@ describe("AppsPage layout, grouping and diagnostics", () => {
       await screen.findByRole("menuitem", { name: "settings.toolDiagnose" }),
     );
 
-    // 冲突列表直接在行里展开，入口「另有 1 处安装」也刷新出来，并有一条提示
+    // 冲突列表直接在行里展开，渠道入口也刷新出来，并有一条提示
     expect(
-      await card("Claude Code").findByText("/opt/homebrew/bin/claude"),
+      await card("Claude Code").findByRole("region", {
+        name: "appsPage.inspectInstallations",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      card("Claude Code").getByText("/opt/homebrew/bin/claude"),
     ).toBeInTheDocument();
     expect(
       card("Claude Code").getByRole("button", {
-        name: /appsPage\.otherInstalls/,
+        name: "appsPage.manageInstallations",
       }),
     ).toHaveAttribute("aria-expanded", "true");
     expect(mocks.warning).toHaveBeenCalledWith(
@@ -392,7 +508,6 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     );
     expect(mocks.info).not.toHaveBeenCalled();
   });
-
   it("reuses an in-flight background tool check without duplicate probes and renders completed cards immediately", async () => {
     const getVersions = mocks.getToolVersions.getMockImplementation()!;
     const codexReady = deferred<void>();
@@ -571,7 +686,6 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     expect(mocks.listToolInstallations).toHaveBeenCalledTimes(1);
   });
 });
-
 describe("AppsPage visibility column", () => {
   it("renders the sidebar visibility switches small with the action color", async () => {
     vi.resetModules();
@@ -586,7 +700,7 @@ describe("AppsPage visibility column", () => {
     }
   });
 
-  it("gives WorkBuddy only the sidebar switch, like Claude Desktop", async () => {
+  it("keeps a download entry when WorkBuddy config exists without an installed client", async () => {
     vi.resetModules();
     await renderApps();
     const row = screen
@@ -594,20 +708,13 @@ describe("AppsPage visibility column", () => {
       .closest("[data-tool-row]") as HTMLElement;
     expect(row).not.toBeNull();
     expect(within(row).getByRole("switch")).toBeInTheDocument();
-    // 和 Claude Desktop 一样：接入状态 + 说明，没有操作按钮
     expect(
       await within(row).findByText("appsPage.desktopConnected"),
     ).toBeInTheDocument();
     expect(mocks.getConfigStatus).toHaveBeenCalledWith("workbuddy");
-    // 除了「已安装」组的拖动把手，唯一的按钮是说明的问号
     expect(
-      within(row)
-        .getAllByRole("button")
-        .filter(
-          (button) =>
-            button.getAttribute("aria-label") !== "appsPage.dragHandle",
-        ),
-    ).toEqual([within(row).getByRole("button", { name: "WorkBuddy" })]);
+      within(row).getByRole("button", { name: "settings.toolInstall" }),
+    ).toBeEnabled();
   });
 
   it("hides CodeBuddy from the sidebar with its own switch", async () => {

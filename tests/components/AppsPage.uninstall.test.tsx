@@ -1,3 +1,4 @@
+import { vi, expect, it, describe } from "vitest";
 import {
   act,
   fireEvent,
@@ -5,96 +6,26 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolUninstallCandidate } from "@/lib/api/settings";
-import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { waitForOverlayTransition } from "../utils/overlayTransition";
 import {
-  candidate,
-  card,
-  createToolState,
+  mocks,
   deferred,
-  registerScrollIntoViewStub,
-  renderApps,
   report,
-  resetAppsPageMocks,
   uninstallPlan,
+  candidate,
+  upgraded,
+  missing,
+  card,
+  rowMenu,
+  openUninstall,
   updateButton,
+  renderApps,
 } from "./appsPageTestHelpers";
-
-const mocks = vi.hoisted(() => ({
-  getToolVersions: vi.fn(),
-  getConfigStatus: vi.fn(async () => ({
-    exists: true,
-    path: "/home/me/.workbuddy",
-  })),
-  probeToolInstallations: vi.fn(),
-  listToolInstallations: vi.fn(),
-  runToolLifecycleAction: vi.fn(),
-  prepareToolUninstall: vi.fn(),
-  copyText: vi.fn(),
-  info: vi.fn(),
-  success: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  settings: {} as { visibleApps?: undefined; appOrder?: string[] },
-  updateSettings: vi.fn(),
-  autoSaveSettings: vi.fn(async () => null),
-  dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
-  desktopStatus: { supported: true, installed: true, configured: true },
-}));
-
-vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
-vi.mock("@/lib/api/providers", () => ({
-  providersApi: {
-    getClaudeDesktopStatus: async () => mocks.desktopStatus,
-  },
-}));
-vi.mock("@/hooks/useSettings", () => ({
-  useSettings: () => ({
-    settings: mocks.settings,
-    updateSettings: mocks.updateSettings,
-    autoSaveSettings: mocks.autoSaveSettings,
-  }),
-}));
-vi.mock("@dnd-kit/core", async () => {
-  const actual =
-    await vi.importActual<typeof import("@dnd-kit/core")>("@dnd-kit/core");
-  return {
-    ...actual,
-    DndContext: (props: DndContextProps) => {
-      if (props.onDragEnd) mocks.dragEndHandlers.push(props.onDragEnd);
-      return <actual.DndContext {...props} />;
-    },
-  };
-});
-vi.mock("sonner", () => ({ toast: mocks }));
-vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
-
-const state = createToolState();
-const { missing } = state;
-
-/** 行尾「⋯」菜单（卸载在里面）。 */
-function rowMenu(name: string) {
-  return card(name).getByRole("button", { name: "appPage.moreActions" });
-}
-
-async function openUninstall(name: string) {
-  const user = userEvent.setup();
-  await user.click(rowMenu(name));
-  await user.click(
-    await screen.findByRole("menuitem", { name: "settings.toolUninstall" }),
-  );
-}
-
-registerScrollIntoViewStub();
+import type { ToolVersions } from "./appsPageTestHelpers";
+import userEvent from "@testing-library/user-event";
 
 describe("AppsPage uninstall flows", () => {
-  beforeEach(() => {
-    resetAppsPageMocks(mocks, state);
-  });
-
   it("shows the selected path and command while retaining the resolved target for uninstall validation", async () => {
     const pending = deferred<ToolUninstallCandidate[]>();
     mocks.prepareToolUninstall.mockReturnValueOnce(pending.promise);
@@ -253,6 +184,46 @@ describe("AppsPage uninstall flows", () => {
     await act(async () => first.resolve([candidate(uninstallPlan("claude"))]));
     expect(dialog.queryByText(uninstallPlan("claude").path)).toBeNull();
     expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+  });
+
+  it("only offers valid Homebrew formula uninstall commands", async () => {
+    const getVersions = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      ((await getVersions(tools)) as ToolVersions).map((tool) => ({
+        ...tool,
+        env_type: "linux",
+      })),
+    );
+    const user = userEvent.setup();
+    await renderApps();
+    await user.click(
+      screen.getByRole("button", { name: "appsPage.moreActions" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitem", {
+        name: "settings.manualUninstallCommands",
+      }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByText("Linux")).toBeInTheDocument();
+    await user.click(
+      dialog.getByRole("combobox", { name: "settings.manualUninstallMethod" }),
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Homebrew (formula)" }),
+    );
+    expect(
+      dialog.getByText("brew uninstall --formula gemini-cli"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByText("brew uninstall --formula opencode"),
+    ).toBeInTheDocument();
+    expect(
+      dialog.getByText("brew uninstall --formula anomalyco/tap/opencode"),
+    ).toBeInTheDocument();
+    expect(dialog.queryByText("Codex")).toBeNull();
+    expect(dialog.queryByText("Claude Code")).toBeNull();
+    expect(dialog.queryByText("Grok Build")).toBeNull();
   });
 
   it("confirms uninstall, preserves the running task across navigation and refreshes to install", async () => {
@@ -518,6 +489,64 @@ describe("AppsPage uninstall flows", () => {
     },
   );
 
+  it("reports the Official desktop copy after removing the last standalone CLI", async () => {
+    const original = mocks.getToolVersions.getMockImplementation()!;
+    const desktop = {
+      path: "/Applications/ChatGPT.app",
+      version: "26.1117.41037",
+      bundled_cli_version: "0.171.0-alpha.13",
+    };
+    const plan = uninstallPlan("codex");
+    const npm = candidate(plan, { source: "npm", version: "0.171.0" });
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      ((await original(tools)) as ToolVersions).map((version) =>
+        version.name === "codex"
+          ? {
+              ...version,
+              desktop_installation: desktop,
+              desktop_managed: true,
+              version: null,
+              latest_version: null,
+            }
+          : version,
+      ),
+    );
+    const reports = async (tools: string[]) =>
+      tools.map((tool) =>
+        report(tool, {
+          installs: tool === "codex" && !upgraded.has(tool) ? [npm] : [],
+        }),
+      );
+    mocks.getToolInstallationReports.mockImplementation(reports);
+    mocks.probeToolInstallations.mockImplementation(reports);
+    mocks.prepareToolUninstall.mockResolvedValueOnce([npm]);
+    await renderApps();
+    const app = card("Codex");
+    const user = userEvent.setup();
+    await user.click(
+      await app.findByRole("button", { name: "appsPage.manageInstallations" }),
+    );
+    await user.click(
+      await app.findByRole("button", { name: "settings.toolUninstall" }),
+    );
+    const dialog = within(await screen.findByRole("dialog"));
+    expect(await dialog.findByText(npm.path)).toBeVisible();
+    await user.click(
+      dialog.getByRole("button", { name: "settings.toolUninstall" }),
+    );
+    await waitFor(() =>
+      expect(mocks.info).toHaveBeenCalledWith(
+        "settings.toolUninstallRemaining",
+        { description: "Codex\nOfficial 26.1117.41037", closeButton: true },
+      ),
+    );
+    expect(app.queryByText(npm.path)).toBeNull();
+    expect(
+      app.queryByRole("button", { name: "settings.toolUninstall" }),
+    ).toBeNull();
+    expect(app.getAllByText(desktop.version).length).toBeGreaterThan(0);
+  });
+
   it("refreshes the remaining installation after uninstall instead of reporting a broken install", async () => {
     await renderApps();
     mocks.probeToolInstallations.mockResolvedValueOnce([
@@ -544,19 +573,27 @@ describe("AppsPage uninstall flows", () => {
       expect(mocks.info).toHaveBeenCalledWith(
         "settings.toolUninstallRemaining",
         {
-          description: "Claude Code",
+          description: "Claude Code\nappsPage.installSourceUnknown 2.0.0",
           closeButton: true,
         },
       ),
     );
     expect(
-      card("Claude Code").getByText("C:/remaining/claude.exe"),
-    ).toBeInTheDocument();
+      card("Claude Code").queryByText("C:/remaining/claude.exe"),
+    ).toBeNull();
+    fireEvent.click(
+      await card("Claude Code").findByRole("button", {
+        name: "appsPage.manageInstallations",
+      }),
+    );
     expect(
-      card("Claude Code").getByRole("button", {
-        name: "appPage.moreActions",
+      await card("Claude Code").findByRole("button", {
+        name: "settings.toolUninstall",
       }),
     ).toBeEnabled();
+    expect(
+      card("Claude Code").getByText("C:/remaining/claude.exe"),
+    ).toBeInTheDocument();
     expect(mocks.warning).not.toHaveBeenCalled();
   });
 });

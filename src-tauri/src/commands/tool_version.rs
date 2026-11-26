@@ -51,6 +51,71 @@ pub(crate) fn local_tool_version(tool: &str) -> Option<String> {
     }
 }
 
+pub(super) fn npm_package_for_version(tool: &str, version: Option<&str>) -> Option<&'static str> {
+    if tool == "opencode"
+        && version
+            .and_then(parse_semver)
+            .is_some_and(|(core, _)| core[0] >= 2)
+    {
+        Some(OPENCODE_V2_NPM_PACKAGE)
+    } else {
+        tool_spec(tool).npm_package
+    }
+}
+
+fn opencode_install_path(
+    environment: &str,
+    wsl_distro: Option<&str>,
+    wsl_shell: Option<&str>,
+    wsl_shell_flag: Option<&str>,
+) -> Option<(PathBuf, PathBuf)> {
+    #[cfg(target_os = "windows")]
+    if let Some(distro) = wsl_distro {
+        let pref = WslShellPreferenceInput {
+            wsl_shell: wsl_shell.map(str::to_string),
+            wsl_shell_flag: wsl_shell_flag.map(str::to_string),
+        };
+        return tool_uninstall::wsl_installed_paths("opencode", distro, &pref);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (wsl_distro, wsl_shell, wsl_shell_flag);
+        if environment == "linux" {
+            return resolve_path_default_entry(
+                "opencode",
+                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+            )
+            .ok()
+            .flatten()
+            .map(|entry| (entry.launcher, entry.real));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    let _ = environment;
+    None
+}
+
+fn opencode_manual_update_for_version(
+    environment: &str,
+    version: Option<&str>,
+    installation: impl FnOnce() -> Option<(PathBuf, PathBuf)>,
+) -> bool {
+    // WSL execution requires a verified npm launcher for both major versions.
+    // On native platforms only V2 uses this additional ownership check.
+    if environment == "wsl" && version.is_some_and(version_is_prerelease) {
+        return true;
+    }
+    version.is_some()
+        && (environment == "wsl"
+            || npm_package_for_version("opencode", version) == Some(OPENCODE_V2_NPM_PACKAGE))
+        && opencode_update_is_manual(
+            environment,
+            installation()
+                .as_ref()
+                .map(|(entry, real)| (entry.as_path(), real.as_path())),
+        )
+}
+
 pub(super) async fn get_single_tool_version_impl(
     tool: &str,
     wsl_shell: Option<&str>,
@@ -61,12 +126,36 @@ pub(super) async fn get_single_tool_version_impl(
         "unexpected tool name in get_single_tool_version_impl: {tool}"
     );
 
+    // 判断该工具的运行环境 & WSL distro（如有）
+
+    #[cfg(target_os = "macos")]
+    if tool == "codex" {
+        if let Ok(Some(desktop)) =
+            tokio::task::spawn_blocking(crate::codex_config::codex_macos_official_installation)
+                .await
+        {
+            let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
+            return ToolVersion {
+                name: tool.to_string(),
+                version: None,
+                latest_version: None,
+                error: None,
+                installed_but_broken: false,
+                desktop_installation: Some(desktop),
+                desktop_managed: true,
+                env_type,
+                wsl_distro,
+                update_blocked_by_node: None,
+                manual_update_only: false,
+            };
+        }
+    }
+
     // 使用全局 HTTP 客户端（已包含代理配置）
     let client = crate::proxy::http_client::get();
 
     // 1. 本地版本（`where` + `--version` 子进程，阻塞）放进 blocking 线程池，
-    //    与 latest 的网络请求并发：总耗时取两者较慢者，而不是相加；也不再占住
-    //    async worker 线程，拖慢同时进行的其它工具的探测与 IPC。
+    //    避免阻塞其他工具的探测。最新版本需根据实际安装渠道查询。
     let local_probe = {
         let tool_owned = tool.to_string();
         let wsl_shell = wsl_shell.map(str::to_string);
@@ -83,8 +172,7 @@ pub(super) async fn get_single_tool_version_impl(
             (env_type, wsl_distro, probe)
         })
     };
-    let (local_probe, prefetched) = tokio::join!(local_probe, prefetch_latest(&client, tool));
-    let (env_type, wsl_distro, probe) = match local_probe {
+    let (env_type, wsl_distro, probe) = match local_probe.await {
         Ok(result) => result,
         Err(e) => {
             let (env_type, wsl_distro) = tool_env_type_and_wsl_distro(tool);
@@ -105,17 +193,64 @@ pub(super) async fn get_single_tool_version_impl(
         ShellProbe::NotFound(e) => (None, Some(e), false),
     };
 
-    // 2. 远程最新版本：网络部分已与本地探测并发拉回，这里只按本地版本做挑选 / 兜底
-    //    （npm 工具在本地领先 latest 时按预发布通道补选，见 ToolSpec::npm_prerelease_tags）
+    // Match the version check to the installed copy, not just the tool name.
+    let location = if (local_version.is_some() || installed_but_broken) && wsl_distro.is_none() {
+        let tool = tool.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let deadline = CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT));
+            #[cfg(not(target_os = "windows"))]
+            if let Some(paths) = resolve_path_default_entry(&tool, deadline).ok().flatten() {
+                return Some((paths.launcher, paths.real));
+            }
+            let launcher = locate_default_tool(&tool, deadline).ok()?;
+            let real = std::fs::canonicalize(&launcher).ok()?;
+            Some((launcher, real))
+        })
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+    let desktop_managed = location
+        .as_ref()
+        .is_some_and(|(_, real)| desktop_managed_codex_cli(tool, real));
     let local = local_version.as_deref();
-    let latest_version = resolve_latest(&client, tool, prefetched, local).await;
+    let manual_update_only = location.as_ref().is_some_and(|(launcher, real)| {
+        npm_prerelease_requires_manual_update(tool, launcher, real, local)
+    }) || (tool == "opencode"
+        && opencode_manual_update_for_version(&env_type, local, || {
+            opencode_install_path(&env_type, wsl_distro.as_deref(), wsl_shell, wsl_shell_flag)
+        }));
+    let latest_version = if desktop_managed || local.is_none() {
+        None
+    } else if let Some((launcher, real)) = &location {
+        latest_version_for_installation(&client, tool, launcher, real, local).await
+    } else if wsl_distro.is_some() {
+        wsl_latest_version(&client, tool, local).await
+    } else {
+        None
+    };
 
-    // 3. 有新版本时，看新版本要求的 Node 与这处安装用的对不对得上
-    let update_blocked_by_node = match (local, latest_version.as_deref()) {
-        (Some(local), Some(latest))
-            if compare_semver(local, latest) == Some(std::cmp::Ordering::Less) =>
+    let npm_package = location
+        .as_ref()
+        .and_then(|(launcher, real)| {
+            let manifest = global_node_package_manifest(tool, launcher, real)?;
+            let name = manifest.get("name")?.as_str()?;
+            npm_package_candidates(tool).find(|candidate| *candidate == name)
+        })
+        .or_else(|| {
+            wsl_distro
+                .is_some()
+                .then(|| npm_package_for_version(tool, local))
+                .flatten()
+        });
+    let update_blocked_by_node = match (local, latest_version.as_deref(), npm_package) {
+        (Some(local), Some(latest), Some(package))
+            if !manual_update_only
+                && compare_semver(local, latest) == Some(std::cmp::Ordering::Less) =>
         {
-            tool_node_requirement::update_node_gap(&client, tool, latest).await
+            tool_node_requirement::update_node_gap(&client, tool, package, latest).await
         }
         _ => None,
     };
@@ -126,10 +261,323 @@ pub(super) async fn get_single_tool_version_impl(
         latest_version,
         error: local_error,
         installed_but_broken,
+        desktop_installation: None,
+        desktop_managed,
         env_type,
         wsl_distro,
         update_blocked_by_node,
+        manual_update_only,
     }
+}
+
+pub(super) fn volta_package_for_version(tool: &str, local: Option<&str>) -> Option<&'static str> {
+    if !tool_spec(tool).npm_installable
+        || (tool == "opencode" && local.and_then(parse_semver).is_none())
+    {
+        return None;
+    }
+    npm_package_for_version(tool, local)
+}
+
+async fn wsl_latest_version(
+    client: &reqwest::Client,
+    tool: &str,
+    local: Option<&str>,
+) -> Option<String> {
+    match (tool, npm_package_for_version(tool, local)) {
+        ("hermes", _) => fetch_hermes_latest_version(client, local).await,
+        ("agy", _) => fetch_agy_latest_version(client).await,
+        ("opencode", Some(package)) => {
+            match fetch_npm_latest_for_tool(client, package, tool, local).await {
+                Some(version) => Some(version),
+                None if package == OPENCODE_V2_NPM_PACKAGE => {
+                    fetch_opencode_v2_release(client).await
+                }
+                None => fetch_github_latest_version(client, "anomalyco/opencode").await,
+            }
+        }
+        (_, Some(package)) => fetch_npm_latest_for_tool(client, package, tool, local).await,
+        (_, None) => None,
+    }
+}
+
+pub(super) async fn latest_version_for_installation(
+    client: &reqwest::Client,
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+    local: Option<&str>,
+) -> Option<String> {
+    if desktop_managed_codex_cli(tool, real) {
+        return None;
+    }
+    if verified_volta_manager(launcher).is_some() {
+        let tags = fetch_npm_dist_tags(client, volta_package_for_version(tool, local)?).await?;
+        // The confirmed updater explicitly installs @latest. Do not advertise
+        // a tool-specific next/beta tag that this plan would not install.
+        return pick_latest_version(&tags, &[], None)
+            .filter(|version| !version_is_prerelease(version));
+    }
+    #[cfg(not(target_os = "windows"))]
+    if is_brew_managed_path(real.to_str()?) {
+        let install = homebrew_installation(real)?;
+        return tokio::task::spawn_blocking(move || fetch_homebrew_release(install))
+            .await
+            .ok()
+            .flatten();
+    }
+    if tool == "codex" && is_standalone_codex(launcher, real) {
+        return fetch_codex_installer_release(client).await;
+    }
+    #[cfg(not(target_os = "windows"))]
+    if is_standard_curl_install(tool, real) {
+        return match tool {
+            "claude" => {
+                let version = client
+                    .get("https://downloads.claude.ai/claude-code-releases/latest")
+                    .timeout(LATEST_PROBE_TIMEOUT)
+                    .send()
+                    .await
+                    .ok()?
+                    .error_for_status()
+                    .ok()?
+                    .text()
+                    .await
+                    .ok()?;
+                release_display_version(version.trim())
+            }
+            "opencode" if npm_package_for_version(tool, local) == Some(OPENCODE_V2_NPM_PACKAGE) => {
+                match fetch_opencode_v2_installer_version(client).await {
+                    Some(version) => Some(version),
+                    None => fetch_opencode_v2_release(client).await,
+                }
+            }
+            "opencode" => fetch_github_latest_version(client, "anomalyco/opencode").await,
+            _ => None,
+        };
+    }
+    if let Some(manifest) = global_node_package_manifest(tool, launcher, real) {
+        let name = manifest.get("name")?.as_str()?;
+        let package = npm_package_candidates(tool).find(|candidate| *candidate == name)?;
+        if package == OPENCODE_V2_NPM_PACKAGE {
+            return match fetch_npm_latest_for_tool(client, package, tool, local).await {
+                Some(version) => Some(version),
+                None => fetch_opencode_v2_release(client).await,
+            };
+        }
+        return fetch_npm_latest_for_tool(client, package, tool, local).await;
+    }
+
+    if tool == "omp" && is_omp_standalone_install(launcher, real) {
+        return fetch_omp_binary_release(launcher, local).await;
+    }
+    if is_native_executable(real) {
+        match tool {
+            "codebuddy" => return fetch_codebuddy_installer_release(client).await,
+            "copilot" => return fetch_github_latest_version(client, "github/copilot-cli").await,
+            _ => {}
+        }
+    }
+    let native_installer = match tool {
+        #[cfg(not(target_os = "windows"))]
+        "pi" => additional_script_install(tool, launcher, real),
+        "grok" => is_grok_native_install(launcher.to_str()?, real.to_str()?),
+        "mcode" => {
+            mcode_receipt_install_root(launcher.to_str()?, McodeLayout::NATIVE).is_some()
+                || mcode_script_install_root(
+                    launcher.to_str()?,
+                    real.to_str()?,
+                    McodeLayout::NATIVE,
+                )
+                .is_some()
+        }
+        "kimi" => kimi_install_dir(dirs::home_dir().as_deref())
+            .is_some_and(|root| is_kimi_script_install(launcher, real, &root)),
+        _ => false,
+    };
+    if native_installer {
+        return fetch_npm_latest_for_tool(client, tool_spec(tool).npm_package?, tool, local).await;
+    }
+
+    match (tool, infer_install_source(launcher)) {
+        ("hermes", _) => fetch_hermes_latest_version(client, local).await,
+        ("agy", _) => fetch_agy_latest_version(client).await,
+        (_, "nvm" | "fnm" | "mise" | "volta" | "pnpm" | "bun") => {
+            let package = tool_spec(tool).npm_package?;
+            fetch_npm_latest_for_tool(client, package, tool, local).await
+        }
+        _ => None,
+    }
+}
+
+fn omp_checked_latest_version(stdout: &str, stderr: &str, current: Option<&str>) -> Option<String> {
+    for line in stdout.lines().chain(stderr.lines()) {
+        if let Some((_, version)) = line.split_once("New version available:") {
+            return release_display_version(&extract_version(version));
+        }
+    }
+    (stdout.contains("Already up to date") || stderr.contains("Already up to date"))
+        .then(|| current.and_then(release_display_version))
+        .flatten()
+}
+
+/// Let the selected native CLI resolve its own effective channel, overlays and ABI.
+/// --check performs no installation; timeout/failure/unrecognized output stays unknown.
+async fn fetch_omp_binary_release(launcher: &Path, current: Option<&str>) -> Option<String> {
+    let launcher = launcher.to_owned();
+    let current = current.map(str::to_owned);
+    tokio::task::spawn_blocking(move || {
+        use std::process::Stdio;
+        #[cfg(not(target_os = "windows"))]
+        let mut command = {
+            let mut command = std::process::Command::new(&launcher);
+            command.args(["update", "--check"]);
+            if let Some(env) =
+                login_shell_env(CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)))
+            {
+                if let Some(path) = env.path.as_deref() {
+                    command.env(
+                        "PATH",
+                        merge_path_segments(path, &std::env::var("PATH").unwrap_or_default()),
+                    );
+                }
+                apply_login_shell_vars(&mut command, &env.vars);
+            }
+            isolate_child_process_group(&mut command);
+            command
+        };
+        #[cfg(target_os = "windows")]
+        let mut command =
+            build_windows_tool_command(&launcher, &["update", "--check"], &effective_path_string());
+        let directory = omp_update_directory(&launcher)?;
+        let path = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "PATH")
+                    .then(|| value.map(std::ffi::OsStr::to_os_string))
+                    .flatten()
+            })
+            .unwrap_or_else(|| std::env::var_os("PATH").unwrap_or_default());
+        let path = omp_update_path(&directory, &path)?;
+        command.env("PATH", path);
+        command
+            .current_dir(crate::config::get_home_dir())
+            .env("NO_COLOR", "1")
+            .env("FORCE_COLOR", "0")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let output = wait_child_output(
+            command.spawn().ok()?,
+            CommandDeadline::from_timeout(Some(LATEST_PROBE_TIMEOUT)),
+        )
+        .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        omp_checked_latest_version(
+            &decode_command_output(&output.stdout),
+            &decode_command_output(&output.stderr),
+            current.as_deref(),
+        )
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn fetch_homebrew_release(install: HomebrewInstallation) -> Option<String> {
+    let mut command = std::process::Command::new(&install.brew);
+    command
+        .args([
+            "info",
+            "--json=v2",
+            &format!("--{}", install.kind),
+            &install.token,
+        ])
+        .env("HOMEBREW_NO_AUTO_UPDATE", "1")
+        .env("HOMEBREW_NO_ANALYTICS", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
+    isolate_child_process_group(&mut command);
+    let output = wait_child_output(
+        command.spawn().ok()?,
+        CommandDeadline::from_timeout(Some(std::time::Duration::from_secs(10))),
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let info: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    homebrew_release_version(&info, install.kind, &install.token)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn homebrew_release_version(info: &serde_json::Value, kind: &str, token: &str) -> Option<String> {
+    let matching = |key: &str, name: &str| {
+        let mut entries = info
+            .get(key)?
+            .as_array()?
+            .iter()
+            .filter(|entry| entry.get(name).and_then(|value| value.as_str()) == Some(token));
+        let entry = entries.next()?;
+        entries.next().is_none().then_some(entry)
+    };
+    let version = if kind == "cask" {
+        let entry = matching("casks", "token")?;
+        let installed = entry.get("installed")?.as_str()?;
+        if installed.is_empty() {
+            return None;
+        }
+        entry.get("version")?.as_str()?.split(',').next()?
+    } else {
+        let entry = matching("formulae", "name")?;
+        if entry.get("installed")?.as_array()?.is_empty() {
+            return None;
+        }
+        entry.get("versions")?.get("stable")?.as_str()?
+    };
+    release_display_version(version)
+}
+
+/// This is the release channel used by the official CodeBuddy native installer.
+async fn fetch_codebuddy_installer_release(client: &reqwest::Client) -> Option<String> {
+    let response = client
+        .get("https://acc-1258344699.cos.accelerate.myqcloud.com/@tencent-ai/codebuddy-code/releases/latest")
+        .timeout(LATEST_PROBE_TIMEOUT)
+        .send().await.ok()?.error_for_status().ok()?;
+    let text = response.text().await.ok()?;
+    release_display_version(text.trim())
+}
+
+async fn fetch_codex_installer_release(client: &reqwest::Client) -> Option<String> {
+    if let Ok(response) = client
+        .get("https://releases.openai.com/codex/channels/latest")
+        .timeout(LATEST_PROBE_TIMEOUT)
+        .send()
+        .await
+    {
+        if let Ok(info) = response.json::<serde_json::Value>().await {
+            if let Some(version) = info
+                .get("tag_name")
+                .and_then(|value| value.as_str())
+                .map(|tag| tag.trim_start_matches("rust-v").trim_start_matches('v'))
+                .and_then(release_display_version)
+            {
+                return Some(version);
+            }
+        }
+    }
+    // The official standalone installer also falls back to GitHub Releases.
+    fetch_github_latest_version(client, "openai/codex").await
+}
+
+/// Classify the channel independently of non-comparable build metadata.
+pub(super) fn version_is_prerelease(version: &str) -> bool {
+    parse_semver(version.split('+').next().unwrap_or(version))
+        .is_some_and(|(_, pre)| !pre.is_empty())
 }
 
 /// 解析 "2.1.156" / "2.1.156-beta.1" → (主版本三段, 预发布段)。无法解析返回 None。
@@ -276,95 +724,20 @@ pub(super) async fn fetch_npm_dist_tags(
         .ok()
 }
 
-/// latest 查询中不依赖本地版本的网络部分，可与本地 `--version` 探测并发进行。
-enum PrefetchedLatest {
-    /// npm dist-tags：选哪个 tag 要看本地版本，等本地探测结束后由 `resolve_latest` 定。
-    Npm(Option<serde_json::Map<String, serde_json::Value>>),
-    /// OpenCode 1.x（`opencode-ai`）与 2.x（`@opencode/cli`）两条线的 dist-tags，并发拉回，
-    /// 等本地版本出来再按主版本挑（见 `misc::OPENCODE_V2_NPM`）。
-    OpenCode {
-        v1: Option<serde_json::Map<String, serde_json::Value>>,
-        v2: Option<serde_json::Map<String, serde_json::Value>>,
-    },
-    /// Hermes 的 GitHub Release；取不到时再按本地版本走 PyPI 兜底。
-    Hermes(Option<String>),
-    Resolved(Option<String>),
-}
-
-async fn prefetch_latest(client: &reqwest::Client, tool: &str) -> PrefetchedLatest {
-    match (tool, tool_spec(tool).npm_package) {
-        ("hermes", _) => PrefetchedLatest::Hermes(
-            fetch_github_latest_version(client, "NousResearch/hermes-agent").await,
-        ),
-        ("agy", _) => PrefetchedLatest::Resolved(fetch_agy_latest_version(client).await),
-        ("opencode", Some(package)) => {
-            let (v1, v2) = tokio::join!(
-                fetch_npm_dist_tags(client, package),
-                fetch_npm_dist_tags(client, OPENCODE_V2_NPM.name),
-            );
-            PrefetchedLatest::OpenCode { v1, v2 }
-        }
-        (_, Some(package)) => PrefetchedLatest::Npm(fetch_npm_dist_tags(client, package).await),
-        (_, None) => PrefetchedLatest::Resolved(None),
-    }
-}
-
-/// 结合本地版本得出要展示的"最新版本"。
-///
-/// npm 工具取 `latest`,本地版本领先时按工具的预发布通道(见 `ToolSpec::npm_prerelease_tags`)
-/// 补选 —— 复用同一次 registry 响应,无额外请求;OpenCode 按本地主版本在 1.x / 2.x 两个包里挑,
-/// 1.x 取不到时退到 GitHub。
-/// Hermes 以 GitHub Releases 为主、PyPI 兜底:
-/// cc-switch 安装/升级 Hermes 走的是官方 install.sh（`git clone` main 分支）与
-/// `hermes update`（`git pull`），整条链路与 PyPI 无关；而 PyPI 的 `hermes-agent`
-/// 自 0.19.0（2026-07-20）起停更，上游只在 GitHub Releases 发版
-/// （#6475 / #6618 / #7033：「最新版本」长期停在 0.19.0、比当前还旧、升级按钮不出现）。
-/// 仅当 GitHub 不可达或被限流时才退到 PyPI，且该值已被本地超过时不展示，宁可显示未知。
-async fn resolve_latest(
+/// 查询某 npm 工具要展示的"最新版本":取 `latest`,并在本地版本领先时按工具的
+/// 预发布通道(见 `npm_prerelease_tags`)补查 —— 复用同一次 registry 响应,无额外请求。
+async fn fetch_npm_latest_for_tool(
     client: &reqwest::Client,
+    package: &str,
     tool: &str,
-    prefetched: PrefetchedLatest,
     local_version: Option<&str>,
 ) -> Option<String> {
-    match prefetched {
-        PrefetchedLatest::Npm(dist_tags) => dist_tags.and_then(|tags| {
-            pick_latest_version(&tags, tool_spec(tool).npm_prerelease_tags, local_version)
-        }),
-        PrefetchedLatest::OpenCode { v1, v2 } => {
-            let picked = pick_opencode_latest(v1.as_ref(), v2.as_ref(), local_version);
-            // GitHub 的 releases/latest 标在 1.x 上，只能给 1.x 兜底。
-            if picked.is_none() && !local_version.is_some_and(is_opencode_v2_version) {
-                fetch_github_latest_version(client, "anomalyco/opencode").await
-            } else {
-                picked
-            }
-        }
-        PrefetchedLatest::Hermes(Some(version)) => Some(version),
-        PrefetchedLatest::Hermes(None) => drop_latest_behind_local(
-            fetch_pypi_latest_version(client, "hermes-agent").await,
-            local_version,
-        ),
-        PrefetchedLatest::Resolved(version) => version,
-    }
-}
-
-/// OpenCode 的「最新版本」跟着本地那条线走：装的是 2.x 看 `@opencode/cli`，否则（含没装、
-/// 版本认不出）看 1.x 的 `opencode-ai`。2.x 用户若拿 1.x 的 latest 比，永远「已是最新」。
-fn pick_opencode_latest(
-    v1: Option<&serde_json::Map<String, serde_json::Value>>,
-    v2: Option<&serde_json::Map<String, serde_json::Value>>,
-    local_version: Option<&str>,
-) -> Option<String> {
-    if local_version.is_some_and(is_opencode_v2_version) {
-        return v2.and_then(|tags| pick_latest_version(tags, &[], local_version));
-    }
-    v1.and_then(|tags| {
-        pick_latest_version(
-            tags,
-            tool_spec("opencode").npm_prerelease_tags,
-            local_version,
-        )
-    })
+    let dist_tags = fetch_npm_dist_tags(client, package).await?;
+    pick_latest_version(
+        &dist_tags,
+        tool_spec(tool).npm_prerelease_tags,
+        local_version,
+    )
 }
 
 /// 版本探测请求的请求级超时。全局客户端是给代理转发用的（总超时 600s / 连接 30s），
@@ -401,6 +774,59 @@ async fn fetch_agy_latest_version(client: &reqwest::Client) -> Option<String> {
     json.get("version")
         .and_then(|v| v.as_str())
         .and_then(release_display_version)
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn fetch_opencode_v2_installer_version(client: &reqwest::Client) -> Option<String> {
+    // The official v2 install script reads its release and package from this endpoint.
+    let metadata = client
+        .get("https://opencode.ai/update/api/latest/cli/npm")
+        .timeout(LATEST_PROBE_TIMEOUT)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json::<serde_json::Value>()
+        .await
+        .ok()?;
+    let version = release_display_version(metadata.get("version")?.as_str()?)?;
+    (npm_package_for_version("opencode", Some(&version)) == Some(OPENCODE_V2_NPM_PACKAGE))
+        .then_some(version)
+}
+
+// GitHub's /latest endpoint intentionally stays on the OpenCode 1 release line.
+async fn fetch_opencode_v2_release(client: &reqwest::Client) -> Option<String> {
+    let releases: Vec<serde_json::Value> = client
+        .get("https://api.github.com/repos/anomalyco/opencode/releases?per_page=30")
+        .header("User-Agent", "cc-switch")
+        .header("Accept", "application/vnd.github+json")
+        .timeout(LATEST_PROBE_TIMEOUT)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    opencode_v2_release_version(&releases)
+}
+
+fn opencode_v2_release_version(releases: &[serde_json::Value]) -> Option<String> {
+    releases
+        .iter()
+        .filter(|release| {
+            release.get("prerelease").and_then(|value| value.as_bool()) == Some(false)
+        })
+        .filter_map(|release| release.get("tag_name")?.as_str())
+        .filter_map(|tag| tag.strip_prefix('v'))
+        .filter_map(|version| {
+            let (core, pre) = parse_semver(version)?;
+            (core[0] >= 2 && pre.is_empty()).then_some((core, version))
+        })
+        .max_by_key(|(core, _)| *core)
+        .map(|(_, version)| version.to_string())
 }
 
 async fn fetch_github_latest_version(client: &reqwest::Client, repo: &str) -> Option<String> {
@@ -456,6 +882,17 @@ fn drop_latest_behind_local(latest: Option<String>, local_version: Option<&str>)
     (!local_leads).then_some(latest)
 }
 
+async fn fetch_hermes_latest_version(
+    client: &reqwest::Client,
+    local_version: Option<&str>,
+) -> Option<String> {
+    if let Some(version) = fetch_github_latest_version(client, "NousResearch/hermes-agent").await {
+        return Some(version);
+    }
+    let pypi = fetch_pypi_latest_version(client, "hermes-agent").await;
+    drop_latest_behind_local(pypi, local_version)
+}
+
 /// Helper function to fetch latest version from PyPI
 async fn fetch_pypi_latest_version(client: &reqwest::Client, package: &str) -> Option<String> {
     let url = format!("https://pypi.org/pypi/{package}/json");
@@ -478,7 +915,7 @@ async fn fetch_pypi_latest_version(client: &reqwest::Client, package: &str) -> O
 /// 段(git describe 风格,如 Hermes main/canary 开发构建 `0.22.1+238.g<sha>`),
 /// 让前端能据此识别开发构建,避免把"版本号更低但内容更新"误报成"有新版本"。
 pub(super) static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\d+\.\d+\.\d+(-[\w.]+)?(\+[\w.-]+)?").expect("Invalid version regex")
+    Regex::new(r"\d+\.\d+\.\d+(-[\w.-]+)?(\+[\w.-]+)?").expect("Invalid version regex")
 });
 
 /// WSL 版本探测载荷先打印的哨兵。用户 shell 的启动文件（Ubuntu 的 update-motd、
@@ -491,7 +928,7 @@ const VERSION_PROBE_SENTINEL: &str = "__CCSWITCH_VERSION__";
 /// 不含单引号，可以直接嵌进外层 `'...'`。
 #[cfg_attr(not(windows), allow(dead_code))]
 fn version_probe_payload(tool: &str) -> String {
-    format!("echo {VERSION_PROBE_SENTINEL}; {tool} --version")
+    format!("echo {VERSION_PROBE_SENTINEL}; echo {VERSION_PROBE_SENTINEL} >&2; {tool} --version")
 }
 /// 取哨兵**最后一次**出现之后的输出。
 ///
@@ -522,6 +959,64 @@ pub(super) fn extract_version(raw: &str) -> String {
         .find(raw)
         .map(|m| m.as_str().to_string())
         .unwrap_or_else(|| raw.to_string())
+}
+
+/// Display, per-install diagnostics and WSL update verification share one parser.
+pub(super) fn parse_tool_version_output(tool: &str, stdout: &str, stderr: &str) -> Option<String> {
+    if tool != "opencode" {
+        let raw = if stdout.trim().is_empty() {
+            stderr
+        } else {
+            stdout
+        };
+        return (!raw.trim().is_empty()).then(|| extract_version(raw.trim()));
+    }
+    static LINE: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)^\s*(?:opencode\s+)?v?(\d+\.\d+\.\d+)(.*)$")
+            .expect("valid OpenCode version candidate")
+    });
+    static VALID: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z_.-]+)?(?:\+[0-9A-Za-z_.-]+)?$")
+            .expect("valid OpenCode version syntax")
+    });
+    let mut versions = std::collections::BTreeSet::new();
+    for line in stdout.lines().chain(stderr.lines()) {
+        let Some(captures) = LINE.captures(line) else {
+            continue;
+        };
+        let core = &captures[1];
+        let tail = &captures[2];
+        let trimmed = tail.trim();
+        let version = if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("(OpenCode)") {
+            core.to_owned()
+        } else if tail.chars().next().is_some_and(char::is_whitespace) {
+            // Whitespace cannot split a version from its channel/build suffix.
+            if trimmed.starts_with('-') || trimmed.starts_with('+') {
+                return None;
+            }
+            // e.g. `22.14.123 (Node.js)` is a diagnostic, not another app version.
+            continue;
+        } else {
+            // Preserve the entire suffix (including malformed Unicode whitespace)
+            // until validation; never discard an invalid candidate in mixed output.
+            let mut version = format!("{core}{}", tail.trim_end());
+            if version.to_ascii_lowercase().ends_with("(opencode)") {
+                let prefix = &version[..version.len() - "(OpenCode)".len()];
+                if prefix.chars().last().is_some_and(char::is_whitespace) {
+                    version = prefix.trim_end().to_owned();
+                }
+            }
+            version
+        };
+        if !VALID.is_match(&version) {
+            return None;
+        }
+        parse_semver(version.split('+').next()?)?;
+        versions.insert(version);
+    }
+    (versions.len() == 1)
+        .then(|| versions.into_iter().next())
+        .flatten()
 }
 
 /// 工具未安装时的统一错误文案；WSL 路径会再拼上 `[WSL:{distro}] ` 前缀。
@@ -568,7 +1063,26 @@ pub(super) enum ShellProbe {
 fn try_get_version(tool: &str) -> ShellProbe {
     use std::process::{Command, Stdio};
 
-    let output = {
+    // Summary and per-copy probes must read the same Volta store. A fresh
+    // login shell can otherwise override the cached root used by update plans.
+    let deadline = CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT));
+    let volta = resolve_path_default_entry(tool, deadline)
+        .ok()
+        .flatten()
+        .filter(|entry| verified_volta_manager(&entry.launcher).is_some());
+    let located_volta = volta.is_some();
+    let output = if let Some(entry) = volta {
+        let inherited = std::env::var_os("PATH").unwrap_or_default();
+        let path = cached_login_shell_path().map_or_else(
+            || inherited.clone(),
+            |login| merge_path_segments(&login, &inherited.to_string_lossy()).into(),
+        );
+        run_probe_version_command(
+            &entry.launcher,
+            &prepend_search_dir_to_path(entry.launcher.parent().unwrap(), &path),
+            deadline,
+        )
+    } else {
         let shell = std::env::var("SHELL")
             .ok()
             .filter(|s| is_valid_shell(s))
@@ -598,21 +1112,40 @@ fn try_get_version(tool: &str) -> ShellProbe {
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if raw.is_empty() {
-                    ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                    if located_volta {
+                        ShellProbe::FoundButFailed(
+                            "The located Volta shim returned no version".into(),
+                        )
+                    } else {
+                        ShellProbe::NotFound(NOT_INSTALLED.to_string())
+                    }
                 } else {
-                    ShellProbe::Found(extract_version(raw))
+                    parse_tool_version_output(tool, &stdout, &stderr)
+                        .map(ShellProbe::Found)
+                        .unwrap_or_else(|| {
+                            ShellProbe::FoundButFailed(
+                                "Cannot verify the reported OpenCode version.".into(),
+                            )
+                        })
                 }
             } else {
                 // exit 127 = shell 找不到命令（可放心 fallback 到搜索路径）；其它非零码
                 // = 命令存在但 --version 自身报错退出，须如实上报、不 fallback 掩盖。
                 let err = if stderr.is_empty() { stdout } else { stderr };
-                if out.status.code() == Some(127) || err.is_empty() {
+                if located_volta {
+                    ShellProbe::FoundButFailed(if err.is_empty() {
+                        "The located Volta shim could not run".into()
+                    } else {
+                        version_probe_error(&err)
+                    })
+                } else if out.status.code() == Some(127) || err.is_empty() {
                     ShellProbe::NotFound(NOT_INSTALLED.to_string())
                 } else {
-                    ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
+                    ShellProbe::FoundButFailed(version_probe_error(&err))
                 }
             }
         }
+        Err(error) if located_volta => ShellProbe::FoundButFailed(error),
         Err(_) => ShellProbe::NotFound(NOT_INSTALLED.to_string()),
     }
 }
@@ -672,16 +1205,23 @@ fn try_get_version_wsl(
             let stderr = decode_command_output(&out.stderr).trim().to_string();
             // 启动文件的输出都在哨兵之前，只看它之后（#7347）
             let payload_out = after_version_sentinel(&stdout).to_string();
+            let payload_err = after_version_sentinel(&stderr).to_string();
             if out.status.success() {
                 let raw = if payload_out.is_empty() {
-                    &stderr
+                    &payload_err
                 } else {
                     &payload_out
                 };
                 if raw.is_empty() {
                     ShellProbe::NotFound(format!("[WSL:{distro}] {NOT_INSTALLED}"))
                 } else {
-                    ShellProbe::Found(extract_version(raw))
+                    parse_tool_version_output(tool, &payload_out, &payload_err)
+                        .map(ShellProbe::Found)
+                        .unwrap_or_else(|| {
+                            ShellProbe::FoundButFailed(
+                                "Cannot verify the reported OpenCode version.".into(),
+                            )
+                        })
                 }
             } else {
                 let err = if stderr.is_empty() {
@@ -699,7 +1239,7 @@ fn try_get_version_wsl(
                 } else {
                     ShellProbe::FoundButFailed(format!(
                         "[WSL:{distro}] {}",
-                        last_lines(err.trim(), 4)
+                        version_probe_error(&err)
                     ))
                 }
             }
@@ -726,6 +1266,178 @@ mod tests {
     use super::*;
 
     #[test]
+    fn opencode_v2_github_fallback_skips_legacy_and_prerelease_tags() {
+        let releases = vec![
+            serde_json::json!({"tag_name":"v1.19.6","prerelease":false}),
+            serde_json::json!({"tag_name":"process-daemon-v3.0.0","prerelease":false}),
+            serde_json::json!({"tag_name":"v2.4.0-beta.1","prerelease":true}),
+            serde_json::json!({"tag_name":"v2.2.7","prerelease":false}),
+            serde_json::json!({"tag_name":"v2.3.2","prerelease":false}),
+        ];
+        assert_eq!(
+            opencode_v2_release_version(&releases).as_deref(),
+            Some("2.3.2")
+        );
+    }
+
+    #[test]
+    fn opencode_uses_the_matching_npm_release_line() {
+        assert_eq!(
+            npm_package_for_version("opencode", Some("1.19.6")),
+            Some("opencode-ai")
+        );
+        assert_eq!(
+            npm_package_for_version("opencode", Some("2.3.2")),
+            Some(OPENCODE_V2_NPM_PACKAGE)
+        );
+        assert_eq!(
+            npm_package_for_version("opencode", None),
+            Some("opencode-ai")
+        );
+    }
+
+    #[test]
+    fn linux_open_code_two_uses_the_package_launcher_for_update_classification() {
+        assert!(opencode_manual_update_for_version(
+            "linux",
+            Some("2.3.2"),
+            || { Some(("/usr/bin/opencode".into(), "/opt/opencode/opencode".into())) }
+        ));
+        assert!(!opencode_manual_update_for_version(
+            "linux",
+            Some("2.3.2"),
+            || {
+                Some((
+                    "/home/test/.npm/bin/opencode".into(),
+                    "/home/test/.npm/lib/node_modules/@opencode/cli/bin/opencode".into(),
+                ))
+            }
+        ));
+    }
+
+    #[test]
+    fn opencode_display_and_update_parse_only_unambiguous_app_versions() {
+        assert_eq!(
+            parse_tool_version_output("opencode", "Node 22.14.0\n2.3.2-next.1", "").as_deref(),
+            Some("2.3.2-next.1")
+        );
+        assert_eq!(
+            parse_tool_version_output("opencode", "Node 22.14.0", "opencode 2.3.2-next.1")
+                .as_deref(),
+            Some("2.3.2-next.1")
+        );
+        assert_eq!(
+            parse_tool_version_output("opencode", "22.14.0\n2.3.2-next.1", ""),
+            None
+        );
+        assert_eq!(
+            parse_tool_version_output("opencode", "Node 22.14.0", ""),
+            None
+        );
+    }
+
+    #[test]
+    fn release_channel_ignores_build_metadata() {
+        assert!(!version_is_prerelease("2.3.2+glibc.2.31.0-x64"));
+        assert!(!version_is_prerelease("2.3.2+linux-x64"));
+        assert!(version_is_prerelease("2.3.2-next.1+nightly"));
+    }
+
+    #[test]
+    fn version_probe_preserves_hyphenated_prerelease_identifiers() {
+        let version = extract_version("opencode 2.3.2--preview.1\nA newer release is available");
+        assert_eq!(version, "2.3.2--preview.1");
+        assert!(parse_semver(&version).is_some_and(|(_, pre)| !pre.is_empty()));
+    }
+
+    #[test]
+    fn omp_native_check_uses_the_selected_updaters_result() {
+        for (stdout, stderr, expected) in [
+            (
+                "Current version: 1.0.0\nNew version available: 2.0.0",
+                "",
+                Some("2.0.0"),
+            ),
+            (
+                "Current channel: canary\nNew version available: 2.0.0-canary.1",
+                "",
+                Some("2.0.0-canary.1"),
+            ),
+            ("", "New version available: 2.0.0", Some("2.0.0")),
+            ("Already up to date", "", Some("1.0.0")),
+            ("Current version: 1.0.0", "unrecognized output", None),
+        ] {
+            assert_eq!(
+                omp_checked_latest_version(stdout, stderr, Some("1.0.0")).as_deref(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn wsl_prereleases_require_manual_update_even_with_verified_npm_ownership() {
+        for version in [
+            "1.19.6-beta.1",
+            "2.3.2-next.1",
+            "2.3.2-next.1+nightly",
+            "2.3.2--preview.1+local",
+        ] {
+            assert!(opencode_manual_update_for_version(
+                "wsl",
+                Some(version),
+                || {
+                    Some((
+                        "/usr/local/bin/opencode".into(),
+                        "/usr/local/lib/node_modules/opencode-ai/bin/opencode".into(),
+                    ))
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn wsl_open_code_one_requires_verified_npm_ownership_before_offering_update() {
+        let launcher = "/home/test/.opencode/bin/opencode";
+        assert!(opencode_manual_update_for_version(
+            "wsl",
+            Some("1.19.6"),
+            || { Some((launcher.into(), launcher.into())) }
+        ));
+        assert!(!opencode_manual_update_for_version(
+            "wsl",
+            Some("1.19.6"),
+            || {
+                Some((
+                    "/home/test/.npm/bin/opencode".into(),
+                    "/home/test/.npm/lib/node_modules/opencode-ai/bin/opencode".into(),
+                ))
+            }
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn homebrew_releases_match_the_installed_package_and_kind() {
+        let info = serde_json::json!({
+            "casks": [
+                {"token":"claude-code","installed":"2.1.322","version":"2.1.323,checksum"},
+                {"token":"uninstalled","installed":null,"version":"9.9.9"}
+            ],
+            "formulae":[{"name":"opencode","installed":[{"version":"2.3.1"}],"versions":{"stable":"2.3.2"}}]
+        });
+        assert_eq!(
+            super::homebrew_release_version(&info, "cask", "claude-code").as_deref(),
+            Some("2.1.323")
+        );
+        assert_eq!(
+            super::homebrew_release_version(&info, "formula", "opencode").as_deref(),
+            Some("2.3.2")
+        );
+        assert!(super::homebrew_release_version(&info, "formula", "claude-code").is_none());
+        assert!(super::homebrew_release_version(&info, "cask", "uninstalled").is_none());
+    }
+
+    #[test]
     fn shell_command_missing_and_version_sentinel() {
         for msg in [
             "bash: line 1: claude: command not found",
@@ -743,7 +1455,7 @@ mod tests {
 
         assert_eq!(
             version_probe_payload("claude"),
-            "echo __CCSWITCH_VERSION__; claude --version"
+            "echo __CCSWITCH_VERSION__; echo __CCSWITCH_VERSION__ >&2; claude --version"
         );
         let motd = "Welcome to Ubuntu 24.04.4 LTS\n__CCSWITCH_VERSION__\n2.1.270 (Claude Code)";
         assert_eq!(after_version_sentinel(motd), "2.1.270 (Claude Code)");
@@ -762,6 +1474,71 @@ mod tests {
             after_version_sentinel("sh: 1: bad: not found"),
             "sh: 1: bad: not found"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wsl_display_version_payload_isolates_both_startup_streams() {
+        for stream in ["", " >&2"] {
+            let payload = version_probe_payload("opencode");
+            let script = format!("printf '22.14.0'; printf '20.1.0' >&2; opencode() {{ printf '2.3.2\\n'{stream}; }}; {payload}");
+            let output = std::process::Command::new("sh")
+                .args(["-c", &script])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let stdout = decode_command_output(&output.stdout);
+            let stderr = decode_command_output(&output.stderr);
+            assert_eq!(
+                parse_tool_version_output(
+                    "opencode",
+                    after_version_sentinel(&stdout),
+                    after_version_sentinel(&stderr)
+                )
+                .as_deref(),
+                Some("2.3.2")
+            );
+        }
+        assert!(
+            parse_tool_version_output("opencode", "opencode ２.３.２-beta.1\n2.3.2", "").is_none()
+        );
+        assert_eq!(
+            parse_tool_version_output("opencode", "opencode 2.3.2-beta.1   (OpenCode)", "")
+                .as_deref(),
+            Some("2.3.2-beta.1")
+        );
+        for (output, version) in [
+            ("opencode 2.3.2+linux-x64  (OpenCode)", "2.3.2+linux-x64"),
+            ("opencode 2.3.2-beta.1\t(OpenCode)", "2.3.2-beta.1"),
+            ("opencode 2.3.2-beta.1\u{a0}(OpenCode)", "2.3.2-beta.1"),
+        ] {
+            assert_eq!(
+                parse_tool_version_output("opencode", output, "").as_deref(),
+                Some(version)
+            );
+        }
+        for diagnostic in ["22.14.0 (Node.js)", "22.14.123 (Node.js)"] {
+            assert_eq!(
+                parse_tool_version_output("opencode", "2.3.2", diagnostic).as_deref(),
+                Some("2.3.2")
+            );
+        }
+        for invalid in [
+            "2.3.2-beta.１",
+            "2.3.2-beta.é",
+            "2.3.2+build.１",
+            "2.3.2–beta.1",
+            "2.3.2-beta.\u{a0}1",
+            "2.3.2\u{a0}-beta.1",
+            "2.3.2\u{a0}+linux-x64",
+        ] {
+            assert!(parse_tool_version_output(
+                "opencode",
+                &format!("opencode {invalid}\n2.3.2"),
+                ""
+            )
+            .is_none());
+        }
     }
 
     #[test]
@@ -890,36 +1667,6 @@ mod tests {
             pick_latest_version(dirty.as_object().unwrap(), &["beta"], Some("0.200.0")).as_deref(),
             Some("0.135.0")
         );
-    }
-
-    /// 2.x 是另一个 npm 包：拿 1.x 的 latest 比，2.x 用户永远「已是最新」、收不到 2.x 的更新。
-    #[test]
-    fn opencode_latest_follows_the_installed_release_line() {
-        // 2026-11-25 两个包的真实 dist-tags（节选）。
-        let v1 = serde_json::json!({ "latest": "1.19.6", "beta": "0.0.0-beta-202608110357" });
-        let v2 = serde_json::json!({ "latest": "2.4.2", "beta": "0.0.0-beta-19507" });
-        let (v1, v2) = (v1.as_object(), v2.as_object());
-        assert_eq!(extract_version("opencode v2.4.1"), "2.4.1");
-
-        assert_eq!(
-            pick_opencode_latest(v1, v2, Some("2.4.1")).as_deref(),
-            Some("2.4.2")
-        );
-        assert_eq!(
-            pick_opencode_latest(v1, v2, Some("1.19.5")).as_deref(),
-            Some("1.19.6")
-        );
-        // 没装、版本认不出：安装按钮装的是 1.x，就按 1.x 看。
-        assert_eq!(
-            pick_opencode_latest(v1, v2, None).as_deref(),
-            Some("1.19.6")
-        );
-        assert_eq!(
-            pick_opencode_latest(v1, v2, Some("dev")).as_deref(),
-            Some("1.19.6")
-        );
-        // 2.x 那条线取不到时不回退 1.x 的版本。
-        assert_eq!(pick_opencode_latest(v1, None, Some("2.4.1")), None);
     }
 
     #[cfg(not(target_os = "windows"))]

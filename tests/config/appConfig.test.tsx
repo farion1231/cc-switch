@@ -23,4 +23,12 @@ describe("orderAppIds", () => {
       "claude",
     );
   });
+  it("uses page-specific defaults without changing the shared default order", () => {
+    const defaults = [...APP_IDS].reverse();
+    expect(orderAppIds(undefined, defaults)).toEqual(defaults);
+    expect(orderAppIds([], defaults)).toEqual(defaults);
+    const [first, ...rest] = defaults;
+    expect(orderAppIds(rest, defaults)).toEqual([first, ...rest]);
+    expect(orderAppIds(undefined)).toEqual(APP_IDS);
+  });
 });

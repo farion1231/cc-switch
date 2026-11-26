@@ -1850,9 +1850,16 @@ pub fn run() {
             commands::launch_session_terminal,
             commands::get_tool_versions,
             commands::run_tool_lifecycle_action,
+            commands::get_install_manager_availability,
             commands::prepare_tool_uninstall,
             commands::probe_tool_installations,
             commands::list_tool_installations,
+            commands::get_tool_installation_reports,
+            commands::get_preferred_tool_installation,
+            commands::set_preferred_tool_installation,
+            commands::get_tool_installation_updates,
+            commands::get_official_claude_desktop_installation,
+            commands::get_official_workbuddy_installation,
             // Provider terminal
             commands::open_provider_terminal,
             // Universal Provider management

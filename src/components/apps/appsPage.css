@@ -1,0 +1,17 @@
+.apps-group-frame {
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--bg-card);
+}
+
+.apps-group-frame > * + *::before {
+  position: absolute;
+  z-index: 1;
+  inset-block-start: 0;
+  inset-inline: 1rem;
+  height: 1px;
+  background: hsl(var(--border) / 0.75);
+  content: "";
+  pointer-events: none;
+}

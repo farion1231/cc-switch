@@ -14,6 +14,21 @@ impl CommandDeadline {
         })
     }
 
+    pub(super) fn for_install_probe(overall: Option<Self>) -> Option<Self> {
+        let probe = Self::from_timeout(Some(INSTALL_PROBE_TIMEOUT))?;
+        match overall {
+            Some(overall) => {
+                overall.remaining().ok()?;
+                Some(if overall.expires_at < probe.expires_at {
+                    overall
+                } else {
+                    probe
+                })
+            }
+            None => Some(probe),
+        }
+    }
+
     fn remaining(self) -> Result<std::time::Duration, String> {
         self.expires_at
             .checked_duration_since(std::time::Instant::now())
@@ -184,6 +199,108 @@ pub(crate) fn is_safe_tool_command_arg(arg: &str) -> bool {
         })
 }
 
+fn locate_cli_for_cc_switch(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+    probe: impl FnMut(&Path) -> bool,
+) -> Result<PathBuf, String> {
+    let (preferred, disabled_paths) = crate::settings::cli_installation_policy(tool);
+    resolve_cli_installation(
+        tool,
+        deadline,
+        preferred.as_deref(),
+        &disabled_paths,
+        || runtime_bundled_cli(tool),
+        probe,
+    )
+    .map(|(path, _)| path)
+    .map_err(|error| error.into_message(tool))
+}
+
+pub(super) const BUNDLED_CLI_PREFERENCE: &str = "bundled";
+
+pub(super) fn verified_bundled_cli(tool: &str) -> Option<PathBuf> {
+    #[cfg(target_os = "macos")]
+    if tool == "codex" {
+        return crate::codex_config::codex_macos_official_bundled_cli();
+    }
+    let _ = tool;
+    None
+}
+
+pub(super) fn runtime_bundled_cli(tool: &str) -> Option<PathBuf> {
+    #[cfg(target_os = "windows")]
+    if tool == "codex" {
+        return crate::codex_config::codex_desktop_cli();
+    }
+    verified_bundled_cli(tool)
+}
+
+fn resolve_cli_with_bundled(
+    preferred: Option<&str>,
+    bundled_cli: impl FnOnce() -> Option<PathBuf>,
+    standalone: impl FnOnce() -> Result<(PathBuf, CliSelection), CliLookupError>,
+) -> Result<(PathBuf, CliSelection), CliLookupError> {
+    if preferred == Some(BUNDLED_CLI_PREFERENCE) {
+        return bundled_cli()
+            .map(|path| (path, CliSelection::Explicit))
+            .map_or_else(standalone, Ok);
+    }
+
+    match standalone() {
+        Err(
+            error @ (CliLookupError::Missing
+            | CliLookupError::Unrunnable
+            | CliLookupError::Disabled),
+        ) => bundled_cli()
+            .map(|path| (path, CliSelection::Bundled))
+            .ok_or(error),
+        result => result,
+    }
+}
+
+pub(super) fn resolve_cli_installation(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+    preferred: Option<&str>,
+    disabled_paths: &[String],
+    bundled_cli: impl FnOnce() -> Option<PathBuf>,
+    probe: impl FnMut(&Path) -> bool,
+) -> Result<(PathBuf, CliSelection), CliLookupError> {
+    resolve_cli_with_bundled(preferred, bundled_cli, || {
+        resolve_standalone_cli(tool, deadline, preferred, disabled_paths, probe)
+    })
+}
+
+fn resolve_standalone_cli(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+    preferred: Option<&str>,
+    disabled_paths: &[String],
+    mut probe: impl FnMut(&Path) -> bool,
+) -> Result<(PathBuf, CliSelection), CliLookupError> {
+    let disabled: Vec<_> = disabled_paths
+        .iter()
+        .flat_map(|entry| {
+            let path = PathBuf::from(entry);
+            [std::fs::canonicalize(&path).ok(), Some(path)]
+                .into_iter()
+                .flatten()
+        })
+        .collect();
+    if let Some(path) = preferred.map(PathBuf::from) {
+        if is_discovered_tool_launcher(tool, &path)
+            && !disabled.contains(&path)
+            && !std::fs::canonicalize(&path).is_ok_and(|real| disabled.contains(&real))
+            && probe(&path)
+        {
+            return Ok((path, CliSelection::Explicit));
+        }
+    }
+    locate_enabled_tool(tool, deadline, &disabled, probe)
+        .map(|path| (path, CliSelection::Automatic))
+}
+
 pub(crate) fn run_detected_tool_command_with_timeout(
     tool: &str,
     args: &[&str],
@@ -205,11 +322,11 @@ pub(crate) fn run_detected_tool_command_with_timeout(
         return run_wsl_tool_command(tool, args, &distro, deadline, extra_env, working_dir);
     }
 
-    // Runtime execution only needs the default entry point. Full installation
-    // enumeration runs `--version` for every candidate and belongs to diagnostics.
     #[cfg(target_os = "windows")]
     {
-        let tool_path = locate_default_tool(tool, deadline)?;
+        let tool_path = locate_cli_for_cc_switch(tool, deadline, |path| {
+            cli_installation_is_runnable(path, deadline)
+        })?;
         let dir = tool_path
             .parent()
             .ok_or_else(|| format!("Invalid {tool} executable path"))?;
@@ -252,7 +369,8 @@ pub(crate) fn locate_detected_tool(tool: &str, timeout: std::time::Duration) -> 
     if wsl_distro_for_tool(tool).is_some() {
         return Ok(());
     }
-    locate_default_tool(tool, CommandDeadline::from_timeout(Some(timeout))).map(|_| ())
+    let deadline = CommandDeadline::from_timeout(Some(timeout));
+    locate_cli_for_cc_switch(tool, deadline, |_| true).map(|_| ())
 }
 
 /// 构造运行本机工具默认入口的命令（定位规则和 PATH 补全同 [`run_detected_tool_command_with_timeout`]），
@@ -277,7 +395,9 @@ pub(crate) fn detected_tool_command(
 
     #[cfg(target_os = "windows")]
     {
-        let tool_path = locate_default_tool(tool, deadline)?;
+        let tool_path = locate_cli_for_cc_switch(tool, deadline, |path| {
+            cli_installation_is_runnable(path, deadline)
+        })?;
         let dir = tool_path
             .parent()
             .ok_or_else(|| format!("Invalid {tool} executable path"))?;
@@ -295,7 +415,9 @@ fn detected_unix_tool_command(
     args: &[&str],
     deadline: Option<CommandDeadline>,
 ) -> Result<std::process::Command, String> {
-    let tool_path = locate_default_tool(tool, deadline)?;
+    let tool_path = locate_cli_for_cc_switch(tool, deadline, |path| {
+        cli_installation_is_runnable(path, deadline)
+    })?;
     let dir = tool_path
         .parent()
         .ok_or_else(|| format!("Invalid {tool} executable path"))?;
@@ -310,6 +432,10 @@ fn detected_unix_tool_command(
         .env("PATH", prepend_search_dir_to_path(dir, &path));
     if let Some(env) = login_env {
         apply_login_shell_vars(&mut cmd, &env.vars);
+    }
+    if verified_volta_manager(&tool_path).is_some() {
+        let root = effective_volta_home().ok_or("Cannot verify the configured Volta home")?;
+        cmd.env("VOLTA_HOME", root);
     }
     isolate_child_process_group(&mut cmd);
     Ok(cmd)
@@ -501,6 +627,32 @@ fn run_wsl_tool_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_cli_is_selectable_and_replaces_disabled_standalone_cli() {
+        let bundled = || Some(PathBuf::from("/official/codex"));
+        let standalone = || Ok((PathBuf::from("/standalone/codex"), CliSelection::Automatic));
+        assert!(matches!(
+            resolve_cli_with_bundled(None, bundled, standalone),
+            Ok((path, CliSelection::Automatic)) if path == Path::new("/standalone/codex")
+        ));
+        assert!(matches!(
+            resolve_cli_with_bundled(Some(BUNDLED_CLI_PREFERENCE), bundled, || panic!("explicit bundled choice must skip standalone lookup")),
+            Ok((path, CliSelection::Explicit)) if path == Path::new("/official/codex")
+        ));
+        assert!(matches!(
+            resolve_cli_with_bundled(None, bundled, || Err(CliLookupError::Disabled)),
+            Ok((path, CliSelection::Bundled)) if path == Path::new("/official/codex")
+        ));
+        assert!(matches!(
+            resolve_cli_with_bundled(None, || None, || Err(CliLookupError::Disabled)),
+            Err(CliLookupError::Disabled)
+        ));
+        assert!(matches!(
+            resolve_cli_with_bundled(Some(BUNDLED_CLI_PREFERENCE), || None, standalone),
+            Ok((_, CliSelection::Automatic))
+        ));
+    }
 
     /// 超时击杀路径：挂死的子进程到点被整组击杀、wait 返回超时错误而非永等。
     /// 同时锚定 setsid 改造后的语义——child 是新会话/新进程组组长，

@@ -1,0 +1,210 @@
+{
+  "claude-desktop": {
+    "homebrew": {
+      "platforms": ["macos"],
+      "command": "brew install --cask claude"
+    }
+  },
+  "claude": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://claude.ai/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos"],
+      "command": "brew install --cask claude-code"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code"
+    }
+  },
+  "codebuddy": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://www.codebuddy.cn/cli/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos", "linux"],
+      "command": "brew install Tencent-CodeBuddy/tap/codebuddy-code"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @tencent-ai/codebuddy-code"
+    },
+    "pnpm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "pnpm add -g @tencent-ai/codebuddy-code"
+    },
+    "yarn": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "yarn global add @tencent-ai/codebuddy-code"
+    },
+    "bun": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "bun install -g @tencent-ai/codebuddy-code"
+    }
+  },
+  "codex": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://chatgpt.com/codex/install.sh\" -o \"$tmp\" && sh \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos"],
+      "command": "brew install --cask codex"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @openai/codex@latest"
+    }
+  },
+  "gemini": {
+    "homebrew": {
+      "platforms": ["macos", "linux"],
+      "command": "brew install gemini-cli"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @google/gemini-cli@latest"
+    }
+  },
+  "grok": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://x.ai/cli/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok"
+    }
+  },
+  "opencode": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://opencode.ai/v2/install\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos", "linux"],
+      "command": "brew install anomalyco/tap/opencode-v2"
+    },
+    "npm": {
+      "platforms": ["windows"],
+      "command": "npm install -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"
+    },
+    "npm-legacy": {
+      "platforms": ["macos", "linux"],
+      "command": "npm install -g --ignore-scripts=false @opencode/cli"
+    },
+    "npm-modern": {
+      "platforms": ["macos", "linux"],
+      "command": "npm install -g --ignore-scripts=false --allow-scripts=@opencode/cli @opencode/cli"
+    },
+    "bun": {
+      "platforms": ["macos", "linux"],
+      "command": "bun install -g --trust @opencode/cli"
+    },
+    "yarn": {
+      "platforms": ["macos", "linux"],
+      "command": "yarn global add @opencode/cli"
+    },
+    "pnpm-build": {
+      "platforms": ["macos", "linux"],
+      "command": "pnpm add -g --allow-build=@opencode/cli @opencode/cli"
+    }
+  },
+  "openclaw": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://openclaw.ai/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "npm-legacy": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g openclaw@latest"
+    },
+    "npm-modern": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g openclaw@latest --allow-scripts=openclaw"
+    },
+    "bun": {
+      "platforms": ["macos", "linux"],
+      "command": "bun add -g --trust openclaw@latest"
+    },
+    "pnpm-build": {
+      "platforms": ["macos", "linux"],
+      "command": "pnpm add -g --allow-build=openclaw openclaw@latest"
+    }
+  },
+  "hermes": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://hermes-agent.nousresearch.com/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "pi": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://pi.dev/install.sh\" -o \"$tmp\" && sh \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g --ignore-scripts @earendil-works/pi-coding-agent"
+    }
+  },
+  "mcode": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://filecdn.minimax.chat/public/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @minimax-ai/code@latest --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\" --registry=https://registry.npmjs.org/"
+    }
+  },
+  "kimi": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://code.kimi.com/kimi-code/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @moonshot-ai/kimi-code"
+    }
+  },
+  "agy": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://antigravity.google/cli/install.sh\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    }
+  },
+  "omp": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://omp.sh/install\" -o \"$tmp\" && sh \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "bun": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "bun install -g @oh-my-pi/pi-coding-agent@latest"
+    }
+  },
+  "copilot": {
+    "curl": {
+      "platforms": ["macos", "linux"],
+      "command": "sh -c 'tmp=$(mktemp) || exit; curl -fsSL \"https://gh.io/copilot-install\" -o \"$tmp\" && bash \"$tmp\"; status=$?; rm -f -- \"$tmp\"; exit \"$status\"'"
+    },
+    "homebrew": {
+      "platforms": ["macos"],
+      "command": "brew install --cask copilot-cli"
+    },
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @github/copilot@latest"
+    }
+  },
+  "dsh": {
+    "npm": {
+      "platforms": ["macos", "linux", "windows"],
+      "command": "npm install -g @deepseek-ai/dsh@latest --engine-strict"
+    }
+  }
+}

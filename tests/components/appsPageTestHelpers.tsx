@@ -1,5 +1,5 @@
+import { vi, expect, beforeEach, afterAll, beforeAll } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
-import { afterAll, beforeAll, expect, vi, type Mock } from "vitest";
 import { QueryClientProvider } from "@tanstack/react-query";
 import type {
   settingsApi,
@@ -7,49 +7,73 @@ import type {
   ToolUninstallCandidate,
   ToolUninstallPlan,
 } from "@/lib/api/settings";
-import type { DragEndEvent } from "@dnd-kit/core";
+import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import userEvent from "@testing-library/user-event";
 
 export type ToolVersions = Awaited<
   ReturnType<typeof settingsApi.getToolVersions>
 >;
 
-export interface AppsPageMocks {
-  getToolVersions: Mock;
-  getConfigStatus: Mock;
-  probeToolInstallations: Mock;
-  listToolInstallations: Mock;
-  runToolLifecycleAction: Mock;
-  prepareToolUninstall: Mock;
-  copyText: Mock;
-  info: Mock;
-  success: Mock;
-  warning: Mock;
-  error: Mock;
-  settings: { visibleApps?: Record<string, boolean>; appOrder?: string[] };
-  updateSettings: Mock;
-  autoSaveSettings: Mock;
-  dragEndHandlers: ((event: DragEndEvent) => void)[];
-  desktopStatus: {
-    supported: boolean;
-    installed: boolean;
-    configured: boolean;
-  };
-}
+const mocks = vi.hoisted(() => ({
+  getToolVersions: vi.fn(),
+  getInstallManagerAvailability: vi.fn().mockResolvedValue({}),
+  getToolInstallationUpdates: vi.fn(),
+  getPreferredToolInstallation: vi.fn(),
+  setPreferredToolInstallation: vi.fn(),
+  getOfficialClaudeDesktopInstallation: vi.fn(),
+  getOfficialWorkbuddyInstallation: vi.fn(),
+  getConfigStatus: vi.fn(async () => ({
+    exists: true,
+    path: "/home/me/.workbuddy",
+  })),
+  probeToolInstallations: vi.fn(),
+  listToolInstallations: vi.fn(),
+  getToolInstallationReports: vi.fn(),
+  runToolLifecycleAction: vi.fn(),
+  prepareToolUninstall: vi.fn(),
+  copyText: vi.fn(),
+  openExternal: vi.fn(async () => {}),
+  info: vi.fn(),
+  success: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
+  settings: {} as {
+    visibleApps?: Record<string, boolean>;
+    appOrder?: string[];
+  },
+  updateSettings: vi.fn(),
+  autoSaveSettings: vi.fn(async () => null),
+  dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
+  desktopStatus: { supported: true, installed: true, configured: true },
+}));
 
-export interface AppsPageToolState {
-  upgraded: Set<string>;
-  outdated: Set<string>;
-  missing: Set<string>;
-}
-
-export function createToolState(): AppsPageToolState {
+vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
+vi.mock("@/lib/api/providers", () => ({
+  providersApi: {
+    getClaudeDesktopStatus: async () => mocks.desktopStatus,
+  },
+}));
+vi.mock("@/hooks/useSettings", () => ({
+  useSettings: () => ({
+    settings: mocks.settings,
+    updateSettings: mocks.updateSettings,
+    autoSaveSettings: mocks.autoSaveSettings,
+  }),
+}));
+vi.mock("@dnd-kit/core", async () => {
+  const actual =
+    await vi.importActual<typeof import("@dnd-kit/core")>("@dnd-kit/core");
   return {
-    upgraded: new Set<string>(),
-    outdated: new Set<string>(),
-    missing: new Set<string>(),
+    ...actual,
+    DndContext: (props: DndContextProps) => {
+      if (props.onDragEnd) mocks.dragEndHandlers.push(props.onDragEnd);
+      return <actual.DndContext {...props} />;
+    },
   };
-}
+});
+vi.mock("sonner", () => ({ toast: mocks }));
+vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
 
 export function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -75,6 +99,29 @@ export function report(
     unmanaged: false,
     ...overrides,
   };
+}
+
+export function mockToolInstallations(
+  tool: string,
+  installs: ToolInstallationReport["installs"],
+) {
+  mocks.getToolInstallationReports.mockImplementation(async (tools: string[]) =>
+    tools.map((name) =>
+      report(name, { installs: name === tool ? installs : [] }),
+    ),
+  );
+}
+
+export async function openInstallCommands(
+  user: ReturnType<typeof userEvent.setup>,
+) {
+  await user.click(
+    screen.getByRole("button", { name: "appsPage.moreActions" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "appsPage.manualCommands" }),
+  );
+  return within(screen.getByRole("dialog"));
 }
 
 export function uninstallPlan(tool: string): ToolUninstallPlan {
@@ -106,6 +153,10 @@ export function candidate(
   };
 }
 
+export const upgraded = new Set<string>();
+export const outdated = new Set<string>();
+export const missing = new Set<string>();
+
 export function card(name: string) {
   return within(
     screen
@@ -120,6 +171,29 @@ export function isReady(name: string) {
     card(name).queryByRole("button", {
       name: /settings\.tool(Update|Install)/,
     }) === null && card(name).queryByText("2.0.0") !== null
+  );
+}
+
+/** 某一组里各行的应用 ID，按显示顺序。 */
+export function rowApps(region: string) {
+  return Array.from(
+    screen
+      .getByRole("region", { name: region })
+      .querySelectorAll<HTMLElement>("[data-tool-row]"),
+    (row) => row.dataset.toolRow,
+  );
+}
+
+/** 行尾「⋯」菜单（卸载在里面）。 */
+export function rowMenu(name: string) {
+  return card(name).getByRole("button", { name: "appPage.moreActions" });
+}
+
+export async function openUninstall(name: string) {
+  const user = userEvent.setup();
+  await user.click(rowMenu(name));
+  await user.click(
+    await screen.findByRole("menuitem", { name: "settings.toolUninstall" }),
   );
 }
 
@@ -153,62 +227,76 @@ export async function renderApps() {
 export const updateAllButton = () =>
   screen.getByRole("button", { name: /settings\.updateAllTools/ });
 
-export function registerScrollIntoViewStub() {
-  // Radix Select scrolls the focused option; jsdom does not implement scrolling.
-  const originalScrollIntoView = Object.getOwnPropertyDescriptor(
-    HTMLElement.prototype,
-    "scrollIntoView",
-  );
-  beforeAll(() => {
-    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
-      configurable: true,
-      value: vi.fn(),
-    });
+// Radix Select scrolls the focused option; jsdom does not implement scrolling.
+const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+  HTMLElement.prototype,
+  "scrollIntoView",
+);
+beforeAll(() => {
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
   });
-  afterAll(() => {
-    if (originalScrollIntoView) {
-      Object.defineProperty(
-        HTMLElement.prototype,
-        "scrollIntoView",
-        originalScrollIntoView,
-      );
-    } else {
-      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
-    }
-  });
-}
+});
+afterAll(() => {
+  if (originalScrollIntoView) {
+    Object.defineProperty(
+      HTMLElement.prototype,
+      "scrollIntoView",
+      originalScrollIntoView,
+    );
+  } else {
+    Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+  }
+});
 
-export function resetAppsPageMocks(
-  mocks: AppsPageMocks,
-  state: AppsPageToolState,
-) {
+beforeEach(() => {
+  mocks.getInstallManagerAvailability.mockReset().mockResolvedValue({});
   vi.resetModules();
-  state.upgraded.clear();
-  state.outdated.clear();
-  state.missing.clear();
+  upgraded.clear();
+  outdated.clear();
+  missing.clear();
   mocks.settings = {};
   mocks.dragEndHandlers = [];
+  mocks.getOfficialClaudeDesktopInstallation
+    .mockReset()
+    .mockResolvedValue(null);
+  mocks.getOfficialWorkbuddyInstallation.mockReset().mockResolvedValue(null);
   mocks.desktopStatus = {
     supported: true,
     installed: true,
     configured: true,
   };
-  mocks.getConfigStatus.mockReset().mockResolvedValue({
-    exists: true,
-    path: "/home/me/.workbuddy",
-  });
   mocks.updateSettings.mockReset();
   mocks.autoSaveSettings.mockReset().mockResolvedValue(null);
   mocks.copyText.mockReset().mockResolvedValue(undefined);
-  state.outdated.add("claude").add("codex").add("gemini");
+  outdated.add("claude").add("codex").add("gemini");
+  mocks.getToolInstallationUpdates.mockReset().mockResolvedValue([]);
+  mocks.getPreferredToolInstallation.mockReset().mockResolvedValue({
+    supported: true,
+    path: null,
+    disabled_paths: [],
+    selected_path: null,
+    selected_real_path: null,
+    selection: "unavailable",
+  });
+  mocks.setPreferredToolInstallation
+    .mockReset()
+    .mockImplementation(
+      async (_tool: string, path: string | null, enabled?: boolean) => ({
+        supported: true,
+        path: enabled === undefined ? path : null,
+        disabled_paths: enabled === false && path ? [path] : [],
+      }),
+    );
   mocks.getToolVersions
     .mockReset()
     .mockImplementation(async (tools: string[]) =>
       tools.map((name) => ({
         name,
-        version: state.missing.has(name)
+        version: missing.has(name)
           ? null
-          : state.upgraded.has(name) || !state.outdated.has(name)
+          : upgraded.has(name) || !outdated.has(name)
             ? "2.0.0"
             : "1.0.0",
         latest_version: "2.0.0",
@@ -223,7 +311,8 @@ export function resetAppsPageMocks(
     .mockImplementation(async (tools: string[]) =>
       tools.map((tool) => report(tool)),
     );
-  mocks.listToolInstallations
+  mocks.listToolInstallations.mockReset().mockResolvedValue([]);
+  mocks.getToolInstallationReports
     .mockReset()
     .mockImplementation(async (tools: string[]) =>
       tools.map((tool) => report(tool)),
@@ -236,7 +325,8 @@ export function resetAppsPageMocks(
   mocks.runToolLifecycleAction
     .mockReset()
     .mockImplementation(async ([tool]: string[]) => {
-      state.upgraded.add(tool);
-      state.missing.delete(tool);
+      upgraded.add(tool);
+      missing.delete(tool);
     });
-}
+});
+export { mocks };

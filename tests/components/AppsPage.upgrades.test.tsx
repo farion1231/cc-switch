@@ -1,3 +1,4 @@
+import { vi, expect, it, beforeEach, describe } from "vitest";
 import {
   act,
   fireEvent,
@@ -6,83 +7,338 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolInstallationReport } from "@/lib/api/settings";
-import type { DndContextProps, DragEndEvent } from "@dnd-kit/core";
 import { emitTauriEvent } from "../msw/tauriMocks";
 import {
-  card,
-  createToolState,
+  mocks,
+  openInstallCommands,
   deferred,
-  isReady,
-  mountApps,
-  registerScrollIntoViewStub,
-  renderApps,
   report,
-  resetAppsPageMocks,
-  updateAllButton,
+  candidate,
+  upgraded,
+  outdated,
+  missing,
+  card,
+  isReady,
   updateButton,
-  type ToolVersions,
+  mountApps,
+  renderApps,
+  updateAllButton,
 } from "./appsPageTestHelpers";
-
-const mocks = vi.hoisted(() => ({
-  getToolVersions: vi.fn(),
-  getConfigStatus: vi.fn(async () => ({
-    exists: true,
-    path: "/home/me/.workbuddy",
-  })),
-  probeToolInstallations: vi.fn(),
-  listToolInstallations: vi.fn(),
-  runToolLifecycleAction: vi.fn(),
-  prepareToolUninstall: vi.fn(),
-  copyText: vi.fn(),
-  info: vi.fn(),
-  success: vi.fn(),
-  warning: vi.fn(),
-  error: vi.fn(),
-  settings: {} as { visibleApps?: undefined; appOrder?: string[] },
-  updateSettings: vi.fn(),
-  autoSaveSettings: vi.fn(async () => null),
-  dragEndHandlers: [] as ((event: DragEndEvent) => void)[],
-  desktopStatus: { supported: true, installed: true, configured: true },
-}));
-
-vi.mock("@/lib/api", () => ({ settingsApi: mocks }));
-vi.mock("@/lib/api/providers", () => ({
-  providersApi: {
-    getClaudeDesktopStatus: async () => mocks.desktopStatus,
-  },
-}));
-vi.mock("@/hooks/useSettings", () => ({
-  useSettings: () => ({
-    settings: mocks.settings,
-    updateSettings: mocks.updateSettings,
-    autoSaveSettings: mocks.autoSaveSettings,
-  }),
-}));
-vi.mock("@dnd-kit/core", async () => {
-  const actual =
-    await vi.importActual<typeof import("@dnd-kit/core")>("@dnd-kit/core");
-  return {
-    ...actual,
-    DndContext: (props: DndContextProps) => {
-      if (props.onDragEnd) mocks.dragEndHandlers.push(props.onDragEnd);
-      return <actual.DndContext {...props} />;
-    },
-  };
-});
-vi.mock("sonner", () => ({ toast: mocks }));
-vi.mock("@/lib/clipboard", () => ({ copyText: mocks.copyText }));
-
-const state = createToolState();
-const { upgraded, missing, outdated } = state;
-
-registerScrollIntoViewStub();
+import type { ToolVersions } from "./appsPageTestHelpers";
+import userEvent from "@testing-library/user-event";
 
 describe("AppsPage concurrent CLI upgrades", () => {
-  beforeEach(() => {
-    resetAppsPageMocks(mocks, state);
+  it.each([
+    { blocked: false, fail: false, mode: "ok" },
+    { blocked: false, fail: false, mode: "coupled" },
+    { blocked: true, fail: false, mode: "ok" },
+    { blocked: false, fail: true, mode: "ok" },
+    { blocked: false, fail: false, mode: "missing" },
+    { blocked: false, fail: false, mode: "unrunnable" },
+    { blocked: false, fail: false, mode: "fallback" },
+    { blocked: false, fail: false, mode: "prerelease" },
+  ])(
+    "updates eligible default and secondary copies without bypassing Node requirements (blocked=$blocked, fail=$fail, mode=$mode)",
+    async ({ blocked, fail, mode }) => {
+      outdated.clear();
+      outdated.add("kimi");
+      const primary = candidate(null, {
+        path: "/home/test/.local/bin/kimi",
+        real_path: "/home/test/kimi/native",
+        version: "1.0.0",
+        source: "curl",
+        is_path_default: true,
+      });
+      const secondary = candidate(null, {
+        path: "/home/test/npm/bin/kimi",
+        real_path:
+          "/home/test/npm/lib/node_modules/@moonshot-ai/kimi-code/bin/kimi",
+        version: "1.0.0",
+        source: "npm",
+        is_path_default: false,
+      });
+      const plan = {
+        tool: "kimi",
+        path: secondary.path,
+        real_path: secondary.real_path!,
+        source: "npm",
+        version: secondary.version,
+        command: "update secondary",
+      };
+      mocks.getToolInstallationReports.mockImplementation(
+        async (tools: string[]) =>
+          tools.map((tool) =>
+            report(
+              tool,
+              tool === "kimi" ? { installs: [primary, secondary] } : {},
+            ),
+          ),
+      );
+      mocks.getToolInstallationUpdates.mockImplementation(
+        async (tool: string) =>
+          tool === "kimi"
+            ? [
+                { installation: secondary, latest_version: "2.0.0", plan },
+                ...(blocked || mode === "prerelease"
+                  ? [
+                      {
+                        installation: primary,
+                        latest_version:
+                          mode === "prerelease" ? "2.1.0-beta.1" : "2.0.0",
+                        update_blocked_by_node: blocked
+                          ? {
+                              required: ">=24",
+                              current: "22",
+                            }
+                          : undefined,
+                      },
+                    ]
+                  : []),
+              ]
+            : [],
+      );
+      let defaultRan = false;
+      let secondaryRan = false;
+      mocks.probeToolInstallations.mockImplementation(async (tools: string[]) =>
+        tools.map((tool) =>
+          report(
+            tool,
+            tool === "kimi"
+              ? {
+                  installs:
+                    mode === "missing"
+                      ? []
+                      : defaultRan && mode === "fallback"
+                        ? [secondary]
+                        : [
+                            {
+                              ...primary,
+                              version: defaultRan ? "2.0.0" : "1.0.0",
+                              runnable: !(defaultRan && mode === "unrunnable"),
+                              error:
+                                defaultRan && mode === "unrunnable"
+                                  ? "default probe failed"
+                                  : null,
+                            },
+                            {
+                              ...secondary,
+                              version:
+                                secondaryRan ||
+                                (defaultRan && mode === "coupled")
+                                  ? "2.0.0"
+                                  : "1.0.0",
+                            },
+                          ],
+                  needs_confirmation: true,
+                  confirmation_token:
+                    mode === "missing" ? undefined : "default-snapshot",
+                  anchored: mode !== "missing",
+                  command: mode === "missing" ? "" : "update default",
+                }
+              : {},
+          ),
+        ),
+      );
+      mocks.runToolLifecycleAction.mockImplementation(
+        async (...args: unknown[]) => {
+          if (fail)
+            throw new Error(args[6] ? "secondary failed" : "default failed");
+          if (!args[6]) defaultRan = true;
+          else secondaryRan = true;
+          upgraded.add("kimi");
+        },
+      );
+      await renderApps();
+      await waitFor(() => expect(updateAllButton()).toBeEnabled());
+      fireEvent.click(updateAllButton());
+      const dialog = await screen.findByRole("dialog");
+      fireEvent.click(
+        within(dialog).getByRole("button", {
+          name: "settings.toolUpgradeConfirmBtn",
+        }),
+      );
+      await waitFor(() =>
+        expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(
+          blocked ||
+            mode === "prerelease" ||
+            mode === "missing" ||
+            mode === "coupled"
+            ? 1
+            : 2,
+        ),
+      );
+      if (!blocked && mode !== "prerelease" && mode !== "missing")
+        expect(mocks.runToolLifecycleAction.mock.calls[0]).toEqual([
+          ["kimi"],
+          "update",
+          {},
+          undefined,
+          "default-snapshot",
+        ]);
+      if (mode === "coupled") {
+        await waitFor(() => expect(mocks.success).toHaveBeenCalled());
+        expect(mocks.warning).not.toHaveBeenCalled();
+        expect(mocks.error).not.toHaveBeenCalled();
+      } else {
+        expect(
+          mocks.runToolLifecycleAction.mock.calls[
+            blocked || mode === "prerelease" || mode === "missing" ? 0 : 1
+          ][6],
+        ).toEqual(plan);
+      }
+      if (mode === "unrunnable" || mode === "fallback")
+        await waitFor(() =>
+          expect(mocks.warning).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+              description: expect.stringContaining(
+                mode === "fallback"
+                  ? "appsPage.installUpdateUnverified"
+                  : "default probe failed",
+              ),
+            }),
+          ),
+        );
+      if (fail)
+        await waitFor(() =>
+          expect(mocks.error).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+              description: expect.stringMatching(
+                /default failed[\s\S]*secondary failed/,
+              ),
+            }),
+          ),
+        );
+    },
+    15000,
+  );
+
+  it.each([false, true])(
+    "waits for current prerelease ownership before enabling the complete batch (refresh=%s)",
+    async (refresh) => {
+      outdated.clear();
+      outdated.add("claude");
+      outdated.add("kimi");
+      const original = mocks.getToolVersions.getMockImplementation()!;
+      mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+        (await original(tools)).map((tool: ToolVersions[number]) =>
+          tool.name === "claude"
+            ? { ...tool, version: "2.1.0", latest_version: "2.2.0-next.1" }
+            : tool,
+        ),
+      );
+      const pending = deferred<ToolInstallationReport[]>();
+      mocks.getToolInstallationReports.mockReturnValue(pending.promise);
+      if (refresh)
+        mocks.getToolInstallationReports.mockResolvedValueOnce([
+          report("claude", {
+            installs: [
+              candidate(null, { source: "npm", is_path_default: true }),
+            ],
+          }),
+          report("kimi"),
+        ]);
+      await renderApps();
+      if (refresh) {
+        await waitFor(() => expect(updateAllButton()).toBeEnabled());
+        fireEvent.click(
+          screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+        );
+        await waitFor(() =>
+          expect(mocks.getToolInstallationReports).toHaveBeenCalledTimes(2),
+        );
+      }
+      await waitFor(() =>
+        expect(screen.getByText("appsPage.checkUpdates")).toHaveAttribute(
+          "aria-hidden",
+          "false",
+        ),
+      );
+      await waitFor(() => expect(updateAllButton()).toBeDisabled());
+      await act(async () =>
+        pending.resolve([
+          report("claude", {
+            installs: [
+              candidate(null, {
+                source: "curl",
+                version: "2.1.0",
+                is_path_default: true,
+              }),
+            ],
+          }),
+          report("kimi"),
+        ]),
+      );
+      await waitFor(() => expect(updateAllButton()).toBeEnabled());
+      mocks.probeToolInstallations.mockImplementation(async (tools: string[]) =>
+        tools.map((tool) => report(tool, { needs_confirmation: true })),
+      );
+      fireEvent.click(updateAllButton());
+      await waitFor(() =>
+        expect(mocks.probeToolInstallations).toHaveBeenCalledWith([
+          "claude",
+          "kimi",
+        ]),
+      );
+      expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not execute a rejected npm prerelease plan through the generic updater", async () => {
+    outdated.clear();
+    outdated.add("claude");
+    const original = mocks.getToolVersions.getMockImplementation()!;
+    mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+      (await original(tools)).map((tool: ToolVersions[number]) =>
+        tool.name === "claude"
+          ? { ...tool, version: "2.1.0", latest_version: "2.2.0-next.1" }
+          : tool,
+      ),
+    );
+    const primary = candidate(null, {
+      source: "npm",
+      version: "2.1.0",
+      is_path_default: true,
+    });
+    mocks.probeToolInstallations.mockResolvedValue([
+      report("claude", {
+        installs: [primary],
+        anchored: true,
+        confirmation_token: "npm-snapshot",
+        update_plan: {
+          tool: "claude",
+          path: primary.path,
+          real_path: primary.real_path!,
+          version: "2.1.0",
+          source: "npm",
+          command: "npm install -g @anthropic-ai/claude-code@latest",
+        },
+      }),
+    ]);
+    const snapshot = mocks.probeToolInstallations.getMockImplementation()!;
+    mocks.getToolInstallationReports.mockImplementation(
+      async (tools: string[]) =>
+        tools
+          .map((tool) => (tool === "claude" ? undefined : report(tool)))
+          .filter(Boolean)
+          .concat(await snapshot(["claude"])),
+    );
+    await renderApps();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: /settings\.updateAllTools/ }),
+      ).toBeNull(),
+    );
+    fireEvent.click(updateButton("Claude Code"));
+    await waitFor(() =>
+      expect(mocks.warning).toHaveBeenCalledWith(
+        "appsPage.installPrereleaseUpdate",
+      ),
+    );
+    expect(mocks.runToolLifecycleAction).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("lets different tools preflight and submit together while blocking duplicate clicks", async () => {
@@ -167,83 +423,59 @@ describe("AppsPage concurrent CLI upgrades", () => {
     await act(async () => runs.get("claude")!.resolve());
   });
 
-  it.each(["install", "update"] as const)(
-    "restores an ongoing %s after remount and receives its completion",
-    async (action) => {
-      if (action === "install") missing.add("claude");
-      const running = deferred<void>();
-      mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
-        await running.promise;
-        upgraded.add("claude");
-        missing.delete("claude");
-      });
-      const actionButton = () =>
-        card("Claude Code").getByRole("button", {
-          name:
-            action === "install"
-              ? "settings.toolInstall"
-              : "settings.toolUpdate",
-        });
-      const view = await renderApps();
-      fireEvent.click(actionButton());
-      await waitFor(() =>
-        expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1),
-      );
-      view.unmount();
-      await renderApps();
-      const versionChecks = mocks.getToolVersions.mock.calls.length;
-      expect(actionButton()).toBeDisabled();
-      expect(actionButton()).toHaveAttribute("aria-busy", "true");
-      expect(updateButton("Codex")).toBeEnabled();
-      fireEvent.click(actionButton());
-      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
-      expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
-      expect(mocks.info).not.toHaveBeenCalled();
-      expect(mocks.error).not.toHaveBeenCalled();
-      expect(mocks.warning).not.toHaveBeenCalled();
-      expect(mocks.success).not.toHaveBeenCalled();
+  it("restores an ongoing upgrade after remount and receives its completion", async () => {
+    const running = deferred<void>();
+    mocks.runToolLifecycleAction.mockImplementationOnce(async () => {
+      await running.promise;
+      upgraded.add("claude");
+      missing.delete("claude");
+    });
+    const actionButton = () => updateButton("Claude Code");
+    const view = await renderApps();
+    fireEvent.click(actionButton());
+    await waitFor(() =>
+      expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1),
+    );
+    view.unmount();
+    await renderApps();
+    const versionChecks = mocks.getToolVersions.mock.calls.length;
+    expect(actionButton()).toBeDisabled();
+    expect(actionButton()).toHaveAttribute("aria-busy", "true");
+    expect(updateButton("Codex")).toBeEnabled();
+    fireEvent.click(actionButton());
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
+    expect(mocks.info).not.toHaveBeenCalled();
+    expect(mocks.error).not.toHaveBeenCalled();
+    expect(mocks.warning).not.toHaveBeenCalled();
+    expect(mocks.success).not.toHaveBeenCalled();
 
-      await act(async () => running.resolve());
-      expect(isReady("Claude Code")).toBe(true);
-      expect(
-        screen.getByRole("button", { name: "appsPage.checkUpdates" }),
-      ).toBeEnabled();
-      expect(mocks.success).toHaveBeenCalledTimes(1);
-    },
-  );
+    await act(async () => running.resolve());
+    expect(isReady("Claude Code")).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "appsPage.checkUpdates" }),
+    ).toBeEnabled();
+    expect(mocks.success).toHaveBeenCalledTimes(1);
+  });
 
-  it.each(["install", "update"] as const)(
-    "shows an informational toast when the backend reports an ongoing %s",
-    async (action) => {
-      if (action === "install") missing.add("claude");
-      mocks.runToolLifecycleAction.mockRejectedValueOnce(
-        "TOOL_ACTION_IN_PROGRESS",
-      );
-      await renderApps();
-      const versionChecks = mocks.getToolVersions.mock.calls.length;
-      fireEvent.click(
-        card("Claude Code").getByRole("button", {
-          name:
-            action === "install"
-              ? "settings.toolInstall"
-              : "settings.toolUpdate",
-        }),
-      );
-      await waitFor(() =>
-        expect(mocks.info).toHaveBeenCalledWith(
-          "settings.toolActionInProgress",
-          {
-            description: "settings.toolActionInProgressDetail",
-            closeButton: true,
-          },
-        ),
-      );
-      expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
-      expect(mocks.error).not.toHaveBeenCalled();
-      expect(mocks.warning).not.toHaveBeenCalled();
-      expect(mocks.success).not.toHaveBeenCalled();
-    },
-  );
+  it("shows an informational toast when the backend reports an ongoing upgrade", async () => {
+    mocks.runToolLifecycleAction.mockRejectedValueOnce(
+      "TOOL_ACTION_IN_PROGRESS",
+    );
+    await renderApps();
+    const versionChecks = mocks.getToolVersions.mock.calls.length;
+    fireEvent.click(updateButton("Claude Code"));
+    await waitFor(() =>
+      expect(mocks.info).toHaveBeenCalledWith("settings.toolActionInProgress", {
+        description: "settings.toolActionInProgressDetail",
+        closeButton: true,
+      }),
+    );
+    expect(mocks.getToolVersions).toHaveBeenCalledTimes(versionChecks);
+    expect(mocks.error).not.toHaveBeenCalled();
+    expect(mocks.warning).not.toHaveBeenCalled();
+    expect(mocks.success).not.toHaveBeenCalled();
+  });
 
   it("ignores a late probe from the old page after the remounted page upgrades a tool", async () => {
     const stale = deferred<ToolVersions>();
@@ -671,7 +903,30 @@ describe("AppsPage concurrent CLI upgrades", () => {
     expect(updateButton("Codex")).toBeEnabled();
   });
 
-  it("does not block another installation submission while an upgrade is running", async () => {
+  it("passes the reviewed upgrade token when confirming an installation", async () => {
+    const user = userEvent.setup();
+    mocks.probeToolInstallations.mockResolvedValueOnce([
+      report("claude", {
+        needs_confirmation: true,
+        confirmation_token: "reviewed-token",
+      }),
+    ]);
+    await renderApps();
+    await user.click(updateButton("Claude Code"));
+    const dialog = within(await screen.findByRole("dialog"));
+    await user.click(
+      dialog.getByRole("button", { name: "settings.toolUpgradeConfirmBtn" }),
+    );
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+      ["claude"],
+      "update",
+      {},
+      undefined,
+      "reviewed-token",
+    );
+  });
+
+  it("opens the selected app’s install commands while another app is upgrading", async () => {
     const claudeRun = deferred<void>();
     missing.add("codex");
     mocks.runToolLifecycleAction.mockImplementation(
@@ -691,15 +946,187 @@ describe("AppsPage concurrent CLI upgrades", () => {
     });
     expect(install).toBeEnabled();
     fireEvent.click(install);
-    await waitFor(() => expect(isReady("Codex")).toBe(true));
-    expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
-      ["codex"],
-      "install",
-      {},
+    const dialog = within(screen.getByRole("dialog"));
+    expect(dialog.getByRole("heading", { name: "Codex" })).toBeVisible();
+    expect(
+      dialog.getByText("npm install -g @openai/codex@latest"),
+    ).toBeVisible();
+    expect(mocks.runToolLifecycleAction).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      dialog.getByRole("button", { name: "appsPage.installOfficialSite" }),
     );
+    expect(mocks.openExternal).toHaveBeenLastCalledWith(
+      "https://github.com/openai/codex/releases/latest",
+    );
+    fireEvent.click(dialog.getByRole("button", { name: "common.close" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(install).toBeEnabled();
     expect(updateButton("Claude Code")).toBeDisabled();
     await act(async () => claudeRun.resolve());
   });
+
+  it.each([
+    ["curl", "curl", false],
+    ["Homebrew", "homebrew", false],
+    ["curl", "curl", true],
+  ] as const)(
+    "shows Codex installation actions for %s (%s, desktop=%s)",
+    async (label, method, withDesktop) => {
+      const platform = vi
+        .spyOn(navigator, "userAgent", "get")
+        .mockReturnValue("Macintosh; Intel Mac OS X");
+      const run = deferred<void>();
+      try {
+        missing.add("codex");
+        const getVersions = mocks.getToolVersions.getMockImplementation()!;
+        mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+          (await getVersions(tools)).map((tool: ToolVersions[number]) =>
+            tool.name === "codex" ? { ...tool, env_type: "macos" } : tool,
+          ),
+        );
+        if (withDesktop) {
+          const getVersions = mocks.getToolVersions.getMockImplementation()!;
+          mocks.getToolVersions.mockImplementation(async (tools: string[]) =>
+            (await getVersions(tools)).map((tool: ToolVersions[number]) =>
+              tool.name === "codex"
+                ? {
+                    ...tool,
+                    version: null,
+                    desktop_managed: true,
+                    env_type: "macos",
+                    desktop_installation: {
+                      path: "/Applications/ChatGPT.app",
+                      version: "26.1117.41037",
+                    },
+                  }
+                : tool,
+            ),
+          );
+        }
+        mocks.runToolLifecycleAction.mockImplementation(async () => {
+          await run.promise;
+          missing.delete("codex");
+        });
+        const newPath = "/tmp/cc-switch-qa/bin/codex";
+        const newCopy = candidate(null, {
+          path: newPath,
+          source: method,
+          version: "2.0.0",
+        });
+        mocks.probeToolInstallations.mockImplementation(async () => [
+          report("codex", {
+            installs: missing.has("codex")
+              ? []
+              : [
+                  newCopy,
+                  candidate(null, {
+                    path: "/tmp/cc-switch-qa/npm/bin/codex",
+                    source: "npm",
+                    version: "1.0.0",
+                    is_path_default: false,
+                  }),
+                ],
+            is_conflict: true,
+          }),
+        ]);
+        await renderApps();
+        if (withDesktop) {
+          const user = userEvent.setup();
+          await openInstallCommands(user);
+          await user.click(
+            within(screen.getByRole("dialog")).getByRole("button", {
+              name: "Codex",
+            }),
+          );
+        } else {
+          fireEvent.click(
+            card("Codex").getByRole("button", { name: "settings.toolInstall" }),
+          );
+        }
+        const dialog = within(screen.getByRole("dialog"));
+        if (withDesktop) {
+          const status = dialog.getAllByText(
+            "appsPage.installAlreadyInstalled",
+          )[0];
+          expect(
+            within(status.parentElement!).getByText(
+              "appsPage.installedFromOfficialClient",
+            ),
+          ).toBeVisible();
+        }
+        const install = dialog.getByRole("button", {
+          name: `settings.toolInstall ${label}`,
+        });
+        expect(
+          dialog.getByRole("button", { name: `common.copy ${label}` })
+            .nextElementSibling,
+        ).toBe(install);
+        fireEvent.click(install);
+        await waitFor(() =>
+          expect(mocks.runToolLifecycleAction).toHaveBeenCalledWith(
+            ["codex"],
+            "install",
+            {},
+            undefined,
+            undefined,
+            method,
+          ),
+        );
+        expect(install).toBeDisabled();
+        expect(
+          dialog
+            .queryByRole("button", { name: "settings.toolInstall npm" })
+            ?.hasAttribute("disabled") ?? true,
+        ).toBe(true);
+        await act(async () => run.resolve());
+        await waitFor(() =>
+          expect(
+            dialog.queryByRole("button", {
+              name: `settings.toolInstall ${label}`,
+            }),
+          ).toBeNull(),
+        );
+        const status = dialog.getAllByText(
+          "appsPage.installAlreadyInstalled",
+        )[0];
+        const channels = within(status.parentElement!);
+        expect(
+          channels.getByText(method === "homebrew" ? "Homebrew" : "curl"),
+        ).toBeVisible();
+        if (withDesktop) {
+          expect(
+            channels.getByText("appsPage.installedFromOfficialClient"),
+          ).toBeVisible();
+        }
+        expect(
+          dialog.getByRole("button", { name: `common.copy ${label}` }),
+        ).toBeEnabled();
+        expect(mocks.success).toHaveBeenCalledWith(
+          "settings.toolActionDone",
+          expect.anything(),
+        );
+        fireEvent.click(dialog.getByRole("button", { name: "common.close" }));
+        if (withDesktop && !card("Codex").queryByText(newPath)) {
+          fireEvent.click(
+            card("Codex").getByRole("button", {
+              name: "appsPage.manageInstallations",
+            }),
+          );
+        }
+        expect(await card("Codex").findByText(newPath)).toBeInTheDocument();
+        expect(
+          card("Codex").getByRole("button", {
+            name: "appsPage.manageInstallations",
+          }),
+        ).toBeInTheDocument();
+        expect(
+          card("Codex").queryByRole("button", { name: "settings.toolInstall" }),
+        ).toBeNull();
+      } finally {
+        platform.mockRestore();
+      }
+    },
+  );
 
   it("shows the queue, elapsed time and latest output on the running rows", async () => {
     const claudeRun = deferred<void>();
@@ -833,10 +1260,8 @@ describe("AppsPage concurrent CLI upgrades", () => {
     );
   });
 });
-
 describe("AppsPage OpenCode Desktop bundled CLI", () => {
   beforeEach(() => {
-    resetAppsPageMocks(mocks, state);
     outdated.add("opencode");
   });
 

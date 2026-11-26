@@ -6,25 +6,48 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import type { ToolUpgradePreview } from "@/components/settings/ToolUpgradeConfirmDialog";
+import { getToolInstallSourceLabel } from "@/components/settings/ToolInstallRow";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
 import type {
+  DesktopToolInstallation,
+  InstallMethod,
   NodeRequirementGap,
   ToolInstallation,
   ToolInstallationOverview,
   ToolInstallationReport,
+  ToolInstallationUpdate,
   ToolUninstallPlan,
+  ToolUpdatePlan,
 } from "@/lib/api/settings";
 import type { AppId } from "@/lib/api/types";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isWindows } from "@/lib/platform";
-import { isUpdateAvailable } from "@/lib/version";
+import { isUpdateAvailable, isPrereleaseVersion } from "@/lib/version";
 
 /**
  * 「应用」页的安装 / 升级 / 卸载逻辑。任务、确认队列和版本结果放在模块级的
  * store 里：离开页面也不中断，回来立刻恢复进度。
  */
+
+// Desktop Codex is listed separately from its independent CLI installations.
+export function useDesktopCliInstallations(
+  tool: string,
+  lastCheckedAt: number | null,
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: ["desktop-cli-installations", tool, lastCheckedAt],
+    queryFn: async () =>
+      (await settingsApi.probeToolInstallations([tool]))[0] ?? null,
+    enabled,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
 
 export interface ToolVersion {
   name: string;
@@ -34,10 +57,13 @@ export interface ToolVersion {
   // 后端已定位到可执行文件但 --version 报错（装了却跑不起来）。直接读此字段，
   // 不要靠匹配 error 文案反推——避免前端与后端字符串硬耦合。
   installed_but_broken: boolean;
+  desktop_installation?: DesktopToolInstallation;
+  desktop_managed?: boolean;
   env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
   wsl_distro: string | null;
   // 有新版本、但这处安装用的 Node 达不到新版本的要求：不给升级，提示先升级 Node。
   update_blocked_by_node: NodeRequirementGap | null;
+  manual_update_only?: boolean;
 }
 
 export const TOOL_NAMES = [
@@ -75,11 +101,46 @@ export function npmBinCollisionPath(detail: string): string | null {
   return match?.[1] ?? null;
 }
 
+type ToolUpdatePlans = Partial<Record<ToolName, ToolUpdatePlan[]>>;
+
 interface PendingUpgrade {
   toolNames: ToolName[];
-  plans: ToolInstallationReport[];
+  plans: ToolUpgradePreview[];
+  updatePlans?: ToolUpdatePlans;
   fromBatchEntry: boolean;
   wslShellByTool: Record<string, WslShellPreference>;
+}
+
+export function availableInstallationUpdate(
+  entry: ToolInstallationUpdate | undefined,
+) {
+  if (
+    !entry?.installation.runnable ||
+    entry.update_blocked_by_node ||
+    entry.installation.source === "desktop" ||
+    entry.installation.source === "official"
+  ) {
+    return undefined;
+  }
+  return isUpdateAvailable(entry.installation.version, entry.latest_version)
+    ? (entry.plan ?? undefined)
+    : undefined;
+}
+
+function previewInstallationUpdate(
+  tool: ToolName,
+  installs: ToolInstallation[],
+  plan: ToolUpdatePlan,
+  targetVersion?: string | null,
+): ToolUpgradePreview {
+  return {
+    tool,
+    installs,
+    command: plan.command,
+    anchored: true,
+    update_plan: plan,
+    target_version: targetVersion,
+  };
 }
 
 export type WslShellPreference = {
@@ -116,123 +177,6 @@ export const ENV_BADGE_CONFIG: Record<
       "bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20",
   },
 };
-
-const posixScriptInstallCommand = (url: string) =>
-  `bash -c 'tmp=$(mktemp) && curl -fsSL ${url} -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'`;
-
-const HERMES_WINDOWS_INSTALL_SCRIPT =
-  "irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1 | iex";
-
-const powershellEncodedCommand = (script: string): string => {
-  let binary = "";
-  for (let i = 0; i < script.length; i += 1) {
-    const code = script.charCodeAt(i);
-    binary += String.fromCharCode(code & 0xff, code >> 8);
-  }
-  return btoa(binary);
-};
-
-const HERMES_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
-  HERMES_WINDOWS_INSTALL_SCRIPT,
-)}`;
-
-const MCODE_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
-  "irm https://filecdn.minimax.chat/public/install.ps1 | iex",
-)}`;
-
-const KIMI_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
-  "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
-)}`;
-
-const AGY_WINDOWS_INSTALL_COMMAND = `powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${powershellEncodedCommand(
-  "irm https://antigravity.google/cli/install.ps1 | iex",
-)}`;
-
-// 与后端 npm_install_command_for("claude") 保持一致：原生依赖和 postinstall 缺一不可，
-// 否则 bin/claude.exe 会保留文本占位文件，在 Windows 上报兼容性错误。
-const CLAUDE_NPM_INSTALL_COMMAND =
-  "npm i -g @anthropic-ai/claude-code@latest --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code";
-
-// 与后端 npm_install_command_for("mcode") 保持一致：npm 12 默认拦截依赖的 install
-// 脚本，不放行 better-sqlite3 时 SQLite 不可用。
-const MCODE_NPM_INSTALL_COMMAND =
-  'npm i -g @minimax-ai/code@latest --ignore-scripts=false --include=optional "--allow-scripts=@minimax-ai/code,better-sqlite3"';
-
-// 与后端 npm_install_command_for("opencode") 保持一致：postinstall 负责把平台二进制
-// 铺到 bin/opencode.exe，npm 12 拦截后只剩文本占位文件。
-const OPENCODE_NPM_INSTALL_COMMAND =
-  "npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai";
-
-// 与后端 npm_install_command_for("grok") 保持一致：postinstall 负责把平台二进制解到
-// ~/.grok/bin 并 relink，npm 12 拦截后升级会一直跑旧版。
-const GROK_NPM_INSTALL_COMMAND =
-  "npm i -g @xai-official/grok@latest --ignore-scripts=false --include=optional --allow-scripts=@xai-official/grok";
-
-const POSIX_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
-${posixScriptInstallCommand("https://claude.ai/install.sh")} || ${CLAUDE_NPM_INSTALL_COMMAND}
-# Codex
-npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
-# Grok Build
-${GROK_NPM_INSTALL_COMMAND}
-# OpenCode
-${posixScriptInstallCommand("https://opencode.ai/install")} || ${OPENCODE_NPM_INSTALL_COMMAND}
-# OpenClaw
-npm i -g openclaw@latest
-# Hermes
-${posixScriptInstallCommand("https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh")}
-# Pi
-npm i -g @earendil-works/pi-coding-agent@latest
-# MiniMax Code
-${posixScriptInstallCommand("https://filecdn.minimax.chat/public/install.sh")} || ${MCODE_NPM_INSTALL_COMMAND}
-# DeepSeek Harness
-npm i -g @deepseek-ai/dsh@latest --engine-strict
-# Kimi Code
-${posixScriptInstallCommand("https://code.kimi.com/kimi-code/install.sh")}
-# Antigravity CLI
-${posixScriptInstallCommand("https://antigravity.google/cli/install.sh")}
-# Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent@latest
-# GitHub Copilot CLI
-npm i -g @github/copilot@latest
-# CodeBuddy
-npm i -g @tencent-ai/codebuddy-code@latest`;
-
-const WINDOWS_ONE_CLICK_INSTALL_COMMANDS = `# Claude Code
-${CLAUDE_NPM_INSTALL_COMMAND}
-# Codex
-npm i -g @openai/codex@latest
-# Gemini CLI
-npm i -g @google/gemini-cli@latest
-# Grok Build
-${GROK_NPM_INSTALL_COMMAND}
-# OpenCode
-${OPENCODE_NPM_INSTALL_COMMAND}
-# OpenClaw
-npm i -g openclaw@latest
-# Hermes
-${HERMES_WINDOWS_INSTALL_COMMAND}
-# Pi
-npm i -g @earendil-works/pi-coding-agent@latest
-# MiniMax Code
-${MCODE_WINDOWS_INSTALL_COMMAND}
-# DeepSeek Harness
-npm i -g @deepseek-ai/dsh@latest --engine-strict
-# Kimi Code
-${KIMI_WINDOWS_INSTALL_COMMAND}
-# Antigravity CLI
-${AGY_WINDOWS_INSTALL_COMMAND}
-# Oh My Pi
-bun install -g @oh-my-pi/pi-coding-agent@latest
-# GitHub Copilot CLI
-npm i -g @github/copilot@latest
-# CodeBuddy
-npm i -g @tencent-ai/codebuddy-code@latest`;
-
-export const ONE_CLICK_INSTALL_COMMANDS = isWindows()
-  ? WINDOWS_ONE_CLICK_INSTALL_COMMANDS
-  : POSIX_ONE_CLICK_INSTALL_COMMANDS;
 
 export const TOOL_DISPLAY_NAMES: Record<ToolName, string> = {
   claude: "Claude Code",
@@ -288,6 +232,7 @@ let toolVersionRequestSequence = 0;
 // 强制重查另起一次，只有最新的那次可以写入。
 let inflightInstallations: Promise<void> | null = null;
 let installationLoadSequence = 0;
+let inflightInstallationDetails: Promise<void> | null = null;
 const latestToolVersionRequests = new Map<string, number>();
 
 /**
@@ -311,7 +256,9 @@ interface ToolManagementState {
   pendingUpgrades: readonly PendingUpgrade[];
   batchAction: ToolLifecycleAction | null;
   /** 每个工具的安装分布（路径、来源、多处安装），页面打开时探测一次 */
-  installReports: Partial<Record<ToolName, ToolInstallationOverview>> | null;
+  installReports: Partial<Record<ToolName, ToolInstallationReport>> | null;
+  installationReportsPending: boolean;
+  overviews: Partial<Record<ToolName, ToolInstallationOverview>> | null;
 }
 
 // 安装/升级不会随设置页卸载而结束。将任务、确认队列与版本结果一起保留在会话中，
@@ -323,6 +270,8 @@ let toolManagementState: ToolManagementState = {
   pendingUpgrades: [],
   batchAction: null,
   installReports: null,
+  installationReportsPending: false,
+  overviews: null,
 };
 const toolManagementListeners = new Set<() => void>();
 const getToolManagementState = () => toolManagementState;
@@ -417,7 +366,7 @@ function commitToolVersionResults(
 // 不联网。快速重挂、启动时的后台检查和页面共用在途请求；「检查更新」强制重查，且只有
 // 最新一次的结果可写入，免得慢的旧响应盖掉刚写入的新数据。
 function loadInstallReports(options?: { force?: boolean }): Promise<void> {
-  if (!options?.force && toolManagementState.installReports) {
+  if (!options?.force && toolManagementState.overviews) {
     return Promise.resolve();
   }
   if (!options?.force && inflightInstallations) return inflightInstallations;
@@ -430,7 +379,7 @@ function loadInstallReports(options?: { force?: boolean }): Promise<void> {
       for (const report of reports) {
         next[report.tool as ToolName] = report;
       }
-      updateToolManagementState({ installReports: next });
+      updateToolManagementState({ overviews: next });
     } catch (error) {
       console.error("[useToolManagement] listToolInstallations failed", error);
     } finally {
@@ -517,20 +466,24 @@ async function runBackgroundToolCheck(): Promise<void> {
 
 /** 已检查过的命令行应用里有没有可升级的（不触发检查，只读缓存）。 */
 export function useToolUpdatesAvailable(): boolean {
-  const { toolVersionsCache, installReports } = useSyncExternalStore(
+  const { toolVersionsCache, installReports, overviews } = useSyncExternalStore(
     subscribeToolManagement,
     getToolManagementState,
   );
   return (
     toolVersionsCache?.data.some(
       (tool) =>
-        !isDesktopManagedTool(tool.name, installReports) &&
+        !isDesktopManagedTool(tool.name, overviews) &&
+        !tool.desktop_managed &&
+        !installReports?.[tool.name as ToolName]?.unmanaged &&
         isUpdateAvailable(tool.version, tool.latest_version),
     ) ?? false
   );
 }
 
-export function useToolManagement() {
+export function useToolManagement(
+  expanded: Partial<Record<ToolName, boolean>>,
+) {
   const { t } = useTranslation();
   const {
     toolVersionsCache,
@@ -538,7 +491,9 @@ export function useToolManagement() {
     toolProgress,
     pendingUpgrades,
     batchAction,
+    overviews,
     installReports,
+    installationReportsPending,
   } = useSyncExternalStore(subscribeToolManagement, getToolManagementState);
   useEffect(ensureToolProgressListener, []);
   const toolVersions = toolVersionsCache?.data ?? EMPTY_TOOL_VERSIONS;
@@ -576,19 +531,160 @@ export function useToolManagement() {
     return new Map(toolVersions.map((tool) => [tool.name, tool]));
   }, [toolVersions]);
 
-  const updatableToolNames = useMemo(
-    () =>
-      TOOL_NAMES.filter((toolName) => {
-        const tool = toolVersionByName.get(toolName);
-        return (
-          !busyTools.has(toolName) &&
-          !loadingTools[toolName] &&
-          !tool?.update_blocked_by_node &&
-          !isDesktopManagedTool(toolName, installReports) &&
-          isUpdateAvailable(tool?.version, tool?.latest_version)
-        );
+  const lastCheckedAt =
+    toolVersionsCache && toolVersionsCache.at > 0 ? toolVersionsCache.at : null;
+  const desktopCodex = Boolean(
+    toolVersionByName.get("codex")?.desktop_installation,
+  );
+  const desktopCliReport = useDesktopCliInstallations(
+    "codex",
+    lastCheckedAt,
+    desktopCodex && !installReports?.codex,
+  );
+  const installationInputs = TOOL_NAMES.map((tool) => {
+    const info = toolVersionByName.get(tool);
+    const report = installReports?.[tool];
+    const usesWsl = info?.env_type === "wsl";
+    const detectedInstalls = usesWsl
+      ? []
+      : (report?.installs ??
+        toolDiagnostics[tool] ??
+        (tool === "codex" ? desktopCliReport.data?.installs : undefined));
+    const checkIndependentUpdates =
+      !usesWsl &&
+      (detectedInstalls?.filter(({ source }) => source !== "desktop").length ??
+        0) >
+        (info?.desktop_installation ||
+        info?.desktop_managed ||
+        detectedInstalls?.some(({ source }) => source === "desktop")
+          ? 0
+          : 1);
+    return { tool, report, usesWsl, detectedInstalls, checkIndependentUpdates };
+  });
+  const installationUpdates = useQueries({
+    queries: installationInputs.map(
+      ({ tool, report, usesWsl, checkIndependentUpdates }) => ({
+        queryKey: [
+          "tool-installation-updates",
+          tool,
+          lastCheckedAt,
+          checkIndependentUpdates,
+          report?.installs.map(({ path, version, runnable }) => [
+            path,
+            version,
+            runnable,
+          ]),
+        ],
+        queryFn: () =>
+          settingsApi.getToolInstallationUpdates(
+            tool,
+            undefined,
+            checkIndependentUpdates,
+          ),
+        enabled:
+          !usesWsl && (Boolean(expanded[tool]) || checkIndependentUpdates),
+        staleTime: 30_000,
+        retry: false,
       }),
-    [toolVersionByName, busyTools, loadingTools, installReports],
+    ),
+  });
+  const installationsByTool = Object.fromEntries(
+    installationInputs.map((input, index) => [
+      input.tool,
+      { ...input, updates: installationUpdates[index] },
+    ]),
+  ) as Record<
+    ToolName,
+    (typeof installationInputs)[number] & {
+      updates: (typeof installationUpdates)[number];
+    }
+  >;
+  const batchEntries = TOOL_NAMES.flatMap((tool) => {
+    const info = toolVersionByName.get(tool);
+    if (busyTools.has(tool) || loadingTools[tool]) {
+      return [];
+    }
+    const { checkIndependentUpdates, updates } = installationsByTool[tool];
+    const previews = checkIndependentUpdates
+      ? (updates.data ?? []).flatMap((entry) => {
+          const plan = availableInstallationUpdate(entry);
+          return plan
+            ? [
+                previewInstallationUpdate(
+                  tool,
+                  [entry.installation],
+                  plan,
+                  entry.latest_version,
+                ),
+              ]
+            : [];
+        })
+      : [];
+    const nodeBlockedPrimary = updates.data?.some(
+      ({ installation, update_blocked_by_node }) =>
+        installation.is_path_default && update_blocked_by_node,
+    );
+    const { report, detectedInstalls } = installationsByTool[tool];
+    const primary =
+      detectedInstalls?.find((copy) => copy.is_path_default) ??
+      (detectedInstalls?.length === 1 ? detectedInstalls[0] : undefined);
+    const npmDefault =
+      report?.update_plan?.source === "npm" ||
+      primary?.source === "npm" ||
+      updates.data?.some(
+        ({ installation, plan }) =>
+          installation.is_path_default && plan?.source === "npm",
+      );
+    const prereleaseBlockedPrimary =
+      (isPrereleaseVersion(info?.latest_version) && (npmDefault || !report)) ||
+      updates.data?.some(
+        ({ installation, latest_version, plan }) =>
+          installation.is_path_default &&
+          !plan &&
+          isPrereleaseVersion(latest_version),
+      );
+    const canUpdatePrimary =
+      !prereleaseBlockedPrimary &&
+      !isDesktopManagedTool(tool, overviews) &&
+      !nodeBlockedPrimary &&
+      !info?.update_blocked_by_node &&
+      !info?.desktop_managed &&
+      !installReports?.[tool]?.unmanaged &&
+      !info?.manual_update_only &&
+      isUpdateAvailable(info?.version, info?.latest_version);
+    const primaryCovered = previews.some(({ installs, update_plan }) =>
+      installs.some(
+        (copy) => copy.is_path_default && copy.path === update_plan?.path,
+      ),
+    );
+    const updateCount =
+      previews.length + Number(canUpdatePrimary && !primaryCovered);
+    return updateCount
+      ? [
+          {
+            tool,
+            previews,
+            canUpdatePrimary: canUpdatePrimary && !primaryCovered,
+            updateCount,
+          },
+        ]
+      : [];
+  });
+  const updatableToolNames = batchEntries.map(({ tool }) => tool);
+  const updatableDefaultToolNames = batchEntries
+    .filter(({ canUpdatePrimary }) => canUpdatePrimary)
+    .map(({ tool }) => tool);
+  const batchPreviews = batchEntries.flatMap(({ previews }) => previews);
+  const updatableCount = batchEntries.reduce(
+    (count, { updateCount }) => count + updateCount,
+    0,
+  );
+  const checkingIndependentUpdates = Object.values(installationsByTool).some(
+    ({ tool, usesWsl, checkIndependentUpdates, updates }) =>
+      (checkIndependentUpdates && updates.isFetching) ||
+      (installationReportsPending &&
+        !usesWsl &&
+        isPrereleaseVersion(toolVersionByName.get(tool)?.latest_version)),
   );
 
   const refreshToolVersions = useCallback(
@@ -705,7 +801,40 @@ export function useToolManagement() {
   };
 
   const loadInstallations = useCallback(
-    (options?: { force?: boolean }) => loadInstallReports(options),
+    async (options?: { force?: boolean }) => {
+      const overview = loadInstallReports(options);
+      if (
+        options?.force ||
+        (!toolManagementState.installReports && !inflightInstallationDetails)
+      ) {
+        const sequence = installationLoadSequence;
+        updateToolManagementState({ installationReportsPending: true });
+        inflightInstallationDetails = settingsApi
+          .getToolInstallationReports([...TOOL_NAMES])
+          .then((reports) => {
+            if (sequence === installationLoadSequence) {
+              updateToolManagementState({
+                installReports: Object.fromEntries(
+                  reports.map((report) => [report.tool, report]),
+                ),
+              });
+            }
+          })
+          .catch((error) =>
+            console.error(
+              "[useToolManagement] getToolInstallationReports failed",
+              error,
+            ),
+          )
+          .finally(() => {
+            if (sequence === installationLoadSequence) {
+              inflightInstallationDetails = null;
+              updateToolManagementState({ installationReportsPending: false });
+            }
+          });
+      }
+      await Promise.all([overview, inflightInstallationDetails]);
+    },
     [],
   );
 
@@ -725,54 +854,46 @@ export function useToolManagement() {
     ]);
   }, [loadAllToolVersions, loadInstallations]);
 
-  const handleCopyInstallCommands = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(ONE_CLICK_INSTALL_COMMANDS);
-      toast.success(t("settings.installCommandsCopied"), { closeButton: true });
-    } catch (error) {
-      console.error(
-        "[useToolManagement] Failed to copy install commands",
-        error,
-      );
-      toast.error(t("settings.installCommandsCopyFailed"));
-    }
-  }, [t]);
-
   // 升级后自动补诊单个工具：静默后台执行。有冲突写入结果；无冲突则清掉该工具可能残留
   // 的过期冲突展示（外部卸载/修复后冲突可能已消失，不清会一直显示旧列表）。不弹 toast、
   // 不报错打扰——与用户主动点的全量诊断区别对待。
-  const diagnoseToolSilently = useCallback(async (toolName: ToolName) => {
-    try {
-      const [report] = await settingsApi.probeToolInstallations([toolName]);
-      // 没拿到报告代表状态未知，不能把它当成「没有其他安装」。
-      if (!report) return false;
-      // 同一份报告也是行上的路径 / 来源 / 「另有 N 处安装」：装完、升级完就刷新，
-      // 不用等手动「检查更新」
-      updateToolManagementState({
-        installReports: {
-          ...(toolManagementState.installReports ?? {}),
-          [toolName]: report,
-        },
-      });
-      setToolDiagnostics((prev) => {
-        if (report.is_conflict) {
-          return { ...prev, [toolName]: report.installs };
-        }
-        // 无冲突：清掉残留;无旧结果则返回同引用，避免无谓 re-render。
-        if (!(toolName in prev)) return prev;
-        const next = { ...prev };
-        delete next[toolName];
-        return next;
-      });
-      return true;
-    } catch (error) {
-      console.error(
-        `[useToolManagement] Auto-diagnose failed for ${toolName}`,
-        error,
-      );
-      return false;
-    }
-  }, []);
+  const diagnoseToolSilently = useCallback(
+    async (toolName: ToolName, installMethod?: InstallMethod) => {
+      try {
+        const [report] = await (installMethod
+          ? settingsApi.probeToolInstallations([toolName], false, installMethod)
+          : settingsApi.probeToolInstallations([toolName]));
+        // 没拿到报告代表状态未知，不能把它当成「没有其他安装」。
+        if (!report) return false;
+        // 同一份报告也是行上的路径 / 来源 / 「另有 N 处安装」：装完、升级完就刷新，
+        // 不用等手动「检查更新」
+        updateToolManagementState({
+          installReports: {
+            ...(toolManagementState.installReports ?? {}),
+            [toolName]: report,
+          },
+        });
+        setToolDiagnostics((prev) => {
+          if (report.is_conflict) {
+            return { ...prev, [toolName]: report.installs };
+          }
+          // 无冲突：清掉残留;无旧结果则返回同引用，避免无谓 re-render。
+          if (!(toolName in prev)) return prev;
+          const next = { ...prev };
+          delete next[toolName];
+          return next;
+        });
+        return true;
+      } catch (error) {
+        console.error(
+          `[useToolManagement] Auto-diagnose failed for ${toolName}`,
+          error,
+        );
+        return false;
+      }
+    },
+    [],
+  );
 
   // 顶部按钮：一次性诊断全部 6 个工具，有冲突的写入各自卡片，
   // 全部无冲突时给一条 info toast。后端逐工具枚举所有安装并判定分歧。
@@ -786,9 +907,16 @@ export function useToolManagement() {
       let conflicts = 0;
       for (const report of reports) {
         installReports[report.tool as ToolName] = report;
-        if (report.is_conflict) {
-          next[report.tool as ToolName] = report.installs;
-          conflicts += 1;
+        const officialDesktop =
+          toolManagementState.toolVersionsCache?.data.some(
+            (version) =>
+              version.name === report.tool && version.desktop_installation,
+          );
+        if (report.is_conflict || officialDesktop) {
+          if (report.installs.length > 0) {
+            next[report.tool as ToolName] = report.installs;
+          }
+          if (report.is_conflict) conflicts += 1;
         }
       }
       updateToolManagementState({ installReports });
@@ -822,8 +950,22 @@ export function useToolManagement() {
       action: ToolLifecycleAction,
       wslOverrides: Record<string, WslShellPreference>,
       uninstallPlan?: ToolUninstallPlan,
+      confirmedPlans: ToolUpgradePreview[] = [],
+      installMethod?: InstallMethod,
+      updatePlans?: ToolUpdatePlans,
     ) => {
-      const isBatch = toolNames.length > 1;
+      const isBatch =
+        toolNames.length > 1 ||
+        Object.entries(updatePlans ?? {}).some(
+          ([tool, plans]) =>
+            plans.length +
+              Number(
+                confirmedPlans.some(
+                  (preview) => preview.tool === tool && !preview.update_plan,
+                ),
+              ) >
+            1,
+        );
 
       // 每个工具独立调用后端，一个失败不会中断其它工具。
       // soft=true 表示"命令成功执行但结果仍需用户介入"（版本没变/无法运行/卸载待核实），
@@ -832,7 +974,7 @@ export function useToolManagement() {
         toolName: ToolName;
         detail: string;
         soft: boolean;
-        kind?: "notRunnable" | "versionUnchanged";
+        kind?: "notRunnable" | "versionUnchanged" | "verificationIncomplete";
       }[] = [];
       let succeeded = 0;
 
@@ -843,12 +985,210 @@ export function useToolManagement() {
             const previousVersion = previousTool?.version ?? null;
             const previousLatestVersion = previousTool?.latest_version ?? null;
 
+            const nativeOnly = Boolean(
+              installMethod && previousTool?.env_type === "wsl",
+            );
+            const probeInstallCopies = async () => {
+              if (nativeOnly) {
+                // Native install verification must not replace WSL row diagnostics.
+                try {
+                  return (
+                    await settingsApi.probeToolInstallations(
+                      [toolName],
+                      true,
+                      installMethod,
+                    )
+                  )[0]?.installs;
+                } catch {
+                  return undefined;
+                }
+              }
+              return (await diagnoseToolSilently(toolName, installMethod))
+                ? toolManagementState.installReports?.[toolName]?.installs
+                : undefined;
+            };
+            const previousCopies =
+              action === "install" &&
+              (previousTool?.desktop_installation || installMethod)
+                ? await probeInstallCopies()
+                : undefined;
+
+            const confirmation =
+              action === "update"
+                ? confirmedPlans.find((plan) => plan.tool === toolName)
+                    ?.confirmation_token
+                : null;
+            const plans = updatePlans?.[toolName];
+            if (plans) {
+              // Run a separately confirmed default updater before secondary copies:
+              // changing a secondary version invalidates the default's snapshot token.
+              let earlierUpdateAttempted = false;
+              const defaultPreview = confirmedPlans.find(
+                (preview) => preview.tool === toolName && !preview.update_plan,
+              );
+              const defaultCopy =
+                defaultPreview?.installs.find((copy) => copy.is_path_default) ??
+                (defaultPreview?.installs.length === 1
+                  ? defaultPreview.installs[0]
+                  : undefined);
+              if (
+                defaultPreview &&
+                (!defaultCopy ||
+                  !defaultPreview.anchored ||
+                  !defaultPreview.confirmation_token ||
+                  !defaultPreview.installs.length)
+              ) {
+                failures.push({
+                  toolName,
+                  detail: t("appsPage.installVerificationIncomplete"),
+                  soft: true,
+                  kind: "verificationIncomplete",
+                });
+              } else if (defaultPreview) {
+                earlierUpdateAttempted = true;
+                try {
+                  await settingsApi.runToolLifecycleAction(
+                    [toolName],
+                    action,
+                    wslOverrides,
+                    undefined,
+                    defaultPreview.confirmation_token ?? undefined,
+                  );
+                  const read = await diagnoseToolSilently(toolName);
+                  const updated = read
+                    ? toolManagementState.installReports?.[
+                        toolName
+                      ]?.installs.find(
+                        (copy) => copy.path === defaultCopy?.path,
+                      )
+                    : undefined;
+                  if (!updated?.runnable || !updated.version) {
+                    failures.push({
+                      toolName,
+                      detail:
+                        updated?.error ||
+                        (updated
+                          ? t("settings.toolNotRunnable")
+                          : t("appsPage.installUpdateUnverified", {
+                              path: defaultCopy?.path,
+                            })),
+                      soft: true,
+                      kind: updated ? "notRunnable" : "verificationIncomplete",
+                    });
+                  } else if (updated.version === defaultCopy?.version) {
+                    failures.push({
+                      toolName,
+                      detail: t("settings.toolActionVersionUnchanged", {
+                        version: updated?.version ?? previousVersion,
+                        latest: previousLatestVersion,
+                      }),
+                      soft: true,
+                      kind: "versionUnchanged",
+                    });
+                  } else succeeded += 1;
+                } catch (error) {
+                  failures.push({
+                    toolName,
+                    detail: extractErrorMessage(error) || String(error),
+                    soft: false,
+                  });
+                }
+              }
+              // The lifecycle lock is per tool. Run its confirmed copies in order.
+              for (const plan of plans) {
+                try {
+                  const target = confirmedPlans.find(
+                    (preview) => preview.update_plan === plan,
+                  )?.target_version;
+                  if (
+                    earlierUpdateAttempted &&
+                    target &&
+                    (await diagnoseToolSilently(toolName))
+                  ) {
+                    const current = toolManagementState.installReports?.[
+                      toolName
+                    ]?.installs.find(
+                      (copy) => copy.real_path === plan.real_path,
+                    );
+                    if (current?.runnable && current.version === target) {
+                      succeeded += 1;
+                      continue;
+                    }
+                  }
+                  earlierUpdateAttempted = true;
+                  await settingsApi.runToolLifecycleAction(
+                    [toolName],
+                    action,
+                    wslOverrides,
+                    undefined,
+                    undefined,
+                    undefined,
+                    plan,
+                  );
+                  const read = await diagnoseToolSilently(toolName);
+                  const copy = read
+                    ? toolManagementState.installReports?.[
+                        toolName
+                      ]?.installs.find((install) => install.path === plan.path)
+                    : undefined;
+                  if (!copy?.runnable || !copy.version) {
+                    failures.push({
+                      toolName,
+                      detail:
+                        copy?.error ||
+                        t("appsPage.installUpdateUnverified", {
+                          path: plan.path,
+                        }),
+                      soft: true,
+                      kind: "notRunnable",
+                    });
+                  } else if (copy.version === plan.version) {
+                    failures.push({
+                      toolName,
+                      detail: t("appsPage.installVersionUnchanged", {
+                        path: copy.path,
+                        version: copy.version,
+                      }),
+                      soft: true,
+                      kind: "versionUnchanged",
+                    });
+                  } else {
+                    succeeded += 1;
+                  }
+                } catch (error) {
+                  failures.push({
+                    toolName,
+                    detail: `${plan.path}: ${extractErrorMessage(error) || String(error)}`,
+                    soft: false,
+                  });
+                }
+              }
+              await refreshToolVersions([toolName], wslOverrides);
+              return;
+            }
             if (action === "uninstall") {
               await settingsApi.runToolLifecycleAction(
                 [toolName],
                 action,
                 wslOverrides,
                 uninstallPlan,
+              );
+            } else if (installMethod) {
+              await settingsApi.runToolLifecycleAction(
+                [toolName],
+                action,
+                wslOverrides,
+                undefined,
+                undefined,
+                installMethod,
+              );
+            } else if (confirmation) {
+              await settingsApi.runToolLifecycleAction(
+                [toolName],
+                action,
+                wslOverrides,
+                undefined,
+                confirmation ?? undefined,
               );
             } else {
               await settingsApi.runToolLifecycleAction(
@@ -857,7 +1197,11 @@ export function useToolManagement() {
                 wslOverrides,
               );
             }
-            if (action === "uninstall") {
+            if (
+              (action === "install" || action === "uninstall") &&
+              !nativeOnly
+            ) {
+              // Adding or removing a copy can change which executable the shell selects.
               const nextReports = { ...toolManagementState.installReports };
               delete nextReports[toolName];
               updateToolManagementState({ installReports: nextReports });
@@ -867,12 +1211,119 @@ export function useToolManagement() {
                 return next;
               });
             }
+            const installedCopies =
+              action === "install" ? await probeInstallCopies() : undefined;
             // 静默执行真正结束后刷新该工具版本，卡片立即反映结果。
             const refreshed = await refreshToolVersions(
               [toolName],
               wslOverrides,
             );
             const tool = refreshed.find((t) => t.name === toolName);
+            if (action === "install") {
+              const copies = installedCopies;
+              if (tool?.desktop_installation || installMethod) {
+                const runnableCopies = copies?.filter(
+                  (install) =>
+                    install.source !== "desktop" &&
+                    install.source !== "official" &&
+                    install.runnable &&
+                    install.version &&
+                    (toolName !== "opencode" ||
+                      !installMethod ||
+                      install.version.startsWith(
+                        installMethod === "npm" ? "1." : "2.",
+                      )),
+                );
+                const source = installMethod?.startsWith("npm-")
+                  ? "npm"
+                  : installMethod === "pnpm-build"
+                    ? "pnpm"
+                    : installMethod;
+                const verifiedCopies = runnableCopies?.filter(
+                  (copy) =>
+                    !source ||
+                    copy.source === source ||
+                    (toolName === "openclaw" &&
+                      installMethod === "curl" &&
+                      copy.source === "npm"),
+                );
+                const changedCopy =
+                  previousCopies &&
+                  verifiedCopies?.find(
+                    (install) =>
+                      !previousCopies.some(
+                        (previous) =>
+                          previous.runnable &&
+                          previous.version === install.version &&
+                          (previous.path === install.path ||
+                            Boolean(
+                              install.real_path &&
+                                previous.real_path === install.real_path,
+                            )),
+                      ),
+                  );
+                if (changedCopy) {
+                  succeeded += 1;
+                  return;
+                }
+                const unclassifiedCopy =
+                  previousCopies &&
+                  installMethod &&
+                  runnableCopies?.find(
+                    (copy) =>
+                      (["system", "unknown"].includes(copy.source) ||
+                        (installMethod === "yarn" && copy.source === "npm") ||
+                        (installMethod.startsWith("npm") &&
+                          ["nvm", "fnm", "mise", "volta"].includes(
+                            copy.source,
+                          ))) &&
+                      !previousCopies.some(
+                        (previous) =>
+                          previous.path === copy.path &&
+                          previous.version === copy.version &&
+                          previous.runnable,
+                      ),
+                  );
+                if (unclassifiedCopy) {
+                  // Discovery does not identify every installer. A new runnable CLI
+                  // confirms installation, while its channel still needs verification.
+                  toast.info(
+                    t("appsPage.installSourceUnverified", {
+                      path: unclassifiedCopy.path,
+                    }),
+                    { closeButton: true },
+                  );
+                  succeeded += 1;
+                  return;
+                }
+                const existingCopy = verifiedCopies?.[0];
+                if (existingCopy) {
+                  failures.push({
+                    toolName,
+                    detail: previousCopies
+                      ? t("appsPage.installVersionUnchanged", {
+                          path: existingCopy.path,
+                          version: existingCopy.version,
+                        })
+                      : existingCopy.path,
+                    soft: true,
+                    kind: previousCopies
+                      ? "versionUnchanged"
+                      : "verificationIncomplete",
+                  });
+                  return;
+                }
+                if (installMethod) {
+                  failures.push({
+                    toolName,
+                    detail: t("settings.toolActionInstalledNotRunnable"),
+                    soft: true,
+                    kind: "verificationIncomplete",
+                  });
+                  return;
+                }
+              }
+            }
             if (action === "uninstall") {
               const diagnosed = await diagnoseToolSilently(toolName);
               const warnings: string[] = [];
@@ -885,9 +1336,36 @@ export function useToolManagement() {
               ) {
                 warnings.push(t("settings.toolUninstallHermesWindowsHint"));
               }
-              if (tool?.version || tool?.installed_but_broken) {
+              const installedCopies = diagnosed
+                ? (toolManagementState.installReports?.[toolName]?.installs ??
+                  [])
+                : [];
+              const desktop = tool?.desktop_installation;
+              const remaining = installedCopies
+                .filter((copy) => !desktop || copy.source !== "desktop")
+                .map((copy) => {
+                  const source =
+                    copy.source === "desktop"
+                      ? t("appsPage.desktopInstallation")
+                      : (getToolInstallSourceLabel(copy.source) ??
+                        t("appsPage.installSourceUnknown"));
+                  return [source, copy.version].filter(Boolean).join(" ");
+                });
+              if (desktop) {
+                remaining.unshift(
+                  ["Official", desktop.version].filter(Boolean).join(" "),
+                );
+              }
+              if (
+                remaining.length ||
+                tool?.version ||
+                tool?.installed_but_broken
+              ) {
                 toast.info(t("settings.toolUninstallRemaining"), {
-                  description: TOOL_DISPLAY_NAMES[toolName],
+                  description: [
+                    TOOL_DISPLAY_NAMES[toolName],
+                    ...remaining,
+                  ].join("\n"),
                   closeButton: true,
                 });
               }
@@ -944,8 +1422,9 @@ export function useToolManagement() {
                 soft: true,
                 kind: "notRunnable",
               });
-              // 装了却跑不起来同样可能源于多处安装，自动诊断帮用户定位。
-              void diagnoseToolSilently(toolName);
+              if (action === "update") {
+                void diagnoseToolSilently(toolName);
+              }
             }
           } catch (error) {
             const detail = extractErrorMessage(error) || String(error);
@@ -1014,15 +1493,21 @@ export function useToolManagement() {
         failures.length > 0 &&
         failures.every((f) => f.soft && f.kind === "versionUnchanged");
 
+      const verificationIncomplete = failures.some(
+        (failure) => failure.kind === "verificationIncomplete",
+      );
+
       if (succeeded === 0 && hardFailures.length === 0) {
         // 命令均成功执行、但结果需要用户介入（版本没变 / 无法运行 / 卸载待核实）
         // → 降级为 warning 并解释原因。
         toast.warning(
           action === "uninstall"
             ? t("settings.toolUninstallWarningTitle")
-            : allSoftVersionUnchanged
-              ? t("settings.toolActionVersionUnchangedTitle")
-              : t("settings.toolActionInstalledNotRunnable"),
+            : verificationIncomplete
+              ? t("appsPage.installVerificationIncomplete")
+              : allSoftVersionUnchanged
+                ? t("settings.toolActionVersionUnchangedTitle")
+                : t("settings.toolActionInstalledNotRunnable"),
           {
             description: failureDescription || undefined,
             closeButton: true,
@@ -1066,7 +1551,13 @@ export function useToolManagement() {
     async (
       requestedTools: ToolName[],
       action: ToolLifecycleAction,
-      options?: { fromBatchEntry?: boolean; uninstallPlan?: ToolUninstallPlan },
+      options?: {
+        fromBatchEntry?: boolean;
+        uninstallPlan?: ToolUninstallPlan;
+        installMethod?: InstallMethod;
+        selectedPreviews?: ToolUpgradePreview[];
+        defaultTools?: ToolName[];
+      },
     ) => {
       const toolNames = requestedTools.filter(
         (name) => !toolManagementState.busyTools.has(name),
@@ -1100,22 +1591,100 @@ export function useToolManagement() {
             action,
             wslOverrides,
             options?.uninstallPlan,
+            [],
+            options?.installMethod,
           );
           return;
         }
-        let reports: ToolInstallationReport[];
+        const selectedPreviews = (options?.selectedPreviews ?? []).filter(
+          ({ tool }) => toolNames.some((name) => name === tool),
+        );
+        const unplannedTools = toolNames.filter((tool) => {
+          if (!selectedPreviews.some((preview) => preview.tool === tool))
+            return true;
+          return (
+            fromBatchEntry && Boolean(options?.defaultTools?.includes(tool))
+          );
+        });
+        let reports: ToolInstallationReport[] = [];
         try {
-          reports = await settingsApi.probeToolInstallations(toolNames);
+          if (unplannedTools.length) {
+            reports = await settingsApi.probeToolInstallations(unplannedTools);
+          }
         } catch (error) {
-          // 探测失败不应阻断升级：退回直接执行（等同旧行为）。
           console.error(
             "[useToolManagement] probeToolInstallations failed",
             error,
           );
-          toolsToRelease = [];
-          await executeRun(toolNames, action, wslOverrides);
-          return;
+          if (fromBatchEntry && unplannedTools.length > 1) {
+            // Retry separately so one failing tool cannot cancel valid plans.
+            const results = await Promise.allSettled(
+              unplannedTools.map((tool) =>
+                settingsApi.probeToolInstallations([tool]),
+              ),
+            );
+            reports = results.flatMap((result, index) =>
+              result.status === "fulfilled"
+                ? result.value.filter(
+                    (report) => report.tool === unplannedTools[index],
+                  )
+                : [],
+            );
+          } else if (!fromBatchEntry) {
+            const hasMultipleCopies = unplannedTools.some(
+              (tool) =>
+                (toolManagementState.installReports?.[tool]?.installs.length ??
+                  0) > 1,
+            );
+            if (hasMultipleCopies) {
+              toast.warning(t("settings.toolDiagnoseFailed"), {
+                description: extractErrorMessage(error) || undefined,
+                closeButton: true,
+              });
+            } else {
+              toolsToRelease = [];
+              await executeRun(toolNames, action, wslOverrides);
+            }
+            return;
+          }
         }
+        const failedChecks = fromBatchEntry
+          ? unplannedTools.filter(
+              (tool) => !reports.some((report) => report.tool === tool),
+            )
+          : [];
+        if (failedChecks.length) {
+          toast.warning(t("settings.toolDiagnoseFailed"), {
+            description: failedChecks.map(toolDisplayName).join("\n"),
+            closeButton: true,
+          });
+        }
+        const rejectedDefaults = reports
+          .filter(
+            (report) =>
+              report.update_plan?.source === "npm" &&
+              isPrereleaseVersion(
+                toolVersionByName.get(report.tool)?.latest_version,
+              ),
+          )
+          .map((report) => report.tool);
+        if (rejectedDefaults.length) {
+          toast.warning(t("appsPage.installPrereleaseUpdate"));
+        }
+        // Do not preview or execute the default twice when a selected plan covers it.
+        reports = reports.filter((report) => {
+          if (rejectedDefaults.includes(report.tool)) return false;
+          const target =
+            report.update_plan?.path ??
+            report.installs.find((copy) => copy.is_path_default)?.path ??
+            report.installs[0]?.path;
+          return !selectedPreviews.some(
+            (preview) =>
+              preview.tool === report.tool &&
+              preview.update_plan?.path === target &&
+              target !== undefined,
+          );
+        });
         // 认不出安装渠道的原生安装（winget / Scoop / 手动下载的二进制等）不执行升级：
         // 退回 npm 只会另装一份 npm 版（#7650）。跳过并提示用原安装方式升级，其余照常。
         const unmanaged = reports.filter((r) => r.unmanaged);
@@ -1137,17 +1706,51 @@ export function useToolManagement() {
           });
         }
         const runnableTools = toolNames.filter(
-          (name) => !unmanaged.some((r) => r.tool === name),
+          (name) =>
+            (!rejectedDefaults.includes(name) &&
+              !failedChecks.includes(name) &&
+              !unmanaged.some((r) => r.tool === name)) ||
+            selectedPreviews.some((preview) => preview.tool === name),
         );
         if (runnableTools.length === 0) return;
         toolsToRelease = toolNames.filter(
           (name) => !runnableTools.includes(name),
         );
-        const needConfirm = reports.filter(
-          (r) => r.needs_confirmation && !r.unmanaged,
+        const eligibleReports = reports.filter(
+          (report) =>
+            !report.unmanaged &&
+            runnableTools.some((tool) => tool === report.tool),
         );
-        if (needConfirm.length === 0) {
-          await executeRun(runnableTools, action, wslOverrides);
+        const needsConfirmation =
+          selectedPreviews.length > 0 ||
+          eligibleReports.some(({ needs_confirmation }) => needs_confirmation);
+        // Once a batch requires confirmation, the preview describes the entire batch.
+        const confirmationPreviews = needsConfirmation
+          ? [...eligibleReports, ...selectedPreviews]
+          : [];
+        const updatePlans: ToolUpdatePlans = {};
+        for (const tool of runnableTools) {
+          const selected = selectedPreviews.flatMap((preview) =>
+            preview.tool === tool && preview.update_plan
+              ? [preview.update_plan]
+              : [],
+          );
+          const planned = reports.find(
+            (report) => report.tool === tool,
+          )?.update_plan;
+          const plans = [...(planned ? [planned] : []), ...selected];
+          if (plans.length) updatePlans[tool] = plans;
+        }
+        if (!needsConfirmation) {
+          await executeRun(
+            runnableTools,
+            action,
+            wslOverrides,
+            undefined,
+            [],
+            undefined,
+            updatePlans,
+          );
           return;
         }
         // 并发探测的确认按到达顺序排队，切页后也能继续确认或取消。
@@ -1156,7 +1759,8 @@ export function useToolManagement() {
             ...toolManagementState.pendingUpgrades,
             {
               toolNames: runnableTools,
-              plans: needConfirm,
+              plans: confirmationPreviews,
+              updatePlans,
               fromBatchEntry,
               wslShellByTool: wslOverrides,
             },
@@ -1172,6 +1776,26 @@ export function useToolManagement() {
     [executeRun, releaseTools, t, wslShellByTool],
   );
 
+  const handleSelectInstallUpdate = useCallback(
+    (tool: ToolName, installs: ToolInstallation[], plan: ToolUpdatePlan) => {
+      if (plan.tool !== tool || toolManagementState.busyTools.has(tool)) return;
+      updateToolManagementState({
+        busyTools: new Map(toolManagementState.busyTools).set(tool, "update"),
+        pendingUpgrades: [
+          ...toolManagementState.pendingUpgrades,
+          {
+            toolNames: [tool],
+            plans: [previewInstallationUpdate(tool, installs, plan)],
+            updatePlans: { [tool]: [plan] },
+            fromBatchEntry: false,
+            wslShellByTool: wslShellByTool,
+          },
+        ],
+      });
+    },
+    [wslShellByTool],
+  );
+
   const handleConfirmUpgrade = useCallback(() => {
     if (
       !pendingUpgrade ||
@@ -1183,13 +1807,23 @@ export function useToolManagement() {
     });
     const {
       toolNames,
+      plans,
       fromBatchEntry,
       wslShellByTool: wslOverrides,
+      updatePlans,
     } = pendingUpgrade;
     if (fromBatchEntry) {
       updateToolManagementState({ batchAction: "update" });
     }
-    void executeRun(toolNames, "update", wslOverrides).finally(() => {
+    void executeRun(
+      toolNames,
+      "update",
+      wslOverrides,
+      undefined,
+      plans,
+      undefined,
+      updatePlans,
+    ).finally(() => {
       if (fromBatchEntry) {
         updateToolManagementState({ batchAction: null });
       }
@@ -1210,12 +1844,10 @@ export function useToolManagement() {
 
   // 全量刷新和诊断仍等待升级结束；各工具的操作只受自身忙碌状态影响。
   const isAnyBusy = busyTools.size > 0;
-  // 最近一次全量检查完成的时刻；0 表示还没完整查过一次
-  const lastCheckedAt =
-    toolVersionsCache && toolVersionsCache.at > 0 ? toolVersionsCache.at : null;
 
   return {
     toolVersionByName,
+    overviews,
     installReports,
     isLoadingTools,
     loadingTools,
@@ -1224,6 +1856,11 @@ export function useToolManagement() {
     batchAction,
     pendingUpgrade,
     updatableToolNames,
+    updatableCount,
+    batchPreviews,
+    updatableDefaultToolNames,
+    checkingIndependentUpdates,
+    installationsByTool,
     toolDiagnostics,
     isDiagnosingAll,
     isAnyBusy,
@@ -1234,8 +1871,8 @@ export function useToolManagement() {
     handleToolShellFlagChange,
     handleDiagnoseAll,
     handleRunToolAction,
+    handleSelectInstallUpdate,
     handleConfirmUpgrade,
     handleCancelUpgrade,
-    handleCopyInstallCommands,
   };
 }

@@ -85,6 +85,9 @@ fn plan_and_removals(
     tool: &str,
     inst: &ToolInstallation,
 ) -> Result<(ToolUninstallPlan, Vec<PathBuf>), String> {
+    if desktop_managed_codex_cli(tool, &inst.real) {
+        return Err("This CLI is managed by the desktop application.".to_string());
+    }
     let mut removals = Vec::new();
     let (command, native) = if let Some(command) = package_uninstall_command(tool, inst)? {
         (command, false)
@@ -219,10 +222,10 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 ],
                 "codex" => &[("/Caskroom/", "codex")],
                 "gemini" => &[("/Cellar/", "gemini-cli")],
-                // `opencode-v2` is OpenCode 2 from anomalyco/tap.
                 "opencode" => &[("/Cellar/", "opencode"), ("/Cellar/", "opencode-v2")],
                 "agy" => &[("/Caskroom/", "antigravity-cli")],
                 "copilot" => &[("/Caskroom/", "copilot-cli")],
+                "codebuddy" => &[("/Cellar/", "codebuddy-code")],
                 _ => &[],
             };
             if !owners.contains(&(marker, token)) {
@@ -283,68 +286,16 @@ fn manager_next_to(entry: &str, manager: &str) -> Option<String> {
     }
 }
 
-/// Read package metadata instead of assuming every script or native binary is npm-owned.
-/// The explicit prefix also supports user npm prefixes without a sibling npm executable.
-/// Returns the owning package with its prefix: OpenCode 1.x and 2.x are different packages.
-fn npm_prefix(tool: &str, inst: &ToolInstallation) -> Option<(&'static str, PathBuf)> {
-    npm_prefix_for_layout(tool, inst, cfg!(target_os = "windows"))
-}
-
-fn npm_prefix_for_layout(
+/// Verify both the global layout and which package owns the selected launcher.
+fn npm_installation_for_layout(
     tool: &str,
     inst: &ToolInstallation,
     windows: bool,
-) -> Option<(&'static str, PathBuf)> {
-    let primary = tool_spec(tool).npm_package?;
-    let v2 = (tool == "opencode").then_some(OPENCODE_V2_NPM.name);
-    [Some(primary), v2]
-        .into_iter()
-        .flatten()
-        .find_map(|package| Some((package, npm_prefix_for_package(package, inst, windows)?)))
-}
-
-fn npm_prefix_for_package(
-    package: &str,
-    inst: &ToolInstallation,
-    windows: bool,
-) -> Option<PathBuf> {
-    let launcher = Path::new(&inst.path);
-    let bin = launcher.parent()?;
-    // A local node_modules/.bin entry is never a global npm launcher. Pi's
-    // managed releases use precisely that layout, even though they contain npm metadata.
-    let prefix = if windows {
-        if bin.file_name().is_some_and(|name| name == ".bin") {
-            return None;
-        }
-        bin
-    } else {
-        if bin.file_name()? != "bin" {
-            return None;
-        }
-        bin.parent()?
-    };
-    let modules = prefix.join(if windows {
-        "node_modules"
-    } else {
-        "lib/node_modules"
-    });
-    let package_dir = std::fs::canonicalize(modules.join(package)).ok()?;
-    let value: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(package_dir.join("package.json")).ok()?).ok()?;
-    if value.get("name").and_then(|name| name.as_str()) != Some(package) {
-        return None;
-    }
-    let owns_target = inst.real.starts_with(&package_dir);
-    // Windows npm shims are files, not symlinks. Their package reference is
-    // required as well as the manifest and the global launcher layout.
-    let owns_shim = windows
-        && !is_native_executable(launcher)
-        && std::fs::read_to_string(launcher).is_ok_and(|script| {
-            script
-                .replace('\\', "/")
-                .contains(&format!("node_modules/{package}/"))
-        });
-    (owns_target || owns_shim).then(|| prefix.to_path_buf())
+) -> Option<(PathBuf, &'static str)> {
+    let (prefix, manifest) = npm_global_package(tool, Path::new(&inst.path), &inst.real, windows)?;
+    let name = manifest.get("name")?.as_str()?;
+    let package = npm_package_candidates(tool).find(|candidate| *candidate == name)?;
+    Some((prefix, package))
 }
 
 fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option<String> {
@@ -355,7 +306,7 @@ fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option
     // formulae and shims, an independently verified npm layout is still valid.
     if !matches!(
         inst.source.as_str(),
-        "system" | "nvm" | "fnm" | "homebrew" | "mise"
+        "system" | "npm" | "nvm" | "fnm" | "homebrew" | "mise"
     ) {
         return None;
     }
@@ -370,7 +321,7 @@ fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option
     {
         return None;
     }
-    let (package, prefix) = npm_prefix(tool, inst)?;
+    let (prefix, package) = npm_installation_for_layout(tool, inst, cfg!(target_os = "windows"))?;
     let npm = manager_next_to(&inst.path, "npm").or_else(|| {
         resolve_path_default(
             "npm",
@@ -401,7 +352,7 @@ fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option
 }
 
 fn known_native_install(tool: &str, inst: &ToolInstallation) -> bool {
-    if inst.source != "system" {
+    if !matches!(inst.source.as_str(), "system" | "curl" | "powershell") {
         return false;
     }
     let real = inst.real.to_string_lossy();
@@ -617,15 +568,12 @@ fn wsl_plan(
     wsl_plan_and_process(tool, distro, pref).map(|(plan, _)| plan)
 }
 
-/// The plan plus the exact process it describes. Without an explicit shell, the probe
-/// tries the version check's flags in order and the removal reuses the winning flag.
 #[cfg(target_os = "windows")]
-fn wsl_plan_and_process(
+fn probe_wsl_installation(
     tool: &str,
     distro: &str,
-    pref: Option<&WslShellPreferenceInput>,
-) -> Result<(ToolUninstallPlan, std::process::Command), String> {
-    let shell = WslShell::from_pref(pref)?;
+    shell: &WslShell<'_>,
+) -> Result<String, String> {
     let probe = wsl_probe_script(tool);
     let child = wsl_process(distro, &shell.probe_args(&probe))?
         .spawn()
@@ -635,7 +583,182 @@ fn wsl_plan_and_process(
         CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
     )?;
     finish_lifecycle_output(&output)?;
+    Ok(decode_command_output(&output.stdout))
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn wsl_installed_paths(
+    tool: &str,
+    distro: &str,
+    pref: &WslShellPreferenceInput,
+) -> Option<(PathBuf, PathBuf)> {
+    let shell = WslShell::from_pref(Some(pref)).ok()?;
+    let stdout = probe_wsl_installation(tool, distro, &shell).ok()?;
+    let (entry, real) = parse_wsl_installation(&stdout).ok()?;
+    Some((PathBuf::from(entry), PathBuf::from(real)))
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn wsl_opencode_update_process(
+    distro: &str,
+    pref: Option<&WslShellPreferenceInput>,
+) -> Result<std::process::Command, String> {
+    let shell = WslShell::from_pref(pref)?;
+    let stdout = probe_wsl_installation("opencode", distro, &shell)?;
+    let (entry, real) = parse_wsl_installation(&stdout)?;
+    let (prefix, package) = verified_wsl_opencode_npm_owner(&entry, &real)
+        .ok_or("Use the original installer or package manager to update OpenCode.")?;
+    let auto_flag = match shell {
+        WslShell::Explicit { .. } => None,
+        WslShell::Auto { .. } => Some(parse_wsl_shell_flag(&stdout)?),
+    };
+    let nonce = uuid::Uuid::new_v4().to_string();
+    let probe = wsl_opencode_version_script(&entry, &real, prefix, package, &nonce);
+    let child = wsl_process(distro, &shell.run_args(&probe, auto_flag))?
+        .spawn()
+        .map_err(|error| format!("Cannot start OpenCode version verification: {error}"))?;
+    let output = wait_child_output(
+        child,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .map_err(|error| format!("Cannot verify OpenCode version: {error}"))?;
+    let fingerprint = validate_wsl_opencode_version(&output, &nonce)?;
+    let script = wsl_opencode_update_script(&entry, &real, prefix, package, &fingerprint);
+    wsl_process(distro, &shell.run_args(&script, auto_flag))
+}
+
+/// Fingerprint both the resolved launcher and the verified package manifest.
+/// The latter changes even when an npm release reuses an identical JS launcher.
+#[cfg(any(target_os = "windows", test))]
+const WSL_OPENCODE_FINGERPRINT: &str = concat!(
+    r#"hash_file() { if command -v sha256sum >/dev/null 2>&1; then value=$(sha256sum < "$1") || return 1; "#,
+    r#"elif command -v shasum >/dev/null 2>&1; then value=$(shasum -a 256 < "$1") || return 1; else return 1; fi; printf '%s' "${value%% *}"; }; "#,
+    r#"fingerprint() { a=$(hash_file "$expected") || return 1; b=$(hash_file "$prefix/lib/node_modules/$package/package.json") || return 1; printf '%s:%s' "$a" "$b"; }; "#,
+);
+
+/// The host bounds this fresh probe before constructing any mutating command.
+/// Both streams are framed after shell startup; startup output is never version evidence.
+#[cfg(any(target_os = "windows", test))]
+fn wsl_opencode_version_script(
+    entry: &str,
+    real: &str,
+    prefix: &str,
+    package: &str,
+    nonce: &str,
+) -> String {
+    let payload = format!(
+        "{}{}",
+        WSL_OPENCODE_FINGERPRINT,
+        concat!(
+            r#"entry=$1; expected=$2; prefix=$3; package=$4; nonce=$5; "#,
+            r#"[ "$(readlink -f -- "$entry")" = "$expected" ] || { printf '%s\n' 'OpenCode installation changed before verification.' >&2; exit 1; }; "#,
+            r#"before=$(fingerprint) || { printf '%s\n' 'Cannot fingerprint OpenCode.' >&2; exit 1; }; "#,
+            r#"if test -x "$prefix/bin/npm"; then PATH="$prefix/bin:$PATH"; export PATH; fi; "#,
+            r#"tmp=$(mktemp -d) || exit 1; trap 'rm -rf -- "$tmp"' EXIT; "#,
+            r#""$entry" --version >"$tmp/out" 2>"$tmp/err"; status=$?; "#,
+            r#"after=$(fingerprint) || exit 1; [ "$before" = "$after" ] || { printf '%s\n' 'OpenCode changed during verification.' >&2; exit 1; }; "#,
+            r#"printf '\n%s:proof:%s\n%s:start\n' "$nonce" "$before" "$nonce"; cat "$tmp/out"; printf '\n%s:end\n' "$nonce"; "#,
+            r#"printf '%s:start\n' "$nonce" >&2; cat "$tmp/err" >&2; printf '\n%s:end\n' "$nonce" >&2; exit "$status""#,
+        )
+    );
+    format!(
+        "sh -c {} cc-switch {} {} {} {} {}",
+        shell_single_quote(&payload),
+        shell_single_quote(entry),
+        shell_single_quote(real),
+        shell_single_quote(prefix),
+        shell_single_quote(package),
+        shell_single_quote(nonce)
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn validate_wsl_opencode_version(
+    output: &std::process::Output,
+    nonce: &str,
+) -> Result<String, String> {
     let stdout = decode_command_output(&output.stdout);
+    let stderr = decode_command_output(&output.stderr);
+    let detail = last_lines(&format!("{stdout}\n{stderr}"), 16);
+    if !output.status.success() {
+        return Err(format!(
+            "OpenCode version check failed ({}): {detail}",
+            output.status
+        ));
+    }
+    let frame = |stream: &str| -> Option<String> {
+        let start = format!("{nonce}:start\n");
+        let end = format!("\n{nonce}:end\n");
+        if stream.matches(&start).count() != 1 || stream.matches(&end).count() != 1 {
+            return None;
+        }
+        Some(stream.split_once(&start)?.1.split_once(&end)?.0.to_owned())
+    };
+    let invalid = || {
+        format!("Cannot verify the installed OpenCode version; update was not started. {detail}")
+    };
+    let payload_out = frame(&stdout).ok_or_else(invalid)?;
+    let payload_err = frame(&stderr).ok_or_else(invalid)?;
+    let proof_marker = format!("{nonce}:proof:");
+    let proof = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(&proof_marker))
+        .ok_or_else(invalid)?;
+    let (launcher_hash, manifest_hash) = proof.split_once(':').ok_or_else(invalid)?;
+    if ![launcher_hash, manifest_hash]
+        .iter()
+        .all(|hash| hash.len() == 64 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
+        return Err(invalid());
+    }
+    let version = tool_version::parse_tool_version_output("opencode", &payload_out, &payload_err)
+        .ok_or_else(invalid)?;
+    if tool_version::version_is_prerelease(&version) {
+        return Err("Use the original installer to update this OpenCode prerelease.".into());
+    }
+    Ok(proof.to_owned())
+}
+
+/// Called only after bounded validation; recheck content before invoking npm.
+#[cfg(any(target_os = "windows", test))]
+fn wsl_opencode_update_script(
+    entry: &str,
+    real: &str,
+    prefix: &str,
+    package: &str,
+    fingerprint: &str,
+) -> String {
+    let payload = format!(
+        "{}{}",
+        WSL_OPENCODE_FINGERPRINT,
+        concat!(
+            r#"entry=$1; expected=$2; prefix=$3; package=$4; verified=$5; "#,
+            r#"[ "$(readlink -f -- "$entry")" = "$expected" ] && current=$(fingerprint) && [ "$current" = "$verified" ] || { printf '%s\n' 'OpenCode installation changed after verification; check updates again.' >&2; exit 1; }; "#,
+            r#"if test -x "$prefix/bin/npm"; then PATH="$prefix/bin:$PATH"; export PATH; fi; "#,
+            r#"npm i -g --prefix "$prefix" "$package@latest" --ignore-scripts=false --include=optional "--allow-scripts=$package""#,
+        )
+    );
+    format!(
+        "sh -c {} cc-switch {} {} {} {} {}",
+        shell_single_quote(&payload),
+        shell_single_quote(entry),
+        shell_single_quote(real),
+        shell_single_quote(prefix),
+        shell_single_quote(package),
+        shell_single_quote(fingerprint)
+    )
+}
+
+/// The plan plus the exact process it describes. Without an explicit shell, the probe
+/// tries the version check's flags in order and the removal reuses the winning flag.
+#[cfg(target_os = "windows")]
+fn wsl_plan_and_process(
+    tool: &str,
+    distro: &str,
+    pref: Option<&WslShellPreferenceInput>,
+) -> Result<(ToolUninstallPlan, std::process::Command), String> {
+    let shell = WslShell::from_pref(pref)?;
+    let stdout = probe_wsl_installation(tool, distro, &shell)?;
     let (path, real_path) = parse_wsl_installation(&stdout)?;
     let auto_flag = match shell {
         WslShell::Explicit { .. } => None,
@@ -806,19 +929,11 @@ fn wsl_uninstall_command(tool: &str, path: &str, real: &str) -> Result<String, S
     let removal = if tool == "hermes" {
         format!("{} uninstall --yes", shell_single_quote(path))
     } else {
-        let primary = tool_spec(tool)
-            .npm_package
-            .ok_or("Use the original installer to uninstall this WSL application.")?;
-        let v2 = (tool == "opencode").then_some(OPENCODE_V2_NPM.name);
-        let (package, prefix) = [Some(primary), v2]
-            .into_iter()
-            .flatten()
+        let (prefix, package) = npm_package_candidates(tool)
             .find_map(|package| {
-                real.split_once(&format!("/lib/node_modules/{package}/"))
-                    .filter(|(prefix, _)| {
-                        !prefix.is_empty() && path == format!("{prefix}/bin/{tool}")
-                    })
-                    .map(|(prefix, _)| (package, prefix))
+                let (prefix, _) = real.split_once(&format!("/lib/node_modules/{package}/"))?;
+                (!prefix.is_empty() && path == format!("{prefix}/bin/{tool}"))
+                    .then_some((prefix, package))
             })
             .ok_or(
                 "Use the original installer or package manager to uninstall this WSL application.",
@@ -848,6 +963,49 @@ fn wsl_uninstall_command(tool: &str, path: &str, real: &str) -> Result<String, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_uninstall_matches_the_selected_package_when_both_are_installed() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefix = temp.path();
+        let modules = prefix.join("lib/node_modules");
+        let launcher = prefix.join("bin/opencode");
+        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+        std::fs::write(&launcher, "launcher").unwrap();
+        for package in ["opencode-ai", "@opencode/cli"] {
+            let package_dir = modules.join(package);
+            std::fs::create_dir_all(&package_dir).unwrap();
+            std::fs::write(
+                package_dir.join("package.json"),
+                format!(r#"{{"name":"{package}"}}"#),
+            )
+            .unwrap();
+        }
+        for package in ["opencode-ai", "@opencode/cli"] {
+            let executable = modules.join(package).join("opencode");
+            std::fs::write(&executable, "launcher").unwrap();
+            let inst = ToolInstallation {
+                real: executable.canonicalize().unwrap(),
+                ..installation(&launcher)
+            };
+            assert_eq!(
+                npm_installation_for_layout("opencode", &inst, false),
+                Some((prefix.to_path_buf(), package))
+            );
+            let real = format!("/home/test/.npm/lib/node_modules/{package}/opencode");
+            let wsl_command =
+                wsl_uninstall_command("opencode", "/home/test/.npm/bin/opencode", &real).unwrap();
+            let removal = format!(
+                "npm uninstall -g --prefix {} {package}",
+                shell_single_quote("/home/test/.npm")
+            );
+            let escaped = shell_single_quote(&removal);
+            assert!(
+                wsl_command.contains(&escaped[1..escaped.len() - 1]),
+                "{wsl_command}"
+            );
+        }
+    }
 
     fn installation(path: &Path) -> ToolInstallation {
         ToolInstallation {
@@ -1030,15 +1188,15 @@ mod tests {
         std::fs::write(package.join("package.json"), r#"{"name":"@openai/codex"}"#).unwrap();
         let executable = temp.path().join("codex.cmd");
         std::fs::write(&executable, "unrelated launcher").unwrap();
-        assert!(npm_prefix("codex", &installation(&executable)).is_none());
+        assert!(npm_installation_for_layout("codex", &installation(&executable), true).is_none());
         std::fs::write(
             &executable,
             r#"node "%dp0%\node_modules\@openai\codex\bin\codex.js""#,
         )
         .unwrap();
         assert_eq!(
-            npm_prefix_for_layout("codex", &installation(&executable), true),
-            Some(("@openai/codex", temp.path().to_path_buf()))
+            npm_installation_for_layout("codex", &installation(&executable), true),
+            Some((temp.path().to_path_buf(), "@openai/codex"))
         );
 
         // 2. Local `node_modules/.bin` and installer launchers are rejected on both layouts.
@@ -1061,12 +1219,12 @@ mod tests {
                 real: std::fs::canonicalize(&target).unwrap(),
                 ..installation(&local_bin)
             };
-            assert!(npm_prefix_for_layout("pi", &inst, windows).is_none());
-            assert!(npm_prefix_for_layout("pi", &installation(&target), windows).is_none());
+            assert!(npm_installation_for_layout("pi", &inst, windows).is_none());
+            assert!(npm_installation_for_layout("pi", &installation(&target), windows).is_none());
             let bin = temp.path().join(".local/bin/pi");
             std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
             std::fs::write(&bin, "#!/bin/sh\nexec release/node_modules/.bin/pi").unwrap();
-            assert!(npm_prefix_for_layout("pi", &installation(&bin), windows).is_none());
+            assert!(npm_installation_for_layout("pi", &installation(&bin), windows).is_none());
         }
 
         // 3. POSIX global npm requires `lib/node_modules` AND a matching `<prefix>/bin/<tool>`.
@@ -1082,14 +1240,14 @@ mod tests {
             ..installation(&target)
         };
         assert_eq!(
-            npm_prefix_for_layout("codex", &inst, false),
-            Some(("@openai/codex", prefix))
+            npm_installation_for_layout("codex", &inst, false),
+            Some((prefix, "@openai/codex"))
         );
         let unrelated = ToolInstallation {
             path: temp.path().join("bin/codex").to_string_lossy().into_owned(),
             ..inst
         };
-        assert!(npm_prefix_for_layout("codex", &unrelated, false).is_none());
+        assert!(npm_installation_for_layout("codex", &unrelated, false).is_none());
     }
 
     /// OpenCode 2 is `@opencode/cli`; looking only for `opencode-ai` left it un-uninstallable.
@@ -1115,8 +1273,8 @@ mod tests {
                 ..installation(&target)
             };
             assert_eq!(
-                npm_prefix_for_layout("opencode", &inst, false),
-                Some((package, prefix.clone()))
+                npm_installation_for_layout("opencode", &inst, false),
+                Some((prefix.clone(), package))
             );
         }
 
@@ -1132,8 +1290,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            npm_prefix_for_layout("opencode", &installation(&shim), true),
-            Some(("@opencode/cli", temp.path().to_path_buf()))
+            npm_installation_for_layout("opencode", &installation(&shim), true),
+            Some((temp.path().to_path_buf(), "@opencode/cli"))
         );
     }
 
@@ -1240,6 +1398,16 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(&path, b"\x7fELF").unwrap();
             assert!(known_native_install(tool, &installation(&path)), "{binary}");
+            let script_channel = ToolInstallation {
+                source: "curl".into(),
+                ..installation(&path)
+            };
+            assert!(known_native_install(tool, &script_channel), "{binary}");
+            let package_channel = ToolInstallation {
+                source: "yarn".into(),
+                ..installation(&path)
+            };
+            assert!(!known_native_install(tool, &package_channel), "{binary}");
         }
     }
 
@@ -1403,6 +1571,169 @@ mod tests {
         )
         .unwrap();
         assert!(openclaw.contains("uninstall --service --yes --non-interactive && npm uninstall"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wsl_update_refuses_prerelease_before_invoking_npm() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Stdio;
+        let directory = tempfile::tempdir().unwrap();
+        let root = tempfile::Builder::new()
+            .prefix("npm\\prefix")
+            .tempdir_in(directory.path())
+            .unwrap();
+        let entry = root.path().join("opencode");
+        let npm = root.path().join("bin/npm");
+        let marker = root.path().join("updated");
+        std::fs::create_dir_all(npm.parent().unwrap()).unwrap();
+        std::fs::write(
+            &npm,
+            format!(
+                "#!/bin/sh\ntouch {}\n",
+                shell_single_quote(marker.to_str().unwrap())
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&npm, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let manifest = root
+            .path()
+            .join("lib/node_modules/opencode-ai/package.json");
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, r#"{"name":"opencode-ai","version":"2.3.2"}"#).unwrap();
+        let nonce = "cc-switch-test-nonce";
+        let run_probe = |timeout, path: &str| {
+            let probe = wsl_opencode_version_script(
+                entry.to_str().unwrap(),
+                entry.canonicalize().unwrap().to_str().unwrap(),
+                root.path().to_str().unwrap(),
+                "opencode-ai",
+                nonce,
+            );
+            let probe = format!("printf '22.14.0'; printf '2.3.2-next.1' >&2; {probe}");
+            let mut command = std::process::Command::new("/bin/sh");
+            command
+                .args(["-c", &probe])
+                .env("PATH", path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            isolate_child_process_group(&mut command);
+            wait_child_output(
+                command.spawn().unwrap(),
+                CommandDeadline::from_timeout(Some(timeout)),
+            )
+        };
+        let path = "/usr/bin:/bin:/usr/sbin:/sbin";
+        for (version, allowed) in [
+            ("1.19.6-beta.1", false),
+            ("18446744073709551616.3.2-beta.1", false),
+            ("２.３.２-beta.1", false),
+            ("opencode ２.３.２-beta.1\n2.3.2", false),
+            ("", false),
+            ("2.3.2--preview.1", false),
+            ("2.3.2-next.1", false),
+            ("1.19.6", true),
+            ("2.3.2", true),
+            ("2.3.2+linux-x64", true),
+            ("2.3.2-next.1+linux-x64", false),
+            ("opencode 2.3.2-next.1\nA newer release is available", false),
+            ("opencode 2.3.2 (OpenCode)", true),
+            ("version not available", false),
+            ("Node 22.14.0", false),
+            ("Node 22.14.0\n2.3.2-next.1", false),
+            ("Node 22.14.0\n2.3.2", true),
+            ("22.14.0\n2.3.2-next.1", false),
+            ("2.3.2\n2.3.2-next.1", false),
+            ("opencode 2.3.2\nopencode 2.3.2", true),
+        ] {
+            for stderr in [false, true] {
+                let _ = std::fs::remove_file(&marker);
+                let redirect = if stderr { " >&2" } else { "" };
+                std::fs::write(
+                    &entry,
+                    format!("#!/bin/sh\nprintf '%s\\n' '{version}'{redirect}\n"),
+                )
+                .unwrap();
+                std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+                let output = run_probe(std::time::Duration::from_secs(2), path).unwrap();
+                let verified = validate_wsl_opencode_version(&output, nonce);
+                assert_eq!(verified.is_ok(), allowed, "{version}: {verified:?}");
+                if let Ok(proof) = &verified {
+                    let script = wsl_opencode_update_script(
+                        entry.to_str().unwrap(),
+                        entry.canonicalize().unwrap().to_str().unwrap(),
+                        root.path().to_str().unwrap(),
+                        "opencode-ai",
+                        proof,
+                    );
+                    assert!(std::process::Command::new("/bin/sh")
+                        .args(["-c", &script])
+                        .env("PATH", path)
+                        .status()
+                        .unwrap()
+                        .success());
+                }
+                assert_eq!(marker.exists(), allowed);
+            }
+        }
+        std::fs::write(&entry, "#!/bin/sh\nprintf '%s\\n' 'probe details'\nprintf '%s\\n' 'missing Node runtime' >&2\nexit 23\n").unwrap();
+        let _ = std::fs::remove_file(&marker);
+        let output = run_probe(std::time::Duration::from_secs(2), path).unwrap();
+        let error = validate_wsl_opencode_version(&output, nonce).unwrap_err();
+        assert!(
+            error.contains("probe details")
+                && error.contains("missing Node runtime")
+                && error.contains("23")
+        );
+        assert!(!marker.exists());
+        let good_node = root.path().join("bin/node");
+        let bad_dir = root.path().join("incompatible-node");
+        std::fs::create_dir_all(&bad_dir).unwrap();
+        let bad_node = bad_dir.join("node");
+        for (node, script) in [
+            (&good_node, "#!/bin/sh\nprintf '%s\\n' '2.3.2'\n"),
+            (&bad_node, "#!/bin/sh\nexit 69\n"),
+        ] {
+            std::fs::write(node, script).unwrap();
+            std::fs::set_permissions(node, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(&entry, "#!/usr/bin/env node\n").unwrap();
+        let output = run_probe(
+            std::time::Duration::from_secs(2),
+            &format!("{}:{path}", bad_dir.display()),
+        )
+        .unwrap();
+        assert!(validate_wsl_opencode_version(&output, nonce).is_ok());
+        // An in-place replacement at the same path invalidates the confirmed probe.
+        std::fs::write(&entry, "#!/bin/sh\nprintf '2.3.2\\n'\n").unwrap();
+        let output = run_probe(std::time::Duration::from_secs(2), path).unwrap();
+        let proof = validate_wsl_opencode_version(&output, nonce).unwrap();
+        let script = wsl_opencode_update_script(
+            entry.to_str().unwrap(),
+            entry.canonicalize().unwrap().to_str().unwrap(),
+            root.path().to_str().unwrap(),
+            "opencode-ai",
+            &proof,
+        );
+        for changed in [&entry, &manifest] {
+            let original = std::fs::read(changed).unwrap();
+            std::fs::write(changed, "changed to a prerelease").unwrap();
+            assert!(!std::process::Command::new("/bin/sh")
+                .args(["-c", &script])
+                .env("PATH", path)
+                .output()
+                .unwrap()
+                .status
+                .success());
+            std::fs::write(changed, original).unwrap();
+            assert!(!marker.exists());
+        }
+        std::fs::write(&entry, "#!/bin/sh\nexec sleep 5\n").unwrap();
+        let started = std::time::Instant::now();
+        assert!(run_probe(std::time::Duration::from_millis(100), path).is_err());
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert!(!marker.exists());
     }
 
     #[test]
@@ -1595,6 +1926,7 @@ mod tests {
             ("opencode", "Cellar", "opencode", "--formula"),
             ("opencode", "Cellar", "opencode-v2", "--formula"),
             ("agy", "Caskroom", "antigravity-cli", "--cask"),
+            ("codebuddy", "Cellar", "codebuddy-code", "--formula"),
         ] {
             let real = format!("{prefix}/{location}/{token}/1/bin/{tool}");
             let command = brew_uninstall_command(tool, &real).unwrap().unwrap();

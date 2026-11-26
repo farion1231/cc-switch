@@ -127,6 +127,7 @@ windows-sys = { version = "0.61", features = [
 rquickjs = { version = "0.8", features = ["bindgen"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+plist = "1"
 # 托盘面板的原生玻璃：NSGlassEffectView（macOS 26）/ NSVisualEffectView
 objc2 = "0.6"
 block2 = "0.6"

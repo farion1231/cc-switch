@@ -32,6 +32,17 @@ export interface WebDavSyncResult {
   status: string;
 }
 
+export type InstallMethod =
+  | "curl"
+  | "homebrew"
+  | "npm"
+  | "npm-legacy"
+  | "npm-modern"
+  | "pnpm"
+  | "pnpm-build"
+  | "yarn"
+  | "bun";
+
 export const settingsApi = {
   async get(): Promise<Settings> {
     return await invoke("get_settings");
@@ -274,6 +285,18 @@ export const settingsApi = {
     return await invoke("set_auto_launch", { enabled });
   },
 
+  async getOfficialClaudeDesktopInstallation() {
+    return invoke<{ path: string; version: string | null } | null>(
+      "get_official_claude_desktop_installation",
+    );
+  },
+
+  async getOfficialWorkbuddyInstallation() {
+    return invoke<{ path: string; version: string | null } | null>(
+      "get_official_workbuddy_installation",
+    );
+  },
+
   async getToolVersions(
     tools?: string[],
     wslShellByTool?: Record<
@@ -287,14 +310,22 @@ export const settingsApi = {
       latest_version: string | null;
       error: string | null;
       installed_but_broken: boolean;
+      desktop_installation?: DesktopToolInstallation;
+      desktop_managed?: boolean;
       env_type: "windows" | "wsl" | "macos" | "linux" | "unknown";
       wsl_distro: string | null;
       update_blocked_by_node: NodeRequirementGap | null;
+      manual_update_only?: boolean;
     }>
   > {
     return await invoke("get_tool_versions", { tools, wslShellByTool });
   },
 
+  async getInstallManagerAvailability(
+    methods: InstallMethod[],
+  ): Promise<Record<string, boolean>> {
+    return invoke("get_install_manager_availability", { methods });
+  },
   async runToolLifecycleAction(
     tools: string[],
     action: "install" | "update" | "uninstall",
@@ -303,12 +334,18 @@ export const settingsApi = {
       { wslShell?: string | null; wslShellFlag?: string | null }
     >,
     uninstallPlan?: ToolUninstallPlan,
+    confirmedUpdate?: string,
+    installMethod?: InstallMethod,
+    updatePlan?: ToolUpdatePlan,
   ): Promise<void> {
     await invoke("run_tool_lifecycle_action", {
       tools,
       action,
       wslShellByTool,
       uninstallPlan,
+      confirmedUpdate,
+      ...(installMethod && { installMethod }),
+      ...(updatePlan && { updatePlan }),
     });
   },
 
@@ -327,16 +364,54 @@ export const settingsApi = {
    *  诊断按钮、升级前确认、升级后补诊共用此命令，各取所需字段。 */
   async probeToolInstallations(
     tools: string[],
+    nativeOnly?: boolean,
+    installMethod?: InstallMethod,
   ): Promise<ToolInstallationReport[]> {
-    return await invoke("probe_tool_installations", { tools });
+    return await invoke("probe_tool_installations", {
+      tools,
+      ...(nativeOnly && { nativeOnly }),
+      ...(installMethod && { installMethod }),
+    });
   },
 
+  /** 「应用」页展示路径、来源和多处安装（和升级前的预检分开调用）。 */
+  async getToolInstallationUpdates(
+    tool: string,
+    path?: string,
+    includeLatest?: boolean,
+  ): Promise<ToolInstallationUpdate[]> {
+    return invoke("get_tool_installation_updates", {
+      tool,
+      path,
+      includeLatest,
+    });
+  },
+
+  async getToolInstallationReports(
+    tools: string[],
+  ): Promise<ToolInstallationReport[]> {
+    return invoke("get_tool_installation_reports", { tools });
+  },
   /** 「应用」页展示路径、来源和多处安装的本地概览：不执行命令、不做诊断，
    *  不联网（详细的执行 / 冲突判定走 probeToolInstallations）。 */
   async listToolInstallations(
     tools: string[],
   ): Promise<ToolInstallationOverview[]> {
     return await invoke("list_tool_installations", { tools });
+  },
+
+  async getPreferredToolInstallation(
+    tool: string,
+  ): Promise<CliInstallationPolicy> {
+    return invoke("get_preferred_tool_installation", { tool });
+  },
+
+  async setPreferredToolInstallation(
+    tool: string,
+    path: string | null,
+    enabled?: boolean,
+  ): Promise<CliInstallationPolicy> {
+    return invoke("set_preferred_tool_installation", { tool, path, enabled });
   },
 
   async getRectifierConfig(): Promise<RectifierConfig> {
@@ -372,6 +447,42 @@ export const settingsApi = {
   },
 };
 
+export interface ToolUpdatePlan {
+  tool: string;
+  path: string;
+  real_path: string;
+  version: string | null;
+  source: string;
+  command: string;
+}
+
+export interface CliInstallationPolicy {
+  supported: boolean;
+  bundled_available: boolean;
+  path: string | null;
+  disabled_paths: string[];
+  disabled_real_paths: string[];
+  selected_path: string | null;
+  selected_real_path: string | null;
+  selection:
+    | "automatic"
+    | "explicit"
+    | "bundled"
+    | "unavailable"
+    | "disabled"
+    | "ambiguous"
+    | "unknown";
+}
+
+export interface ToolInstallationUpdate {
+  installation: ToolInstallation;
+  real_path?: string;
+  package_version: string | null;
+  latest_version: string | null;
+  update_blocked_by_node?: NodeRequirementGap | null;
+  plan: ToolUpdatePlan | null;
+}
+
 export interface ToolUninstallPlan {
   tool: string;
   path: string;
@@ -381,9 +492,16 @@ export interface ToolUninstallPlan {
   wsl_distro: string | null;
 }
 
+export interface DesktopToolInstallation {
+  path: string;
+  version: string | null;
+  bundled_cli_version: string | null;
+}
+
 /** 单处工具安装的诊断信息（多处安装冲突检测）。字段对应后端 ToolInstallation。 */
 export interface ToolInstallation {
   path: string;
+  real_path?: string;
   version: string | null;
   runnable: boolean;
   error: string | null;
@@ -404,6 +522,7 @@ export interface ToolInstallationOverview {
   tool: string;
   installs: ToolInstallationPath[];
   is_wsl?: boolean;
+  desktop_installed?: boolean;
 }
 
 /** 卸载对话框里的一处安装：能自动卸载就带 plan，否则给出原因。对应后端 ToolUninstallCandidate。 */
@@ -426,10 +545,13 @@ export interface ToolInstallationReport {
   installs: ToolInstallation[];
   is_conflict: boolean;
   needs_confirmation: boolean;
+  confirmation_token?: string | null;
   command: string;
   anchored: boolean;
   /** 默认那处是认不出安装渠道的原生可执行文件：不执行升级，command 为空。 */
   unmanaged: boolean;
+  package_version?: string;
+  update_plan?: ToolUpdatePlan;
 }
 
 export interface RectifierConfig {

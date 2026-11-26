@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useId,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -8,7 +9,7 @@ import {
   type CSSProperties,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   closestCenter,
   DndContext,
@@ -32,36 +33,35 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   AlertTriangle,
   ArrowUpCircle,
-  ChevronDown,
-  Copy,
   Download,
   GripVertical,
   Info,
   LayoutGrid,
+  ListOrdered,
   Loader2,
   MoreHorizontal,
   RefreshCw,
+  Star,
   Trash2,
 } from "lucide-react";
 import { settingsApi, type AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
-import type { ToolInstallationOverview } from "@/lib/api/settings";
+import type {
+  InstallMethod,
+  ToolInstallation,
+  ToolInstallationReport,
+} from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettings } from "@/hooks/useSettings";
+import { toast } from "@/lib/toast";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { isUpdateAvailable } from "@/lib/version";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { HelpTip } from "@/components/ui/help-tip";
 import { HoverTip } from "@/components/ui/hover-tip";
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,37 +78,30 @@ import {
 import { AppPageHeader } from "@/components/shell/AppPageHeader";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ToolUpgradeConfirmDialog } from "@/components/settings/ToolUpgradeConfirmDialog";
-import { ToolInstallRow } from "@/components/settings/ToolInstallRow";
+import {
+  getToolInstallSourceLabel,
+  ToolInstallRow,
+} from "@/components/settings/ToolInstallRow";
 import { ToolErrorMessage } from "@/components/settings/ToolErrorMessage";
 import { ToolUninstallConfirmDialog } from "./ToolUninstallConfirmDialog";
+import type { InstallApp } from "./installCommands";
+import "./appsPage.css";
+import { InstallCommandsDialog } from "./InstallCommandsDialog";
 import { ManualUninstallDialog } from "./ManualUninstallDialog";
 import {
   ENV_BADGE_CONFIG,
-  isDesktopManagedTool,
-  ONE_CLICK_INSTALL_COMMANDS,
   TOOL_APP_IDS,
   TOOL_NAMES,
   toolDisplayName,
+  availableInstallationUpdate,
   useToolManagement,
+  isDesktopManagedTool,
   WSL_SHELL_FLAG_OPTIONS,
   WSL_SHELL_OPTIONS,
   type ToolLifecycleAction,
   type ToolName,
+  type ToolVersion,
 } from "./useToolManagement";
-
-/** 安装来源的显示名：只标认得出的，认不出（system）就不标，免得标错。 */
-const SOURCE_LABEL: Record<string, string> = {
-  homebrew: "Homebrew",
-  nvm: "npm",
-  volta: "npm",
-  fnm: "npm",
-  mise: "npm",
-  bun: "bun",
-  pnpm: "pnpm",
-  scoop: "Scoop",
-  pip: "pip",
-  desktop: "OpenCode Desktop",
-};
 
 // WorkBuddy 是桌面应用、自己负责更新，这里和 Claude Desktop 一样只管侧栏显示
 type Row =
@@ -121,6 +114,11 @@ const ROW_BY_APP = Object.fromEntries([
   ["workbuddy", { kind: "workbuddy" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
+
+const alphabeticalAppOrder = (Object.keys(ROW_BY_APP) as AppId[]).sort(
+  (left, right) =>
+    APP_DISPLAY_NAME[left].localeCompare(APP_DISPLAY_NAME[right], "en"),
+);
 
 type RowSection = { key: string; title: string; rows: Row[] };
 
@@ -156,19 +154,20 @@ const DragHandleContext = createContext<DragHandle | null>(null);
 
 /** 本机有这个命令行应用：探到了版本、装了但跑不起来，或安装清单里有安装位置（和「卸载」出现的条件一致）。 */
 function isToolPresent(
-  info: { version?: string | null; installed_but_broken?: boolean } | undefined,
-  report: ToolInstallationOverview | undefined,
+  info: ToolVersion | undefined,
+  report: ToolInstallationReport | undefined,
 ): boolean {
   return Boolean(
     info?.version ||
       info?.installed_but_broken ||
-      (report?.installs?.length ?? 0) > 0,
+      info?.desktop_installation ||
+      report?.installs.length,
   );
 }
 
 // 表头和应用行共用列宽；操作列宽取各行按钮和表头量宽按钮的最大值，最后一列是行尾的「⋯」菜单。
 const APP_ROW_GRID =
-  "grid grid-cols-[minmax(0,1fr)_168px_var(--apps-actions-width,0px)_56px_28px] items-center gap-x-4";
+  "grid grid-cols-[minmax(0,1fr)_minmax(0,clamp(116px,21vw,208px))_var(--apps-actions-width,0px)_var(--apps-sidebar-width,56px)_28px] items-center gap-x-2.5 lg:gap-x-3";
 
 function formatCheckedAt(timestamp: number, locale: string): string {
   const date = new Date(timestamp);
@@ -188,30 +187,107 @@ function formatCheckedAt(timestamp: number, locale: string): string {
  */
 export function AppsPage() {
   const { t, i18n } = useTranslation();
-  const tools = useToolManagement();
+  const [expanded, setExpanded] = useState<Partial<Record<ToolName, boolean>>>(
+    {},
+  );
+  const tools = useToolManagement(expanded);
+  const [desktopInstalling, setDesktopInstalling] = useState(false);
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const tableRef = useRef<HTMLDivElement>(null);
-  const { data: desktopStatus, isPending: isDesktopStatusPending } = useQuery({
+  const {
+    data: desktopStatus,
+    isPending: isDesktopStatusPending,
+    refetch: refreshClaudeDesktop,
+  } = useQuery({
     queryKey: ["claude-desktop-status"],
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });
-  const { data: workbuddyStatus, isPending: isWorkbuddyStatusPending } =
-    useQuery({
-      queryKey: ["config-status", "workbuddy"],
-      queryFn: () => settingsApi.getConfigStatus("workbuddy"),
-      staleTime: 30_000,
-    });
+  const { data: officialClaude, refetch: refreshOfficialClaude } = useQuery({
+    queryKey: ["official-claude-desktop-installation"],
+    queryFn: () => settingsApi.getOfficialClaudeDesktopInstallation(),
+    staleTime: 30_000,
+  });
+  const {
+    data: officialWorkbuddy,
+    isPending: isOfficialWorkbuddyPending,
+    refetch: refreshOfficialWorkbuddy,
+  } = useQuery({
+    queryKey: ["official-workbuddy-installation"],
+    queryFn: () => settingsApi.getOfficialWorkbuddyInstallation(),
+    staleTime: 30_000,
+  });
+  const {
+    data: workbuddyStatus,
+    isPending: isWorkbuddyStatusPending,
+    refetch: refreshWorkBuddy,
+  } = useQuery({
+    queryKey: ["config-status", "workbuddy"],
+    queryFn: () => settingsApi.getConfigStatus("workbuddy"),
+    staleTime: 30_000,
+  });
+
+  const installFromChannel = async (app: InstallApp, method: InstallMethod) => {
+    if (app === "workbuddy") return;
+    if (app !== "claude-desktop") {
+      await tools.handleRunToolAction([app], "install", {
+        installMethod: method,
+      });
+      return;
+    }
+    setDesktopInstalling(true);
+    try {
+      await settingsApi.runToolLifecycleAction(
+        [app],
+        "install",
+        undefined,
+        undefined,
+        undefined,
+        method,
+      );
+      const [{ data }, { data: official }] = await Promise.all([
+        refreshClaudeDesktop(),
+        refreshOfficialClaude(),
+      ]);
+      if (!data?.installed && !official) {
+        toast.warning(t("settings.toolActionInstalledNotRunnable"));
+        return;
+      }
+      toast.success(
+        t("settings.toolActionDone", {
+          count: 1,
+          action: t("settings.toolInstall"),
+        }),
+      );
+    } catch (error) {
+      const detail = extractErrorMessage(error);
+      if (detail === "TOOL_ACTION_IN_PROGRESS") {
+        toast.info(t("settings.toolActionInProgress"));
+      } else {
+        toast.error(t("settings.toolActionFailed"), { description: detail });
+      }
+    } finally {
+      setDesktopInstalling(false);
+    }
+  };
 
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
   const rowInstalled = (row: Row): boolean | null => {
     if (row.kind === "desktop") {
-      return isDesktopStatusPending ? null : Boolean(desktopStatus?.installed);
+      return officialClaude
+        ? true
+        : isDesktopStatusPending
+          ? null
+          : Boolean(desktopStatus?.installed);
     }
-    // WorkBuddy 同样没有命令可探，按配置目录（~/.workbuddy）在不在判断
+    // A signed desktop bundle is installed even before its first configuration is created.
     if (row.kind === "workbuddy") {
-      return isWorkbuddyStatusPending ? null : Boolean(workbuddyStatus?.exists);
+      return officialWorkbuddy || workbuddyStatus?.exists
+        ? true
+        : isWorkbuddyStatusPending || isOfficialWorkbuddyPending
+          ? null
+          : false;
     }
     const info = tools.toolVersionByName.get(row.tool);
     const report = tools.installReports?.[row.tool];
@@ -219,15 +295,18 @@ export function AppsPage() {
     // 清单为空 → 未安装（清单含登录 shell 解析到的默认入口，和版本探测看到的是同一处），
     // 版本探到「装了但跑不起来」时再归回已安装。跑在 WSL 里的工具本机清单说明不了什么，
     // 照旧等版本探测。
-    if (report && !report.is_wsl) {
-      return report.installs.length > 0 || isToolPresent(info, report);
-    }
-    // 清单未回（或 WSL）：首次探测还没出结果时先不分组
+    const overview = tools.overviews?.[row.tool];
+    if (overview && !overview.is_wsl)
+      return (
+        Boolean(overview.desktop_installed) ||
+        overview.installs.length > 0 ||
+        isToolPresent(info, tools.installReports?.[row.tool])
+      );
     if (!info && tools.isLoadingTools) return null;
     return isToolPresent(info, report);
   };
   // 两组共用一份顺序（拖动后写进设置，侧栏也按它排），每组只是按装没装过滤
-  const appOrder = orderAppIds(settings?.appOrder);
+  const appOrder = orderAppIds(settings?.appOrder, alphabeticalAppOrder);
   const orderedRows = appOrder.map((app) => ROW_BY_APP[app]);
   const rowStates = orderedRows.map((row) => ({
     row,
@@ -268,29 +347,41 @@ export function AppsPage() {
     const actions = Array.from(
       table.querySelectorAll<HTMLElement>("[data-tool-actions]"),
     );
-    const updateActionWidth = () => {
+    const sidebarHeading = table.querySelector<HTMLElement>(
+      "[data-sidebar-heading]",
+    );
+    const updateColumnWidths = () => {
       const width = Math.max(
         0,
         ...actions.map((action) => action.getBoundingClientRect().width),
       );
-      table.style.setProperty("--apps-actions-width", `${width}px`);
+      table.style.setProperty("--apps-actions-width", `${Math.ceil(width)}px`);
+      if (sidebarHeading) {
+        const sidebarWidth = Math.max(
+          56,
+          Math.ceil(sidebarHeading.getBoundingClientRect().width),
+        );
+        table.style.setProperty("--apps-sidebar-width", `${sidebarWidth}px`);
+      }
     };
-    updateActionWidth();
+    updateColumnWidths();
     // 按钮增减、文案或字体变化时同步整列，避免各行自行收缩后版本列错位。
     if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(updateActionWidth);
+    const observer = new ResizeObserver(updateColumnWidths);
     actions.forEach((action) => observer.observe(action));
+    if (sidebarHeading) observer.observe(sidebarHeading);
     return () => observer.disconnect();
   }, [sectionLayoutKey]);
 
-  const [showCommands, setShowCommands] = useState(false);
+  const [installCommandsFor, setInstallCommandsFor] = useState<{
+    tool: InstallApp;
+    manualUpdate?: boolean;
+  } | null>(null);
   const [showUninstallCommands, setShowUninstallCommands] = useState(false);
-  const [pendingUninstall, setPendingUninstall] = useState<ToolName | null>(
-    null,
-  );
-  const [expanded, setExpanded] = useState<Partial<Record<ToolName, boolean>>>(
-    {},
-  );
+  const [pendingUninstall, setPendingUninstall] = useState<{
+    tool: ToolName;
+    path?: string;
+  } | null>(null);
   // 「诊断安装冲突」（和升级后的自动补诊）有结果的行自动展开，否则点了诊断看起来没反应
   const diagnosedTools = Object.keys(tools.toolDiagnostics) as ToolName[];
   useEffect(() => {
@@ -335,11 +426,11 @@ export function AppsPage() {
   // 检查完再一次性更新，免得「全部升级」闪没又出现、数字逐个跳。
   const settledUpdatableCount = useRef(0);
   if (!tools.isLoadingTools) {
-    settledUpdatableCount.current = tools.updatableToolNames.length;
+    settledUpdatableCount.current = tools.updatableCount;
   }
   const updatableCount = tools.isLoadingTools
     ? settledUpdatableCount.current
-    : tools.updatableToolNames.length;
+    : tools.updatableCount;
 
   const lastChecked = tools.lastCheckedAt
     ? t("appsPage.lastChecked", {
@@ -360,7 +451,11 @@ export function AppsPage() {
     const oldIndex = appOrder.indexOf(active.id as AppId);
     const newIndex = appOrder.indexOf(over.id as AppId);
     if (oldIndex === -1 || newIndex === -1) return;
-    const next = arrayMove(appOrder, oldIndex, newIndex);
+    saveAppOrder(arrayMove(appOrder, oldIndex, newIndex));
+  };
+
+  const saveAppOrder = (next: AppId[]) => {
+    if (!settings) return;
     const previous = settings.appOrder;
     updateSettings({ appOrder: next });
     void autoSaveSettings({ appOrder: next }).catch(() =>
@@ -368,21 +463,53 @@ export function AppsPage() {
     );
   };
 
+  const desktopInstallButton = (app: "workbuddy" | "claude-desktop") => (
+    <Button
+      variant="neutral"
+      size="compact"
+      disabled={app === "claude-desktop" && desktopInstalling}
+      onClick={() => setInstallCommandsFor({ tool: app })}
+    >
+      {app === "claude-desktop" && desktopInstalling ? (
+        <Loader2 className="size-3.5 motion-safe:animate-spin" />
+      ) : (
+        <Download className="size-3.5" />
+      )}
+      {t("settings.toolInstall")}
+    </Button>
+  );
+
   const renderRow = (row: Row) =>
     row.kind === "workbuddy" ? (
       <AppRow
         key="workbuddy"
         app="workbuddy"
-        name={<span className="truncate">{APP_DISPLAY_NAME.workbuddy}</span>}
+        name={
+          <>
+            <span className="truncate">{APP_DISPLAY_NAME.workbuddy}</span>
+            {officialWorkbuddy && <Pill>Official</Pill>}
+          </>
+        }
         version={
-          <span className="inline-flex items-center gap-1 text-caption text-fg-2">
-            {workbuddyStatus?.exists
-              ? t("appsPage.desktopConnected")
-              : t("appsPage.desktopNotConnected")}
-            <HelpTip title={APP_DISPLAY_NAME.workbuddy} align="end">
-              {t("appsPage.workbuddyHelp")}
-            </HelpTip>
-          </span>
+          officialWorkbuddy ? (
+            <span className="font-mono text-body font-medium tabular-nums text-fg-1">
+              {officialWorkbuddy.version ?? t("appsPage.detectedInstalled")}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+              {workbuddyStatus?.exists
+                ? t("appsPage.desktopConnected")
+                : t("appsPage.desktopNotConnected")}
+              <HelpTip title={APP_DISPLAY_NAME.workbuddy} align="end">
+                {t("appsPage.workbuddyHelp")}
+              </HelpTip>
+            </span>
+          )
+        }
+        action={
+          !isOfficialWorkbuddyPending &&
+          !officialWorkbuddy &&
+          desktopInstallButton("workbuddy")
         }
         visibility={visibilitySwitch("workbuddy")}
       />
@@ -391,19 +518,40 @@ export function AppsPage() {
         key="claude-desktop"
         app="claude-desktop"
         name={
-          <span className="truncate">{APP_DISPLAY_NAME["claude-desktop"]}</span>
+          <>
+            <span className="truncate">
+              {APP_DISPLAY_NAME["claude-desktop"]}
+            </span>
+            {officialClaude && <Pill>Official</Pill>}
+          </>
+        }
+        meta={
+          officialClaude && (
+            <span className="truncate font-mono" title={officialClaude.path}>
+              {officialClaude.path}
+            </span>
+          )
         }
         version={
-          <span className="inline-flex items-center gap-1 text-caption text-fg-2">
-            {desktopStatus?.supported === false
-              ? t("appsPage.desktopUnsupported")
-              : desktopStatus?.configured
-                ? t("appsPage.desktopConnected")
-                : t("appsPage.desktopNotConnected")}
-            <HelpTip title={APP_DISPLAY_NAME["claude-desktop"]} align="end">
-              {t("appsPage.desktopHelp")}
-            </HelpTip>
-          </span>
+          officialClaude ? (
+            <span className="font-mono text-body font-medium tabular-nums text-fg-1">
+              {officialClaude.version ?? t("appsPage.detectedInstalled")}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1 text-caption text-fg-2">
+              {desktopStatus?.supported === false
+                ? t("appsPage.desktopUnsupported")
+                : desktopStatus?.configured
+                  ? t("appsPage.desktopConnected")
+                  : t("appsPage.desktopNotConnected")}
+              <HelpTip title={APP_DISPLAY_NAME["claude-desktop"]} align="end">
+                {t("appsPage.desktopHelp")}
+              </HelpTip>
+            </span>
+          )
+        }
+        action={
+          rowInstalled(row) === false && desktopInstallButton("claude-desktop")
         }
         visibility={visibilitySwitch("claude-desktop")}
       />
@@ -412,7 +560,10 @@ export function AppsPage() {
         key={row.tool}
         tool={row.tool}
         tools={tools}
-        onUninstall={() => setPendingUninstall(row.tool)}
+        onInstall={(manualUpdate) =>
+          setInstallCommandsFor({ tool: row.tool, manualUpdate })
+        }
+        onUninstall={(path) => setPendingUninstall({ tool: row.tool, path })}
         expanded={expanded[row.tool] ?? false}
         onToggleExpanded={() =>
           setExpanded((prev) => ({
@@ -443,13 +594,21 @@ export function AppsPage() {
               <Button
                 variant="neutral"
                 size="regular"
-                disabled={tools.isLoadingTools || Boolean(tools.batchAction)}
+                disabled={
+                  tools.isLoadingTools ||
+                  tools.checkingIndependentUpdates ||
+                  Boolean(tools.batchAction)
+                }
                 aria-busy={Boolean(tools.batchAction)}
                 onClick={() =>
                   void tools.handleRunToolAction(
                     tools.updatableToolNames,
                     "update",
-                    { fromBatchEntry: true },
+                    {
+                      fromBatchEntry: true,
+                      selectedPreviews: tools.batchPreviews,
+                      defaultTools: tools.updatableDefaultToolNames,
+                    },
                   )
                 }
               >
@@ -465,7 +624,15 @@ export function AppsPage() {
               variant="neutral"
               size="regular"
               disabled={tools.isLoadingTools || tools.isAnyBusy}
-              onClick={() => void tools.checkForUpdates()}
+              onClick={() =>
+                void Promise.all([
+                  tools.checkForUpdates(),
+                  refreshClaudeDesktop(),
+                  refreshOfficialClaude(),
+                  refreshWorkBuddy(),
+                  refreshOfficialWorkbuddy(),
+                ])
+              }
             >
               <RefreshCw
                 className={cn(
@@ -513,7 +680,9 @@ export function AppsPage() {
                 >
                   {t("settings.toolDiagnose")}
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setShowCommands(true)}>
+                <DropdownMenuItem
+                  onSelect={() => setInstallCommandsFor({ tool: "claude" })}
+                >
                   {t("appsPage.manualCommands")}
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -536,10 +705,21 @@ export function AppsPage() {
           <div
             className={cn(
               APP_ROW_GRID,
-              "mx-px h-8 px-4 text-caption font-medium text-fg-2",
+              "mx-px h-9 px-4 text-caption font-medium text-fg-2",
             )}
           >
-            <SectionTitle title={sections[0]?.title} />
+            <div className="flex min-w-0 items-center gap-2">
+              <SectionTitle title={sections[0]?.title} />
+              <Button
+                variant="ghost"
+                size="compact"
+                disabled={!settings}
+                onClick={() => saveAppOrder(alphabeticalAppOrder)}
+              >
+                <ListOrdered className="size-3.5" aria-hidden />
+                {t("appsPage.sortByName")}
+              </Button>
+            </div>
             <span className="text-end">{t("appsPage.columnVersion")}</span>
             {/* 看不见的「安装 / 升级」按钮只用来量宽：操作列始终留出按钮的位置，
                 版本号加载完或检查到新版本、按钮冒出来时，版本列不会被推开。 */}
@@ -556,8 +736,14 @@ export function AppsPage() {
                 <ArrowUpCircle className="h-3.5 w-3.5" />
                 {t("settings.toolUpdate")}
               </Button>
+              <Button variant="neutral" size="compact" tabIndex={-1}>
+                {t("appsPage.repairInstallation")}
+              </Button>
             </div>
-            <span className="flex items-center justify-end gap-0.5">
+            <span
+              data-sidebar-heading
+              className="flex w-max items-center gap-1 whitespace-nowrap justify-self-end"
+            >
               {t("appsPage.columnVisible")}
               <HelpTip title={t("appsPage.columnVisible")} align="end">
                 {t("appsPage.visibleHelp")}
@@ -569,7 +755,7 @@ export function AppsPage() {
           {sections.map((section, index) => (
             <section key={section.key} aria-label={section.title}>
               {index > 0 && (
-                <div className="mx-px mt-4 flex h-8 items-center px-4">
+                <div className="mx-px mt-5 flex h-9 items-center px-4">
                   <SectionTitle title={section.title} />
                 </div>
               )}
@@ -585,7 +771,7 @@ export function AppsPage() {
                     items={section.rows.map(rowKey)}
                     strategy={verticalListSortingStrategy}
                   >
-                    <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+                    <div className="apps-group-frame">
                       {section.rows.map((row) => (
                         <SortableAppRow key={rowKey(row)} id={rowKey(row)}>
                           {renderRow(row)}
@@ -595,7 +781,7 @@ export function AppsPage() {
                   </SortableContext>
                 </DndContext>
               ) : (
-                <div className="divide-y divide-border overflow-hidden rounded-panel border border-border bg-surface">
+                <div className="apps-group-frame">
                   {section.rows.map(renderRow)}
                 </div>
               )}
@@ -604,38 +790,36 @@ export function AppsPage() {
         </div>
       </div>
 
-      <Dialog open={showCommands} onOpenChange={setShowCommands}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t("settings.manualInstallCommands")}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3 px-6">
-            <p className="text-body text-fg-2">
-              {t("settings.oneClickInstallHint")}
-            </p>
-            <pre className="max-h-[50vh] overflow-auto rounded-control border border-border bg-subtle px-3 py-2.5 font-mono text-caption">
-              {ONE_CLICK_INSTALL_COMMANDS}
-            </pre>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="neutral"
-              size="regular"
-              onClick={() => setShowCommands(false)}
-            >
-              {t("common.close")}
-            </Button>
-            <Button
-              variant="solid"
-              size="regular"
-              onClick={() => void tools.handleCopyInstallCommands()}
-            >
-              <Copy className="h-3.5 w-3.5" />
-              {t("common.copy")}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {installCommandsFor && (
+        <InstallCommandsDialog
+          initialTool={installCommandsFor.tool}
+          manualUpdateRequested={installCommandsFor.manualUpdate}
+          onClose={() => setInstallCommandsFor(null)}
+          toolVersionByName={tools.toolVersionByName}
+          installationReports={tools.installReports}
+          lastCheckedAt={tools.lastCheckedAt}
+          officialClaudeDesktop={Boolean(officialClaude)}
+          officialWorkbuddy={Boolean(officialWorkbuddy)}
+          isAppInstalled={(app) => {
+            const id =
+              app === "workbuddy" || app === "claude-desktop"
+                ? app
+                : TOOL_APP_IDS[app];
+            return rowInstalled(ROW_BY_APP[id]) === true;
+          }}
+          onInstall={installFromChannel}
+          isInstallBusy={(app) =>
+            app === "claude-desktop"
+              ? desktopInstalling
+              : app !== "workbuddy" && tools.busyTools.has(app)
+          }
+          isInstallQueued={(app) =>
+            app !== "claude-desktop" &&
+            app !== "workbuddy" &&
+            tools.toolProgress.get(app)?.stage === "queued"
+          }
+        />
+      )}
 
       <ManualUninstallDialog
         open={showUninstallCommands}
@@ -645,12 +829,17 @@ export function AppsPage() {
 
       {pendingUninstall && (
         <ToolUninstallConfirmDialog
-          tool={pendingUninstall}
+          tool={pendingUninstall.tool}
+          targetPath={pendingUninstall.path}
           wslShellByTool={tools.wslShellByTool}
           onConfirm={(uninstallPlan) => {
-            void tools.handleRunToolAction([pendingUninstall], "uninstall", {
-              uninstallPlan,
-            });
+            void tools.handleRunToolAction(
+              [pendingUninstall.tool],
+              "uninstall",
+              {
+                uninstallPlan,
+              },
+            );
             setPendingUninstall(null);
           }}
           onCancel={() => setPendingUninstall(null)}
@@ -694,13 +883,16 @@ function AppRow({
   const { t } = useTranslation();
   const dragHandle = useContext(DragHandleContext);
   return (
-    <div data-tool-row={app} className="group relative px-4 py-3">
+    <div
+      data-tool-row={app}
+      className="group relative px-4 py-3 focus-within:bg-subtle"
+    >
       {dragHandle && (
         // 放在行首的内边距里，不占列宽，表头和各列照旧对齐
         <button
           type="button"
           className={cn(
-            "absolute start-0 top-3 flex h-10 w-4 cursor-grab items-center justify-center text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing",
+            "absolute start-0 top-3 flex h-10 w-4 cursor-grab items-center justify-center text-fg-3 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing",
             dragHandle.isDragging && "cursor-grabbing opacity-100",
           )}
           aria-label={t("appsPage.dragHandle", { name: APP_DISPLAY_NAME[app] })}
@@ -714,17 +906,17 @@ function AppRow({
         <div className="flex min-w-0 items-center gap-4">
           <AppGlyph app={app} size={20} badgeClassName="bg-surface" />
           <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-1.5 text-strong text-fg-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-strong text-fg-1">
               {name}
             </div>
             {meta && (
-              <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">
+              <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-caption text-fg-2">
                 {meta}
               </div>
             )}
           </div>
         </div>
-        <div className="text-end">{version}</div>
+        <div className="min-w-0 text-end">{version}</div>
         <div
           data-tool-actions
           className="flex w-max items-center justify-self-end gap-2 [&>button]:shrink-0"
@@ -734,15 +926,29 @@ function AppRow({
         <div className="flex justify-end">{visibility}</div>
         <div className="flex justify-end">{menu}</div>
       </div>
-      {footer && <div className="ms-9 mt-2">{footer}</div>}
+      {footer && <div className="mt-2 sm:ms-9">{footer}</div>}
     </div>
   );
 }
 
-function Pill({ children }: { children: React.ReactNode }) {
+function Pill({
+  children,
+  preferredLabel,
+}: {
+  children: React.ReactNode;
+  preferredLabel?: string;
+}) {
   return (
-    <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-border-strong px-1.5 text-badge text-fg-2">
+    <span
+      className={cn(
+        "inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full border border-border-strong px-1.5 text-badge text-fg-2",
+        preferredLabel && "border-primary/40 bg-primary/10 text-primary",
+      )}
+      title={preferredLabel}
+    >
+      {preferredLabel && <Star aria-hidden className="size-2.5" />}
       {children}
+      {preferredLabel && <span className="sr-only"> ({preferredLabel})</span>}
     </span>
   );
 }
@@ -750,6 +956,7 @@ function Pill({ children }: { children: React.ReactNode }) {
 function ToolRow({
   tool,
   tools,
+  onInstall,
   onUninstall,
   expanded,
   onToggleExpanded,
@@ -757,51 +964,158 @@ function ToolRow({
 }: {
   tool: ToolName;
   tools: ReturnType<typeof useToolManagement>;
-  onUninstall: () => void;
+  onInstall: (manualUpdate: boolean) => void;
+  onUninstall: (path?: string) => void;
   expanded: boolean;
   onToggleExpanded: () => void;
   visibility: React.ReactNode;
 }) {
   const { t } = useTranslation();
+  const installationPanelId = useId();
+  const queryClient = useQueryClient();
   const info = tools.toolVersionByName.get(tool);
-  const report: ToolInstallationOverview | undefined =
+  const report: ToolInstallationReport | undefined =
     tools.installReports?.[tool];
+  const usesWsl = info?.env_type === "wsl";
+  const preferenceKey = [
+    "preferred-cli-installation",
+    tool,
+    info?.env_type,
+    info?.wsl_distro,
+    tools.lastCheckedAt,
+    report?.installs.map(({ path, real_path }) => [path, real_path]),
+  ] as const;
+  const preferred = useQuery({
+    queryKey: preferenceKey,
+    queryFn: () => settingsApi.getPreferredToolInstallation(tool),
+    enabled: !usesWsl && (expanded || isToolPresent(info, report)),
+    staleTime: 30_000,
+    retry: false,
+  });
+  const selectPreferred = useMutation({
+    mutationFn: ({
+      path,
+      enabled,
+    }: {
+      path: string | null;
+      enabled?: boolean;
+    }) => settingsApi.setPreferredToolInstallation(tool, path, enabled),
+    onMutate: () =>
+      queryClient.cancelQueries({ queryKey: preferenceKey, exact: true }),
+    onSuccess: (policy) => {
+      queryClient.setQueryData(preferenceKey, policy);
+    },
+    onError: (error) =>
+      toast.error(t("appsPage.cliPreferenceFailed"), {
+        description: extractErrorMessage(error),
+      }),
+  });
+  const nativeReport = usesWsl ? undefined : report;
   const defaultInstall =
-    report?.installs.find((install) => install.is_path_default) ??
-    report?.installs[0];
-  const otherInstalls = (report?.installs.length ?? 0) - 1;
-  // 「诊断安装冲突」的结果优先（升级后会重新诊断），否则用打开页面时探测到的安装分布
-  const installs = tools.toolDiagnostics[tool] ?? report?.installs;
+    nativeReport?.installs.find((install) => install.is_path_default) ??
+    nativeReport?.installs[0];
+  const desktop = info?.desktop_installation;
+  const {
+    detectedInstalls,
+    checkIndependentUpdates,
+    updates: installationUpdates,
+  } = tools.installationsByTool[tool];
+  const inspected =
+    !usesWsl && installationUpdates.data?.length
+      ? installationUpdates.data.map((row) => row.installation)
+      : (detectedInstalls ?? []);
+  const installs = desktop
+    ? inspected.filter((install) => install.source !== "desktop")
+    : inspected;
+  const canInspect = Boolean(desktop || installs.length > 0);
 
   const isVersionLoading =
     Boolean(tools.loadingTools[tool]) ||
     (tools.isLoadingTools && !tools.toolVersionByName.has(tool));
-  const isOutdated = isUpdateAvailable(info?.version, info?.latest_version);
-  const nodeGap = isOutdated ? info?.update_blocked_by_node : null;
-  // OpenCode Desktop 自带的命令行随 Desktop 更新，这里不给升级，只说明一句
-  const desktopManaged = isDesktopManagedTool(tool, tools.installReports);
-  const broken = Boolean(info?.installed_but_broken);
+  const desktopManaged =
+    Boolean(desktop) ||
+    isDesktopManagedTool(tool, tools.overviews) ||
+    info?.desktop_managed ||
+    defaultInstall?.source === "desktop";
+  const hasNewVersion = isUpdateAvailable(info?.version, info?.latest_version);
+  const isOutdated =
+    !desktopManaged && !nativeReport?.unmanaged && hasNewVersion;
+  const copyNodeGap = installationUpdates.data?.find(
+    ({ installation }) => installation.is_path_default,
+  )?.update_blocked_by_node;
+  const nodeGap = isOutdated
+    ? (copyNodeGap ?? info?.update_blocked_by_node)
+    : null;
+  const manualUpdate = Boolean(info?.manual_update_only);
+  const broken = Boolean(info?.installed_but_broken) && !desktopManaged;
   const isBusy = tools.busyTools.has(tool);
   const busyAction = tools.busyTools.get(tool);
-  const canUninstall = isToolPresent(info, report);
-  const action: Exclude<ToolLifecycleAction, "uninstall"> | null =
+  const installed = isToolPresent(info, report);
+  const canUninstall = !desktopManaged && installed;
+  const showManualUpdate =
+    manualUpdate && (hasNewVersion || tool === "opencode");
+  const action:
+    | Exclude<ToolLifecycleAction, "uninstall">
+    | "manual-update"
+    | null =
     (busyAction !== "uninstall" ? busyAction : undefined) ??
-    (isVersionLoading || broken
+    (isVersionLoading || broken || desktopManaged
       ? null
-      : !info?.version
-        ? "install"
-        : isOutdated && !nodeGap && !desktopManaged
-          ? "update"
-          : null);
-  const sourceLabel = defaultInstall
-    ? SOURCE_LABEL[defaultInstall.source]
-    : undefined;
+      : showManualUpdate
+        ? "manual-update"
+        : nativeReport?.unmanaged
+          ? null
+          : !installed
+            ? "install"
+            : isOutdated && !nodeGap && !manualUpdate
+              ? "update"
+              : null);
+  const sourceLabel = desktop
+    ? "Official"
+    : desktopManaged
+      ? tool === "opencode"
+        ? "OpenCode Desktop"
+        : t("appsPage.desktopInstallation")
+      : defaultInstall
+        ? getToolInstallSourceLabel(defaultInstall.source)
+        : undefined;
+  const channels = [
+    ...new Set(
+      [
+        sourceLabel,
+        ...installs.map(({ source }) => getToolInstallSourceLabel(source)),
+      ].filter(Boolean),
+    ),
+  ];
   const envBadge =
     info?.env_type === "wsl" && ENV_BADGE_CONFIG.wsl
       ? `${t(ENV_BADGE_CONFIG.wsl.labelKey)}${info.wsl_distro ? ` · ${info.wsl_distro}` : ""}`
       : null;
 
-  const version = isVersionLoading ? (
+  const detailsByPath = new Map(
+    installationUpdates.data?.map((entry) => [entry.installation.path, entry]),
+  );
+  const rows: ToolInstallation[] = desktop
+    ? [
+        {
+          path: desktop.path,
+          source: "official",
+          version: desktop.version,
+          runnable: true,
+          error: null,
+          is_path_default: Boolean(
+            installationUpdates.data?.some(
+              ({ installation, real_path }) =>
+                installation.source === "desktop" &&
+                installation.is_path_default &&
+                (real_path ?? installation.path).startsWith(`${desktop.path}/`),
+            ),
+          ),
+        },
+        ...installs,
+      ]
+    : installs;
+  const fallbackVersion = isVersionLoading ? (
     <span
       role="status"
       aria-label={t("common.loading")}
@@ -809,22 +1123,34 @@ function ToolRow({
     >
       <Loader2 className="h-4 w-4 animate-spin text-fg-3" />
     </span>
+  ) : desktopManaged ? (
+    <div className="font-mono text-body font-medium tabular-nums text-fg-1">
+      {desktop?.version ?? info?.version ?? t("appsPage.detectedInstalled")}
+    </div>
   ) : info?.version ? (
     <div>
       <div className="font-mono text-body font-medium tabular-nums text-fg-1">
         {info.version}
       </div>
-      {isOutdated && info.latest_version && (
-        <div className="text-caption text-fg-2">
-          {t("appsPage.newVersion", { version: info.latest_version })}
-        </div>
-      )}
+      {(isOutdated || (manualUpdate && hasNewVersion)) &&
+        info.latest_version && (
+          <div className="text-caption text-fg-2">
+            {t("appsPage.newVersion", { version: info.latest_version })}
+          </div>
+        )}
     </div>
   ) : broken ? (
-    <span className="inline-flex items-center gap-1 text-caption font-medium text-warning-text">
-      <AlertTriangle className="h-3.5 w-3.5" />
-      {t("appsPage.notRunnable")}
-    </span>
+    <div>
+      {report?.package_version && (
+        <div className="font-mono text-body font-medium tabular-nums text-fg-1">
+          {report.package_version}
+        </div>
+      )}
+      <span className="inline-flex items-center gap-1 text-caption text-warning-text">
+        <AlertTriangle className="h-3.5 w-3.5" />
+        {t("appsPage.notRunnable")}
+      </span>
+    </div>
   ) : (
     <span className="text-caption text-fg-2">{t("common.notInstalled")}</span>
   );
@@ -833,7 +1159,11 @@ function ToolRow({
     <Button
       variant="neutral"
       size="compact"
-      onClick={() => void tools.handleRunToolAction([tool], action)}
+      onClick={
+        action === "install" || action === "manual-update"
+          ? () => onInstall(action === "manual-update")
+          : () => void tools.handleRunToolAction([tool], action)
+      }
       disabled={isVersionLoading || isBusy}
       aria-busy={isBusy}
     >
@@ -846,11 +1176,267 @@ function ToolRow({
       )}
       {action === "install"
         ? t("settings.toolInstall")
-        : t("settings.toolUpdate")}
+        : action === "manual-update"
+          ? t("appsPage.manualUpdateGuide")
+          : t("settings.toolUpdate")}
     </Button>
   ) : null;
 
-  const installHint = t(`appsPage.installHint.${tool}`, { defaultValue: "" });
+  const policy = usesWsl ? undefined : preferred.data;
+  const selectedCopy =
+    rows.find((install) => install.path === policy?.selected_path) ??
+    rows.find(
+      (install) =>
+        install.real_path && install.real_path === policy?.selected_real_path,
+    );
+  const cliSourceLabel = (install: ToolInstallation) =>
+    getToolInstallSourceLabel(install.source) ??
+    t("appsPage.installSourceUnknown");
+  const cliCopies = rows.filter(
+    (install) => install.source !== "official" && install.source !== "desktop",
+  );
+  const isCliDisabled = (install: ToolInstallation) =>
+    Boolean(
+      policy?.disabled_paths.includes(install.path) ||
+        (install.real_path &&
+          (policy?.disabled_paths.includes(install.real_path) ||
+            policy?.disabled_real_paths?.includes(install.real_path))),
+    );
+  const eligibleCopies = cliCopies.filter(
+    (install) => install.runnable && !isCliDisabled(install),
+  );
+  const bundledAvailable = Boolean(desktop && policy?.bundled_available);
+  const automaticSelection =
+    policy?.selection === "automatic" || policy?.selection === "bundled";
+  const explicitSelection = policy?.selection === "explicit";
+  const usingBundled =
+    policy?.selection === "bundled" ||
+    (explicitSelection && policy?.path === "bundled");
+  const selectedChannel = usingBundled
+    ? "Official"
+    : selectedCopy && (automaticSelection || explicitSelection)
+      ? cliSourceLabel(selectedCopy)
+      : undefined;
+  const summaryChannel =
+    selectedChannel ?? (channels.length === 1 ? channels[0] : undefined);
+  let selectionMessage: string | null = null;
+  if (
+    policy?.supported &&
+    !explicitSelection &&
+    (!desktop || cliCopies.length > 0 || policy.selected_path)
+  ) {
+    if (automaticSelection) {
+      if ((channels.length > 1 || policy.path) && selectedChannel) {
+        selectionMessage = t("appsPage.cliUsingAutomatic", {
+          channel: selectedChannel,
+        });
+      }
+    } else if (policy.selection === "disabled") {
+      selectionMessage = t(
+        cliCopies.length > 1
+          ? "appsPage.cliAllDisabled"
+          : "appsPage.cliInstallationDisabled",
+      );
+    } else {
+      selectionMessage = t(
+        policy.selection === "ambiguous"
+          ? "appsPage.cliSelectionAmbiguous"
+          : policy.selection === "unavailable"
+            ? "appsPage.cliSelectionUnavailable"
+            : "appsPage.cliSelectionUnknown",
+      );
+    }
+  }
+  const preferredCopy = eligibleCopies.find(
+    (install) => install.path === policy?.path,
+  );
+  const preferredBundled = bundledAvailable && policy?.path === "bundled";
+  const selectedOptionLabel = preferredBundled
+    ? "Official"
+    : preferredCopy
+      ? cliSourceLabel(preferredCopy)
+      : policy?.path
+        ? t("appsPage.cliDefaultUnavailable")
+        : t("common.auto");
+  const hasRepeatedChannel =
+    new Set(eligibleCopies.map(cliSourceLabel)).size !== eligibleCopies.length;
+  const versionSelector =
+    policy?.supported &&
+    (policy.path ||
+      cliCopies.length > 1 ||
+      (bundledAvailable && cliCopies.length > 0)) ? (
+      <Select
+        value={policy.path ?? "automatic"}
+        disabled={isBusy || selectPreferred.isPending}
+        onValueChange={(path) =>
+          selectPreferred.mutate({ path: path === "automatic" ? null : path })
+        }
+      >
+        <SelectTrigger
+          aria-label={t("appsPage.cliVersionChoice")}
+          title={selectedOptionLabel}
+          className="h-7 w-max min-w-20 max-w-32 gap-1.5 px-2 text-caption [&>svg]:size-3 [&>svg]:shrink-0"
+        >
+          <SelectValue>{selectedOptionLabel}</SelectValue>
+        </SelectTrigger>
+        <SelectContent
+          align="end"
+          sideOffset={4}
+          className={cn(
+            "min-w-20",
+            hasRepeatedChannel &&
+              "w-[min(20rem,var(--radix-select-content-available-width))]",
+          )}
+        >
+          <SelectItem value="automatic">{t("common.auto")}</SelectItem>
+          {bundledAvailable && (
+            <SelectItem value="bundled">Official</SelectItem>
+          )}
+          {policy.path &&
+            !preferredBundled &&
+            !eligibleCopies.some((install) => install.path === policy.path) && (
+              <SelectItem value={policy.path} disabled>
+                {t("appsPage.cliDefaultUnavailable")}
+              </SelectItem>
+            )}
+          {eligibleCopies.map((install) => {
+            const channel = cliSourceLabel(install);
+            const repeated =
+              hasRepeatedChannel &&
+              eligibleCopies.some(
+                (other) =>
+                  other.path !== install.path &&
+                  cliSourceLabel(other) === channel,
+              );
+            return (
+              <SelectItem
+                key={install.path}
+                value={install.path}
+                textValue={channel}
+              >
+                <span className="block min-w-0">
+                  <span className="block truncate">{channel}</span>
+                  {repeated && (
+                    <span
+                      className="block truncate text-caption text-fg-2"
+                      title={install.path}
+                    >
+                      {install.path}
+                    </span>
+                  )}
+                </span>
+              </SelectItem>
+            );
+          })}
+        </SelectContent>
+      </Select>
+    ) : null;
+
+  const primaryPath =
+    report?.update_plan?.path ??
+    installs.find((install) => install.is_path_default)?.path ??
+    defaultInstall?.path;
+  const primaryUpdate = primaryPath
+    ? detailsByPath.get(primaryPath)
+    : undefined;
+  const primaryUpdateShown =
+    checkIndependentUpdates &&
+    primaryUpdate?.latest_version === info?.latest_version &&
+    isUpdateAvailable(
+      primaryUpdate?.installation.version ?? primaryUpdate?.package_version,
+      primaryUpdate?.latest_version,
+    );
+  const showCopyVersions =
+    rows.length > 0 && info?.env_type !== "wsl" && !isVersionLoading;
+  const version = showCopyVersions ? (
+    <ul
+      aria-label={t("appsPage.columnVersion")}
+      className="space-y-1 tabular-nums"
+    >
+      {rows.map((install) => {
+        const label =
+          rows.length === 1
+            ? undefined
+            : install.source === "official"
+              ? "Official"
+              : install.source === "desktop"
+                ? tool === "opencode"
+                  ? "OpenCode Desktop"
+                  : t("appsPage.desktopInstallation")
+                : (getToolInstallSourceLabel(install.source) ??
+                  t("appsPage.installSourceUnknown"));
+        const detail = detailsByPath.get(install.path);
+        const isDefaultCopy =
+          report?.update_plan?.path === install.path ||
+          install.is_path_default ||
+          rows.length === 1;
+        const installedVersion =
+          install.version ??
+          detail?.package_version ??
+          (isDefaultCopy ? report?.package_version : null);
+        return (
+          <li
+            key={install.path}
+            className="flex min-w-0 items-center justify-end gap-x-2 whitespace-nowrap"
+          >
+            {label && (
+              <span className="truncate text-caption text-fg-2" title={label}>
+                {label}
+              </span>
+            )}
+            {installedVersion && (
+              <span className="shrink-0 font-mono text-body font-medium text-fg-1">
+                {installedVersion}
+              </span>
+            )}
+            {!install.runnable ? (
+              <span className="truncate text-caption text-warning-text">
+                {t("appsPage.notRunnable")}
+              </span>
+            ) : (
+              !installedVersion && (
+                <span className="truncate text-caption text-fg-2">
+                  {t("appsPage.detectedInstalled")}
+                </span>
+              )
+            )}
+            {checkIndependentUpdates &&
+              detail?.latest_version &&
+              isUpdateAvailable(installedVersion, detail.latest_version) && (
+                <span className="truncate text-caption text-fg-2">
+                  {t("appsPage.newVersion", { version: detail.latest_version })}
+                </span>
+              )}
+          </li>
+        );
+      })}
+      {!primaryUpdateShown &&
+        (isOutdated || (manualUpdate && hasNewVersion)) &&
+        info?.latest_version && (
+          <li className="truncate text-caption text-fg-2">
+            {t("appsPage.newVersion", { version: info.latest_version })}
+          </li>
+        )}
+    </ul>
+  ) : (
+    fallbackVersion
+  );
+  const repairPlan = rows
+    .filter(
+      (install) =>
+        !install.runnable && (install.is_path_default || rows.length === 1),
+    )
+    .map((install) => {
+      const detail = detailsByPath.get(install.path);
+      return detail?.package_version || report?.package_version
+        ? (detail?.plan ??
+            (report?.update_plan?.path === install.path
+              ? report.update_plan
+              : null))
+        : null;
+    })
+    .find((plan) => plan?.source === "npm");
+
   // 执行期间副行换成进度：排队中，或已用时间 + 命令最新一行输出
   const progress = isBusy ? tools.toolProgress.get(tool) : undefined;
   const progressMeta =
@@ -866,38 +1452,8 @@ function ToolRow({
         )}
       </>
     ) : null;
-  const meta = progressMeta ? (
-    progressMeta
-  ) : defaultInstall ? (
-    <>
-      <span className="min-w-0 truncate font-mono" title={defaultInstall.path}>
-        {defaultInstall.path}
-      </span>
-      {otherInstalls > 0 && (
-        <button
-          type="button"
-          onClick={onToggleExpanded}
-          aria-expanded={expanded}
-          className="inline-flex shrink-0 items-center gap-0.5 font-medium text-warning-text hover:underline"
-        >
-          {t("appsPage.otherInstalls", { count: otherInstalls })}
-          <ChevronDown
-            className={cn(
-              "h-3 w-3 transition-transform",
-              expanded && "rotate-180",
-            )}
-          />
-        </button>
-      )}
-    </>
-  ) : !info?.version && !isVersionLoading ? (
-    <span className="truncate" title={installHint}>
-      {installHint}
-    </span>
-  ) : null;
-
   const wslControls =
-    info?.env_type === "wsl" || report?.is_wsl === true ? (
+    info?.env_type === "wsl" || tools.overviews?.[tool]?.is_wsl === true ? (
       <div className="flex items-center gap-2 text-caption text-fg-2">
         <span>Shell</span>
         <Select
@@ -943,12 +1499,12 @@ function ToolRow({
     ) : null;
 
   const errorLine =
-    !isVersionLoading && !info?.version && info?.error ? (
+    !isVersionLoading && !desktopManaged && !info?.version && info?.error ? (
       <ToolErrorMessage message={info.error} />
     ) : null;
 
   const nodeLine =
-    !isVersionLoading && nodeGap ? (
+    !isVersionLoading && nodeGap && !(expanded && copyNodeGap) ? (
       <p className="flex items-start gap-1 text-caption text-warning-text">
         <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
         {t("appsPage.updateNeedsNode", {
@@ -959,38 +1515,160 @@ function ToolRow({
       </p>
     ) : null;
 
+  const loadingDetails = expanded && installationUpdates.isFetching;
+  const installationList =
+    expanded && canInspect ? (
+      <section
+        id={installationPanelId}
+        aria-label={t("appsPage.inspectInstallations")}
+        className="overflow-hidden rounded-control border border-border"
+      >
+        {installationUpdates.isError && (
+          <div className="flex items-center gap-2 border-b border-border bg-subtle px-3 py-2">
+            <Button
+              variant="quiet"
+              size="compact"
+              onClick={() => void installationUpdates.refetch()}
+            >
+              {t("common.retry")}
+            </Button>
+          </div>
+        )}
+        <ul className="divide-y divide-border bg-surface">
+          {rows.map((install) => {
+            const detail = detailsByPath.get(install.path);
+            const disabled = isCliDisabled(install);
+            const updatePlan = checkIndependentUpdates
+              ? availableInstallationUpdate(detail)
+              : undefined;
+            const isPreferred =
+              explicitSelection &&
+              (usingBundled
+                ? install.source === "official"
+                : selectedCopy?.path === install.path);
+            const managedDesktop =
+              install.source === "official" || install.source === "desktop";
+            return (
+              <li
+                key={install.path}
+                className="flex flex-wrap items-start gap-x-4 gap-y-1.5 px-3 py-2"
+              >
+                <div className="min-w-0 flex-1 basis-52">
+                  <div className="flex min-h-7 min-w-0 items-center gap-2 whitespace-nowrap [&>div]:shrink-0">
+                    <ToolInstallRow
+                      inst={install}
+                      packageVersion={detail?.package_version}
+                      hidePath
+                    />
+                    {install.source === "official" &&
+                      desktop?.bundled_cli_version && (
+                        <span className="shrink-0 text-caption text-fg-2">
+                          {t("appsPage.bundledCliVersion", {
+                            version: desktop.bundled_cli_version,
+                          })}
+                        </span>
+                      )}
+                    {managedDesktop && (
+                      <span
+                        className="truncate text-caption text-fg-2"
+                        title={t("appsPage.desktopSelfUpdates")}
+                      >
+                        {t("appsPage.desktopSelfUpdates")}
+                      </span>
+                    )}
+                    {isPreferred && (
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full border border-primary/30 bg-primary/10 px-1.5 text-badge font-medium text-primary">
+                        {t("appsPage.cliPreferred")}
+                      </span>
+                    )}
+                    {disabled && <Pill>{t("appsPage.cliDisabled")}</Pill>}
+                  </div>
+                  <p className="break-all whitespace-normal font-mono text-caption text-fg-2">
+                    {install.path}
+                  </p>
+                  {install.error && !install.runnable && (
+                    <ToolErrorMessage message={install.error} />
+                  )}
+                  {detail?.update_blocked_by_node && (
+                    <p className="text-caption text-warning-text">
+                      {t("appsPage.updateNeedsNode", {
+                        version: detail.latest_version,
+                        required: detail.update_blocked_by_node.required,
+                        current: detail.update_blocked_by_node.current,
+                      })}
+                    </p>
+                  )}
+                </div>
+                {!managedDesktop && (
+                  <div className="ms-auto flex min-h-7 shrink-0 items-center gap-1">
+                    {updatePlan && (
+                      <Button
+                        size="compact"
+                        variant="quiet"
+                        disabled={isBusy}
+                        onClick={() =>
+                          tools.handleSelectInstallUpdate(
+                            tool,
+                            rows,
+                            updatePlan,
+                          )
+                        }
+                      >
+                        {t("settings.toolUpdate")}
+                      </Button>
+                    )}
+                    {policy?.supported && (
+                      <HoverTip content={t("appsPage.cliAvailability")}>
+                        <label className="inline-flex items-center gap-2 whitespace-nowrap px-2 text-caption text-fg-2">
+                          <span>{t("appsPage.cliEnable")}</span>
+                          <Switch
+                            size="sm"
+                            aria-label={`${t("appsPage.cliEnable")} · ${cliSourceLabel(install)}`}
+                            checked={!disabled}
+                            disabled={isBusy || selectPreferred.isPending}
+                            onCheckedChange={(enabled) =>
+                              selectPreferred.mutate({
+                                path: install.path,
+                                enabled,
+                              })
+                            }
+                          />
+                        </label>
+                      </HoverTip>
+                    )}
+                    <Button
+                      size="compact"
+                      variant="quiet"
+                      disabled={isBusy}
+                      className="text-danger-text"
+                      onClick={() => onUninstall(install.path)}
+                    >
+                      {t("settings.toolUninstall")}
+                    </Button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    ) : null;
+
   const desktopLine =
-    !isVersionLoading && isOutdated && desktopManaged ? (
-      <p className="flex items-start gap-1 text-caption text-fg-2">
-        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+    tool === "opencode" && desktopManaged && hasNewVersion ? (
+      <p className="flex items-center gap-1 text-caption text-fg-2">
+        <Info className="h-3.5 w-3.5" />
         {t("settings.toolUpgradeDesktopManagedDetail")}
       </p>
     ) : null;
-
-  const conflictList =
-    expanded && installs && installs.length > 1 ? (
-      <div className="space-y-1.5 rounded-control bg-warning-soft p-2.5">
-        <div className="text-caption font-medium text-warning-text">
-          {t("appsPage.installsFound", { count: installs.length })}
-        </div>
-        <ul className="space-y-1">
-          {installs.map((install) => (
-            <li key={install.path}>
-              <ToolInstallRow inst={install} />
-            </li>
-          ))}
-        </ul>
-      </div>
-    ) : null;
-
   const footer =
-    wslControls || errorLine || nodeLine || desktopLine || conflictList ? (
+    desktopLine || wslControls || errorLine || nodeLine || installationList ? (
       <div className="space-y-2">
         {errorLine}
         {nodeLine}
         {desktopLine}
         {wslControls}
-        {conflictList}
+        {installationList}
       </div>
     ) : undefined;
 
@@ -1000,46 +1678,113 @@ function ToolRow({
       name={
         <>
           <span className="truncate">{toolDisplayName(tool)}</span>
-          {sourceLabel && <Pill>{sourceLabel}</Pill>}
+          {summaryChannel && (
+            <Pill
+              preferredLabel={
+                explicitSelection && selectedChannel
+                  ? t("appsPage.cliPreferred")
+                  : undefined
+              }
+            >
+              {summaryChannel}
+            </Pill>
+          )}
           {envBadge && <Pill>{envBadge}</Pill>}
         </>
       }
-      meta={meta}
+      meta={
+        progressMeta ??
+        (selectionMessage && (
+          <span
+            role="status"
+            className="max-w-full truncate"
+            title={selectionMessage}
+          >
+            {selectionMessage}
+          </span>
+        ))
+      }
       version={version}
-      action={actionButton}
+      action={
+        <>
+          {versionSelector}
+          {repairPlan && !actionButton ? (
+            <Button
+              size="compact"
+              variant="neutral"
+              disabled={isBusy}
+              onClick={() =>
+                tools.handleSelectInstallUpdate(tool, rows, repairPlan)
+              }
+            >
+              {t("appsPage.repairInstallation")}
+            </Button>
+          ) : (
+            actionButton
+          )}
+        </>
+      }
       visibility={visibility}
       menu={
-        (canUninstall || busyAction === "uninstall") && (
-          <DropdownMenu>
-            <HoverTip content={t("common.more")}>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="quiet"
-                  size="icon-compact"
-                  aria-label={t("appPage.moreActions", {
-                    name: toolDisplayName(tool),
-                  })}
-                  disabled={isVersionLoading || isBusy}
-                  aria-busy={busyAction === "uninstall"}
+        canInspect ? (
+          <HoverTip content={t("appsPage.manageInstallations")}>
+            <Button
+              size="icon-compact"
+              variant="quiet"
+              onClick={onToggleExpanded}
+              aria-label={t("appsPage.manageInstallations")}
+              aria-expanded={expanded}
+              aria-controls={expanded ? installationPanelId : undefined}
+              aria-busy={loadingDetails || undefined}
+              className={cn(expanded && "bg-subtle text-fg-1")}
+            >
+              {loadingDetails ? (
+                <Loader2
+                  aria-hidden
+                  className="size-4 motion-safe:animate-spin"
+                />
+              ) : (
+                <MoreHorizontal
+                  aria-hidden
+                  className="size-4"
+                  strokeWidth={1.5}
+                />
+              )}
+            </Button>
+          </HoverTip>
+        ) : (
+          (canUninstall || busyAction === "uninstall") && (
+            <DropdownMenu>
+              <HoverTip content={t("common.more")}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="quiet"
+                    size="icon-compact"
+                    aria-label={t("appPage.moreActions", {
+                      name: toolDisplayName(tool),
+                    })}
+                    disabled={isVersionLoading || isBusy}
+                    aria-busy={busyAction === "uninstall"}
+                  >
+                    {busyAction === "uninstall" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
+                    )}
+                  </Button>
+                </DropdownMenuTrigger>
+              </HoverTip>
+              <DropdownMenuContent align="end" className="min-w-[160px]">
+                <DropdownMenuItem
+                  onSelect={() => onUninstall()}
+                  className="text-danger-text focus:text-danger-text"
                 >
-                  {busyAction === "uninstall" ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <MoreHorizontal className="h-4 w-4" strokeWidth={1.5} />
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-            </HoverTip>
-            <DropdownMenuContent align="end" className="min-w-[160px]">
-              <DropdownMenuItem
-                onSelect={onUninstall}
-                className="text-danger-text focus:text-danger-text"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-                {t("settings.toolUninstall")}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {t("settings.toolUninstall")}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )
         )
       }
       footer={footer}
@@ -1096,7 +1841,7 @@ function SortableAppRow({
     <div
       ref={setNodeRef}
       style={style}
-      className={cn(isDragging && "bg-surface shadow-v7-md")}
+      className={cn(isDragging && "bg-surface ring-1 ring-inset ring-ring")}
     >
       <DragHandleContext.Provider value={{ attributes, listeners, isDragging }}>
         {children}

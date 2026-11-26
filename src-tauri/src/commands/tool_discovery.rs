@@ -486,11 +486,13 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     // Preserve search priority without scanning all previous paths for every insertion.
     let mut search_paths = IndexSet::new();
     if tool == "kimi" {
-        let install_dir = std::env::var_os("KIMI_INSTALL_DIR")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".kimi-code"));
-        push_unique_path(&mut search_paths, install_dir.join("bin"));
+        if let Some(root) = kimi_install_dir(Some(&home)) {
+            push_unique_path(&mut search_paths, root.join("bin"));
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    if tool == "hermes" && !home.as_os_str().is_empty() {
+        push_unique_path(&mut search_paths, home.join(".nix-profile/bin"));
     }
     if tool == "grok" {
         let extra_paths = grok_extra_search_paths(&home, std::env::var_os("GROK_BIN_DIR"));
@@ -504,7 +506,7 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             push_unique_path(&mut search_paths, path);
         }
     }
-    if tool == "omp" {
+    if matches!(tool, "omp" | "codebuddy" | "openclaw") {
         // A Bun global install (`bun install -g @oh-my-pi/pi-coding-agent`) puts
         // the launcher in Bun's global bin, which is not on the PATH a GUI process
         // inherits — same reason OpenCode scans it. The official installer's
@@ -530,6 +532,19 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
+        push_unique_path(&mut search_paths, home.join(".yarn/bin"));
+        let yarn_global = yarn_global_dir();
+        if yarn_global.is_absolute() {
+            push_unique_path(&mut search_paths, yarn_global.join("node_modules/.bin"));
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(local) = manager_directory_env("LOCALAPPDATA") {
+            push_unique_path(&mut search_paths, local.join("Yarn/bin"));
+        }
+        if let Some(prefix) = manager_directory_env("YARN_PREFIX").filter(|path| path.is_absolute())
+        {
+            push_unique_path(&mut search_paths, prefix.join("bin"));
+        }
         push_unique_path(&mut search_paths, home.join("n/bin"));
         push_unique_path(&mut search_paths, home.join(".volta/bin"));
         extend_mise_node_search_paths(&mut search_paths, &home);
@@ -700,6 +715,9 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
 
     let path_env = effective_path_os();
     extend_from_cli_path_env(&mut search_paths, path_env);
+    for path in super::manager_bin_paths() {
+        push_unique_path(&mut search_paths, path);
+    }
     search_paths.into_iter().collect()
 }
 
@@ -844,7 +862,12 @@ pub(super) fn build_windows_tool_command(
                 format!(" {args}")
             }
         );
-        let mut cmd = Command::new("cmd");
+        let system_dir = PathBuf::from(
+            std::env::var_os("SystemRoot")
+                .unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows")),
+        )
+        .join("System32");
+        let mut cmd = Command::new(system_dir.join("cmd.exe"));
         cmd.args(["/D", "/S", "/C"])
             .raw_arg(&command)
             .env("PATH", new_path)
@@ -906,14 +929,20 @@ pub(super) fn probe_path_default_version(tool: &str) -> ShellProbe {
                 if raw.is_empty() {
                     ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
                 } else {
-                    ShellProbe::Found(extract_version(raw))
+                    parse_tool_version_output(tool, &stdout, &stderr)
+                        .map(ShellProbe::Found)
+                        .unwrap_or_else(|| {
+                            ShellProbe::FoundButFailed(
+                                "Cannot verify the reported OpenCode version.".into(),
+                            )
+                        })
                 }
             } else {
                 let err = if stderr.is_empty() { stdout } else { stderr };
                 if err.is_empty() {
                     ShellProbe::FoundButFailed(silent_version_probe_detail(out.status))
                 } else {
-                    ShellProbe::FoundButFailed(last_lines(err.trim(), 4))
+                    ShellProbe::FoundButFailed(version_probe_error(&err))
                 }
             }
         }
@@ -982,7 +1011,13 @@ pub(super) fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf
             if out.status.success() {
                 let raw = if stdout.is_empty() { &stderr } else { &stdout };
                 if !raw.is_empty() {
-                    return ShellProbe::Found(extract_version(raw));
+                    return parse_tool_version_output(tool, &stdout, &stderr)
+                        .map(ShellProbe::Found)
+                        .unwrap_or_else(|| {
+                            ShellProbe::FoundButFailed(
+                                "Cannot verify the reported OpenCode version.".into(),
+                            )
+                        });
                 }
                 silent_diagnostic.get_or_insert_with(|| silent_version_probe_detail(out.status));
             } else {
@@ -992,7 +1027,7 @@ pub(super) fn scan_cli_version_in(tool: &str, search_paths: &[std::path::PathBuf
                     silent_diagnostic
                         .get_or_insert_with(|| silent_version_probe_detail(out.status));
                 } else if exec_diagnostic.is_none() {
-                    exec_diagnostic = Some(last_lines(detail, 4));
+                    exec_diagnostic = Some(version_probe_error(detail));
                 }
             }
         }
@@ -1031,13 +1066,128 @@ pub struct ToolInstallation {
     /// 判定。`enumerate_tool_installations` 已经为去重算过一次,这里复用避免上游
     /// `installs_anchored_command` 再 canonicalize 一遍——消除冗余 syscall + 闭合
     /// "enumerate 与 anchor 看到同一真身"的一致性边界(否则两次 canonicalize 之间
-    /// symlink 被换会让锚定指向不同真身)。`#[serde(skip)]` 不外露给前端。
-    #[serde(skip)]
+    /// symlink 被换会让锚定指向不同真身)。前端用它将解析到的别名匹配到同一安装。
+    #[serde(rename = "real_path", serialize_with = "serialize_installation_path")]
     pub(super) real: std::path::PathBuf,
+}
+
+fn serialize_installation_path<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&path.to_string_lossy())
 }
 
 /// 由可执行文件路径前缀推断安装来源。纯字符串匹配、无副作用。
 /// 顺序敏感：Homebrew 的 Cellar / Caskroom 真身要先于通用规则命中。
+/// Verify the selected launcher is Volta's shim, including copied Windows
+/// shims. A sibling manager or directory name alone does not establish ownership.
+pub(super) fn verified_volta_manager(launcher: &Path) -> Option<PathBuf> {
+    let bin = launcher.parent()?;
+    if !bin.file_name()?.to_str()?.eq_ignore_ascii_case("bin") {
+        return None;
+    }
+    #[cfg(target_os = "windows")]
+    let names = ("volta.exe", "volta-shim.exe");
+    #[cfg(not(target_os = "windows"))]
+    let names = ("volta", "volta-shim");
+    if !launcher.is_file() {
+        return None;
+    }
+    let real = std::fs::canonicalize(launcher).ok()?;
+    let mut manager_dirs = vec![bin.to_path_buf()];
+    if real.file_name()?.to_str()?.eq_ignore_ascii_case(names.1) {
+        manager_dirs.push(real.parent()?.to_path_buf());
+    }
+    // Windows installs the manager/shim template separately from the user shims.
+    #[cfg(target_os = "windows")]
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        manager_dirs.push(PathBuf::from(program_files).join("Volta"));
+    }
+    let matching_manager = |dir: PathBuf| {
+        let manager = dir.join(names.0);
+        let shim = dir.join(names.1);
+        if !manager.is_file() || !shim.is_file() {
+            return None;
+        }
+        let same_target = std::fs::canonicalize(&shim).ok().as_ref() == Some(&real);
+        (same_target || same_bounded_shim_contents(launcher, &shim)).then_some(manager)
+    };
+    if let Some(manager) = manager_dirs.into_iter().find_map(&matching_manager) {
+        return Some(manager);
+    }
+    if let Some(path) = effective_path_os() {
+        if let Some(manager) = std::env::split_paths(&path)
+            .filter(|dir| dir.is_absolute())
+            .find_map(&matching_manager)
+        {
+            return Some(manager);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    if let Some(path) = cached_login_shell_path() {
+        return std::env::split_paths(&path)
+            .filter(|dir| dir.is_absolute())
+            .find_map(matching_manager);
+    }
+    None
+}
+
+/// Match the process/login-shell configuration used by version probes. Pin it
+/// in update commands so a later shell-config edit cannot change the store.
+pub(super) fn effective_volta_home() -> Option<PathBuf> {
+    let absolute = |value: std::ffi::OsString| {
+        let path = PathBuf::from(value);
+        path.is_absolute().then_some(path)
+    };
+    if let Some(value) = std::env::var_os("VOLTA_HOME") {
+        return absolute(value);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(value) = cached_login_shell_env().and_then(|env| env.volta_home.as_ref()) {
+            return absolute(value.clone());
+        }
+        let root = dirs::home_dir()?.join(".volta");
+        root.is_absolute().then_some(root)
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let root = std::env::var_os("LOCALAPPDATA")
+            .and_then(absolute)
+            .or_else(dirs::data_local_dir)?
+            .join("Volta");
+        root.is_absolute().then_some(root)
+    }
+}
+
+fn same_bounded_shim_contents(launcher: &Path, shim: &Path) -> bool {
+    use std::io::Read;
+    const LIMIT: u64 = 32 * 1024 * 1024;
+    let compare = || -> Option<bool> {
+        let mut a = std::fs::File::open(launcher).ok()?;
+        let mut b = std::fs::File::open(shim).ok()?;
+        let size = a.metadata().ok()?.len();
+        if size == 0 || size > LIMIT || b.metadata().ok()?.len() != size {
+            return Some(false);
+        }
+        let mut left = [0u8; 8192];
+        let mut right = [0u8; 8192];
+        let mut remaining = size;
+        while remaining > 0 {
+            let count = remaining.min(left.len() as u64) as usize;
+            a.read_exact(&mut left[..count]).ok()?;
+            b.read_exact(&mut right[..count]).ok()?;
+            if left[..count] != right[..count] {
+                return Some(false);
+            }
+            remaining -= count as u64;
+        }
+        Some(true)
+    };
+    compare().unwrap_or(false)
+}
+
 pub(super) fn infer_install_source(path: &Path) -> &'static str {
     let s = path
         .to_string_lossy()
@@ -1073,20 +1223,513 @@ pub(super) fn infer_install_source(path: &Path) -> &'static str {
     }
 }
 
-/// 安装来源：Homebrew 看 canonicalize 真身，node 管理器仍看 launcher。
-///
-/// Intel Cask 入口是 `/usr/local/bin/codex`，不含 `/homebrew/` / `/caskroom/`，
-/// 真身才在 `/usr/local/Caskroom/...`。只看 launcher 会把徽章标成 `system`。
-/// nvm/volta/fnm 的分类在 shim 路径上，必须继续用未解析的入口。
-fn infer_install_source_for_install(launcher: &Path, real: &Path) -> &'static str {
+pub(super) fn npm_package_candidates(tool: &str) -> impl Iterator<Item = &'static str> {
+    tool_spec(tool)
+        .npm_package
+        .into_iter()
+        .chain((tool == "opencode").then_some(OPENCODE_V2_NPM_PACKAGE))
+}
+
+/// Verify global npm ownership against the expected package manifest and target.
+pub(super) fn npm_global_package(
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+    windows: bool,
+) -> Option<(PathBuf, serde_json::Value)> {
+    let bin = launcher.parent()?;
+    // A local node_modules/.bin entry is never a global npm launcher. Pi's
+    // managed releases use precisely that layout, even though they contain npm metadata.
+    let prefix = if windows {
+        if bin.file_name().is_some_and(|name| name == ".bin") {
+            return None;
+        }
+        bin
+    } else {
+        if bin.file_name()? != "bin" {
+            return None;
+        }
+        bin.parent()?
+    };
+    let modules = prefix.join(if windows {
+        "node_modules"
+    } else {
+        "lib/node_modules"
+    });
+    let shim = (windows
+        && std::fs::metadata(launcher).is_ok_and(|file| file.is_file() && file.len() <= 32 * 1024)
+        && !is_native_executable(launcher))
+    .then(|| std::fs::read_to_string(launcher).ok())
+    .flatten()
+    .map(|script| script.replace('\\', "/"));
+    let mut owners = npm_package_candidates(tool).filter_map(|package| {
+        let package_dir = std::fs::canonicalize(modules.join(package)).ok()?;
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(package_dir.join("package.json")).ok()?).ok()?;
+        let owns_launcher = real.starts_with(&package_dir)
+            || shim
+                .as_ref()
+                .is_some_and(|script| script.contains(&format!("node_modules/{package}/")));
+        (owns_launcher && manifest.get("name")?.as_str() == Some(package)).then_some(manifest)
+    });
+    let manifest = owners.next()?;
+    owners
+        .next()
+        .is_none()
+        .then(|| (prefix.to_path_buf(), manifest))
+}
+
+pub(super) fn global_node_package_manifest(
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+) -> Option<serde_json::Value> {
+    npm_global_package(tool, launcher, real, cfg!(target_os = "windows"))
+        .map(|(_, manifest)| manifest)
+        .or_else(|| alternate_global_manifest(tool, launcher, real).map(|(_, manifest)| manifest))
+}
+
+pub(super) fn global_node_package_version(
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+) -> Option<String> {
+    let manifest = global_node_package_manifest(tool, launcher, real)?;
+    let version = manifest.get("version")?.as_str()?;
+    (!version.is_empty()).then(|| version.to_owned())
+}
+
+pub(super) fn desktop_managed_codex_cli(tool: &str, real: &Path) -> bool {
+    if tool != "codex" {
+        return false;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        crate::codex_config::codex_macos_desktop_for_cli(real).is_some()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // The desktop app lays out bundled CLI binaries by version in this directory.
+        let Some(root) = std::env::var_os("LOCALAPPDATA") else {
+            return false;
+        };
+        let directory = PathBuf::from(root).join("OpenAI").join("Codex").join("bin");
+        let directory = std::fs::canonicalize(&directory).unwrap_or(directory);
+        real.strip_prefix(directory).is_ok_and(|relative| {
+            relative.components().count() == 2
+                && relative
+                    .file_name()
+                    .is_some_and(|name| name.eq_ignore_ascii_case("codex.exe"))
+        })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = real;
+        false
+    }
+}
+
+/// Read installer metadata without letting a damaged receipt allocate arbitrary memory.
+fn install_json(path: &Path) -> Option<serde_json::Value> {
+    use std::io::Read;
+    const LIMIT: u64 = 128 * 1024;
+    let metadata = std::fs::metadata(path).ok()?;
+    if !metadata.is_file() || metadata.len() > LIMIT {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .ok()?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= LIMIT as usize)
+        .then(|| serde_json::from_slice(&bytes).ok())
+        .flatten()
+}
+
+/// A Yarn lockfile alone also exists in projects. Require the configured global
+/// root, its dependency declaration, and the expected package owning the target.
+fn yarn_global_manifest(
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+    global: &Path,
+) -> Option<serde_json::Value> {
+    if !global.is_absolute() || !global.join("yarn.lock").is_file() {
+        return None;
+    }
+    let project = install_json(&global.join("package.json"))?;
+    npm_package_candidates(tool).find_map(|package| {
+        project.get("dependencies")?.get(package)?;
+        let directory = global
+            .join("node_modules")
+            .join(package)
+            .canonicalize()
+            .ok()?;
+        let manifest = install_json(&directory.join("package.json"))?;
+        if manifest.get("name")?.as_str()? != package {
+            return None;
+        }
+        let owns = real.starts_with(&directory)
+            || yarn_cmd_points_to_package(tool, launcher, &directory, &manifest);
+        owns.then_some(manifest)
+    })
+}
+
+/// Yarn Classic's cmd-shim embeds a quoted path relative to %~dp0. Verify
+/// the declared bin target, not merely the appearance of a package name.
+fn yarn_cmd_points_to_package(
+    tool: &str,
+    launcher: &Path,
+    package: &Path,
+    manifest: &serde_json::Value,
+) -> bool {
+    if !launcher
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"))
+    {
+        return false;
+    }
+    let Some(bin) = manifest.get("bin").and_then(|bins| {
+        bins.get(tool)
+            .and_then(|bin| bin.as_str())
+            .or_else(|| bins.as_str())
+    }) else {
+        return false;
+    };
+    let Some(target) = package
+        .join(bin)
+        .canonicalize()
+        .ok()
+        .filter(|target| target.starts_with(package))
+    else {
+        return false;
+    };
+    let Some(parent) = launcher.parent() else {
+        return false;
+    };
+    use std::io::Read;
+    if !std::fs::metadata(launcher).is_ok_and(|meta| meta.is_file() && meta.len() <= 32 * 1024) {
+        return false;
+    }
+    let mut bytes = Vec::new();
+    if std::fs::File::open(launcher)
+        .and_then(|file| file.take(32 * 1024 + 1).read_to_end(&mut bytes))
+        .is_err()
+        || bytes.len() > 32 * 1024
+    {
+        return false;
+    }
+    let Ok(script) = String::from_utf8(bytes) else {
+        return false;
+    };
+    script.split('"').skip(1).step_by(2).any(|quoted| {
+        let quoted = quoted.replace('\\', "/");
+        let relative = quoted
+            .strip_prefix("%~dp0/")
+            .or_else(|| quoted.strip_prefix("%dp0%/"));
+        relative
+            .filter(|relative| !relative.contains('%'))
+            .is_some_and(|relative| {
+                parent.join(relative).canonicalize().ok().as_ref() == Some(&target)
+            })
+    })
+}
+
+/// Vite+ shims all resolve to `vp`, not the installed CLI. Match the bin receipt
+/// and package manifest; never interpret an arbitrary vp symlink as an installed app.
+fn vite_global_manifest(tool: &str, launcher: &Path, real: &Path) -> Option<serde_json::Value> {
+    let home = crate::config::get_home_dir();
+    let (bin, data) =
+        if let Some(root) = manager_directory_env("VP_HOME").filter(|root| root.is_absolute()) {
+            (root.join("bin"), root)
+        } else if std::fs::symlink_metadata(home.join(".vite-plus/current")).is_ok() {
+            let root = home.join(".vite-plus");
+            (root.join("bin"), root)
+        } else if let (Some(bin), Some(data), Some(cache)) = (
+            manager_directory_env("VP_BIN_DIR"),
+            manager_directory_env("VP_DATA_DIR"),
+            manager_directory_env("VP_CACHE_DIR"),
+        ) {
+            if !bin.is_absolute() || !data.is_absolute() || !cache.is_absolute() {
+                return None;
+            }
+            (bin, data)
+        } else {
+            let bin = launcher.parent()?;
+            let root = bin.parent()?;
+            if root.join(".vp-owned").exists() {
+                (bin.to_path_buf(), root.to_path_buf())
+            } else {
+                let data = manager_directory_env("XDG_DATA_HOME")
+                    .filter(|path| path.is_absolute())
+                    .unwrap_or_else(|| home.join(".local/share"))
+                    .join("vite-plus");
+                (data.join("bin"), data)
+            }
+        };
+    vite_global_manifest_at(tool, launcher, real, &bin, &data)
+}
+
+fn vite_global_manifest_at(
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+    bin: &Path,
+    data: &Path,
+) -> Option<serde_json::Value> {
+    if launcher.parent()?.canonicalize().ok()? != bin.canonicalize().ok()?
+        || !["vp", "vp.exe"]
+            .iter()
+            .any(|name| bin.join(name).canonicalize().ok().as_deref() == Some(real))
+    {
+        return None;
+    }
+    let receipt = install_json(&data.join("bins").join(format!("{tool}.json")))?;
+    let package = receipt.get("package")?.as_str()?;
+    if receipt.get("name")?.as_str()? != tool
+        || receipt.get("source")?.as_str()? != "vp"
+        || !npm_package_candidates(tool).any(|expected| expected == package)
+    {
+        return None;
+    }
+    let version = receipt.get("version")?.as_str()?;
+    // Release directories have opaque IDs. Bound the scan and do not follow
+    // package-directory symlinks outside this manager's store.
+    let store = data.join("packages").join(package).canonicalize().ok()?;
+    for entry in std::fs::read_dir(&store).ok()?.take(64).flatten() {
+        if !entry.file_type().ok()?.is_dir() {
+            continue;
+        }
+        let directory = entry
+            .path()
+            .join("lib/node_modules")
+            .join(package)
+            .canonicalize()
+            .ok();
+        let Some(directory) = directory.filter(|directory| directory.starts_with(&store)) else {
+            continue;
+        };
+        let Some(manifest) = install_json(&directory.join("package.json")) else {
+            continue;
+        };
+        if manifest.get("name").and_then(|value| value.as_str()) == Some(package)
+            && manifest.get("version").and_then(|value| value.as_str()) == Some(version)
+        {
+            return Some(manifest);
+        }
+    }
+    None
+}
+
+fn manager_directory_env(key: &str) -> Option<PathBuf> {
+    if let Some(value) = std::env::var_os(key) {
+        return Some(PathBuf::from(value));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        cached_login_shell_env()?
+            .vars
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| PathBuf::from(value))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        None
+    }
+}
+
+fn yarn_default_global_dir(
+    home: &Path,
+    windows: bool,
+    local_data: Option<PathBuf>,
+    xdg_data: Option<PathBuf>,
+) -> PathBuf {
+    if windows {
+        local_data
+            .map(|root| root.join("Yarn/Data/global"))
+            .unwrap_or_else(|| home.join(".config/yarn/global"))
+    } else {
+        xdg_data
+            .map(|root| root.join("yarn/global"))
+            .unwrap_or_else(|| home.join(".config/yarn/global"))
+    }
+}
+
+fn yarn_global_dir() -> PathBuf {
+    manager_directory_env("YARN_GLOBAL_FOLDER").unwrap_or_else(|| {
+        yarn_default_global_dir(
+            &crate::config::get_home_dir(),
+            cfg!(target_os = "windows"),
+            manager_directory_env("LOCALAPPDATA"),
+            manager_directory_env("XDG_DATA_HOME"),
+        )
+    })
+}
+
+pub(super) fn alternate_global_manifest(
+    tool: &str,
+    launcher: &Path,
+    real: &Path,
+) -> Option<(&'static str, serde_json::Value)> {
+    let global = yarn_global_dir();
+    if let Some(manifest) = yarn_global_manifest(tool, launcher, real, &global) {
+        return Some(("yarn", manifest));
+    }
+    if let Some(manifest) = vite_global_manifest(tool, launcher, real) {
+        return Some(("vite", manifest));
+    }
+    // Ask Yarn itself for .yarnrc-derived global-folder settings. The shared
+    // bounded cache avoids spawning one manager process for every app.
+    let could_be_yarn = real
+        .components()
+        .any(|part| part.as_os_str() == "node_modules")
+        || launcher
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cmd"));
+    if let Some(configured) = could_be_yarn
+        .then(super::configured_yarn_global_dir)
+        .flatten()
+        .filter(|path| path != &global)
+    {
+        return yarn_global_manifest(tool, launcher, real, &configured)
+            .map(|manifest| ("yarn", manifest));
+    }
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(super) fn additional_script_install(tool: &str, launcher: &Path, real: &Path) -> bool {
+    additional_script_install_at(tool, launcher, real, &crate::config::get_home_dir())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn additional_script_install_at(tool: &str, launcher: &Path, real: &Path, home: &Path) -> bool {
+    if tool == "mcode" {
+        return mcode_receipt_install_root(&launcher.to_string_lossy(), McodeLayout::NATIVE)
+            .is_some();
+    }
+    if tool == "pi" {
+        return is_pi_managed_install(&launcher.to_string_lossy());
+    }
+    if !is_native_executable(real) {
+        return false;
+    }
+    match tool {
+        "grok" => {
+            launcher.file_name().is_some_and(|name| name == "grok")
+                && launcher.canonicalize().ok().as_deref() == Some(real)
+                && home
+                    .join(".grok/downloads")
+                    .canonicalize()
+                    .ok()
+                    .is_some_and(|root| real.starts_with(root))
+                && is_grok_native_install(&launcher.to_string_lossy(), &real.to_string_lossy())
+        }
+        "codebuddy" => home
+            .join(".local/share/codebuddy/versions")
+            .canonicalize()
+            .ok()
+            .and_then(|root| real.strip_prefix(root).ok().map(Path::to_path_buf))
+            .is_some_and(|relative| {
+                relative.components().count() == 2
+                    && relative.file_name().is_some_and(|name| name == "codebuddy")
+            }),
+        "omp" => is_omp_standalone_install(launcher, real),
+        "agy" | "copilot" => {
+            if home
+                .join(".local/bin")
+                .join(tool)
+                .canonicalize()
+                .ok()
+                .as_deref()
+                != Some(real)
+            {
+                return false;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let (identifier, team) = if tool == "agy" {
+                    ("cli", "EQHXZ8M8AV")
+                } else {
+                    ("copilot", "VEKTX9H2N7")
+                };
+                crate::config::macos_has_developer_signature(real, identifier, team)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                false
+            } // No receipt distinguishes a downloaded Linux binary from a local copy.
+        }
+        _ => false,
+    }
+}
+
+/// Resolved files establish bundle and Homebrew ownership. Keep the launcher
+/// path for version manager shims such as nvm, Volta, and fnm.
+fn infer_install_source_for_install(tool: &str, launcher: &Path, real: &Path) -> &'static str {
     let real_s = real
         .to_string_lossy()
         .replace('\\', "/")
         .to_ascii_lowercase();
+    if desktop_managed_codex_cli(tool, real) {
+        return "desktop";
+    }
+    // A Homebrew-installed Volta template owns the shim, not its npm app.
+    if verified_volta_manager(launcher).is_some() {
+        return "volta";
+    }
+    if let Some((source, _)) = alternate_global_manifest(tool, launcher, real) {
+        return source;
+    }
     if real_s.contains("/cellar/") || real_s.contains("/caskroom/") {
-        "homebrew"
+        return "homebrew";
+    }
+    if tool == "codex" && is_standalone_codex(launcher, real) {
+        return "curl";
+    }
+    #[cfg(not(target_os = "windows"))]
+    if is_standard_curl_install(tool, real) {
+        return "curl";
+    }
+    let launcher_source = infer_install_source(launcher);
+    if matches!(
+        launcher_source,
+        "homebrew" | "system" | "nvm" | "fnm" | "volta" | "mise"
+    ) && npm_global_package(tool, launcher, real, cfg!(target_os = "windows")).is_some()
+    {
+        return "npm";
+    }
+    #[cfg(not(target_os = "windows"))]
+    if additional_script_install(tool, launcher, real) {
+        return "curl";
+    }
+    if tool == "kimi"
+        && kimi_install_dir(dirs::home_dir().as_deref())
+            .is_some_and(|root| is_kimi_script_install(launcher, real, &root))
+    {
+        return if cfg!(target_os = "windows") {
+            "powershell"
+        } else {
+            "curl"
+        };
+    }
+    #[cfg(not(target_os = "windows"))]
+    if real.starts_with("/nix/store")
+        || (tool == "hermes"
+            && dirs::home_dir()
+                .is_some_and(|home| launcher == home.join(".nix-profile/bin/hermes")))
+    {
+        return "nix";
+    }
+    // A Homebrew prefix can also contain unrelated launchers. The resolved
+    // Cellar/Caskroom path above is the evidence that Homebrew owns this copy.
+    if launcher_source == "homebrew" {
+        "system"
     } else {
-        infer_install_source(launcher)
+        launcher_source
     }
 }
 
@@ -1118,7 +1761,7 @@ fn infer_install_source_for_tool(tool: &str, launcher: &Path, real: &Path) -> &'
     if tool == "opencode" && is_opencode_desktop_sidecar(launcher) {
         "desktop"
     } else {
-        infer_install_source_for_install(launcher, real)
+        infer_install_source_for_install(tool, launcher, real)
     }
 }
 
@@ -1137,25 +1780,54 @@ const LOGIN_ENV_MARKER: &str = "\0__CC_SWITCH_ENV__\0";
 pub(super) struct LoginShellEnv {
     pub(super) path: Option<String>,
     pub(super) vars: Vec<(String, String)>,
+    pub(super) volta_home: Option<std::ffi::OsString>,
 }
 
 #[cfg(not(target_os = "windows"))]
-fn parse_login_shell_env_output(raw: &str) -> Option<LoginShellEnv> {
-    let (_, records) = raw.split_once(LOGIN_ENV_MARKER)?;
+fn parse_login_shell_env_output(raw: &[u8]) -> Option<LoginShellEnv> {
+    use std::os::unix::ffi::OsStringExt;
+    let marker = LOGIN_ENV_MARKER.as_bytes();
+    let start = raw
+        .windows(marker.len())
+        .position(|window| window == marker)?
+        + marker.len();
     let mut env = LoginShellEnv::default();
-    for (key, value) in records
-        .split('\0')
-        .filter_map(|entry| entry.split_once('='))
-    {
-        if !value.starts_with('/') {
+    for entry in raw[start..].split(|byte| *byte == 0) {
+        let Some(separator) = entry.iter().position(|byte| *byte == b'=') else {
+            continue;
+        };
+        let key = &entry[..separator];
+        let value = &entry[separator + 1..];
+        if !value.starts_with(b"/") {
             continue;
         }
+        if key == b"VOLTA_HOME" {
+            env.volta_home = Some(std::ffi::OsString::from_vec(value.to_vec()));
+        }
+        if key == b"PATH" {
+            // Retain the prior PATH decoding behavior: one non-Unicode entry
+            // must not discard usable login-only Node/manager directories.
+            env.path = Some(String::from_utf8_lossy(value).into_owned());
+            continue;
+        }
+        let Ok(value) = std::str::from_utf8(value) else {
+            continue;
+        };
         match key {
-            "PATH" => env.path = Some(value.to_owned()),
-            "VP_HOME" | "VP_BIN_DIR" | "VP_DATA_DIR" | "VP_CACHE_DIR" | "XDG_DATA_HOME"
-            | "XDG_CONFIG_HOME" | "XDG_CACHE_HOME" | "XDG_STATE_HOME" => {
-                env.vars.push((key.to_owned(), value.to_owned()));
-            }
+            b"YARN_GLOBAL_FOLDER"
+            | b"YARN_PREFIX"
+            | b"VP_HOME"
+            | b"VP_BIN_DIR"
+            | b"VP_DATA_DIR"
+            | b"VP_CACHE_DIR"
+            | b"PNPM_HOME"
+            | b"VOLTA_HOME"
+            | b"XDG_DATA_HOME"
+            | b"XDG_CONFIG_HOME"
+            | b"XDG_CACHE_HOME"
+            | b"XDG_STATE_HOME" => env
+                .vars
+                .push((String::from_utf8_lossy(key).into_owned(), value.to_owned())),
             _ => {}
         }
     }
@@ -1217,7 +1889,7 @@ pub(super) fn login_shell_env(deadline: Option<CommandDeadline>) -> Option<Login
     if !out.status.success() {
         return None;
     }
-    parse_login_shell_env_output(&decode_command_output(&out.stdout))
+    parse_login_shell_env_output(&out.stdout)
 }
 
 /// [`login_shell_env`] 的进程级缓存：GUI 启动后登录 shell 环境不会再变，解析一次、全进程共用。
@@ -1420,6 +2092,7 @@ fn install_probe_base_path(
 pub(super) fn run_probe_version_command(
     tool_path: &Path,
     new_path: &std::ffi::OsStr,
+    deadline: Option<CommandDeadline>,
 ) -> Result<std::process::Output, String> {
     use std::process::{Command, Stdio};
 
@@ -1432,12 +2105,13 @@ pub(super) fn run_probe_version_command(
     if let Some(env) = cached_login_shell_env() {
         apply_login_shell_vars(&mut cmd, &env.vars);
     }
+    if verified_volta_manager(tool_path).is_some() {
+        let root = effective_volta_home().ok_or("Cannot verify the configured Volta home")?;
+        cmd.env("VOLTA_HOME", root);
+    }
     isolate_child_process_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| e.to_string())?;
-    wait_child_output(
-        child,
-        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
-    )
+    wait_child_output(child, deadline)
 }
 
 /// 带超时的 `--version` 探测（Windows）。命令构造与 `run_windows_tool_version_command`
@@ -1448,6 +2122,7 @@ pub(super) fn run_probe_version_command(
 pub(super) fn run_probe_version_command(
     tool_path: &Path,
     new_path: &str,
+    deadline: Option<CommandDeadline>,
 ) -> Result<std::process::Output, String> {
     use std::process::Stdio;
 
@@ -1456,10 +2131,7 @@ pub(super) fn run_probe_version_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let child = cmd.spawn().map_err(|e| e.to_string())?;
-    wait_child_output(
-        child,
-        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
-    )
+    wait_child_output(child, deadline)
 }
 
 /// 工具的一处安装位置：只定位，不跑 `--version`。
@@ -1479,19 +2151,42 @@ pub(super) struct LocatedInstall {
 ///
 /// 第二个返回值是解析到的命令行默认入口真身（可能不在搜索目录里，例如只在登录 shell
 /// PATH 里的 asdf、pnpm 全局安装）。
-pub(super) fn locate_tool_installations(
+fn locate_tool_installations(
     tool: &str,
+    only_path: Option<&Path>,
 ) -> (Vec<LocatedInstall>, Option<std::path::PathBuf>) {
-    let search_paths = build_tool_search_paths(tool);
+    let mut search_paths = build_tool_search_paths(tool);
     // 必须带超时：deadline 传 None 时 wait_child_output 无限等，登录 shell 一挂
     // 整个预检就永久卡死（且前端此阶段无任何反馈）。定位失败仅丢失 is_path_default
     // 标记，非致命。
-    let mut path_default = resolve_path_default(
-        tool,
-        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
-    )
-    .ok()
-    .flatten();
+    let deadline = CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT));
+    #[cfg(target_os = "windows")]
+    let mut path_default = resolve_path_default(tool, deadline).ok().flatten();
+    #[cfg(not(target_os = "windows"))]
+    let mut path_default = resolve_path_default_entry(tool, deadline)
+        .ok()
+        .flatten()
+        .map(|entry| {
+            if let Some(dir) = entry
+                .launcher
+                .parent()
+                .filter(|dir| !search_paths.iter().any(|path| path == *dir))
+            {
+                search_paths.push(dir.to_path_buf());
+            }
+            entry.real
+        });
+
+    // The GUI PATH can omit the desktop CLI selected by a login shell.
+    if let Some(dir) = path_default
+        .as_deref()
+        .filter(|path| desktop_managed_codex_cli(tool, path))
+        .and_then(Path::parent)
+    {
+        if !search_paths.iter().any(|path| path == dir) {
+            search_paths.push(dir.to_path_buf());
+        }
+    }
 
     let mut seen: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
     let mut installs: Vec<LocatedInstall> = Vec::new();
@@ -1521,7 +2216,7 @@ pub(super) fn locate_tool_installations(
                 &mut path_default,
                 CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
             );
-            if !seen.insert(real.clone()) {
+            if only_path.is_some_and(|path| path != tool_path) || !seen.insert(real.clone()) {
                 continue;
             }
             let source = infer_install_source_for_tool(tool, &tool_path, &real);
@@ -1547,7 +2242,14 @@ pub(super) fn locate_tool_installations(
 /// `--version`，从而能发现"升级写入 A 处、PATH 实际用 B 处"。定位见
 /// [`locate_tool_installations`]。
 pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> {
-    let (located, _) = locate_tool_installations(tool);
+    enumerate_tool_installations_at(tool, None)
+}
+
+pub(super) fn enumerate_tool_installations_at(
+    tool: &str,
+    only_path: Option<&Path>,
+) -> Vec<ToolInstallation> {
+    let (located, _) = locate_tool_installations(tool, only_path);
     if located.is_empty() {
         return Vec::new();
     }
@@ -1571,14 +2273,25 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
             #[cfg(not(target_os = "windows"))]
             let new_path = prepend_search_dir_to_path(dir, &current_path);
 
-            let output = run_probe_version_command(&install.path, &new_path);
+            let output = run_probe_version_command(
+                &install.path,
+                &new_path,
+                CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+            );
 
             let (version, runnable, error, exited_with_error) = match output {
                 Ok(out) if out.status.success() => {
                     let stdout = decode_command_output(&out.stdout).trim().to_string();
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
-                    let raw = if stdout.is_empty() { stderr } else { stdout };
-                    (Some(extract_version(&raw)), true, None, false)
+                    match parse_tool_version_output(tool, &stdout, &stderr) {
+                        Some(version) => (Some(version), true, None, false),
+                        None => (
+                            None,
+                            false,
+                            Some("Cannot verify the reported CLI version.".into()),
+                            false,
+                        ),
+                    }
                 }
                 Ok(out) => {
                     let stderr = decode_command_output(&out.stderr).trim().to_string();
@@ -1588,7 +2301,7 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
                     let error = if detail.is_empty() {
                         None
                     } else {
-                        Some(last_lines(detail, 4))
+                        Some(version_probe_error(detail))
                     };
                     (None, false, error, true)
                 }
@@ -1623,7 +2336,7 @@ pub(super) struct ToolInstallLocation {
 /// 但不对每处安装跑 `--version`。命令行默认入口不在搜索目录里时（只在登录 shell PATH
 /// 里的 asdf、pnpm 全局、自定义 npm prefix 等）也列出来，免得装了的工具先被归进「未安装」。
 pub(super) fn list_tool_install_locations(tool: &str) -> Vec<ToolInstallLocation> {
-    let (located, path_default) = locate_tool_installations(tool);
+    let (located, path_default) = locate_tool_installations(tool, None);
     let mut locations: Vec<ToolInstallLocation> = Vec::with_capacity(located.len() + 1);
     if let Some(default) = path_default
         .filter(|path| path.is_file() && !located.iter().any(|install| &install.real == path))
@@ -1694,74 +2407,185 @@ pub(super) fn default_install(installs: &[ToolInstallation]) -> Option<&ToolInst
     })
 }
 
+/// A saved launcher is eligible only if it is still discoverable for this tool.
+pub(super) fn is_discovered_tool_launcher(tool: &str, path: &Path) -> bool {
+    if !path.is_absolute() || !path.is_file() {
+        return false;
+    }
+    if build_tool_search_paths(tool).iter().any(|dir| {
+        tool_executable_candidates(tool, dir)
+            .iter()
+            .any(|candidate| candidate == path)
+    }) {
+        return true;
+    }
+    #[cfg(not(target_os = "windows"))]
+    return resolve_path_default_entry(
+        tool,
+        CommandDeadline::from_timeout(Some(INSTALL_PROBE_TIMEOUT)),
+    )
+    .ok()
+    .flatten()
+    .is_some_and(|entry| entry.launcher == path);
+    #[cfg(target_os = "windows")]
+    false
+}
+
+#[derive(Debug)]
+pub(super) enum CliLookupError {
+    Missing,
+    Disabled,
+    Unrunnable,
+    Ambiguous,
+    Probe(String),
+}
+
+impl CliLookupError {
+    pub(super) fn into_message(self, tool: &str) -> String {
+        match self {
+            Self::Missing => format!("{tool} is not installed"),
+            Self::Disabled => {
+                format!("No enabled installation of {tool} is available in CC Switch")
+            }
+            Self::Unrunnable => format!("No installed CLI for {tool} could run"),
+            Self::Ambiguous => {
+                format!("{tool} is installed but its default installation is ambiguous")
+            }
+            Self::Probe(message) => message,
+        }
+    }
+}
+
 pub(super) fn locate_default_tool(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<std::path::PathBuf, String> {
-    let path_default = resolve_path_default_entry(tool, deadline)?;
-    locate_default_tool_in(tool, path_default, &build_tool_search_paths(tool), deadline)
+    locate_enabled_tool(tool, deadline, &[], |_| true).map_err(|error| error.into_message(tool))
 }
 
-fn locate_default_tool_in(
+pub(super) fn locate_enabled_tool(
     tool: &str,
-    path_default: Option<ResolvedPathDefault>,
-    search_paths: &[std::path::PathBuf],
-    #[cfg_attr(target_os = "windows", allow(unused_variables))] deadline: Option<CommandDeadline>,
-) -> Result<std::path::PathBuf, String> {
+    deadline: Option<CommandDeadline>,
+    disabled: &[PathBuf],
+    is_runnable: impl FnMut(&Path) -> bool,
+) -> Result<PathBuf, CliLookupError> {
+    let path_default = resolve_path_default_entry(tool, deadline).map_err(CliLookupError::Probe)?;
+    locate_enabled_tool_in(
+        tool,
+        deadline,
+        disabled,
+        path_default,
+        &build_tool_search_paths(tool),
+        is_runnable,
+    )
+}
+
+fn locate_enabled_tool_in(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+    disabled: &[PathBuf],
+    default_entry: Option<ResolvedPathDefault>,
+    search_paths: &[PathBuf],
+    mut is_runnable: impl FnMut(&Path) -> bool,
+) -> Result<PathBuf, CliLookupError> {
+    let mut saw_disabled = false;
     let mut seen = std::collections::HashSet::new();
     let mut candidates = Vec::new();
+    let mut mise_target = None;
+    let mut path_default = default_entry.as_ref().map(|entry| entry.real.clone());
     for dir in search_paths {
-        for candidate in tool_executable_candidates(tool, dir) {
-            if !candidate.exists() {
+        for launcher in tool_executable_candidates(tool, dir) {
+            if !launcher.is_file() {
                 continue;
             }
-            let real = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
-            if path_default
-                .as_ref()
-                .is_some_and(|default| default.real == real)
+            let real = std::fs::canonicalize(&launcher).unwrap_or_else(|_| launcher.clone());
+            let (candidate, target) = resolve_mise_shim_install(
+                tool,
+                launcher.clone(),
+                real.clone(),
+                &mut path_default,
+                deadline,
+            );
+            if disabled.contains(&launcher)
+                || disabled.contains(&real)
+                || disabled.contains(&candidate)
+                || disabled.contains(&target)
             {
-                return Ok(candidate);
+                saw_disabled = true;
+                continue;
             }
-            if seen.insert(real.clone()) {
-                candidates.push((candidate, real));
+            if candidate != launcher && mise_target.is_none() {
+                mise_target = Some(target.clone());
+            }
+            if seen.insert(target.clone()) {
+                candidates.push((candidate, target));
             }
         }
     }
 
-    if let Some(default) = path_default {
-        // 保留原始入口路径而非 canonicalize 后的真身：指向 multicall 二进制（如 pnpm/mise/volta）
-        // 的软链如果展开后直接执行，会丢失 `argv[0]` 身份导致跑成宿主工具本身（#9960）。
-        return Ok(default.launcher);
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    if candidates.len() > 1 {
-        if let Some(target) = candidates
-            .iter()
-            .find_map(|(candidate, real)| mise_shim_target(tool, candidate, real, deadline))
+    let mut saw_unrunnable = false;
+    if let (Some(path), Some(entry)) = (path_default, default_entry) {
+        if disabled.contains(&path)
+            || disabled.contains(&entry.launcher)
+            || disabled.contains(&entry.real)
         {
-            return Ok(target);
+            saw_disabled = true;
+        } else {
+            let launcher = if path == entry.real {
+                &entry.launcher
+            } else {
+                &path
+            };
+            if is_runnable(launcher) {
+                return Ok(launcher.to_path_buf());
+            }
+            saw_unrunnable = true;
+            candidates.retain(|(_, target)| *target != path);
+        }
+    }
+    candidates.retain(|(candidate, _)| {
+        let runnable = is_runnable(candidate);
+        saw_unrunnable |= !runnable;
+        runnable
+    });
+    if candidates.len() > 1 {
+        if let Some((candidate, _)) = candidates
+            .iter()
+            .find(|(_, target)| Some(target) == mise_target.as_ref())
+        {
+            return Ok(candidate.clone());
         }
     }
 
     match candidates.as_slice() {
         [(only, _)] => Ok(only.clone()),
-        [] => desktop_bundled_tool(tool).ok_or_else(|| format!("{tool} is not installed")),
-        _ => Err(format!(
-            "{tool} is installed but its default installation is ambiguous"
-        )),
+        [] if saw_unrunnable => Err(CliLookupError::Unrunnable),
+        [] if saw_disabled => Err(CliLookupError::Disabled),
+        [] => Err(CliLookupError::Missing),
+        _ => Err(CliLookupError::Ambiguous),
     }
 }
 
-/// 只装了 Codex 桌面版的人没有独立 CLI：运行时命令（插件页、守护进程重启）退到桌面版自带的
-/// 那个（#9850），与模型目录探测用的是同一份候选。只在这里兜底、不进安装枚举：应用页的检测、
-/// 升级、卸载仍只管独立安装的 CLI（#8468）。
-fn desktop_bundled_tool(tool: &str) -> Option<std::path::PathBuf> {
-    if tool == "codex" {
-        crate::codex_config::codex_desktop_cli()
-    } else {
-        None
-    }
+/// Probe the candidate with the same PATH setup used by installation diagnostics.
+pub(super) fn cli_installation_is_runnable(path: &Path, deadline: Option<CommandDeadline>) -> bool {
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    let Some(deadline) = CommandDeadline::for_install_probe(deadline) else {
+        return false;
+    };
+    #[cfg(target_os = "windows")]
+    let probe_path = format!("{};{}", dir.display(), effective_path_string());
+    #[cfg(not(target_os = "windows"))]
+    let probe_path = prepend_search_dir_to_path(
+        dir,
+        &install_probe_base_path(
+            cached_login_shell_path().as_deref(),
+            &effective_path_os().unwrap_or_default(),
+        ),
+    );
+    run_probe_version_command(path, &probe_path, Some(deadline))
+        .is_ok_and(|output| output.status.success())
 }
 
 /// mise 的 shim 是指向 mise 本体的软链，canonicalize 后和它调度的真身不是同一个文件，
