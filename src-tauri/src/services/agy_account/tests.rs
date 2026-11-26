@@ -179,6 +179,41 @@ mod switching {
         assert_eq!(*login.writes.lock().unwrap(), 0, "查看状态不写钥匙串");
     }
 
+    #[test]
+    fn cloud_snapshot_waits_for_a_failed_binding_save_to_roll_back() {
+        use crate::services::sync_protocol::sync_mutex;
+
+        struct CancelUnlock;
+
+        impl AgyLoginStore for CancelUnlock {
+            fn read(&self) -> Result<Option<String>, AppError> {
+                assert!(sync_mutex().try_lock().is_err());
+                Err(AppError::Message("keychain unlock cancelled".into()))
+            }
+
+            fn write(&self, _: &str) -> Result<(), AppError> {
+                unreachable!("a cancelled unlock must not write")
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let manager =
+            AgyAccountManager::with_login_store(dir.path().to_path_buf(), Arc::new(CancelUnlock));
+        tauri::async_runtime::block_on(add(&manager, "bob"));
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        state
+            .db
+            .save_provider(&AppType::Agy, &official_card("alice"))
+            .unwrap();
+        let before = state.db.export_sql_string_for_sync().unwrap();
+
+        let error = save_from_editor(&state, &manager, official_card("bob")).unwrap_err();
+        assert_eq!(error.to_string(), "keychain unlock cancelled");
+
+        let _sync_guard = sync_mutex().blocking_lock();
+        assert_eq!(state.db.export_sql_string_for_sync().unwrap(), before);
+    }
+
     #[tokio::test]
     async fn status_leaves_a_locked_keychain_alone_but_switch_can_unlock_it() {
         let (_dir, login, manager) = manager();

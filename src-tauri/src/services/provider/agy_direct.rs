@@ -9,6 +9,7 @@ use crate::database::Database;
 use crate::error::AppError;
 use crate::provider::Provider;
 use crate::services::agy_account::{keychain, AgyAccountManager};
+use crate::services::sync_protocol::sync_mutex;
 use crate::store::AppState;
 
 use super::{lock_native_provider_operations, ProviderService};
@@ -41,11 +42,15 @@ pub(crate) fn save_from_editor(
     mut provider: Provider,
 ) -> Result<bool, AppError> {
     let app = AppType::Agy;
+    let binding = bound_account_id(&provider);
+    // Take the sync lock first, as restores may project provider configuration.
+    // Snapshots must wait until the login switch has succeeded or the row is restored.
+    let _sync_guard =
+        (binding.is_some() && keychain::supported()).then(|| sync_mutex().blocking_lock());
     let _guard = lock_native_provider_operations(state, &app);
     ProviderService::prepare_new_provider(&app, &mut provider)?;
     let previous = state.db.get_provider_by_id(&provider.id, &app)?;
-    let binding_changed =
-        bound_account_id(&provider) != previous.as_ref().and_then(bound_account_id);
+    let binding_changed = binding != previous.as_ref().and_then(bound_account_id);
 
     state.db.save_provider(&app, &provider)?;
     if !binding_changed {
