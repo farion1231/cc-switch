@@ -47,15 +47,17 @@ export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
 export async function invalidateClaudeOfficialLoginCaches(
   queryClient: QueryClient,
 ) {
+  void queryClient
+    .invalidateQueries({
+      queryKey: subscriptionKeys.quota("claude"),
+    })
+    .catch(() => undefined);
   await Promise.all([
     queryClient.invalidateQueries({
       queryKey: managedAuthStatusQueryKey("claude_official"),
     }),
     queryClient.invalidateQueries({
       queryKey: ["claude_official", "default_plan"],
-    }),
-    queryClient.invalidateQueries({
-      queryKey: subscriptionKeys.quota("claude"),
     }),
   ]);
 }
@@ -69,58 +71,63 @@ export async function invalidateManagedAuthQuotaCaches(
   authProvider: ManagedAuthProvider,
   options?: { accountId?: string; allAccounts?: boolean },
 ) {
-  const keys: Array<readonly unknown[]> = [];
+  const statusKeys: Array<readonly unknown[]> = [];
+  const quotaKeys: Array<readonly unknown[]> = [];
   const accountId = options?.accountId?.trim();
   const allAccounts = options?.allAccounts === true;
 
   if (authProvider === "agy_oauth") {
-    keys.push(agyAuthStatusQuery.queryKey, subscriptionKeys.quota("agy"));
+    statusKeys.push(agyAuthStatusQuery.queryKey);
+    quotaKeys.push(subscriptionKeys.quota("agy"));
     if (allAccounts) {
-      keys.push(["agy_oauth", "quota"]);
+      quotaKeys.push(["agy_oauth", "quota"]);
     } else if (accountId) {
-      keys.push(["agy_oauth", "quota", accountId]);
+      quotaKeys.push(["agy_oauth", "quota", accountId]);
     }
   } else if (authProvider === "codex_oauth") {
-    keys.push(["codex_oauth", "quota", "default"]);
+    quotaKeys.push(["codex_oauth", "quota", "default"]);
     if (allAccounts) {
-      keys.push(["codex_oauth", "quota"]);
+      quotaKeys.push(["codex_oauth", "quota"]);
     } else if (accountId) {
-      keys.push(["codex_oauth", "quota", accountId]);
+      quotaKeys.push(["codex_oauth", "quota", accountId]);
     }
   } else if (authProvider === "github_copilot") {
-    keys.push(["copilot", "quota", "default"]);
+    quotaKeys.push(["copilot", "quota", "default"]);
     if (allAccounts) {
-      keys.push(["copilot", "quota"]);
+      quotaKeys.push(["copilot", "quota"]);
     } else if (accountId) {
-      keys.push(["copilot", "quota", accountId]);
+      quotaKeys.push(["copilot", "quota", accountId]);
     }
   } else if (authProvider === "xai_oauth") {
-    keys.push(["xai_oauth", "quota", "default"]);
+    quotaKeys.push(["xai_oauth", "quota", "default"]);
     if (allAccounts) {
-      keys.push(["xai_oauth", "quota"]);
+      quotaKeys.push(["xai_oauth", "quota"]);
     } else if (accountId) {
-      keys.push(["xai_oauth", "quota", accountId]);
+      quotaKeys.push(["xai_oauth", "quota", accountId]);
     }
   } else if (authProvider === "claude_official") {
-    keys.push(
-      ["claude_official", "default_plan"],
-      subscriptionKeys.quota("claude"),
-    );
+    statusKeys.push(["claude_official", "default_plan"]);
+    quotaKeys.push(subscriptionKeys.quota("claude"));
     if (allAccounts) {
-      keys.push(["claude_official", "quota"]);
+      quotaKeys.push(["claude_official", "quota"]);
     } else if (accountId) {
-      keys.push(["claude_official", "quota", accountId]);
+      quotaKeys.push(["claude_official", "quota", accountId]);
     }
   } else if (authProvider === "codebuddy_oauth") {
     if (allAccounts) {
-      keys.push(["codebuddy_oauth", "quota"]);
+      quotaKeys.push(["codebuddy_oauth", "quota"]);
     } else if (accountId) {
-      keys.push(["codebuddy_oauth", "quota", accountId]);
+      quotaKeys.push(["codebuddy_oauth", "quota", accountId]);
     }
   }
 
+  void Promise.all(
+    quotaKeys.map((queryKey) =>
+      queryClient.resetQueries({ queryKey }).catch(() => undefined),
+    ),
+  );
   await Promise.all(
-    keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+    statusKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
   );
 }
 
@@ -178,6 +185,9 @@ function useQuotaKeepLastGood(
   }>({ key: scopeKey, snap: null });
   if (lastGoodRef.current.key !== scopeKey) {
     lastGoodRef.current = { key: scopeKey, snap: null };
+  }
+  if (query.data === undefined && query.dataUpdatedAt === 0 && !query.isError) {
+    lastGoodRef.current.snap = null;
   }
   const { data, lastGood } = resolveDisplayUsage(
     query.data,

@@ -700,7 +700,7 @@ describe("useManagedAuth", () => {
     expect(queryClient.getQueryState(quotaKey)?.isInvalidated).toBe(false);
   });
 
-  it("invalidates shared default and account quota caches on removeAccount and logout", async () => {
+  it("resets shared default and account quota caches on removeAccount and logout", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -723,14 +723,12 @@ describe("useManagedAuth", () => {
     act(() => codex.result.current.removeAccount("acct-1"));
     await waitFor(() =>
       expect(
-        queryClient.getQueryState(["codex_oauth", "quota", "acct-1"])
-          ?.isInvalidated,
-      ).toBe(true),
+        queryClient.getQueryData(["codex_oauth", "quota", "acct-1"]),
+      ).toBeUndefined(),
     );
     expect(
-      queryClient.getQueryState(["codex_oauth", "quota", "default"])
-        ?.isInvalidated,
-    ).toBe(true);
+      queryClient.getQueryData(["codex_oauth", "quota", "default"]),
+    ).toBeUndefined();
 
     const copilot = renderHook(() => useManagedAuth("github_copilot"), {
       wrapper: createWrapper(queryClient),
@@ -741,16 +739,15 @@ describe("useManagedAuth", () => {
     act(() => copilot.result.current.logout());
     await waitFor(() =>
       expect(
-        queryClient.getQueryState(["copilot", "quota", "acct-gh"])
-          ?.isInvalidated,
-      ).toBe(true),
+        queryClient.getQueryData(["copilot", "quota", "acct-gh"]),
+      ).toBeUndefined(),
     );
     expect(
-      queryClient.getQueryState(["copilot", "quota", "default"])?.isInvalidated,
-    ).toBe(true);
+      queryClient.getQueryData(["copilot", "quota", "default"]),
+    ).toBeUndefined();
   });
 
-  it("invalidates default quota / plan caches on setDefaultAccount across providers", async () => {
+  it("resets default quota and invalidates plan caches on setDefaultAccount across providers", async () => {
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false },
@@ -779,9 +776,8 @@ describe("useManagedAuth", () => {
           ?.isInvalidated,
       ).toBe(true);
       expect(
-        queryClient.getQueryState(["subscription", "quota", "claude"])
-          ?.isInvalidated,
-      ).toBe(true);
+        queryClient.getQueryData(["subscription", "quota", "claude"]),
+      ).toBeUndefined();
     });
 
     const xai = renderHook(() => useManagedAuth("xai_oauth"), {
@@ -791,21 +787,27 @@ describe("useManagedAuth", () => {
     act(() => xai.result.current.setDefaultAccount("acct-1"));
     await waitFor(() =>
       expect(
-        queryClient.getQueryState(["xai_oauth", "quota", "default"])
-          ?.isInvalidated,
-      ).toBe(true),
+        queryClient.getQueryData(["xai_oauth", "quota", "default"]),
+      ).toBeUndefined(),
     );
 
     const agy = renderHook(() => useManagedAuth("agy_oauth"), {
       wrapper: createWrapper(queryClient),
     });
     await waitFor(() => expect(agy.result.current.isStatusSuccess).toBe(true));
+    const agyStatusCallsBefore = apiMocks.authGetStatus.mock.calls.filter(
+      ([provider]) => provider === "agy_oauth",
+    ).length;
     act(() => agy.result.current.setDefaultAccount("acct-1"));
-    await waitFor(() =>
+    await waitFor(() => {
       expect(
-        queryClient.getQueryState(["subscription", "quota", "agy"])
-          ?.isInvalidated,
-      ).toBe(true),
-    );
+        apiMocks.authGetStatus.mock.calls.filter(
+          ([provider]) => provider === "agy_oauth",
+        ).length,
+      ).toBeGreaterThan(agyStatusCallsBefore);
+      expect(
+        queryClient.getQueryData(["subscription", "quota", "agy"]),
+      ).toBeUndefined();
+    });
   });
 });

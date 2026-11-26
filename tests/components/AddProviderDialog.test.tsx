@@ -681,4 +681,51 @@ context_window = 500000
       expect(screen.getByRole("button", { name: "common.add" })).toBeEnabled(),
     );
   });
+
+  it("does not close a newly opened dialog when a previous app save resolves late", async () => {
+    let resolveSave!: () => void;
+    const handleSubmit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveSave = resolve;
+        }),
+    );
+    const handleOpenChange = vi.fn();
+
+    const { rerender } = render(
+      <AddProviderDialog
+        open
+        onOpenChange={handleOpenChange}
+        appId="codex"
+        onSubmit={handleSubmit}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "common.add" }));
+    await waitFor(() => expect(handleSubmit).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <AddProviderDialog
+        open={false}
+        onOpenChange={handleOpenChange}
+        appId="codex"
+        onSubmit={handleSubmit}
+      />,
+    );
+    rerender(
+      <AddProviderDialog
+        open
+        onOpenChange={handleOpenChange}
+        appId="gemini"
+        onSubmit={handleSubmit}
+      />,
+    );
+    handleOpenChange.mockClear();
+
+    await act(async () => {
+      resolveSave();
+    });
+
+    expect(handleOpenChange).not.toHaveBeenCalled();
+  });
 });

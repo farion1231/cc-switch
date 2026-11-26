@@ -297,11 +297,13 @@ export function AddProviderDialog({
         );
       }
 
-      setUniversalFormOpen(false);
-      setSelectedUniversalPreset(null);
-      onOpenChange(false);
+      if (currentFormSessionToken.current === formSessionToken) {
+        setUniversalFormOpen(false);
+        setSelectedUniversalPreset(null);
+        onOpenChange(false);
+      }
     },
-    [t, onOpenChange],
+    [t, onOpenChange, formSessionToken],
   );
 
   const handleUniversalFormClose = useCallback(() => {
@@ -514,7 +516,9 @@ export function AddProviderDialog({
           ...providerData,
           ...(editorBase ? { editorSave: { ...editorBase, onConflict } } : {}),
         });
-        closeDialog();
+        if (currentFormSessionToken.current === formSessionToken) {
+          closeDialog();
+        }
       };
       await submitWithConflictRetry(submit);
     },
@@ -526,6 +530,7 @@ export function AddProviderDialog({
       projectsDraft,
       draftEditorBase,
       submitWithConflictRetry,
+      formSessionToken,
     ],
   );
 

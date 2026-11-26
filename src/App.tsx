@@ -24,7 +24,10 @@ import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import type { SubscriptionQuota } from "@/types/subscription";
-import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
+import {
+  invalidateClaudeOfficialLoginCaches,
+  invalidateGrokCliLoginCaches,
+} from "@/lib/query/subscription";
 import { providersQueryOptions, useProvidersQuery } from "@/lib/query/queries";
 import { useSettingsQuery } from "@/lib/query/settings";
 import { proxyKeys } from "@/lib/query/proxy";
@@ -535,9 +538,7 @@ function App() {
             }
             if (event.appType === "claude") {
               // 托盘切卡、应用项目同样可能把默认登录收成新账号
-              await queryClient.invalidateQueries({
-                queryKey: ["managed-auth-status", "claude_official"],
-              });
+              await invalidateClaudeOfficialLoginCaches(queryClient);
             }
             if (event.appType === "grokbuild") {
               // 托盘切卡同样可能把 Grok CLI 原登录收成新账号、换成绑定的号
