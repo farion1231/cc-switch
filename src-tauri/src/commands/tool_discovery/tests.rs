@@ -717,6 +717,13 @@ mod anchored_upgrade {
         assert_eq!(merge_path_segments("/usr/bin::/bin", ""), "/usr/bin:/bin");
     }
 
+    #[test]
+    fn pi_search_paths_include_managed_install_bin() {
+        let home = crate::config::get_home_dir();
+        let paths = build_tool_search_paths("pi");
+        assert!(paths.contains(&home.join(".pi").join("agent").join("bin")));
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_search_paths_include_pnpm_global_bin_dirs() {
