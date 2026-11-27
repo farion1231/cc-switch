@@ -1,0 +1,20 @@
+[Desktop Entry]
+# The desktop entry must be installed as `cc-switch.desktop` because that is the
+# application id of this binary: on Wayland, compositors resolve the window icon by
+# looking up `<app_id>.desktop` (e.g. KWin falls back to the generic "wayland" icon
+# when the lookup fails), so the file name has to match. That is why the Linux
+# product name is "cc-switch" and the user-facing label is hardcoded here instead of
+# interpolating the product name. Keep both in sync when touching src-tauri/tauri.linux.conf.json.
+Name=CC Switch
+Categories={{categories}}
+{{#if comment}}
+Comment={{comment}}
+{{/if}}
+Exec={{exec}}
+StartupWMClass={{exec}}
+Icon={{icon}}
+Terminal=false
+Type=Application
+{{#if mime_type}}
+MimeType={{mime_type}}
+{{/if}}
