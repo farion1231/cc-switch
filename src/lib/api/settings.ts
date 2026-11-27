@@ -37,6 +37,13 @@ export const settingsApi = {
     return await invoke("get_settings");
   },
 
+  async setModuleManagement(
+    module: "mcp" | "skills",
+    enabled: boolean,
+  ): Promise<void> {
+    await invoke("set_module_management", { module, enabled });
+  },
+
   async save(settings: Settings): Promise<boolean> {
     return await invoke("save_settings", { settings });
   },

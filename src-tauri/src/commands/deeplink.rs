@@ -59,6 +59,7 @@ pub async fn import_from_deeplink_unified(
             }))
         }
         "mcp" => {
+            crate::settings::require_mcp_management_enabled()?;
             let result = import_mcp_from_deeplink(&state, request)?;
             // Add type field to the result
             Ok(serde_json::json!({
@@ -69,6 +70,7 @@ pub async fn import_from_deeplink_unified(
             }))
         }
         "skill" => {
+            crate::settings::require_skills_management_enabled()?;
             let skill_key = import_skill_from_deeplink(&state, request)?;
             Ok(serde_json::json!({
                 "type": "skill",

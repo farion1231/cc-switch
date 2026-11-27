@@ -814,44 +814,47 @@ pub fn run() {
             }
 
             // 1.1. Skills 统一管理迁移：当数据库迁移到 v3 结构后，自动从各应用目录导入到 SSOT
-            // 触发条件由 schema 迁移设置 settings.skills_ssot_migration_pending = true 控制。
-            match app_state.db.get_setting("skills_ssot_migration_pending") {
-                Ok(Some(flag)) if flag == "true" || flag == "1" => {
-                    // 安全保护：如果用户已经有 v3 结构的 Skills 数据，就不要自动清空重建。
-                    let has_existing = app_state
-                        .db
-                        .get_all_installed_skills()
-                        .map(|skills| !skills.is_empty())
-                        .unwrap_or(false);
-
-                    if has_existing {
-                        log::info!(
-                            "Detected skills_ssot_migration_pending but skills table not empty; skipping auto import."
-                        );
-                        let _ = app_state
+            // 触发条件由 schema 迁移设置 settings.skills_ssot_migration_pending = true 控制；
+            // 仅在用户开启 Skills 管理时运行，关闭状态下绝不扫描或创建 Skills 目录。
+            if crate::settings::is_skills_management_enabled() {
+                match app_state.db.get_setting("skills_ssot_migration_pending") {
+                    Ok(Some(flag)) if flag == "true" || flag == "1" => {
+                        // 安全保护：如果用户已经有 v3 结构的 Skills 数据，就不要自动清空重建。
+                        let has_existing = app_state
                             .db
-                            .set_setting("skills_ssot_migration_pending", "false");
-                    } else {
-                        match crate::services::skill::migrate_skills_to_ssot(&app_state.db) {
-                            Ok(count) => {
-                                log::info!("✓ Auto imported {count} skill(s) into SSOT");
-                                if count > 0 {
-                                    crate::init_status::set_skills_migration_result(count);
+                            .get_all_installed_skills()
+                            .map(|skills| !skills.is_empty())
+                            .unwrap_or(false);
+
+                        if has_existing {
+                            log::info!(
+                                "Detected skills_ssot_migration_pending but skills table not empty; skipping auto import."
+                            );
+                            let _ = app_state
+                                .db
+                                .set_setting("skills_ssot_migration_pending", "false");
+                        } else {
+                            match crate::services::skill::migrate_skills_to_ssot(&app_state.db) {
+                                Ok(count) => {
+                                    log::info!("✓ Auto imported {count} skill(s) into SSOT");
+                                    if count > 0 {
+                                        crate::init_status::set_skills_migration_result(count);
+                                    }
+                                    let _ = app_state
+                                        .db
+                                        .set_setting("skills_ssot_migration_pending", "false");
                                 }
-                                let _ = app_state
-                                    .db
-                                    .set_setting("skills_ssot_migration_pending", "false");
-                            }
-                            Err(e) => {
-                                log::warn!("✗ Failed to auto import legacy skills to SSOT: {e}");
-                                crate::init_status::set_skills_migration_error(e.to_string());
-                                // 保留 pending 标志，方便下次启动重试
+                                Err(e) => {
+                                    log::warn!("✗ Failed to auto import legacy skills to SSOT: {e}");
+                                    crate::init_status::set_skills_migration_error(e.to_string());
+                                    // 保留 pending 标志，方便下次启动重试
+                                }
                             }
                         }
                     }
+                    Ok(_) => {} // 未开启迁移标志，静默跳过
+                    Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
                 }
-                Ok(_) => {} // 未开启迁移标志，静默跳过
-                Err(e) => log::warn!("✗ Failed to read skills migration flag: {e}"),
             }
 
             // 1.5. 自动导入 live 配置 + seed 官方预设供应商（Claude / Codex / Gemini）
@@ -1110,8 +1113,10 @@ pub fn run() {
                 }
             }
 
-            // 3. 导入 MCP 服务器配置（表空时触发）
-            if app_state.db.is_mcp_table_empty().unwrap_or(false) {
+            // 3. 导入 MCP 服务器配置（仅在开启 MCP 管理且表空时触发）
+            if crate::settings::is_mcp_management_enabled()
+                && app_state.db.is_mcp_table_empty().unwrap_or(false)
+            {
                 log::info!("MCP table empty, importing from live configurations...");
 
                 for (app, label) in [
@@ -1607,6 +1612,7 @@ pub fn run() {
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,
+            commands::set_module_management,
             commands::has_codex_unify_history_backup,
             commands::codex_forces_multi_agent_v2,
             commands::get_codex_session_compression,

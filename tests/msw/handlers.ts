@@ -295,6 +295,15 @@ export const handlers = [
 
   http.post(`${TAURI_ENDPOINT}/check_env_conflicts`, () => success([])),
 
+  http.post(`${TAURI_ENDPOINT}/set_module_management`, async ({ request }) => {
+    const { module, enabled } = await withJson<{
+      module: "mcp" | "skills";
+      enabled: boolean;
+    }>(request);
+    setSettings({ [module === "mcp" ? "manageMcp" : "manageSkills"]: enabled });
+    return success(null);
+  }),
+
   http.post(`${TAURI_ENDPOINT}/save_settings`, async ({ request }) => {
     const { settings } = await withJson<{ settings: Settings }>(request);
     setSettings(settings);

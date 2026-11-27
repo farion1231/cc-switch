@@ -3817,7 +3817,9 @@
       "privateEndpoint": "This address points at localhost or a private network. Do not import unless it is your own local service.",
       "shellCommand": "This config runs a full command line through a shell — what actually executes is in the arguments. Review each line.",
       "mcpDangerousField": "This MCP config contains high-risk fields that can read host environment variables (e.g. bearer_token_env_var, env_http_headers, env_vars), execute helper commands (http_headers_helper), or override the working directory (cwd). Import only if you fully trust the source."
-    }
+    },
+    "mcpManagementDisabled": "MCP management is turned off. Enable it on the MCP page first.",
+    "skillsManagementDisabled": "Skills management is turned off. Enable it on the Skills page first."
   },
   "iconPicker": {
     "search": "Search Icons",
@@ -4411,7 +4413,8 @@
     },
     "needsAttention": "Needs attention",
     "back": "Back",
-    "plugins": "Plugins"
+    "plugins": "Plugins",
+    "off": "Off"
   },
   "appsPage": {
     "showInSidebar": "Show {{name}} in the sidebar",
@@ -5554,6 +5557,27 @@
     "hint": "It may have been saved by a newer version of CC Switch. The stored data is kept as is and can't be edited or enabled; upgrading restores it, or you can delete it.",
     "confirmTitle": "Delete unreadable entry",
     "confirmMessage": "Delete “{{name}}”? Only this CC Switch record is removed; the apps' own config files are not changed."
+  },
+  "moduleManagement": {
+    "offBadge": "Off",
+    "mcp": {
+      "offTitle": "MCP management is off",
+      "offDescription": "While turned off, CC Switch will not read or modify any app's MCP configuration. You can edit configs yourself or manage them with other tools.",
+      "enableButton": "Enable MCP management",
+      "headerSwitchAria": "Turn off MCP management",
+      "headerSwitchTip": "Turn off MCP management (keeps existing configs and records)",
+      "toastEnabled": "MCP management enabled",
+      "toastDisabled": "MCP management turned off — CC Switch will no longer touch your MCP configs"
+    },
+    "skills": {
+      "offTitle": "Skills management is off",
+      "offDescription": "When management is off, CC Switch stops importing Skills and syncing them to apps. Existing files and records remain. Cloud sync still transfers Skills files and records, including those in the shared ~/.agents/skills directory.",
+      "enableButton": "Enable Skills management",
+      "headerSwitchAria": "Turn off Skills management",
+      "headerSwitchTip": "Turn off Skills management (keeps existing files and records)",
+      "toastEnabled": "Skills management enabled",
+      "toastDisabled": "Skills management turned off; cloud sync remains unchanged"
+    }
   },
   "zcode": {
     "addModel": "Add Model",

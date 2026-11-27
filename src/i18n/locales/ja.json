@@ -3817,7 +3817,9 @@
       "privateEndpoint": "このアドレスはローカルホストまたは内部ネットワークを指しています。自分で立てたローカルサービス以外はインポートしないでください。",
       "shellCommand": "この設定はシェル経由でコマンド全体を実行します。実際に動作する内容は引数にあります。1 行ずつ確認してください。",
       "mcpDangerousField": "この MCP 設定には、ホストの環境変数の読み取り（bearer_token_env_var、env_http_headers、env_vars など）、ヘルパーコマンドの実行（http_headers_helper）、または作業ディレクトリの変更（cwd）を行える高リスク項目が含まれています。完全に信頼できる提供元の場合のみインポートしてください。"
-    }
+    },
+    "mcpManagementDisabled": "MCP 管理がオフになっています。先に MCP ページで有効にしてからインポートしてください。",
+    "skillsManagementDisabled": "Skills 管理がオフになっています。先に Skills ページで有効にしてからインポートしてください。"
   },
   "iconPicker": {
     "search": "アイコンを検索",
@@ -4411,7 +4413,8 @@
     },
     "needsAttention": "対応が必要",
     "back": "戻る",
-    "plugins": "プラグイン"
+    "plugins": "プラグイン",
+    "off": "オフ"
   },
   "appsPage": {
     "showInSidebar": "{{name}} をサイドバーに表示",
@@ -5554,6 +5557,27 @@
     "hint": "新しいバージョンの CC Switch で保存された可能性があります。データはそのまま保持され、編集や有効化はできません。アップグレードすると復元されます。削除することもできます。",
     "confirmTitle": "読み取れない項目を削除",
     "confirmMessage": "「{{name}}」を削除しますか？CC Switch のこの記録だけを削除し、各アプリの設定ファイルは変更しません。"
+  },
+  "moduleManagement": {
+    "offBadge": "オフ",
+    "mcp": {
+      "offTitle": "MCP 管理はオフです",
+      "offDescription": "オフの間、CC Switch は各アプリの MCP 設定を読み書きしません。手動編集や他のツールで自由に管理できます。",
+      "enableButton": "MCP 管理をオンにする",
+      "headerSwitchAria": "MCP 管理をオフにする",
+      "headerSwitchTip": "MCP 管理をオフにする（既存の設定や記録は削除されません）",
+      "toastEnabled": "MCP 管理をオンにしました",
+      "toastDisabled": "MCP 管理をオフにしました。CC Switch は MCP 設定を変更しません"
+    },
+    "skills": {
+      "offTitle": "Skills 管理はオフです",
+      "offDescription": "管理をオフにすると、CC Switch は Skills のインポートと各アプリへの同期を停止します。既存のファイルと記録は保持されます。クラウド同期では、共有ディレクトリ ~/.agents/skills の内容を含め、Skills のファイルと記録が引き続き転送されます。",
+      "enableButton": "Skills 管理をオンにする",
+      "headerSwitchAria": "Skills 管理をオフにする",
+      "headerSwitchTip": "Skills 管理をオフにする（既存のファイルや記録は削除されません）",
+      "toastEnabled": "Skills 管理をオンにしました",
+      "toastDisabled": "Skills 管理をオフにしました。クラウド同期は引き続き有効です"
+    }
   },
   "zcode": {
     "addModel": "モデルを追加",

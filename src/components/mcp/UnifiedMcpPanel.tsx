@@ -61,6 +61,7 @@ import { DisclosureButton, V7ConfirmDialog, V7Dialog } from "./formBits";
 import { summaryOf } from "./mcpDraft";
 import { useVisibleAppIds } from "./useVisibleAppIds";
 import { APP_IDS_WITH, type AppIdWith, appHas } from "@/config/appSpecs";
+import { ModuleManagementHeaderSwitch } from "@/components/common/ModuleManagementGate";
 
 function getMcpSearchText(id: string, server: McpServer): string {
   const spec = server.server ?? {};
@@ -140,6 +141,8 @@ const failKey = (id: string, app: AppIdWith<"mcp">) => `${id}\u0000${app}`;
 
 interface UnifiedMcpPanelProps {
   onInteractionBlockedChange?: (blocked: boolean) => void;
+  onDisableManagement?: () => void;
+  managementPending?: boolean;
 }
 
 interface ImportReport {
@@ -154,6 +157,8 @@ interface ImportReport {
  */
 const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   onInteractionBlockedChange,
+  onDisableManagement,
+  managementPending = false,
 }) => {
   const { t } = useTranslation();
   const appIds = useVisibleAppIds(APP_IDS_WITH.mcp);
@@ -194,7 +199,8 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     resyncMutation.isPending;
   const dialogOpen =
     drawer !== null || deleteId !== null || importReport !== null;
-  const interactionBlocked = writePending || mutationPending || dialogOpen;
+  const interactionBlocked =
+    writePending || mutationPending || dialogOpen || managementPending;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
   const controlsDisabled = useDelayedFlag(interactionBlocked);
@@ -207,6 +213,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   const navigationBlocked =
     writePending ||
     mutationPending ||
+    managementPending ||
     editorSaving ||
     deleteId !== null ||
     importReport !== null;
@@ -223,6 +230,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     if (
       writeLockRef.current ||
       mutationPending ||
+      managementPending ||
       (!allowOpenDialog && dialogOpen)
     ) {
       return false;
@@ -630,7 +638,18 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
         icon={<Server className="h-5 w-5" strokeWidth={1.5} />}
         title="MCP"
         titleExtra={
-          <HelpTip title={t("mcpPage.helpTitle")}>{t("mcpPage.help")}</HelpTip>
+          <>
+            <HelpTip title={t("mcpPage.helpTitle")}>
+              {t("mcpPage.help")}
+            </HelpTip>
+            {onDisableManagement && (
+              <ModuleManagementHeaderSwitch
+                module="mcp"
+                disabled={interactionBlocked || managementPending}
+                onDisable={onDisableManagement}
+              />
+            )}
+          </>
         }
         actions={
           <>

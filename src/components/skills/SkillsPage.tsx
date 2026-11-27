@@ -132,6 +132,7 @@ interface SkillsPageProps {
   installTargets: AppId[];
   onInstallTargetsChange: (apps: AppId[]) => void;
   installTo: InstallRunner;
+  managementPending?: boolean;
   /** 「已安装 · 3 个应用 ›」：切到已安装段并定位到那一行 */
   onShowInstalled: (skillId: string) => void;
   onOpenRepoManager: () => void;
@@ -202,6 +203,7 @@ export function SkillsPage({
   installTargets,
   onInstallTargetsChange,
   installTo,
+  managementPending = false,
   onShowInstalled,
   onOpenRepoManager,
   onEnableFailures,
@@ -405,7 +407,7 @@ export function SkillsPage({
     apps.map((app) => APP_DISPLAY_NAME[app]).join(t("mcpPage.listSeparator"));
 
   const handleInstall = async (row: DiscoverRow) => {
-    if (installing.has(row.key)) return;
+    if (managementPending || installing.has(row.key)) return;
     setInstalling((prev) => new Set(prev).add(row.key));
     setFailed((prev) => {
       const next = { ...prev };
@@ -839,7 +841,7 @@ export function SkillsPage({
                             type="button"
                             variant="neutral"
                             size="compact"
-                            disabled={!row.repoOwner}
+                            disabled={managementPending || !row.repoOwner}
                             aria-label={
                               failure
                                 ? t("skillsPage.discover.retryAria", {

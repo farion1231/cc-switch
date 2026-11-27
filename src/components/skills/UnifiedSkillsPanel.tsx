@@ -80,6 +80,7 @@ import { describeRepoFailures } from "./repoFailures";
 import { repoWebUrl } from "./repoUrl";
 import type { ZipSkippedSkill } from "@/lib/api/skills";
 import { APP_IDS_WITH } from "@/config/appSpecs";
+import { ModuleManagementHeaderSwitch } from "@/components/common/ModuleManagementGate";
 
 const BACKUP_DIR = "~/.cc-switch/skill-backups";
 
@@ -108,6 +109,8 @@ interface UnifiedSkillsPanelProps {
   initialView?: SkillsView;
   onInteractionBlockedChange?: (blocked: boolean) => void;
   onNavigationBlockedChange?: (blocked: boolean) => void;
+  onDisableManagement?: () => void;
+  managementPending?: boolean;
 }
 
 function isEditableTarget(target: EventTarget | null) {
@@ -133,10 +136,13 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
   initialView = "installed",
   onInteractionBlockedChange,
   onNavigationBlockedChange,
+  onDisableManagement,
+  managementPending = false,
 }) => {
   const { t, i18n } = useTranslation();
   const appIds = useVisibleAppIds(APP_IDS_WITH.skills);
-  const { targets, setTargets, installTo } = useSkillInstallTargets(appIds);
+  const { targets, setTargets, installTo, isInstalling } =
+    useSkillInstallTargets(appIds);
 
   const [view, setView] = useState<SkillsView>(initialView);
   // 「发现」段第一次打开后就一直挂着（隐藏而不卸载），来回切不再重新加载仓库列表
@@ -220,10 +226,12 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     importMutation.isPending ||
     installFromZipMutation.isPending ||
     updateSkillMutation.isPending ||
+    isInstalling ||
     isUpdatingMany;
   const dialogOpen =
     importOpen || restoreOpen || confirm !== null || repoManagerOpen;
-  const navigationBlocked = writePending || mutationPending || dialogOpen;
+  const navigationBlocked =
+    writePending || mutationPending || dialogOpen || managementPending;
   const interactionBlocked = navigationBlocked || isCheckingUpdates;
   // 外观上的禁用晚 300ms 才出现：点一个格子写得很快时不让整页按钮闪一下变灰。
   // 写入本身仍由写锁（writeLockRef / interactionBlocked）拦着。
@@ -251,6 +259,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       isCheckingUpdates ||
       writeLockRef.current ||
       mutationPending ||
+      managementPending ||
       (!allowOpenDialog && dialogOpen)
     ) {
       return false;
@@ -938,9 +947,18 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
       icon={<SkillsIcon size={20} />}
       title={t("nav.skills")}
       titleExtra={
-        <HelpTip title={t("skillsPage.helpTitle")}>
-          {t("skillsPage.help")}
-        </HelpTip>
+        <>
+          <HelpTip title={t("skillsPage.helpTitle")}>
+            {t("skillsPage.help")}
+          </HelpTip>
+          {onDisableManagement && (
+            <ModuleManagementHeaderSwitch
+              module="skills"
+              disabled={interactionBlocked || managementPending}
+              onDisable={onDisableManagement}
+            />
+          )}
+        </>
       }
       actions={
         <>
@@ -1370,6 +1388,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               installTargets={targets}
               onInstallTargetsChange={setTargets}
               installTo={installTo}
+              managementPending={managementPending}
               onShowInstalled={showInstalled}
               onOpenRepoManager={() => setRepoManagerOpen(true)}
               onEnableFailures={recordEnableFailures}

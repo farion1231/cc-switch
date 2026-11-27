@@ -413,6 +413,8 @@ pub(crate) fn apply_snapshot(
     // Exclude installs, uninstalls, updates, and local projection while Skills
     // are backed up/replaced and the corresponding database snapshot is applied.
     let _skill_state_guard = skill_state_write_guard();
+    // Cloud snapshots always pair skill rows with their files, independently
+    // of this device's live-management switch.
     let skills_backup = backup_current_skills()?;
 
     // Replace skills first, then import database; roll back skills on DB failure.
@@ -822,5 +824,97 @@ mod tests {
             size: data.len() as u64,
         };
         assert!(verify_artifact(data, "test.bin", &meta).is_ok());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn snapshots_keep_skill_rows_and_files_together_with_management_disabled() {
+        let _home = crate::test_support::TestHome::new();
+        let source = crate::database::Database::memory().unwrap();
+        let skill: crate::app_config::InstalledSkill = serde_json::from_value(serde_json::json!({
+            "id": "local:shared", "name": "Shared", "directory": "shared",
+            "apps": {"claude": true}, "installedAt": 1
+        }))
+        .unwrap();
+        source.save_skill(&skill).unwrap();
+
+        // Exercise both supported storage locations: a disabled uploader must
+        // still publish the files matching its database's installed skills.
+        for location in [
+            crate::services::skill::SkillStorageLocation::CcSwitch,
+            crate::services::skill::SkillStorageLocation::Unified,
+        ] {
+            crate::settings::update_settings(crate::settings::AppSettings {
+                manage_skills: false,
+                skill_storage_location: location,
+                ..crate::settings::get_settings()
+            })
+            .unwrap();
+            let ssot = crate::services::skill::SkillService::get_ssot_dir().unwrap();
+            fs::create_dir_all(ssot.join("shared")).unwrap();
+            fs::write(ssot.join("shared/SKILL.md"), "shared skill content").unwrap();
+            let snapshot = build_local_snapshot(&source).unwrap();
+            let mut archive =
+                zip::ZipArchive::new(std::io::Cursor::new(&snapshot.skills_zip)).unwrap();
+            assert!(archive.by_name("shared/SKILL.md").is_ok());
+
+            // Both enabled and disabled receivers must restore a complete
+            // snapshot, so later enabling management never finds missing files.
+            for enabled in [true, false] {
+                crate::settings::update_settings(crate::settings::AppSettings {
+                    manage_skills: enabled,
+                    ..crate::settings::get_settings()
+                })
+                .unwrap();
+                fs::write(ssot.join("shared/SKILL.md"), "stale local content").unwrap();
+                let target = crate::database::Database::memory().unwrap();
+                apply_snapshot(&target, &snapshot.db_sql, &snapshot.skills_zip).unwrap();
+                assert!(target
+                    .get_all_installed_skills()
+                    .unwrap()
+                    .contains_key(&skill.id));
+                assert_eq!(
+                    fs::read_to_string(ssot.join("shared/SKILL.md")).unwrap(),
+                    "shared skill content"
+                );
+                assert_eq!(crate::settings::is_skills_management_enabled(), enabled);
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn disabled_management_still_validates_and_rolls_back_cloud_snapshots() {
+        let _home = crate::test_support::TestHome::new();
+        assert!(!crate::settings::is_skills_management_enabled());
+        let source = crate::database::Database::memory().unwrap();
+        source.set_setting("snapshot-test", "remote").unwrap();
+        let ssot = crate::services::skill::SkillService::get_ssot_dir().unwrap();
+        fs::create_dir_all(ssot.join("shared")).unwrap();
+        fs::write(ssot.join("shared/SKILL.md"), "remote").unwrap();
+        let snapshot = build_local_snapshot(&source).unwrap();
+
+        let target = crate::database::Database::memory().unwrap();
+        target.set_setting("snapshot-test", "local").unwrap();
+        fs::write(ssot.join("shared/SKILL.md"), "local").unwrap();
+        assert!(apply_snapshot(&target, &snapshot.db_sql, b"invalid zip").is_err());
+        assert_eq!(
+            target.get_setting("snapshot-test").unwrap().as_deref(),
+            Some("local")
+        );
+        assert_eq!(
+            fs::read_to_string(ssot.join("shared/SKILL.md")).unwrap(),
+            "local"
+        );
+
+        assert!(apply_snapshot(&target, b"invalid sql", &snapshot.skills_zip).is_err());
+        assert_eq!(
+            target.get_setting("snapshot-test").unwrap().as_deref(),
+            Some("local")
+        );
+        assert_eq!(
+            fs::read_to_string(ssot.join("shared/SKILL.md")).unwrap(),
+            "local"
+        );
     }
 }

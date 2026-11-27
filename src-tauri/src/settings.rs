@@ -708,6 +708,14 @@ pub struct AppSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_client_host: Option<String>,
 
+    // ===== 选择性管理开关（新安装默认关闭；旧设置缺键时保留原有管理行为）=====
+    /// 是否由 CC Switch 管理各应用的 MCP 配置
+    #[serde(default)]
+    pub manage_mcp: bool,
+    /// 是否由 CC Switch 管理各应用的 Skills 目录
+    #[serde(default)]
+    pub manage_skills: bool,
+
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
@@ -836,6 +844,8 @@ impl Default for AppSettings {
             current_provider_copilot: None,
             current_provider_zcode: None,
             proxy_client_host: None,
+            manage_mcp: false,
+            manage_skills: false,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
@@ -989,7 +999,23 @@ fn load_settings_from_path(path: &Path) -> LoadedSettings {
         Ok(text) => (text, false),
         Err(err) => (String::from_utf8_lossy(err.as_bytes()).into_owned(), true),
     };
-    let (settings, parse_lossy) = parse_settings_lenient(&text);
+    let (mut settings, parse_lossy) = parse_settings_lenient(&text);
+    // A saved settings object without these keys predates opt-in management.
+    // Preserve the old installation's behavior, but never override an explicit
+    // choice (or treat an invalid value as consent). Missing/unreadable files
+    // keep the fresh-install defaults. The next save persists both keys.
+    let content = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    if let Some(Ok(serde_json::Value::Object(fields))) = serde_json::Deserializer::from_str(content)
+        .into_iter::<serde_json::Value>()
+        .next()
+    {
+        if !fields.contains_key("manageMcp") {
+            settings.manage_mcp = true;
+        }
+        if !fields.contains_key("manageSkills") {
+            settings.manage_skills = true;
+        }
+    }
     LoadedSettings {
         settings,
         lossy: bad_utf8 || parse_lossy,
@@ -1154,6 +1180,52 @@ pub fn get_settings() -> AppSettings {
     read_settings().clone()
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ManagedModule {
+    Mcp,
+    Skills,
+}
+
+pub fn set_module_management(module: ManagedModule, enabled: bool) -> Result<(), AppError> {
+    mutate_settings(|settings| match module {
+        ManagedModule::Mcp => settings.manage_mcp = enabled,
+        ManagedModule::Skills => settings.manage_skills = enabled,
+    })
+}
+
+pub fn is_mcp_management_enabled() -> bool {
+    read_settings().manage_mcp
+}
+
+pub fn is_skills_management_enabled() -> bool {
+    read_settings().manage_skills
+}
+
+pub fn require_mcp_management_enabled() -> Result<(), AppError> {
+    if is_mcp_management_enabled() {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "mcp.management_disabled",
+            "MCP 管理未开启，请先在 MCP 页面开启后再操作",
+            "MCP management is turned off. Enable it on the MCP page first.",
+        ))
+    }
+}
+
+pub fn require_skills_management_enabled() -> Result<(), AppError> {
+    if is_skills_management_enabled() {
+        Ok(())
+    } else {
+        Err(AppError::localized(
+            "skills.management_disabled",
+            "Skills 管理未开启，请先在 Skills 页面开启后再操作",
+            "Skills management is turned off. Enable it on the Skills page first.",
+        ))
+    }
+}
+
 pub fn get_settings_for_frontend() -> AppSettings {
     let mut settings = get_settings();
     if let Some(sync) = &mut settings.webdav_sync {
@@ -1174,6 +1246,16 @@ pub fn update_settings(mut new_settings: AppSettings) -> Result<(), AppError> {
     save_settings_file(&new_settings)?;
     *guard = new_settings;
     Ok(())
+}
+
+/// Page switches own these fields. An unrelated settings form may still hold their old values.
+pub(crate) fn save_frontend_settings(mut incoming: AppSettings) -> Result<(), AppError> {
+    incoming.codex_quota_protection.validate()?;
+    mutate_settings(|current| {
+        incoming.manage_mcp = current.manage_mcp;
+        incoming.manage_skills = current.manage_skills;
+        *current = incoming;
+    })
 }
 
 fn mutate_settings<F>(mutator: F) -> Result<(), AppError>
@@ -2101,5 +2183,92 @@ mod tests {
         );
         let entries = fs::read_dir(dir.path()).expect("read dir").count();
         assert_eq!(entries, 1, "no temp or backup files left behind");
+    }
+
+    #[test]
+    fn selective_management_migrates_only_missing_keys_in_saved_settings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        let fresh = load_settings_from_path(&path).settings;
+        assert!(!fresh.manage_mcp && !fresh.manage_skills);
+        write_settings_to_path(&path, &fresh, &AtomicBool::new(false)).unwrap();
+        let restarted = load_settings_from_path(&path).settings;
+        assert!(!restarted.manage_mcp && !restarted.manage_skills);
+
+        for (json, mcp, skills) in [
+            (r#"{}"#, true, true),
+            (r#"{"manageMcp":false}"#, false, true),
+            (r#"{"manageSkills":false}"#, true, false),
+            (r#"{"manageMcp":false,"manageSkills":false}"#, false, false),
+            (r#"{"manageMcp":true,"manageSkills":false}"#, true, false),
+            (r#"{"manageMcp":false,"manageSkills":true}"#, false, true),
+            // Lenient recovery must retain explicit choices, including invalid
+            // values that fall back to off, while still migrating missing keys.
+            (
+                r#"{"manageMcp":false,"backupIntervalHours":-1}"#,
+                false,
+                true,
+            ),
+            (r#"{"manageSkills":"invalid"}"#, true, false),
+            (
+                "\u{feff}{\"manageSkills\":false} trailing garbage",
+                true,
+                false,
+            ),
+            ("not json", false, false),
+        ] {
+            fs::write(&path, json).unwrap();
+            let loaded = load_settings_from_path(&path).settings;
+            assert_eq!(
+                (loaded.manage_mcp, loaded.manage_skills),
+                (mcp, skills),
+                "{json}"
+            );
+            write_settings_to_path(&path, &loaded, &AtomicBool::new(false)).unwrap();
+            let reloaded = load_settings_from_path(&path).settings;
+            assert_eq!(
+                (reloaded.manage_mcp, reloaded.manage_skills),
+                (mcp, skills),
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn selective_management_preserves_provider_selection_and_survives_stale_form_saves() {
+        let _home = crate::test_support::TestHome::new();
+        let stale_form = get_settings();
+        set_current_provider(&AppType::Claude, Some("from-tray")).unwrap();
+        set_module_management(ManagedModule::Mcp, true).unwrap();
+        assert_eq!(
+            get_settings().current_provider_claude.as_deref(),
+            Some("from-tray")
+        );
+        set_module_management(ManagedModule::Skills, true).unwrap();
+        save_frontend_settings(stale_form).unwrap();
+        reload_settings().unwrap();
+        assert!(is_mcp_management_enabled() && is_skills_management_enabled());
+    }
+
+    #[test]
+    fn selective_management_defaults_off_and_round_trips() {
+        let legacy: AppSettings = serde_json::from_str("{}").expect("parse empty settings");
+        assert!(!legacy.manage_mcp);
+        assert!(!legacy.manage_skills);
+
+        let enabled = AppSettings {
+            manage_mcp: true,
+            manage_skills: true,
+            ..AppSettings::default()
+        };
+        let json = serde_json::to_value(&enabled).expect("serialize");
+        assert_eq!(json["manageMcp"], serde_json::Value::Bool(true));
+        assert_eq!(json["manageSkills"], serde_json::Value::Bool(true));
+
+        let restored: AppSettings = serde_json::from_value(json).expect("deserialize");
+        assert!(restored.manage_mcp);
+        assert!(restored.manage_skills);
     }
 }

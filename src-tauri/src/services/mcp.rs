@@ -792,11 +792,12 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn an_unreadable_server_only_blocks_writes_to_its_own_id() {
-        let home = tempfile::tempdir().unwrap();
-        let _env = crate::test_support::EnvVars::new()
-            .set("CC_SWITCH_TEST_HOME", home.path())
-            .set("HOME", home.path());
-        crate::settings::reload_settings().unwrap();
+        let _home = crate::test_support::TestHome::new();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            manage_mcp: true,
+            ..crate::settings::get_settings()
+        })
+        .unwrap();
         let state = AppState::new(Arc::new(Database::memory().unwrap()));
         for id in ["good", "broken"] {
             state.db.save_mcp_server(&server(id)).unwrap();

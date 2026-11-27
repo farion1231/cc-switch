@@ -3817,7 +3817,9 @@
       "privateEndpoint": "该地址指向本机或内网。若非你自建的本地服务，请勿导入。",
       "shellCommand": "该配置通过 shell 执行一整段命令，实际运行的内容在参数里，请逐行核对。",
       "mcpDangerousField": "该 MCP 配置包含高危扩展字段，可能会读取宿主机环境变量并外发（如 bearer_token_env_var、env_http_headers、env_vars）、执行辅助命令（http_headers_helper）或劫持工作目录（cwd）。请务必确认来源完全可信。"
-    }
+    },
+    "mcpManagementDisabled": "MCP 管理未开启，请先前往 MCP 页面开启后再导入。",
+    "skillsManagementDisabled": "Skills 管理未开启，请先前往 Skills 页面开启后再导入。"
   },
   "iconPicker": {
     "search": "搜索图标",
@@ -4411,7 +4413,8 @@
     },
     "needsAttention": "需要处理",
     "back": "返回",
-    "plugins": "插件"
+    "plugins": "插件",
+    "off": "未开启"
   },
   "appsPage": {
     "showInSidebar": "在侧栏显示 {{name}}",
@@ -5554,6 +5557,27 @@
     "hint": "可能由更新版本的 CC Switch 写入。数据已原样保留，不能编辑或启用；升级后即可恢复，也可以删除。",
     "confirmTitle": "删除无法读取的条目",
     "confirmMessage": "删除「{{name}}」？只删除 CC Switch 里的这条记录，不改动各应用自己的配置文件。"
+  },
+  "moduleManagement": {
+    "offBadge": "未开启",
+    "mcp": {
+      "offTitle": "MCP 管理未开启",
+      "offDescription": "关闭状态下 CC Switch 不会读取或改动任何应用的 MCP 配置，你可以自由手动调整或使用其他工具管理。",
+      "enableButton": "开启 MCP 管理",
+      "headerSwitchAria": "关闭 MCP 管理",
+      "headerSwitchTip": "点击关闭 MCP 管理（不删除现有配置与记录）",
+      "toastEnabled": "已开启 MCP 管理",
+      "toastDisabled": "已关闭 MCP 管理，CC Switch 不再改动你的 MCP 配置"
+    },
+    "skills": {
+      "offTitle": "Skills 管理未开启",
+      "offDescription": "关闭后，CC Switch 停止导入 Skills 和向各应用同步，保留现有文件与记录。云同步仍会传输 Skills 文件和记录，包括共享 ~/.agents/skills 目录中的内容。",
+      "enableButton": "开启 Skills 管理",
+      "headerSwitchAria": "关闭 Skills 管理",
+      "headerSwitchTip": "点击关闭 Skills 管理（不删除现有目录与记录）",
+      "toastEnabled": "已开启 Skills 管理",
+      "toastDisabled": "已关闭 Skills 管理，云同步不受影响"
+    }
   },
   "zcode": {
     "addModel": "添加模型",

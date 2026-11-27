@@ -178,9 +178,24 @@ vi.mock("@/components/settings/SettingsPage", () => ({
 
 vi.mock("@/components/skills/UnifiedSkillsPanel", () => ({
   // v7：Skills 的页头（添加 / 检查更新 / 存储与同步）在面板自己里面
-  default: ({ initialView }: { initialView?: string }) => {
+  default: ({
+    initialView,
+    onDisableManagement,
+  }: {
+    initialView?: string;
+    onDisableManagement?: () => void;
+  }) => {
     skillsPanelMocks.initialViews.push(initialView ?? "installed");
-    return <div data-testid="unified-skills-panel">{initialView}</div>;
+    return (
+      <div data-testid="unified-skills-panel">
+        {initialView}
+        {onDisableManagement && (
+          <button type="button" onClick={onDisableManagement}>
+            disable-skills
+          </button>
+        )}
+      </div>
+    );
   },
 }));
 
@@ -200,9 +215,18 @@ vi.mock("@/components/mcp/UnifiedMcpPanel", async () => {
     typeof import("@/lib/unsavedChanges")
   >("@/lib/unsavedChanges");
   // 当作一直开着的 MCP 编辑页：输入即登记未保存的修改
-  const Body = () => (
+  const Body = ({
+    onDisableManagement,
+  }: {
+    onDisableManagement?: () => void;
+  }) => (
     <div data-testid="mcp-editor" {...useUnsavedChangesTracker()}>
       <input aria-label="mcp-field" />
+      {onDisableManagement && (
+        <button type="button" onClick={onDisableManagement}>
+          disable-mcp
+        </button>
+      )}
     </div>
   );
   return { default: Body };
@@ -509,6 +533,7 @@ describe("App integration with MSW", () => {
   }, 10_000);
 
   it("keeps the unsaved guard when re-clicking the current page", async () => {
+    setSettings({ manageMcp: true });
     const { default: App } = await import("@/App");
     renderApp(App);
     await waitFor(() =>
@@ -1027,6 +1052,7 @@ describe("App integration with MSW", () => {
   });
 
   it("renders the Skills page with its own header", async () => {
+    setSettings({ manageSkills: true });
     localStorage.setItem("cc-switch-last-view", "skills");
     const { default: App } = await import("@/App");
     renderApp(App);
@@ -1115,6 +1141,7 @@ describe("App integration with MSW", () => {
   });
 
   it("opens the old skillsDiscovery view as the Discover segment", async () => {
+    setSettings({ manageSkills: true });
     localStorage.setItem("cc-switch-last-view", "skillsDiscovery");
     const { default: App } = await import("@/App");
     renderApp(App);
@@ -1122,6 +1149,75 @@ describe("App integration with MSW", () => {
     expect(await screen.findByTestId("unified-skills-panel")).toHaveTextContent(
       "discover",
     );
+  });
+
+  it("gates MCP and Skills behind off-state screens by default and lets users toggle them independently", async () => {
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+
+    const nav = within(document.querySelector("nav") as HTMLElement);
+    const mcpNav = nav.getByRole("button", { name: /^MCP/, hidden: true });
+    const skillsNav = nav.getByRole("button", {
+      name: /^nav\.skills/,
+      hidden: true,
+    });
+    expect(mcpNav).toHaveTextContent("nav.off");
+    expect(skillsNav).toHaveTextContent("nav.off");
+
+    fireEvent.click(mcpNav);
+    expect(await screen.findByTestId("mcp-management-off")).toBeInTheDocument();
+    expect(screen.queryByTestId("mcp-editor")).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "moduleManagement.mcp.enableButton",
+        hidden: true,
+      }),
+    );
+    expect(await screen.findByTestId("mcp-editor")).toBeInTheDocument();
+    expect(
+      nav.getByRole("button", { name: /^MCP/, hidden: true }),
+    ).not.toHaveTextContent("nav.off");
+    expect(
+      nav.getByRole("button", { name: /^nav\.skills/, hidden: true }),
+    ).toHaveTextContent("nav.off");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "disable-mcp", hidden: true }),
+    );
+    expect(await screen.findByTestId("mcp-management-off")).toBeInTheDocument();
+
+    fireEvent.click(
+      nav.getByRole("button", { name: /^nav\.skills/, hidden: true }),
+    );
+    expect(
+      await screen.findByTestId("skills-management-off"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("unified-skills-panel"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "moduleManagement.skills.enableButton",
+        hidden: true,
+      }),
+    );
+    expect(
+      await screen.findByTestId("unified-skills-panel"),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "disable-skills", hidden: true }),
+    );
+    expect(
+      await screen.findByTestId("skills-management-off"),
+    ).toBeInTheDocument();
   });
 
   it("shows all eight native resize cursors and restores existing inline styles", async () => {

@@ -7,6 +7,7 @@ import en from "@/i18n/locales/en.json";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { settingsApi, skillsApi } from "@/lib/api";
 import type {
+  DiscoverableSkill,
   InstalledSkill,
   SkillBackupEntry,
   SkillRepoFailure,
@@ -15,6 +16,8 @@ import type {
 import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const m = vi.hoisted(() => ({
+  install: vi.fn(),
+  discoverable: [] as DiscoverableSkill[],
   scanUnmanaged: vi.fn(),
   toggle: vi.fn(),
   bulkToggle: vi.fn(),
@@ -37,6 +40,19 @@ const m = vi.hoisted(() => ({
   repoFailures: [] as SkillRepoFailure[],
   checking: false,
   visibleApps: ["claude", "codex", "pi"] as string[],
+}));
+
+// jsdom has no viewport height; render the discovery rows.
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 56,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: index,
+        start: index * 56,
+      })),
+  }),
 }));
 
 vi.mock("sonner", () => ({
@@ -116,10 +132,15 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
   useResyncSkillsToApps: () => ({ mutateAsync: m.resync, isPending: false }),
   useIsResyncingSkills: () => false,
-  useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
+  useDiscoverableSkills: () => ({ data: m.discoverable, refetch: vi.fn() }),
   useRefreshDiscoverableSkills: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
-  useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepos: () => ({
+    data: m.discoverable.length
+      ? [{ owner: "owner", name: "repo", branch: "main", enabled: true }]
+      : [],
+    refetch: vi.fn(),
+  }),
   useSkillRepoTokens: () => ({ data: { hosts: [], secureStorage: true } }),
   useSkillRepoTokenActions: () => ({
     setToken: vi.fn(),
@@ -128,7 +149,7 @@ vi.mock("@/hooks/useSkills", () => ({
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
-  useInstallSkill: () => ({ mutateAsync: vi.fn() }),
+  useInstallSkill: () => ({ mutateAsync: m.install }),
 }));
 
 type Overrides = Omit<Partial<InstalledSkill>, "apps"> & {
@@ -177,6 +198,8 @@ async function openMenu(trigger: string, item: string) {
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    m.install.mockReset();
+    m.discoverable = [];
     m.installed = [];
     m.backups = [];
     m.updates = [];
@@ -682,6 +705,66 @@ describe("UnifiedSkillsPanel", () => {
     );
     expect(openDir).toHaveBeenCalledWith("b-dir");
     openDir.mockRestore();
+  });
+
+  it("blocks turning management off until a discovery install reaches every target", async () => {
+    m.discoverable = [
+      {
+        key: "demo",
+        name: "Demo",
+        description: "",
+        directory: "demo",
+        repoOwner: "owner",
+        repoName: "repo",
+        repoBranch: "main",
+      },
+    ];
+    localStorage.setItem(
+      "cc-switch:skills:install-to",
+      JSON.stringify(["claude", "codex"]),
+    );
+    let finishDownload!: (result: { id: string }) => void;
+    let finishProjection!: () => void;
+    m.install.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishDownload = resolve;
+      }),
+    );
+    m.toggle.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishProjection = resolve;
+      }),
+    );
+    const setBusy = vi.fn();
+    const props = {
+      initialView: "discover" as const,
+      onDisableManagement: vi.fn(),
+      onNavigationBlockedChange: setBusy,
+    };
+    const { rerender } = renderPanel({ ...props, managementPending: true });
+    const install = screen.getByRole("button", {
+      name: "skillsPage.discover.installAria",
+    });
+    expect(install).toBeDisabled();
+    rerender(<UnifiedSkillsPanel {...props} />);
+    await userEvent.click(install);
+    const toggle = screen.getByRole("switch", {
+      name: "moduleManagement.skills.headerSwitchAria",
+    });
+    expect(m.install).toHaveBeenCalledTimes(1);
+    expect(toggle).toBeDisabled();
+    expect(setBusy).toHaveBeenLastCalledWith(true);
+    await act(async () => finishDownload({ id: "demo" }));
+    expect(m.toggle).toHaveBeenCalledWith({
+      id: "demo",
+      app: "codex",
+      enabled: true,
+    });
+    expect(toggle).toBeDisabled();
+    expect(setBusy).toHaveBeenLastCalledWith(true);
+    await act(async () => finishProjection());
+    expect(toggle).toBeEnabled();
+    expect(setBusy).toHaveBeenLastCalledWith(false);
   });
 
   it("switches Installed / Discover with page tabs", async () => {
