@@ -4958,6 +4958,9 @@
     "viewInstalled": "설치됨",
     "viewInstalledCount": "{{count}}개 설치됨",
     "viewDiscover": "탐색",
+    "viewRepos": "저장소",
+    "count": "{{count}}개 Skill",
+    "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "이름, 폴더, 설명 또는 저장소 검색",
     "lastChecked": "마지막 확인: {{when}}",
     "justNow": "방금",
@@ -4968,6 +4971,9 @@
       "close": "닫기"
     },
     "filter": {
+      "button": "필터",
+      "statusHeading": "상태",
+      "sourceHeading": "소스",
       "all": "모두",
       "updates": "업데이트 있음",
       "none": "활성화된 앱 없음",

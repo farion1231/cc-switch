@@ -142,7 +142,7 @@ function renderPage(
   const onShowInstalled = vi.fn();
   render(
     <SkillsPage
-      renderViewTabs={(trailing) => trailing}
+      source={m.repos.length > 0 ? "repos" : "skillssh"}
       visibleAppIds={["claude", "codex", "pi"]}
       installTargets={["codex", "claude"]}
       onInstallTargetsChange={vi.fn()}
@@ -248,10 +248,7 @@ describe("SkillsPage (Discover)", () => {
 
   it("stays on repositories when they return no skills, so a retry is possible", () => {
     m.repos = [makeRepo()];
-    renderPage();
-    expect(
-      screen.getByRole("button", { name: "skillsPage.discover.sourceRepos" }),
-    ).toHaveAttribute("aria-pressed", "true");
+    renderPage({ source: "repos" });
     expect(
       screen.getByText("skillsPage.discover.noneRead"),
     ).toBeInTheDocument();
@@ -272,7 +269,7 @@ describe("SkillsPage (Discover)", () => {
         }),
       },
     ];
-    renderPage();
+    renderPage({ source: "repos" });
 
     // 读到的照常列出，横幅说哪些没读到
     expect(screen.getByText("repo-skill")).toBeInTheDocument();
@@ -283,9 +280,9 @@ describe("SkillsPage (Discover)", () => {
     await userEvent.click(screen.getByRole("button", { name: "common.retry" }));
     expect(m.refetchDiscoverable).toHaveBeenCalled();
 
-    // 仓库弹层里那一行写「读取失败」
+    // 筛选弹层里的仓库行写「读取失败」
     await userEvent.click(
-      screen.getByRole("button", { name: /skillsPage.repos.buttonAll/ }),
+      screen.getByRole("button", { name: "skillsPage.filter.button" }),
     );
     expect(
       await screen.findByText("skillsPage.repos.readFailed"),
@@ -347,12 +344,12 @@ describe("SkillsPage (Discover)", () => {
     expect(onShowInstalled).toHaveBeenCalledWith("owner-a/repo-a:repo-skill");
     expect(screen.queryByText("skills.uninstall")).not.toBeInTheDocument();
 
-    // 「只看未安装」是页内筛选：复选框，不是第二层分段控件
-    expect(
-      screen.queryByRole("button", { name: "skills.filter.uninstalled" }),
-    ).not.toBeInTheDocument();
+    // 「只看未安装」收在统一筛选弹层里
     await userEvent.click(
-      screen.getByRole("checkbox", {
+      screen.getByRole("button", { name: "skillsPage.filter.button" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("checkbox", {
         name: "skillsPage.discover.onlyUninstalled",
       }),
     );
@@ -439,7 +436,7 @@ describe("SkillsPage (Discover)", () => {
     m.discoverable = [makeDiscoverable()];
     renderPage();
     await userEvent.click(
-      screen.getByRole("button", { name: /skillsPage.repos.buttonAll/ }),
+      screen.getByRole("button", { name: "skillsPage.filter.button" }),
     );
     const boxes = await screen.findAllByRole("checkbox", {
       name: "skillsPage.repos.enableAria",

@@ -4956,6 +4956,9 @@
     "viewInstalled": "Установленные",
     "viewInstalledCount": "Установленные {{count}}",
     "viewDiscover": "Обзор",
+    "viewRepos": "Репозитории",
+    "count": "{{count}} навыков",
+    "countFiltered": "{{shown}} из {{count}}",
     "searchPlaceholder": "Поиск по имени, каталогу, описанию или репозиторию",
     "lastChecked": "Последняя проверка: {{when}}",
     "justNow": "только что",
@@ -4966,6 +4969,9 @@
       "close": "Скрыть"
     },
     "filter": {
+      "button": "Фильтр",
+      "statusHeading": "Статус",
+      "sourceHeading": "Источник",
       "all": "Все",
       "updates": "Есть обновления",
       "none": "Нигде не включены",

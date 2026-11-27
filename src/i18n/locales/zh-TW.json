@@ -4958,6 +4958,9 @@
     "viewInstalled": "已安裝",
     "viewInstalledCount": "已安裝 {{count}}",
     "viewDiscover": "探索",
+    "viewRepos": "倉庫",
+    "count": "{{count}} 個 Skill",
+    "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "搜尋名稱、目錄、描述或倉庫",
     "lastChecked": "上次檢查：{{when}}",
     "justNow": "剛剛",
@@ -4968,6 +4971,9 @@
       "close": "關閉提示"
     },
     "filter": {
+      "button": "篩選",
+      "statusHeading": "狀態",
+      "sourceHeading": "來源",
       "all": "全部",
       "updates": "可更新",
       "none": "未在任何應用啟用",

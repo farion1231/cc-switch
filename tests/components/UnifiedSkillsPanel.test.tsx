@@ -602,29 +602,29 @@ describe("UnifiedSkillsPanel", () => {
     // 可更新的数量只说一次（工具栏按钮）；行上的「可更新」就是这一行的更新按钮
     expect(screen.getAllByText("skills.updateAvailable")).toHaveLength(1);
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
-    // 已知有更新时「检查更新」直接变成「全部更新」，不用先筛选
+    // 已知有更新时工具栏出现「全部更新」，页头仍保留统一的「检查更新」
     expect(
       screen.getAllByRole("button", { name: "skillsPage.updateAllCount" }),
     ).toHaveLength(1);
     expect(
-      screen.queryByRole("button", { name: "skills.checkUpdates" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "skills.checkUpdates" }),
+    ).toBeInTheDocument();
 
-    await openMenu("skillsPage.filter.all", "skillsPage.filter.updates");
+    await openMenu("skillsPage.filter.button", "skillsPage.filter.updates");
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
-    // 筛选按钮在工具栏，选中行时也一直看得见
+    // 选中行时工具栏切换为批量操作条，取消后回到搜索与筛选
     await userEvent.click(
       screen.getByRole("checkbox", { name: "skillsPage.selectAria" }),
     );
     expect(screen.getByText("skillsPage.bulk.selected")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "skillsPage.filter.updates" }),
-    ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "common.cancel" }),
     );
+    expect(screen.getByText("skillsPage.filter.updates")).toBeInTheDocument();
 
-    await openMenu("skillsPage.filter.updates", "skillsPage.filter.all");
+    await userEvent.click(
+      screen.getByRole("button", { name: "skillsPage.clearFilters" }),
+    );
     expect(screen.getAllByRole("listitem")).toHaveLength(2);
 
     await userEvent.click(

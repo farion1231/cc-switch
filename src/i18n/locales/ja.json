@@ -4958,6 +4958,9 @@
     "viewInstalled": "インストール済み",
     "viewInstalledCount": "インストール済み {{count}}",
     "viewDiscover": "見つける",
+    "viewRepos": "リポジトリ",
+    "count": "{{count}} 件の Skill",
+    "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "名前・フォルダー・説明・リポジトリを検索",
     "lastChecked": "前回の確認：{{when}}",
     "justNow": "たった今",
@@ -4968,6 +4971,9 @@
       "close": "閉じる"
     },
     "filter": {
+      "button": "フィルター",
+      "statusHeading": "状態",
+      "sourceHeading": "ソース",
       "all": "すべて",
       "updates": "更新あり",
       "none": "どのアプリでも無効",

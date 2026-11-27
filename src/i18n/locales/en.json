@@ -4958,6 +4958,9 @@
     "viewInstalled": "Installed",
     "viewInstalledCount": "Installed {{count}}",
     "viewDiscover": "Discover",
+    "viewRepos": "Repositories",
+    "count": "{{count}} Skills",
+    "countFiltered": "{{shown}} of {{count}}",
     "searchPlaceholder": "Search name, folder, description or repo",
     "lastChecked": "Last checked: {{when}}",
     "justNow": "just now",
@@ -4968,6 +4971,9 @@
       "close": "Dismiss"
     },
     "filter": {
+      "button": "Filter",
+      "statusHeading": "Status",
+      "sourceHeading": "Source",
       "all": "All",
       "updates": "Has updates",
       "none": "Not enabled anywhere",

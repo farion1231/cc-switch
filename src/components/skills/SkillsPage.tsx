@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import {
@@ -6,15 +6,15 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
+  ListFilter,
   Loader2,
-  RefreshCw,
+  X,
 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { settingsApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { HelpTip } from "@/components/ui/help-tip";
 import { Notice } from "@/components/ui/notice";
-import { SegmentedControl } from "@/components/ui/segmented-control";
 import { HoverTip } from "@/components/ui/hover-tip";
 import {
   Popover,
@@ -122,12 +122,15 @@ export function useSkillRepoActions() {
   return { addRepo, removeRepo, setRepoEnabled };
 }
 
+export interface SkillsShRefreshHandle {
+  canRefresh: boolean;
+  refreshing: boolean;
+  refresh: () => void;
+}
+
 interface SkillsPageProps {
-  /**
-   * 「已安装 / 发现」页签（由外层渲染，两段共用一条页签行）；
-   * 传入的内容放在页签行右侧（安装到、搜索）。
-   */
-  renderViewTabs: (trailing: React.ReactNode) => React.ReactNode;
+  /** 平铺一级页签传入的来源：仓库 或 skills.sh */
+  source: SkillsPageSource;
   visibleAppIds: AppId[];
   installTargets: AppId[];
   onInstallTargetsChange: (apps: AppId[]) => void;
@@ -139,6 +142,8 @@ interface SkillsPageProps {
   onEnableFailures: (
     failures: Array<{ id: string; app: AppId; error: unknown }>,
   ) => void;
+  /** 把 skills.sh 的刷新状态同步给外层页头统一的刷新按钮 */
+  onSkillsShRefreshChange?: (handle: SkillsShRefreshHandle) => void;
   initialQuery?: string;
 }
 
@@ -194,10 +199,10 @@ function formatInstalls(count: number, locale: string): string {
 }
 
 /**
- * Skills 的「发现」段：仓库 / skills.sh 两个来源，结果是行列表；显式「安装到」哪些应用。
+ * Skills 的「仓库」与「skills.sh」平铺页：统一工具栏（左搜索 + 筛选 + 计数，右安装到）+ 纯平铺列表。
  */
 export function SkillsPage({
-  renderViewTabs,
+  source,
   visibleAppIds,
   installTargets,
   onInstallTargetsChange,
@@ -205,10 +210,10 @@ export function SkillsPage({
   onShowInstalled,
   onOpenRepoManager,
   onEnableFailures,
+  onSkillsShRefreshChange,
   initialQuery = "",
 }: SkillsPageProps) {
   const { t, i18n } = useTranslation();
-  const [source, setSource] = useState<SkillsPageSource>("repos");
   const [query, setQuery] = useState(initialQuery);
   const [statusFilter, setStatusFilter] = useState<"all" | "uninstalled">(
     "all",
@@ -231,11 +236,7 @@ export function SkillsPage({
   const refreshDiscoverable = useRefreshDiscoverableSkills();
   const { data: repoFailures = [] } = useDiscoverableSkillsFailures();
   const { data: installedSkills = [] } = useInstalledSkills();
-  const {
-    data: repos = [],
-    isLoading: loadingRepos,
-    refetch: refetchRepos,
-  } = useSkillRepos();
+  const { data: repos = [], refetch: refetchRepos } = useSkillRepos();
   const {
     data: skillsShResult,
     isLoading: loadingSkillsSh,
@@ -257,12 +258,7 @@ export function SkillsPage({
     }
   }, [skillsShResult, skillsShOffset, placeholderSkillsSh]);
 
-  // 没配置任何仓库时直接看 skills.sh；仓库读出来是空的仍留在仓库，方便重试
-  const effectiveSource: SkillsPageSource =
-    source === "repos" && !loadingRepos && repos.length === 0
-      ? "skillssh"
-      : source;
-  const isSkillsSh = effectiveSource === "skillssh";
+  const isSkillsSh = source === "skillssh";
   const enabledRepos = repos.filter((repo) => repo.enabled);
 
   const submitSkillsSh = () => {
@@ -283,6 +279,18 @@ export function SkillsPage({
       setSkillsShOffset(0);
     }
   };
+
+  const retrySkillsShRef = useRef(retrySkillsSh);
+  retrySkillsShRef.current = retrySkillsSh;
+
+  useEffect(() => {
+    if (!isSkillsSh || !onSkillsShRefreshChange) return;
+    onSkillsShRefreshChange({
+      canRefresh: skillsShQuery.length >= 2,
+      refreshing: fetchingSkillsSh,
+      refresh: () => retrySkillsShRef.current(),
+    });
+  }, [isSkillsSh, skillsShQuery, fetchingSkillsSh, onSkillsShRefreshChange]);
 
   // ─── 已安装 / 目录名占用 ────────────────────────────────────────────
   const installedByKey = useMemo(() => {
@@ -565,59 +573,103 @@ export function SkillsPage({
     );
   };
 
+  const hasActiveFilter =
+    !isSkillsSh &&
+    (statusFilter === "uninstalled" || enabledRepos.length < repos.length);
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 页签行在外层（UnifiedSkillsPanel），这里只把右侧控件交出去 */}
-      {renderViewTabs(
-        // 和「已安装」同一套：搜索框 + 去远端拉最新的文字按钮
-        <div className="flex min-w-0 items-center gap-2">
-          <MatrixSearch
-            className="w-[280px] min-w-[160px] shrink"
-            inputId="sk-discover-search"
-            value={query}
-            onValueChange={setQuery}
-            onEnter={isSkillsSh ? submitSkillsSh : undefined}
-            placeholder={
-              isSkillsSh
-                ? t("skillsPage.discover.skillsShPlaceholder")
-                : t("skillsPage.discover.searchPlaceholder")
-            }
-            ariaLabel={
-              isSkillsSh
-                ? t("skillsPage.discover.skillsShAria")
-                : t("skillsPage.discover.searchAria")
-            }
-            status={
-              normalizedQuery && !isSkillsSh
-                ? t("appMatrix.found", { count: visibleRows.length })
-                : ""
-            }
-          />
-          {!isSkillsSh && (
-            <Button
-              type="button"
-              variant="quiet"
-              size="regular"
-              className="shrink-0"
-              disabled={fetchingDiscoverable}
-              onClick={reload}
-            >
-              <RefreshCw
-                className={cn(
-                  "h-4 w-4",
-                  fetchingDiscoverable && "animate-spin",
-                )}
-                strokeWidth={2}
-              />
-              {t("skillsPage.discover.reload")}
-            </Button>
+      {/* 统一平铺工具栏（h-14，对齐 MCP / Plugins / 已安装）：左搜索 + 筛选 + 计数，右安装到 */}
+      <div className="flex h-14 shrink-0 items-center gap-3 px-6">
+        <MatrixSearch
+          className="w-[320px] min-w-[180px] shrink"
+          inputId={`sk-${source}-search`}
+          value={query}
+          onValueChange={setQuery}
+          onEnter={isSkillsSh ? submitSkillsSh : undefined}
+          placeholder={
+            isSkillsSh
+              ? t("skillsPage.discover.skillsShPlaceholder")
+              : t("skillsPage.discover.searchPlaceholder")
+          }
+          ariaLabel={
+            isSkillsSh
+              ? t("skillsPage.discover.skillsShAria")
+              : t("skillsPage.discover.searchAria")
+          }
+          status={
+            normalizedQuery && !isSkillsSh
+              ? t("appMatrix.found", { count: visibleRows.length })
+              : ""
+          }
+        />
+        {!isSkillsSh && (
+          <>
+            <ReposFilterPopover
+              repos={repos}
+              discoverable={discoverable ?? []}
+              failures={repoFailures}
+              onlyUninstalled={statusFilter === "uninstalled"}
+              active={hasActiveFilter}
+              onOnlyUninstalledChange={(checked) =>
+                setStatusFilter(checked ? "uninstalled" : "all")
+              }
+              onToggleRepo={setRepoEnabled}
+              onManage={onOpenRepoManager}
+            />
+            {statusFilter === "uninstalled" && (
+              <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-control bg-subtle px-2 text-caption text-fg-1">
+                <span>{t("skillsPage.discover.onlyUninstalled")}</span>
+                <button
+                  type="button"
+                  aria-label={t("skillsPage.clearFilters")}
+                  onClick={() => setStatusFilter("all")}
+                  className="rounded-sm text-fg-3 transition-colors hover:text-fg-1"
+                >
+                  <X className="h-3 w-3" strokeWidth={2} />
+                </button>
+              </span>
+            )}
+            {repos.length > 0 && enabledRepos.length < repos.length && (
+              <span className="inline-flex h-6 shrink-0 items-center rounded-control bg-subtle px-2 text-caption tabular-nums text-fg-1">
+                {t("skillsPage.repos.buttonSome", {
+                  count: enabledRepos.length,
+                  total: repos.length,
+                })}
+              </span>
+            )}
+          </>
+        )}
+        {!loadingList &&
+          (isSkillsSh ? accumulated.length > 0 : repoRows.length > 0) && (
+            <span className="shrink-0 whitespace-nowrap text-caption tabular-nums text-fg-2">
+              {isSkillsSh
+                ? t("skillsPage.count", {
+                    count: skillsShResult?.totalCount ?? accumulated.length,
+                  })
+                : visibleRows.length === repoRows.length
+                  ? t("skillsPage.count", { count: repoRows.length })
+                  : t("skillsPage.countFiltered", {
+                      shown: visibleRows.length,
+                      count: repoRows.length,
+                    })}
+            </span>
           )}
-        </div>,
-      )}
+        <div className="flex-1" />
+        <InstallToPopover
+          label={installToLabel}
+          fullLabel={t("skillsPage.installTo.button", {
+            apps: names(installTargets),
+          })}
+          visibleAppIds={visibleAppIds}
+          targets={installTargets}
+          onChange={onInstallTargetsChange}
+        />
+      </div>
 
       {/* 部分仓库没读到：列表照常显示读到的，横幅如实说哪些没读到。全部没读到时由空状态说明。 */}
       {!isSkillsSh && repoFailures.length > 0 && repoRows.length > 0 && (
-        <div className="px-6 pt-3">
+        <div className="px-6 pb-3">
           <Notice
             tone="warning"
             title={t("skillsPage.repoFail.title", {
@@ -641,63 +693,8 @@ export function SkillsPage({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col px-6 pb-5 pt-3">
+      <div className="flex min-h-0 flex-1 flex-col px-6 pb-5">
         <div className="flex min-h-0 flex-col overflow-hidden rounded-panel border border-border bg-surface">
-          {/* 表头和「已安装」对齐：左边筛选，右边装到哪些应用（对应已安装的应用列） */}
-          <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border bg-subtle px-2">
-            <SegmentedControl<SkillsPageSource>
-              aria-label={t("skillsPage.discover.sourceAria")}
-              size="sm"
-              value={effectiveSource}
-              onValueChange={setSource}
-              items={[
-                {
-                  value: "repos",
-                  label: t("skillsPage.discover.sourceRepos", {
-                    count: enabledRepos.length,
-                  }),
-                },
-                {
-                  value: "skillssh",
-                  label: "skills.sh",
-                },
-              ]}
-            />
-            {!isSkillsSh && (
-              <>
-                <RepoPopover
-                  repos={repos}
-                  discoverable={discoverable ?? []}
-                  failures={repoFailures}
-                  onToggle={setRepoEnabled}
-                  onManage={onOpenRepoManager}
-                />
-                <label className="flex h-7 shrink-0 cursor-pointer items-center gap-2 rounded-control px-2 text-body text-fg-2 transition-colors hover:bg-subtle hover:text-fg-1">
-                  <input
-                    type="checkbox"
-                    className={CHECKBOX_CLASS}
-                    checked={statusFilter === "uninstalled"}
-                    onChange={(event) =>
-                      setStatusFilter(
-                        event.target.checked ? "uninstalled" : "all",
-                      )
-                    }
-                  />
-                  {t("skillsPage.discover.onlyUninstalled")}
-                </label>
-              </>
-            )}
-            <div className="flex-1" />
-            <InstallToPopover
-              label={installToLabel}
-              fullLabel={t("skillsPage.installTo.button", {
-                apps: names(installTargets),
-              })}
-              visibleAppIds={visibleAppIds}
-              targets={installTargets}
-              onChange={onInstallTargetsChange}
-            />
-          </div>
           <div
             ref={listScrollRef}
             className="min-h-0 overflow-auto scroll-stable"
@@ -992,18 +989,24 @@ function InstallToPopover({
   );
 }
 
-// ─── 「仓库」弹层：勾掉即停用 ────────────────────────────────────────────
-function RepoPopover({
+// ─── 「仓库」页统一筛选弹层：仅未安装 + 仓库开关 + 管理仓库 ──────────────
+function ReposFilterPopover({
   repos,
   discoverable,
   failures,
-  onToggle,
+  onlyUninstalled,
+  active,
+  onOnlyUninstalledChange,
+  onToggleRepo,
   onManage,
 }: {
   repos: SkillRepo[];
   discoverable: DiscoverableSkill[];
   failures: SkillRepoFailure[];
-  onToggle: (repo: SkillRepo, enabled: boolean) => Promise<void>;
+  onlyUninstalled: boolean;
+  active: boolean;
+  onOnlyUninstalledChange: (checked: boolean) => void;
+  onToggleRepo: (repo: SkillRepo, enabled: boolean) => Promise<void>;
   onManage: () => void;
 }) {
   const { t } = useTranslation();
@@ -1011,14 +1014,6 @@ function RepoPopover({
     failures.map((failure) => [repoFailureKey(failure), failure]),
   );
   const [open, setOpen] = useState(false);
-  const enabled = repos.filter((repo) => repo.enabled).length;
-  const label =
-    enabled === repos.length
-      ? t("skillsPage.repos.buttonAll")
-      : t("skillsPage.repos.buttonSome", {
-          count: enabled,
-          total: repos.length,
-        });
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -1026,10 +1021,13 @@ function RepoPopover({
           type="button"
           variant="quiet"
           size="compact"
-          className="pe-1.5 ps-2.5 text-fg-2"
+          className={cn(
+            "shrink-0 px-2.5",
+            active ? "bg-subtle text-fg-1" : "text-fg-2",
+          )}
         >
-          {label}
-          <ChevronDown className="h-3.5 w-3.5" strokeWidth={2} />
+          <ListFilter className="h-3.5 w-3.5" strokeWidth={2} />
+          {t("skillsPage.filter.button")}
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -1039,50 +1037,69 @@ function RepoPopover({
         aria-label={t("skillsPage.repos.popoverAria")}
         className={cn(POPOVER_CLASS, "flex w-[300px] flex-col")}
       >
-        <div className="flex max-h-[280px] flex-col overflow-y-auto">
-          {repos.map((repo) => {
-            const id = `${repo.owner}/${repo.name}`;
-            const failure = repo.enabled
-              ? failureByRepo.get(repoFailureKey(repo))
-              : undefined;
-            return (
-              <label
-                key={id}
-                className="flex min-h-8 cursor-pointer items-center gap-2 rounded-control px-2 py-1 transition-colors hover:bg-subtle"
-              >
-                <input
-                  type="checkbox"
-                  className={CHECKBOX_CLASS}
-                  checked={repo.enabled}
-                  aria-label={t("skillsPage.repos.enableAria", { repo: id })}
-                  onChange={(event) =>
-                    void onToggle(repo, event.target.checked)
-                  }
-                />
-                <span className="min-w-0 flex-1 truncate font-mono text-caption">
-                  {id}
-                </span>
-                <span className="shrink-0 text-caption text-fg-3">
-                  {repo.branch || "main"}
-                </span>
-                {failure ? (
-                  <span
-                    className="shrink-0 text-right text-caption text-warning-text"
-                    title={skillErrorReason(failure.error, t)}
+        <label className="flex min-h-8 cursor-pointer items-center gap-2 rounded-control px-2 py-1 text-body transition-colors hover:bg-subtle">
+          <input
+            type="checkbox"
+            className={CHECKBOX_CLASS}
+            checked={onlyUninstalled}
+            onChange={(event) => onOnlyUninstalledChange(event.target.checked)}
+          />
+          {t("skillsPage.discover.onlyUninstalled")}
+        </label>
+        {repos.length > 0 && (
+          <>
+            <div aria-hidden="true" className="mx-1.5 my-1 h-px bg-border" />
+            <div className="px-2 py-1 text-caption font-medium text-fg-3">
+              {t("skillsPage.filter.sourceHeading")}
+            </div>
+            <div className="flex max-h-[240px] flex-col overflow-y-auto">
+              {repos.map((repo) => {
+                const id = `${repo.owner}/${repo.name}`;
+                const failure = repo.enabled
+                  ? failureByRepo.get(repoFailureKey(repo))
+                  : undefined;
+                return (
+                  <label
+                    key={id}
+                    className="flex min-h-8 cursor-pointer items-center gap-2 rounded-control px-2 py-1 transition-colors hover:bg-subtle"
                   >
-                    {t("skillsPage.repos.readFailed")}
-                  </span>
-                ) : (
-                  <span className="w-12 shrink-0 text-right text-caption tabular-nums text-fg-2">
-                    {repo.enabled
-                      ? countRepoSkills(discoverable, repo)
-                      : t("skillsPage.repos.disabledShort")}
-                  </span>
-                )}
-              </label>
-            );
-          })}
-        </div>
+                    <input
+                      type="checkbox"
+                      className={CHECKBOX_CLASS}
+                      checked={repo.enabled}
+                      aria-label={t("skillsPage.repos.enableAria", {
+                        repo: id,
+                      })}
+                      onChange={(event) =>
+                        void onToggleRepo(repo, event.target.checked)
+                      }
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono text-caption">
+                      {id}
+                    </span>
+                    <span className="shrink-0 text-caption text-fg-3">
+                      {repo.branch || "main"}
+                    </span>
+                    {failure ? (
+                      <span
+                        className="shrink-0 text-right text-caption text-warning-text"
+                        title={skillErrorReason(failure.error, t)}
+                      >
+                        {t("skillsPage.repos.readFailed")}
+                      </span>
+                    ) : (
+                      <span className="w-12 shrink-0 text-right text-caption tabular-nums text-fg-2">
+                        {repo.enabled
+                          ? countRepoSkills(discoverable, repo)
+                          : t("skillsPage.repos.disabledShort")}
+                      </span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </>
+        )}
         <div aria-hidden="true" className="mx-1.5 my-1 h-px bg-border" />
         <button
           type="button"

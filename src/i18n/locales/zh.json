@@ -4958,6 +4958,9 @@
     "viewInstalled": "已安装",
     "viewInstalledCount": "已安装 {{count}}",
     "viewDiscover": "发现",
+    "viewRepos": "仓库",
+    "count": "{{count}} 个 Skill",
+    "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "搜索名称、目录、描述或仓库",
     "lastChecked": "上次检查：{{when}}",
     "justNow": "刚刚",
@@ -4968,6 +4971,9 @@
       "close": "关闭提示"
     },
     "filter": {
+      "button": "筛选",
+      "statusHeading": "状态",
+      "sourceHeading": "来源",
       "all": "全部",
       "updates": "可更新",
       "none": "未在任何应用启用",

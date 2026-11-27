@@ -4887,6 +4887,9 @@
     "viewInstalled": "Yüklendi",
     "viewInstalledCount": "{{count}} kuruldu",
     "viewDiscover": "Keşfet",
+    "viewRepos": "Depolar",
+    "count": "{{count}} Beceri",
+    "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "Ad, klasör, açıklama veya repoyu arayın",
     "lastChecked": "Son kontrol: {{when}}",
     "justNow": "şimdi",
@@ -4897,6 +4900,9 @@
       "close": "Reddet"
     },
     "filter": {
+      "button": "Filtrele",
+      "statusHeading": "Durum",
+      "sourceHeading": "Kaynak",
       "all": "Tümü",
       "updates": "Güncellemeler var",
       "none": "Hiçbir yerde etkinleştirilmedi",
