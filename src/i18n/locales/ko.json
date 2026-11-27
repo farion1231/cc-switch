@@ -4957,7 +4957,10 @@
     "viewAria": "스킬 보기",
     "viewInstalled": "설치됨",
     "viewInstalledCount": "{{count}}개 설치됨",
-    "viewDiscover": "탐색",
+    "viewRepos": "저장소",
+    "countOne": "{{count}}개 Skill",
+    "count": "{{count}}개 Skill",
+    "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "이름, 폴더, 설명 또는 저장소 검색",
     "lastChecked": "마지막 확인: {{when}}",
     "justNow": "방금",
@@ -4968,11 +4971,13 @@
       "close": "닫기"
     },
     "filter": {
+      "button": "필터",
+      "statusHeading": "상태",
+      "sourceHeading": "소스",
       "all": "모두",
       "updates": "업데이트 있음",
       "none": "활성화된 앱 없음",
-      "inApp": "{{app}}에서 활성화됨",
-      "sourceButton": "출처: {{source}}"
+      "inApp": "{{app}}에서 활성화됨"
     },
     "source": {
       "local": "로컬"
@@ -5048,8 +5053,6 @@
       "skillsShAria": "skills.sh 검색",
       "skillsShHint": "위에 2자 이상 입력하고 Enter를 눌러 skills.sh를 검색하세요.",
       "skillsShNone": "skills.sh에서 “{{query}}”에 대한 결과가 없습니다",
-      "sourceAria": "탐색 출처",
-      "sourceRepos": "저장소 · {{count}}개",
       "reload": "저장소 새로 고침",
       "listLabel": "설치 가능한 스킬",
       "installed": "설치됨",
@@ -5069,7 +5072,6 @@
       "onlyUninstalled": "미설치 항목만"
     },
     "repos": {
-      "buttonAll": "출처: 전체",
       "buttonSome": "출처: {{total}}개 중 {{count}}개",
       "popoverAria": "탐색에 사용하는 저장소",
       "enableAria": "탐색에서 {{repo}} 사용",

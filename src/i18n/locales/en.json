@@ -4957,7 +4957,10 @@
     "viewAria": "Skills view",
     "viewInstalled": "Installed",
     "viewInstalledCount": "Installed {{count}}",
-    "viewDiscover": "Discover",
+    "viewRepos": "Repositories",
+    "countOne": "{{count}} Skill",
+    "count": "{{count}} Skills",
+    "countFiltered": "{{shown}} of {{count}}",
     "searchPlaceholder": "Search name, folder, description or repo",
     "lastChecked": "Last checked: {{when}}",
     "justNow": "just now",
@@ -4968,11 +4971,13 @@
       "close": "Dismiss"
     },
     "filter": {
+      "button": "Filter",
+      "statusHeading": "Status",
+      "sourceHeading": "Source",
       "all": "All",
       "updates": "Has updates",
       "none": "Not enabled anywhere",
-      "inApp": "Enabled in {{app}}",
-      "sourceButton": "Source: {{source}}"
+      "inApp": "Enabled in {{app}}"
     },
     "source": {
       "local": "Local"
@@ -5048,8 +5053,6 @@
       "skillsShAria": "Search skills.sh",
       "skillsShHint": "Type at least 2 characters above and press Enter to search skills.sh.",
       "skillsShNone": "Nothing found on skills.sh for “{{query}}”",
-      "sourceAria": "Discover source",
-      "sourceRepos": "Repos · {{count}}",
       "reload": "Refresh repos",
       "listLabel": "Skills you can install",
       "installed": "Installed",
@@ -5069,7 +5072,6 @@
       "onlyUninstalled": "Not installed only"
     },
     "repos": {
-      "buttonAll": "Source: all",
       "buttonSome": "Source: {{count}} of {{total}}",
       "popoverAria": "Repositories used by Discover",
       "enableAria": "Use {{repo}} in Discover",

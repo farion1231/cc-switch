@@ -4957,7 +4957,10 @@
     "viewAria": "Skills-Ansicht",
     "viewInstalled": "Installiert",
     "viewInstalledCount": "Installiert {{count}}",
-    "viewDiscover": "Entdecken",
+    "viewRepos": "Repositories",
+    "countOne": "{{count}} Skill",
+    "count": "{{count}} Skills",
+    "countFiltered": "{{shown}} von {{count}}",
     "searchPlaceholder": "Name, Ordner, Beschreibung oder Repo suchen",
     "lastChecked": "Zuletzt geprüft: {{when}}",
     "justNow": "gerade eben",
@@ -4968,11 +4971,13 @@
       "close": "Schließen"
     },
     "filter": {
+      "button": "Filter",
+      "statusHeading": "Status",
+      "sourceHeading": "Quelle",
       "all": "Alle",
       "updates": "Mit Updates",
       "none": "Nirgends aktiviert",
-      "inApp": "In {{app}} aktiviert",
-      "sourceButton": "Quelle: {{source}}"
+      "inApp": "In {{app}} aktiviert"
     },
     "source": {
       "local": "Lokal"
@@ -5048,8 +5053,6 @@
       "skillsShAria": "skills.sh durchsuchen",
       "skillsShHint": "Geben Sie oben mindestens 2 Zeichen ein und drücken Sie die Eingabetaste, um skills.sh zu durchsuchen.",
       "skillsShNone": "Auf skills.sh wurde nichts zu „{{query}}“ gefunden",
-      "sourceAria": "Quelle für „Entdecken“",
-      "sourceRepos": "Repos · {{count}}",
       "reload": "Repos aktualisieren",
       "listLabel": "Installierbare Skills",
       "installed": "Installiert",
@@ -5069,7 +5072,6 @@
       "onlyUninstalled": "Nur nicht installierte"
     },
     "repos": {
-      "buttonAll": "Quelle: alle",
       "buttonSome": "Quelle: {{count}} von {{total}}",
       "popoverAria": "Von „Entdecken“ verwendete Repositories",
       "enableAria": "{{repo}} in „Entdecken“ verwenden",

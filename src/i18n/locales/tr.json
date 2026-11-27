@@ -4886,7 +4886,10 @@
     "viewAria": "Beceri görünümü",
     "viewInstalled": "Yüklendi",
     "viewInstalledCount": "{{count}} kuruldu",
-    "viewDiscover": "Keşfet",
+    "viewRepos": "Depolar",
+    "countOne": "{{count}} Beceri",
+    "count": "{{count}} Beceri",
+    "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "Ad, klasör, açıklama veya repoyu arayın",
     "lastChecked": "Son kontrol: {{when}}",
     "justNow": "şimdi",
@@ -4897,11 +4900,13 @@
       "close": "Reddet"
     },
     "filter": {
+      "button": "Filtrele",
+      "statusHeading": "Durum",
+      "sourceHeading": "Kaynak",
       "all": "Tümü",
       "updates": "Güncellemeler var",
       "none": "Hiçbir yerde etkinleştirilmedi",
-      "inApp": "{{app}}'de etkinleştirildi",
-      "sourceButton": "Kaynak: {{source}}"
+      "inApp": "{{app}}'de etkinleştirildi"
     },
     "source": {
       "local": "Yerel"
@@ -4977,8 +4982,6 @@
       "skillsShAria": "Skills.sh'de arama yapın",
       "skillsShHint": "Skills.sh'yi aramak için yukarıya en az 2 karakter yazın ve Enter tuşuna basın.",
       "skillsShNone": "skills.sh'de “{{query}}” için hiçbir şey bulunamadı",
-      "sourceAria": "Kaynağı keşfedin",
-      "sourceRepos": "Depolar · {{count}}",
       "reload": "Depoları yenile",
       "listLabel": "Yükleyebileceğiniz beceriler",
       "installed": "Yüklendi",
@@ -4998,7 +5001,6 @@
       "onlyUninstalled": "Yalnızca yüklü değil"
     },
     "repos": {
-      "buttonAll": "Kaynak: hepsi",
       "buttonSome": "Kaynak: {{count}} / {{total}}",
       "popoverAria": "Discover tarafından kullanılan depolar",
       "enableAria": "Keşfet'te {{repo}}'yi kullanın",

@@ -4957,7 +4957,10 @@
     "viewAria": "Skills 视图",
     "viewInstalled": "已安装",
     "viewInstalledCount": "已安装 {{count}}",
-    "viewDiscover": "发现",
+    "viewRepos": "仓库",
+    "countOne": "{{count}} 个 Skill",
+    "count": "{{count}} 个 Skill",
+    "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "搜索名称、目录、描述或仓库",
     "lastChecked": "上次检查：{{when}}",
     "justNow": "刚刚",
@@ -4968,11 +4971,13 @@
       "close": "关闭提示"
     },
     "filter": {
+      "button": "筛选",
+      "statusHeading": "状态",
+      "sourceHeading": "来源",
       "all": "全部",
       "updates": "可更新",
       "none": "未在任何应用启用",
-      "inApp": "在 {{app}} 启用",
-      "sourceButton": "来源：{{source}}"
+      "inApp": "在 {{app}} 启用"
     },
     "source": {
       "local": "本地"
@@ -5048,8 +5053,6 @@
       "skillsShAria": "在 skills.sh 搜索",
       "skillsShHint": "在上面输入至少 2 个字，按回车搜索 skills.sh。",
       "skillsShNone": "skills.sh 上没有找到“{{query}}”",
-      "sourceAria": "发现来源",
-      "sourceRepos": "仓库 · {{count}}",
       "reload": "刷新仓库",
       "listLabel": "可安装的 Skill",
       "installed": "已安装",
@@ -5069,7 +5072,6 @@
       "onlyUninstalled": "只看未安装"
     },
     "repos": {
-      "buttonAll": "来源：全部",
       "buttonSome": "来源：{{count}} / {{total}}",
       "popoverAria": "参与发现的仓库",
       "enableAria": "在发现里使用 {{repo}}",
