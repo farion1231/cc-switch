@@ -985,15 +985,11 @@ pub fn list_marketplaces(app: PluginApp) -> Result<Vec<PluginMarketplace>, Strin
     ) {
         return Err(unsupported(app, "marketplace management"));
     }
-    let out = run_cli(
+    let value = run_json(
         app,
         &["plugin", "marketplace", "list", "--json"],
         LIST_TIMEOUT,
     )?;
-    if !out.success {
-        return Err(failure_detail(&out));
-    }
-    let value = parse_json_payload(&out.stdout).unwrap_or(Value::Null);
     Ok(match app {
         PluginApp::Claude => parse_claude_marketplaces(&value),
         PluginApp::Codex => {
@@ -2232,5 +2228,38 @@ enabled = false
         restore_codex_plugin_disabled_if_needed(&db, "a@m", true, epoch_before).unwrap();
         let text = std::fs::read_to_string(&config).unwrap();
         assert_eq!(codex_plugin_enabled_in_text(&text, "a@m"), Some(false));
+    }
+
+    /// The marketplace list comes from `claude plugin marketplace list --json`. Output
+    /// that is not JSON must be reported, not shown as "no marketplaces".
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    #[serial_test::serial]
+    fn marketplace_list_reports_output_that_is_not_json() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = crate::test_support::TempUserHome::new();
+        let bin = home.path().join(".local/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let output = home.path().join("cli-output");
+        let claude = bin.join("claude");
+        std::fs::write(&claude, format!("#!/bin/sh\ncat '{}'\n", output.display())).unwrap();
+        std::fs::set_permissions(&claude, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let _env = crate::test_support::EnvVars::new()
+            .set("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+            .set("SHELL", "/bin/sh");
+
+        std::fs::write(
+            &output,
+            include_str!("fixtures/claude-2.1.318/marketplace-list.json"),
+        )
+        .unwrap();
+        let markets = list_marketplaces(PluginApp::Claude).unwrap();
+        assert_eq!(markets.len(), 1, "the fake CLI was not the one run");
+        assert_eq!(markets[0].name, "ccs-test");
+
+        std::fs::write(&output, "Error: settings.json is not valid\n").unwrap();
+        let result = list_marketplaces(PluginApp::Claude);
+        assert!(result.is_err(), "unreadable output was shown as {result:?}");
     }
 }
