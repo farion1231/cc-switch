@@ -147,6 +147,51 @@ export function formatResetIn(
   );
 }
 
+/**
+ * 紧凑重置倒计时（如 `1d7h`、`4h47m`、`12m`），统一列宽、避免中文「天/小时后重置」挤压进度条；
+ * 完整文案仍通过 `formatResetIn` 挂在 `title` 上供悬停查看。
+ */
+export function formatResetCompact(iso: string, now: Date): string | null {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime()) || at <= now) return null;
+  const totalMinutes = Math.max(
+    1,
+    Math.floor((at.getTime() - now.getTime()) / 60_000),
+  );
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  if (days > 0) return hours > 0 ? `${days}d${hours}h` : `${days}d`;
+  if (hours > 0) return minutes > 0 ? `${hours}h${minutes}m` : `${hours}h`;
+  return `${minutes}m`;
+}
+
+/** 单行正余额时收进标题行右侧纵向居中展示，省去一整行高度。 */
+function singleInlineBalance(quota: PanelQuota | null) {
+  if (!quota || quota.note || (quota.resetCredits ?? 0) > 0) return null;
+  if (quota.lines.length !== 1) return null;
+  const line = quota.lines[0];
+  if (line.left != null || !line.emphasis) return null;
+  return line;
+}
+
+function ResetCreditsBadge({
+  count,
+  texts,
+}: {
+  count: number;
+  texts: PanelTexts;
+}) {
+  return (
+    <span
+      title={texts.resetCredits.replace("{count}", String(count))}
+      className="shrink-0 rounded bg-black/[0.06] px-1.5 py-px text-[10.5px] font-medium tabular-nums text-muted-foreground dark:bg-white/[0.1]"
+    >
+      ↻×{count}
+    </span>
+  );
+}
+
 /** 只给数值上绿色（「余额 82.10 CNY」里的金额），和主界面 `TONE_TEXT.normal` 同色。 */
 function EmphasizedText({
   text,
@@ -170,23 +215,103 @@ function QuotaBlock({
   quota,
   texts,
   compact = false,
+  inlineResetCredits = false,
 }: {
   quota: PanelQuota;
   texts: PanelTexts;
   /** 子面板里：最多两档 */
   compact?: boolean;
+  /** 重置次数已内联到标题行，不再单独占一行 */
+  inlineResetCredits?: boolean;
 }) {
-  if (quota.lines.length === 0 && !quota.note && quota.resetCredits == null) {
+  const showResetCredits =
+    !inlineResetCredits && quota.resetCredits != null && quota.resetCredits > 0;
+  if (quota.lines.length === 0 && !quota.note && !showResetCredits) {
     return null;
   }
   const now = new Date();
   const lines = quota.lines.slice(0, compact ? 2 : 3).map((line) => ({
     ...line,
     when: line.resetsAt ? formatResetIn(line.resetsAt, now, texts) : null,
+    whenCompact: line.resetsAt ? formatResetCompact(line.resetsAt, now) : null,
   }));
-  // 各档共用一张网格（文字 | 进度条 | 多久重置），进度条的起止才对得齐；
-  // 整块都没有重置时间时不留第三列，免得右边空出一截间距。
+  const allCompactTiers =
+    lines.length > 0 &&
+    lines.every((line) => line.shortLabel && line.left != null);
   const hasWhen = lines.some((line) => line.when);
+
+  if (allCompactTiers) {
+    return (
+      <div
+        className={cn(
+          "grid items-center gap-x-2 gap-y-1",
+          hasWhen
+            ? "grid-cols-[44px_minmax(1.5rem,1fr)_34px_60px]"
+            : "grid-cols-[44px_minmax(1.5rem,1fr)_34px]",
+          compact ? "mt-1" : "mt-1.5",
+        )}
+      >
+        {lines.map((line, index) => {
+          const left = line.left ?? 0;
+          const displayPct = Math.round(quota.showsUsed ? 100 - left : left);
+          return (
+            <div key={index} className="contents">
+              <span
+                title={line.text}
+                className={cn(
+                  "truncate text-[11.5px] font-medium",
+                  line.warn ? "text-amber-500" : "text-muted-foreground",
+                )}
+              >
+                {line.shortLabel}
+              </span>
+              <span className="h-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10">
+                <span
+                  className={cn(
+                    "block h-full rounded-full",
+                    left <= 0
+                      ? "bg-red-500"
+                      : line.warn
+                        ? "bg-amber-500"
+                        : "bg-blue-500",
+                  )}
+                  style={{ width: `${Math.max(left, 2)}%` }}
+                />
+              </span>
+              <span
+                className={cn(
+                  "text-right text-[11.5px] font-medium tabular-nums",
+                  line.warn ? "text-amber-500" : "text-foreground/80",
+                )}
+              >
+                {displayPct}%
+              </span>
+              {hasWhen && (
+                <span
+                  title={line.when ?? undefined}
+                  className="justify-self-end whitespace-nowrap font-mono text-[12px] tabular-nums text-muted-foreground"
+                >
+                  {line.whenCompact ? `↻${line.whenCompact}` : ""}
+                </span>
+              )}
+            </div>
+          );
+        })}
+        {showResetCredits && (
+          <span className="col-span-full text-[11px] text-muted-foreground">
+            {texts.resetCredits.replace("{count}", String(quota.resetCredits))}
+          </span>
+        )}
+        {quota.note && (
+          <span className="col-span-full text-[11px] text-amber-500">
+            {quota.note}
+          </span>
+        )}
+      </div>
+    );
+  }
+
+  // 非标准档位（余额、自定义脚本、无短档名数据）：沿用原三列排版
   return (
     <div
       className={cn(
@@ -202,7 +327,7 @@ function QuotaBlock({
           <div key={index} className="contents">
             <span
               className={cn(
-                "whitespace-nowrap text-[11px] tabular-nums",
+                "whitespace-nowrap text-[11.5px] tabular-nums",
                 line.warn ? "text-amber-500" : "text-muted-foreground",
               )}
             >
@@ -226,14 +351,17 @@ function QuotaBlock({
               </span>
             )}
             {hasWhen && (
-              <span className="justify-self-end whitespace-nowrap text-[10.5px] tabular-nums text-muted-foreground">
-                {line.when}
+              <span
+                title={line.when ?? undefined}
+                className="justify-self-end whitespace-nowrap font-mono text-[12px] tabular-nums text-muted-foreground"
+              >
+                {line.whenCompact ? `↻${line.whenCompact}` : line.when}
               </span>
             )}
           </div>
         );
       })}
-      {quota.resetCredits != null && quota.resetCredits > 0 && (
+      {showResetCredits && (
         <span className="col-span-full text-[11px] text-muted-foreground">
           {texts.resetCredits.replace("{count}", String(quota.resetCredits))}
         </span>
@@ -274,6 +402,12 @@ function AppRow({
   onOpen: () => void;
 }) {
   const Chevron = side === "left" ? ChevronLeft : ChevronRight;
+  const balanceLine = singleInlineBalance(app.quota);
+  const resetCredits =
+    app.quota?.resetCredits != null && app.quota.resetCredits > 0
+      ? app.quota.resetCredits
+      : null;
+
   return (
     <button
       type="button"
@@ -283,13 +417,13 @@ function AppRow({
       onMouseLeave={onLeave}
       onClick={onOpen}
       className={cn(
-        // 图标 | 名称 | 箭头；额度另起一行，从名称列一直铺到箭头下方，进度条才不被箭头那一列挤短
-        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 rounded-[10px] px-2.5 py-2 text-left",
+        // 图标 | 名称 | 右侧（余额 + 箭头，纵向居中）；多档额度另起一行铺到箭头下方
+        "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 rounded-[10px] px-2.5 py-2 text-left",
         FOCUS_RING,
         active ? "bg-blue-500/[0.16]" : ROW_HOVER,
       )}
     >
-      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-black/[0.05] dark:bg-white/[0.08]">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-black/[0.05] dark:bg-white/[0.08]">
         <AppGlyph app={app.app} size={20} badgeClassName="bg-transparent" />
       </span>
       <span className="min-w-0">
@@ -307,6 +441,9 @@ function AppRow({
               {app.attention}
             </span>
           )}
+          {resetCredits != null && (
+            <ResetCreditsBadge count={resetCredits} texts={texts} />
+          )}
         </span>
         <span className="block truncate text-xs text-muted-foreground">
           {app.addId ? (
@@ -321,14 +458,24 @@ function AppRow({
           )}
         </span>
       </span>
-      {app.addId ? (
-        <Plus className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
-      ) : (
-        <Chevron className="mt-2 h-4 w-4 shrink-0 text-muted-foreground" />
-      )}
-      {app.quota && (
+      <span className="flex shrink-0 items-center gap-1.5">
+        {balanceLine && (
+          <span
+            title={balanceLine.text}
+            className="whitespace-nowrap text-[12px] font-medium tabular-nums text-green-600 dark:text-green-400"
+          >
+            {balanceLine.emphasis}
+          </span>
+        )}
+        {app.addId ? (
+          <Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <Chevron className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
+      </span>
+      {app.quota && !balanceLine && (
         <span className="col-span-2 col-start-2 min-w-0">
-          <QuotaBlock quota={app.quota} texts={texts} />
+          <QuotaBlock quota={app.quota} texts={texts} inlineResetCredits />
         </span>
       )}
     </button>
@@ -370,6 +517,14 @@ function SubRow({
   const hint =
     provider?.hint && !row.text.includes(provider.hint) ? provider.hint : null;
   const inUse = row.checked && provider != null;
+  const balanceLine = singleInlineBalance(provider?.quota ?? null);
+  const resetCredits =
+    provider?.quota?.resetCredits != null && provider.quota.resetCredits > 0
+      ? provider.quota.resetCredits
+      : null;
+  const hasRightCol = inUse || balanceLine != null;
+  const hasQuotaBlock = provider?.quota != null && !balanceLine;
+
   return (
     <button
       type="button"
@@ -377,13 +532,12 @@ function SubRow({
       disabled={!row.enabled}
       onClick={() => onAction(row.id)}
       className={cn(
-        // 图标 | 名称 | 使用中；额度另起一行铺到「使用中」下方，免得被那一列挤窄
+        // 图标 | 名称 | 右侧（余额 / 使用中，纵向居中）；多档额度另起一行铺到右边缘
         "grid w-full gap-x-2.5 rounded-lg px-2.5 py-1.5 text-left",
-        inUse
+        hasRightCol
           ? "grid-cols-[auto_minmax(0,1fr)_auto]"
           : "grid-cols-[auto_minmax(0,1fr)]",
-        // 带额度的行高，图标和「使用中」贴着第一行
-        provider?.quota ? "items-start" : "items-center",
+        "items-center",
         FOCUS_RING,
         row.enabled ? ROW_HOVER : "cursor-default opacity-55",
       )}
@@ -401,8 +555,11 @@ function SubRow({
         ) : null}
       </span>
       <span className="min-w-0">
-        <span className="block truncate text-[13px] font-medium">
-          {row.text}
+        <span className="flex items-center gap-1.5">
+          <span className="truncate text-[13px] font-medium">{row.text}</span>
+          {resetCredits != null && (
+            <ResetCreditsBadge count={resetCredits} texts={texts} />
+          )}
         </span>
         {hint && (
           <span className="block truncate text-[11px] text-muted-foreground">
@@ -410,14 +567,31 @@ function SubRow({
           </span>
         )}
       </span>
-      {inUse && (
-        <span className="text-[11px] font-medium text-blue-500">
-          {texts.inUse}
+      {hasRightCol && (
+        <span className="flex shrink-0 items-center gap-1.5">
+          {balanceLine && (
+            <span
+              title={balanceLine.text}
+              className="whitespace-nowrap text-[11.5px] font-medium tabular-nums text-green-600 dark:text-green-400"
+            >
+              {balanceLine.emphasis}
+            </span>
+          )}
+          {inUse && (
+            <span className="text-[11px] font-medium text-blue-500">
+              {texts.inUse}
+            </span>
+          )}
         </span>
       )}
-      {provider?.quota && (
+      {hasQuotaBlock && provider?.quota && (
         <span className="min-w-0 [grid-column:2/-1]">
-          <QuotaBlock quota={provider.quota} texts={texts} compact />
+          <QuotaBlock
+            quota={provider.quota}
+            texts={texts}
+            compact
+            inlineResetCredits
+          />
         </span>
       )}
     </button>
