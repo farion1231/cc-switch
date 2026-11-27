@@ -1576,8 +1576,15 @@ fn aggregate_anthropic_sse(body: &str, require_tool_stop: bool) -> Result<Value,
                         }
                     };
                     if require_tool_stop {
-                        tool_inputs.remove(&index);
-                        if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                        let is_tool = block.get("type").and_then(Value::as_str) == Some("tool_use");
+                        if blocks.contains_key(&index)
+                            && (is_tool || tool_inputs.contains_key(&index))
+                        {
+                            return Err(ProxyError::TransformError(format!(
+                                "anthropic SSE aggregation: duplicate content_block_start at tool index {index}"
+                            )));
+                        }
+                        if is_tool {
                             tool_inputs.insert(index, AggregatedToolInput::default());
                         }
                     }
@@ -2102,6 +2109,26 @@ mod tests {
             .map(|event| format!("data: {event}\n\n"))
             .collect();
         codex_anthropic_sse_to_message_value(&wire)
+    }
+
+    #[test]
+    fn test_issue_7459_aggregation_rejects_duplicate_tool_block_start() {
+        let original = issue_7459_aggregation_events(true, None);
+        for replacement in [
+            original[1].clone(),
+            json!({"type":"content_block_start", "index":0, "content_block":{
+                "type":"text", "text":"overwrites pending call"
+            }}),
+        ] {
+            let mut events = original.clone();
+            events.extend([
+                replacement,
+                json!({"type":"content_block_stop", "index":0}),
+                json!({"type":"message_stop"}),
+            ]);
+            let error = issue_7459_aggregate_events(&events).unwrap_err();
+            assert!(error.to_string().contains("duplicate content_block_start"));
+        }
     }
 
     #[test]

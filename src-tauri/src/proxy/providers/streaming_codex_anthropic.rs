@@ -49,6 +49,7 @@ struct BlockState {
     /// emits no `input_json_delta`. Empty otherwise.
     start_input: String,
     input_delta_seen: bool,
+    uses_wrapped_arguments: bool,
     source_block: Value,
     has_visible_summary: bool,
     done: bool,
@@ -175,6 +176,17 @@ impl AnthropicToResponsesState {
         };
         let block = data.get("content_block").unwrap_or(&Value::Null);
         let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let name = block.get("name").and_then(Value::as_str).unwrap_or("");
+        let uses_wrapped_arguments = block_type == "tool_use"
+            && anthropic_tool_uses_wrapped_arguments(name, &self.tool_context);
+        if self
+            .blocks
+            .get(&index)
+            .is_some_and(|previous| previous.uses_wrapped_arguments || uses_wrapped_arguments)
+        {
+            events.extend(self.failed_wrapped_tool_event());
+            return events;
+        }
 
         match block_type {
             "text" => {
@@ -197,6 +209,7 @@ impl AnthropicToResponsesState {
                             .to_string(),
                         start_input: String::new(),
                         input_delta_seen: false,
+                        uses_wrapped_arguments: false,
                         source_block: block.clone(),
                         has_visible_summary: false,
                         done: false,
@@ -206,7 +219,6 @@ impl AnthropicToResponsesState {
             "tool_use" => {
                 let output_index = self.next_output_index();
                 let call_id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 // Some gateways put the full tool input on content_block_start and emit
                 // no input_json_delta; capture it as a fallback (see close_block).
                 let start_input = block
@@ -237,6 +249,7 @@ impl AnthropicToResponsesState {
                         accum: String::new(),
                         start_input,
                         input_delta_seen: false,
+                        uses_wrapped_arguments,
                         source_block: block.clone(),
                         has_visible_summary: false,
                         done: false,
@@ -266,6 +279,7 @@ impl AnthropicToResponsesState {
                             .to_string(),
                         start_input: String::new(),
                         input_delta_seen: false,
+                        uses_wrapped_arguments: false,
                         source_block: block.clone(),
                         has_visible_summary,
                         done: false,
@@ -288,6 +302,18 @@ impl AnthropicToResponsesState {
         let Some(block) = self.blocks.get_mut(&index) else {
             return Vec::new();
         };
+        if block.uses_wrapped_arguments {
+            if delta_type != "input_json_delta" {
+                return Vec::new();
+            }
+            let partial = delta.get("partial_json").and_then(Value::as_str);
+            if let Some(partial) = partial.filter(|_| !block.done) {
+                block.input_delta_seen = true;
+                block.accum.push_str(partial);
+                return Vec::new();
+            }
+            return self.failed_wrapped_tool_event().into_iter().collect();
+        }
         let output_index = block.output_index;
         let item_id = block.item_id.clone();
 
@@ -304,12 +330,8 @@ impl AnthropicToResponsesState {
                     .and_then(|t| t.as_str())
                     .unwrap_or("");
                 block.accum.push_str(partial);
-                // These tools need complete JSON before their arguments can be adapted;
-                // in particular, never expose the Anthropic-only schema wrapper to Codex.
-                if block.name == "Read"
-                    || self.tool_context.is_custom_tool_chat_name(&block.name)
-                    || anthropic_tool_uses_wrapped_arguments(&block.name, &self.tool_context)
-                {
+                // These tools need complete JSON before their arguments can be adapted.
+                if block.name == "Read" || self.tool_context.is_custom_tool_chat_name(&block.name) {
                     return Vec::new();
                 }
                 vec![sse::function_call_arguments_delta(
@@ -377,8 +399,7 @@ impl AnthropicToResponsesState {
                 } else {
                     block.start_input.clone()
                 };
-                let uses_wrapped_arguments =
-                    anthropic_tool_uses_wrapped_arguments(&name, &self.tool_context);
+                let uses_wrapped_arguments = block.uses_wrapped_arguments;
                 let raw_input = if uses_wrapped_arguments {
                     // A live wrapped tool commits only at content_block_stop, never at
                     // a message terminal or EOF, even if its JSON is already complete.
@@ -391,14 +412,7 @@ impl AnthropicToResponsesState {
                         })
                     };
                     let Some(input) = input else {
-                        return self
-                            .failed_event(
-                                "Upstream returned invalid or incomplete wrapped tool arguments"
-                                    .to_string(),
-                                Some("invalid_tool_arguments".to_string()),
-                            )
-                            .into_iter()
-                            .collect();
+                        return self.failed_wrapped_tool_event().into_iter().collect();
                     };
                     input.to_string()
                 } else {
@@ -576,6 +590,13 @@ impl AnthropicToResponsesState {
         events
     }
 
+    fn failed_wrapped_tool_event(&mut self) -> Option<Bytes> {
+        self.failed_event(
+            "Upstream returned invalid or incomplete wrapped tool arguments".to_string(),
+            Some("invalid_tool_arguments".to_string()),
+        )
+    }
+
     fn failed_event(&mut self, message: String, error_type: Option<String>) -> Option<Bytes> {
         if self.completed {
             return None;
@@ -728,10 +749,7 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
                 )
                 .is_err()
             {
-                events.extend(state.failed_event(
-                    "Upstream returned invalid or incomplete wrapped tool arguments".to_string(),
-                    Some("invalid_tool_arguments".to_string()),
-                ));
+                events.extend(state.failed_wrapped_tool_event());
                 return events;
             }
         }
@@ -1245,6 +1263,49 @@ mod tests {
             assert!(!merged.contains("event: response.function_call_arguments.done"));
             assert!(!merged.contains("event: response.output_item.done"));
             assert!(!merged.contains("complete-but-uncommitted"));
+        }
+    }
+
+    #[tokio::test]
+    async fn issue_7459_wrapped_stream_rejects_duplicate_start_and_invalid_delta() {
+        let start = json!({"type":"content_block_start", "index":0, "content_block":{
+            "type":"tool_use", "id":"call_lookup", "name":"lookup", "input":{}
+        }});
+        for invalid in [
+            start.clone(),
+            json!({"type":"content_block_start", "index":0, "content_block":{
+                "type":"text", "text":"overwrites pending call"
+            }}),
+            json!({"type":"content_block_delta", "index":0, "delta":{"type":"input_json_delta"}}),
+            json!({"type":"content_block_delta", "index":0, "delta":{
+                "type":"input_json_delta", "partial_json":42
+            }}),
+        ] {
+            let events = [
+                start.clone(),
+                invalid,
+                json!({"type":"content_block_delta", "index":0, "delta":{
+                    "type":"input_json_delta", "partial_json": r#"{"cc_switch_args":{"query":"valid"}}"#
+                }}),
+                json!({"type":"content_block_stop", "index":0}),
+                json!({"type":"message_stop"}),
+            ];
+            let wire: String = events
+                .iter()
+                .map(|event| format!("data: {event}\n\n"))
+                .collect();
+            let result = run_with_context(&wire, issue_7459_context("oneOf")).await;
+            assert!(result.contains("event: response.failed"), "{result}");
+            assert!(result.contains("invalid_tool_arguments"), "{result}");
+            assert!(!result.contains("event: response.completed"), "{result}");
+            assert!(
+                !result.contains("event: response.output_item.done"),
+                "{result}"
+            );
+            assert!(
+                !result.contains("event: response.function_call_arguments."),
+                "{result}"
+            );
         }
     }
 
