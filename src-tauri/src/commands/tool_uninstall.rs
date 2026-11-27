@@ -219,7 +219,8 @@ fn brew_uninstall_command(tool: &str, real: &str) -> Result<Option<String>, Stri
                 ],
                 "codex" => &[("/Caskroom/", "codex")],
                 "gemini" => &[("/Cellar/", "gemini-cli")],
-                "opencode" => &[("/Cellar/", "opencode")],
+                // `opencode-v2` is OpenCode 2 from anomalyco/tap.
+                "opencode" => &[("/Cellar/", "opencode"), ("/Cellar/", "opencode-v2")],
                 "agy" => &[("/Caskroom/", "antigravity-cli")],
                 "copilot" => &[("/Caskroom/", "copilot-cli")],
                 _ => &[],
@@ -284,12 +285,29 @@ fn manager_next_to(entry: &str, manager: &str) -> Option<String> {
 
 /// Read package metadata instead of assuming every script or native binary is npm-owned.
 /// The explicit prefix also supports user npm prefixes without a sibling npm executable.
-fn npm_prefix(tool: &str, inst: &ToolInstallation) -> Option<PathBuf> {
+/// Returns the owning package with its prefix: OpenCode 1.x and 2.x are different packages.
+fn npm_prefix(tool: &str, inst: &ToolInstallation) -> Option<(&'static str, PathBuf)> {
     npm_prefix_for_layout(tool, inst, cfg!(target_os = "windows"))
 }
 
-fn npm_prefix_for_layout(tool: &str, inst: &ToolInstallation, windows: bool) -> Option<PathBuf> {
-    let package = tool_spec(tool).npm_package?;
+fn npm_prefix_for_layout(
+    tool: &str,
+    inst: &ToolInstallation,
+    windows: bool,
+) -> Option<(&'static str, PathBuf)> {
+    let primary = tool_spec(tool).npm_package?;
+    let v2 = (tool == "opencode").then_some(OPENCODE_V2_NPM.name);
+    [Some(primary), v2]
+        .into_iter()
+        .flatten()
+        .find_map(|package| Some((package, npm_prefix_for_package(package, inst, windows)?)))
+}
+
+fn npm_prefix_for_package(
+    package: &str,
+    inst: &ToolInstallation,
+    windows: bool,
+) -> Option<PathBuf> {
     let launcher = Path::new(&inst.path);
     let bin = launcher.parent()?;
     // A local node_modules/.bin entry is never a global npm launcher. Pi's
@@ -330,7 +348,6 @@ fn npm_prefix_for_layout(tool: &str, inst: &ToolInstallation, windows: bool) -> 
 }
 
 fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option<String> {
-    let package = tool_spec(tool).npm_package?;
     // A source badge or a sibling manager is not proof of package ownership.
     // pnpm/Bun commands remain available manually for the clients that document
     // them; until their global roots are verified, do not guess or fall back to npm.
@@ -353,7 +370,7 @@ fn node_package_uninstall_command(tool: &str, inst: &ToolInstallation) -> Option
     {
         return None;
     }
-    let prefix = npm_prefix(tool, inst)?;
+    let (package, prefix) = npm_prefix(tool, inst)?;
     let npm = manager_next_to(&inst.path, "npm").or_else(|| {
         resolve_path_default(
             "npm",
@@ -533,9 +550,38 @@ fn native_removal_paths(tool: &str, inst: &ToolInstallation) -> Vec<PathBuf> {
             paths.extend(grok_installer_files(&root));
         }
     }
+    if tool == "opencode" {
+        paths.extend(opencode_v2_legacy_shims(&inst.real));
+    }
     let mut seen = std::collections::HashSet::new();
     paths.retain(|path| seen.insert(path.clone()));
     paths
+}
+
+/// OpenCode 2's installer (`opencode.ai/v2/install`) also writes an `opencode2` alias next
+/// to `opencode`. Remove it only when it is exactly that alias, never a file the user wrote.
+fn opencode_v2_legacy_shims(real: &Path) -> Vec<PathBuf> {
+    const SHIMS: [(&str, &str); 2] = [
+        (
+            "opencode2",
+            "#!/bin/sh\nexec \"$(dirname \"$0\")/opencode\" \"$@\"\n",
+        ),
+        (
+            "opencode2.cmd",
+            "@echo off\n\"%~dp0opencode.exe\" %*\nexit /b %errorlevel%\n",
+        ),
+    ];
+    let Some(dir) = real.parent() else {
+        return Vec::new();
+    };
+    SHIMS
+        .iter()
+        .map(|(name, body)| (dir.join(name), body))
+        .filter(|(path, body)| {
+            std::fs::read_to_string(path).is_ok_and(|text| text.replace("\r\n", "\n") == **body)
+        })
+        .map(|(path, _)| path)
+        .collect()
 }
 
 /// Remove only the listed files. No recursive deletion:
@@ -760,12 +806,20 @@ fn wsl_uninstall_command(tool: &str, path: &str, real: &str) -> Result<String, S
     let removal = if tool == "hermes" {
         format!("{} uninstall --yes", shell_single_quote(path))
     } else {
-        let package = tool_spec(tool)
+        let primary = tool_spec(tool)
             .npm_package
             .ok_or("Use the original installer to uninstall this WSL application.")?;
-        let (prefix, _) = real
-            .split_once(&format!("/lib/node_modules/{package}/"))
-            .filter(|(prefix, _)| !prefix.is_empty() && path == format!("{prefix}/bin/{tool}"))
+        let v2 = (tool == "opencode").then_some(OPENCODE_V2_NPM.name);
+        let (package, prefix) = [Some(primary), v2]
+            .into_iter()
+            .flatten()
+            .find_map(|package| {
+                real.split_once(&format!("/lib/node_modules/{package}/"))
+                    .filter(|(prefix, _)| {
+                        !prefix.is_empty() && path == format!("{prefix}/bin/{tool}")
+                    })
+                    .map(|(prefix, _)| (package, prefix))
+            })
             .ok_or(
                 "Use the original installer or package manager to uninstall this WSL application.",
             )?;
@@ -984,7 +1038,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             npm_prefix_for_layout("codex", &installation(&executable), true),
-            Some(temp.path().to_path_buf())
+            Some(("@openai/codex", temp.path().to_path_buf()))
         );
 
         // 2. Local `node_modules/.bin` and installer launchers are rejected on both layouts.
@@ -1027,12 +1081,60 @@ mod tests {
             path: prefix.join("bin/codex").to_string_lossy().into_owned(),
             ..installation(&target)
         };
-        assert_eq!(npm_prefix_for_layout("codex", &inst, false), Some(prefix));
+        assert_eq!(
+            npm_prefix_for_layout("codex", &inst, false),
+            Some(("@openai/codex", prefix))
+        );
         let unrelated = ToolInstallation {
             path: temp.path().join("bin/codex").to_string_lossy().into_owned(),
             ..inst
         };
         assert!(npm_prefix_for_layout("codex", &unrelated, false).is_none());
+    }
+
+    /// OpenCode 2 is `@opencode/cli`; looking only for `opencode-ai` left it un-uninstallable.
+    #[test]
+    fn opencode_v2_npm_install_is_owned_by_its_own_package() {
+        for (package, dir) in [
+            ("opencode-ai", "opencode-ai"),
+            ("@opencode/cli", "@opencode/cli"),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let prefix = temp.path().join("prefix");
+            let pkg = prefix.join("lib/node_modules").join(dir);
+            std::fs::create_dir_all(pkg.join("bin")).unwrap();
+            std::fs::write(
+                pkg.join("package.json"),
+                format!(r#"{{"name":"{package}"}}"#),
+            )
+            .unwrap();
+            let target = pkg.join("bin/opencode.exe");
+            std::fs::write(&target, "binary").unwrap();
+            let inst = ToolInstallation {
+                path: prefix.join("bin/opencode").to_string_lossy().into_owned(),
+                ..installation(&target)
+            };
+            assert_eq!(
+                npm_prefix_for_layout("opencode", &inst, false),
+                Some((package, prefix.clone()))
+            );
+        }
+
+        // Windows npm shim of a 2.x install.
+        let temp = tempfile::tempdir().unwrap();
+        let pkg = temp.path().join("node_modules/@opencode/cli");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(pkg.join("package.json"), r#"{"name":"@opencode/cli"}"#).unwrap();
+        let shim = temp.path().join("opencode.cmd");
+        std::fs::write(
+            &shim,
+            r#""%dp0%\node_modules\@opencode\cli\bin\opencode.exe"   %*"#,
+        )
+        .unwrap();
+        assert_eq!(
+            npm_prefix_for_layout("opencode", &installation(&shim), true),
+            Some(("@opencode/cli", temp.path().to_path_buf()))
+        );
     }
 
     #[test]
@@ -1142,6 +1244,40 @@ mod tests {
     }
 
     #[test]
+    fn opencode_native_removal_includes_only_the_v2_installer_alias() {
+        let temp = tempfile::tempdir().unwrap();
+        let bin = temp.path().join(".opencode/bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let entry = bin.join("opencode");
+        std::fs::write(&entry, b"\x7fELF").unwrap();
+        let inst = installation(&entry);
+        assert!(!native_removal_paths("opencode", &inst)
+            .iter()
+            .any(|path| path.ends_with("opencode2")));
+
+        let alias = bin.join("opencode2");
+        std::fs::write(
+            &alias,
+            "#!/bin/sh\nexec \"$(dirname \"$0\")/opencode\" \"$@\"\n",
+        )
+        .unwrap();
+        let cmd = bin.join("opencode2.cmd");
+        std::fs::write(
+            &cmd,
+            "@echo off\r\n\"%~dp0opencode.exe\" %*\r\nexit /b %errorlevel%\r\n",
+        )
+        .unwrap();
+        let paths = native_removal_paths("opencode", &inst);
+        assert!(paths.contains(&inst.real.parent().unwrap().join("opencode2")));
+        assert!(paths.contains(&inst.real.parent().unwrap().join("opencode2.cmd")));
+
+        // A user's own script under that name stays.
+        std::fs::write(&alias, "#!/bin/sh\necho mine\n").unwrap();
+        assert!(!native_removal_paths("opencode", &inst)
+            .contains(&inst.real.parent().unwrap().join("opencode2")));
+    }
+
+    #[test]
     fn openclaw_removes_only_the_service_before_its_npm_package() {
         let temp = tempfile::tempdir().unwrap();
         #[cfg(target_os = "windows")]
@@ -1228,6 +1364,15 @@ mod tests {
         assert!(command.contains("npm uninstall -g --prefix"));
         assert!(!command.contains("call "));
         assert!(command.contains("[ ! -L"));
+        let opencode_v2 = wsl_uninstall_command(
+            "opencode",
+            "/usr/local/bin/opencode",
+            "/usr/local/lib/node_modules/@opencode/cli/bin/opencode.exe",
+        )
+        .unwrap();
+        assert!(opencode_v2.contains("/lib/node_modules/@opencode/cli/"));
+        assert!(opencode_v2.contains("npm uninstall -g --prefix"));
+        assert!(opencode_v2.contains(" @opencode/cli && "));
         for (path, real) in [
             ("/usr/local/bin/codex", "/usr/local/Cellar/mise/1/bin/mise"),
             (
@@ -1448,6 +1593,7 @@ mod tests {
             ("codex", "Caskroom", "codex", "--cask"),
             ("gemini", "Cellar", "gemini-cli", "--formula"),
             ("opencode", "Cellar", "opencode", "--formula"),
+            ("opencode", "Cellar", "opencode-v2", "--formula"),
             ("agy", "Caskroom", "antigravity-cli", "--cask"),
         ] {
             let real = format!("{prefix}/{location}/{token}/1/bin/{tool}");

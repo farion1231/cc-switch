@@ -513,6 +513,20 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             push_unique_path(&mut search_paths, home.join(".bun").join("bin"));
         }
     }
+    if tool == "pi" {
+        if let Some(agent_dir) = std::env::var_os("PI_CODING_AGENT_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+        {
+            push_unique_path(&mut search_paths, agent_dir.join("bin"));
+        }
+        if !home.as_os_str().is_empty() {
+            push_unique_path(
+                &mut search_paths,
+                home.join(".pi").join("agent").join("bin"),
+            );
+        }
+    }
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
@@ -708,12 +722,12 @@ fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::p
         .find(|candidate| candidate.is_file())
 }
 
-/// Pi ships only through npm, but PyPI has an unrelated Python 2 package also named
-/// `pi` whose console script lands in a Python `Scripts` dir as `pi.exe`. That file is
-/// never the Pi coding agent: probing it reports a Python traceback as "installed but
-/// broken", and uninstall would target it (#9267). Only pip's own layout is matched
-/// (`<tool>.exe` directly inside a `Scripts` dir); npm writes `.cmd` shims, so a custom
-/// npm prefix under some `Scripts` folder is left alone.
+/// Pi ships via npm and its managed installer (both using `.cmd`/script launchers on Windows),
+/// while PyPI has an unrelated Python 2 package also named `pi` whose console script lands in
+/// a Python `Scripts` dir as `pi.exe`. That file is never the Pi coding agent: probing it
+/// reports a Python traceback as "installed but broken", and uninstall would target it (#9267).
+/// Only pip's own layout is matched (`<tool>.exe` directly inside a `Scripts` dir); npm writes
+/// `.cmd` shims, so a custom npm prefix under some `Scripts` folder is left alone.
 #[cfg(any(target_os = "windows", test))]
 fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
     tool == "pi"

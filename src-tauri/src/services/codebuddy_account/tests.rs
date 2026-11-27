@@ -725,3 +725,43 @@ async fn quota_does_not_query_with_expired_tokens() {
     assert_eq!(fx.live(), raw);
     assert!(fx.manager.quota("nope@x", "en", false).await.is_err());
 }
+
+#[tokio::test]
+async fn an_unreadable_account_file_is_kept_instead_of_overwritten() {
+    let fx = Fixture::new();
+    fx.set_live(&credential("100", CN, "a1", "s1"));
+    fx.manager.import_current().await.unwrap();
+    fx.set_live(&credential("200", INTL, "b1", "s2"));
+    fx.manager.import_current().await.unwrap();
+    let store_path = fx.data_dir.join(STORE_FILENAME);
+    let mut unreadable = std::fs::read(&store_path).unwrap();
+    unreadable.extend_from_slice(b"\n}");
+    std::fs::write(&store_path, &unreadable).unwrap();
+
+    let reopened = CodebuddyAccountManager::with_auth_dir(fx.data_dir.clone(), fx.auth_dir.clone());
+    fx.set_live(&credential("300", CN, "c1", "s3"));
+    let account = reopened.import_current().await.unwrap();
+
+    assert_eq!(account.id, "300@www.codebuddy.cn");
+    assert!(
+        crate::test_support::dir_holds_file_with(&fx.data_dir, &unreadable),
+        "the unreadable account file was overwritten"
+    );
+}
+
+/// The rescue stash keeps logins CC Switch couldn't parse; a stash it can't read
+/// itself must not be replaced by a fresh one.
+#[tokio::test]
+async fn an_unreadable_rescue_stash_is_kept_instead_of_overwritten() {
+    let fx = Fixture::new();
+    let unreadable = br#"{"entries":[{"raw":"an earlier rescued login","saved_at":1}]"#.to_vec();
+    std::fs::write(fx.data_dir.join(STASH_FILENAME), &unreadable).unwrap();
+    fx.set_live(r#"{"$wbEncrypted":1,"envelope":"opaque"}"#);
+
+    assert!(fx.manager.import_current().await.is_err());
+
+    assert!(
+        crate::test_support::dir_holds_file_with(&fx.data_dir, &unreadable),
+        "the unreadable rescue stash was overwritten"
+    );
+}

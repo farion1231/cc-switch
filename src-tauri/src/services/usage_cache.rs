@@ -18,6 +18,8 @@ pub struct UsageCache {
     claude_account: RwLock<HashMap<String, SubscriptionQuota>>,
     /// 授权中心的 xAI 账号（绑了账号的 Grok 官方卡），按账号 id 存
     xai_account: RwLock<HashMap<String, SubscriptionQuota>>,
+    /// 授权中心的 Antigravity 账号，按账号 id 存（托盘逐个账号显示额度）
+    agy_account: RwLock<HashMap<String, SubscriptionQuota>>,
     script: RwLock<HashMap<(AppType, String), UsageResult>>,
 }
 
@@ -79,6 +81,23 @@ impl UsageCache {
         f: impl FnOnce(&SubscriptionQuota) -> R,
     ) -> Option<R> {
         self.xai_account
+            .read()
+            .ok()
+            .and_then(|r| r.get(account_id).map(f))
+    }
+
+    pub fn put_agy_account(&self, account_id: String, quota: SubscriptionQuota) {
+        if let Ok(mut w) = self.agy_account.write() {
+            w.insert(account_id, quota);
+        }
+    }
+
+    pub fn with_agy_account<R>(
+        &self,
+        account_id: &str,
+        f: impl FnOnce(&SubscriptionQuota) -> R,
+    ) -> Option<R> {
+        self.agy_account
             .read()
             .ok()
             .and_then(|r| r.get(account_id).map(f))
@@ -155,6 +174,9 @@ impl UsageCache {
             accounts.clear();
         }
         if let Ok(mut accounts) = self.xai_account.write() {
+            accounts.clear();
+        }
+        if let Ok(mut accounts) = self.agy_account.write() {
             accounts.clear();
         }
     }

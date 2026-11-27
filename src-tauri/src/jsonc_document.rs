@@ -163,7 +163,7 @@ impl JsoncDocument {
     }
 }
 
-fn parse_round_trip(source: &str) -> Result<RtJSONText, AppError> {
+pub(crate) fn parse_round_trip(source: &str) -> Result<RtJSONText, AppError> {
     let mut tokens = tokenize_rt_str(source)
         .map_err(|e| AppError::Config(format!("Failed to tokenize JSONC config: {e}")))?;
     // json-five 0.3.1 consumes the closing slash of a block comment but leaves

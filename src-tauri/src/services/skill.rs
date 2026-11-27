@@ -767,6 +767,7 @@ impl SkillService {
             | AppType::Copilot
             | AppType::WorkBuddy
             | AppType::Codebuddy => {}
+            AppType::ZCode => {}
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
@@ -804,6 +805,7 @@ impl SkillService {
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            AppType::ZCode => crate::zcode_config::get_zcode_dir().join("skills"),
         })
     }
 

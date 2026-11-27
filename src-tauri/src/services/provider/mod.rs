@@ -43,7 +43,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_opencode_providers_from_live, import_zcode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
@@ -8004,6 +8004,7 @@ impl ProviderService {
             | AppType::Copilot
             | AppType::WorkBuddy
             | AppType::Codebuddy => Ok(String::new()),
+            AppType::ZCode => Ok(String::new()),
         }
     }
 
@@ -8030,6 +8031,7 @@ impl ProviderService {
             | AppType::Copilot
             | AppType::WorkBuddy
             | AppType::Codebuddy => Ok(String::new()),
+            AppType::ZCode => Ok(String::new()),
         }
     }
 
@@ -8832,6 +8834,13 @@ impl ProviderService {
             }
             AppType::Omp => {
                 crate::omp_config::validate_provider(&provider.id, &provider.settings_config)?;
+            }
+            AppType::ZCode => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::InvalidInput(
+                        "ZCode configuration must be a JSON object".into(),
+                    ));
+                }
             }
         }
 

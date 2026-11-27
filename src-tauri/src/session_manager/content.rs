@@ -91,6 +91,19 @@ pub fn validate_source(provider_id: &str, source_path: &str) -> Result<Validated
                 session_id: id.to_string(),
             }
         }
+        "zcode" => {
+            let id = source_path
+                .strip_prefix("zcode:")
+                .filter(|id| !id.is_empty())
+                .ok_or("Invalid ZCode session source")?;
+            SourceLocation::Sqlite {
+                db: canonicalize_existing_path(
+                    &super::providers::zcode::database_path(),
+                    "ZCode session database",
+                )?,
+                session_id: id.to_string(),
+            }
+        }
         "opencode" if source_path.starts_with("sqlite:") => validate_sqlite_source(
             source_path,
             opencode::parse_sqlite_source(source_path),
@@ -445,11 +458,13 @@ fn pretty_json(value: &Value) -> Result<String, String> {
 fn sqlite_allowed(provider_id: &str, table: &str, column: &str) -> bool {
     let (tables, columns): (&[&str], &[&str]) = match provider_id {
         "opencode" => (
-            &["part", "message", "session_message"],
+            &["part", "message", "session_message", "session_part"],
             &["data", "content"],
         ),
         // Hermes：正文、推理全文、tool_calls JSON（参数按 pointer 取）
         "hermes" => (&["messages"], &["content", "reasoning", "tool_calls"]),
+        // ZCode 与 OpenCode 同构：part/message 的 data 列
+        "zcode" => (&["part", "message"], &["data"]),
         _ => (&[], &[]),
     };
     tables.contains(&table) && columns.contains(&column)
@@ -486,14 +501,25 @@ fn read_sqlite_cell(
     )
     .map_err(|_| "无法打开会话数据库".to_string())?;
     // 表名、列名来自上面的白名单，可以安全拼接
-    let sql = format!(
-        "SELECT length(CAST({column} AS BLOB)), {column} FROM {table} WHERE id = ?1 AND session_id = ?2"
-    );
-    let (size, cell): (Option<i64>, rusqlite::types::Value) = conn
-        .query_row(&sql, rusqlite::params![id, session_id], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        })
-        .map_err(|_| STALE.to_string())?;
+    let select = format!("SELECT length(CAST({column} AS BLOB)), {column} FROM {table}");
+    let read_row = |row: &rusqlite::Row<'_>| Ok((row.get(0)?, row.get(1)?));
+    let (size, cell): (Option<i64>, rusqlite::types::Value) = if table == "session_part" {
+        // OpenCode 2.4+ 的 session_part 没有 id 列，主键是 (message_id, ordinal)，引用写成 `<message_id>:<ordinal>`
+        let (message_id, ordinal) = id.rsplit_once(':').ok_or_else(|| STALE.to_string())?;
+        let ordinal: i64 = ordinal.parse().map_err(|_| STALE.to_string())?;
+        conn.query_row(
+            &format!("{select} WHERE message_id = ?1 AND ordinal = ?2 AND session_id = ?3"),
+            rusqlite::params![message_id, ordinal, session_id],
+            read_row,
+        )
+    } else {
+        conn.query_row(
+            &format!("{select} WHERE id = ?1 AND session_id = ?2"),
+            rusqlite::params![id, session_id],
+            read_row,
+        )
+    }
+    .map_err(|_| STALE.to_string())?;
     if size.unwrap_or(0) as u64 > MAX_TEXT_BYTES {
         return Err(TOO_LARGE_TEXT.to_string());
     }
@@ -952,6 +978,76 @@ mod tests {
             std::os::unix::fs::symlink(&target, dir.join(GROK_CHAT_HISTORY)).unwrap();
             assert_eq!(resolve_content_ref(&source, &full).unwrap_err(), OUTSIDE);
         }
+    }
+
+    /// OpenCode 2.4+：拆进 `session_part` 的 part 按 (message_id, ordinal) 回取全文，仍限定本会话
+    #[test]
+    fn opencode_session_part_refs_resolve_by_message_and_ordinal() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        use super::super::model::SessionBlock;
+
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("opencode.db");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, title TEXT, directory TEXT NOT NULL,
+                 time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
+             CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+                 type TEXT NOT NULL, seq INTEGER NOT NULL, data TEXT NOT NULL,
+                 time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL);
+             CREATE TABLE session_part (message_id TEXT NOT NULL, session_id TEXT NOT NULL,
+                 ordinal INTEGER NOT NULL, type TEXT NOT NULL, call_id TEXT,
+                 time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL,
+                 PRIMARY KEY(message_id, ordinal));
+             INSERT INTO session_v2 VALUES ('ses_1', 't', '/tmp/p', 1, 2);
+             INSERT INTO session_message VALUES ('msg_1', 'ses_1', 'assistant', 1, '{\"content\":[]}', 1, 2);",
+        )
+        .unwrap();
+        let reasoning = "r".repeat(5000);
+        conn.execute(
+            "INSERT INTO session_part VALUES ('msg_1', 'ses_1', 0, 'reasoning', NULL, 1, 2, ?1)",
+            [serde_json::json!({ "type": "reasoning", "text": reasoning }).to_string()],
+        )
+        .unwrap();
+        drop(conn);
+
+        let messages =
+            opencode::load_messages_sqlite(&format!("sqlite:{}:ses_1", db.display())).unwrap();
+        let full = messages
+            .iter()
+            .flat_map(|m| &m.blocks)
+            .find_map(|block| match block {
+                SessionBlock::Thinking { full: Some(f), .. } => Some(f.clone()),
+                _ => None,
+            })
+            .expect("long reasoning gets a full-text ref");
+        let source = ValidatedSource {
+            provider_id: "opencode".into(),
+            raw: String::new(),
+            location: SourceLocation::Sqlite {
+                db: db.canonicalize().unwrap(),
+                session_id: "ses_1".into(),
+            },
+        };
+        assert_eq!(resolve_content_ref(&source, &full).unwrap(), reasoning);
+
+        let other = ValidatedSource {
+            location: SourceLocation::Sqlite {
+                db: db.canonicalize().unwrap(),
+                session_id: "ses_2".into(),
+            },
+            ..source.clone()
+        };
+        assert_eq!(resolve_content_ref(&other, &full).unwrap_err(), STALE);
+        let malformed = ContentRef::Sqlite {
+            table: "session_part".into(),
+            id: "msg_1".into(),
+            column: "data".into(),
+            pointer: "/text".into(),
+        };
+        assert_eq!(resolve_content_ref(&source, &malformed).unwrap_err(), STALE);
     }
 
     /// Hermes：推理全文与 tool_calls 参数按白名单列回取，仍限定本会话的行

@@ -148,6 +148,15 @@ pub async fn get_config_status(
                 .to_string_lossy()
                 .into_owned(),
         }),
+        AppType::ZCode => {
+            let provider_config = crate::zcode_config::get_zcode_provider_config_path();
+            Ok(ConfigStatus {
+                exists: provider_config.exists(),
+                path: crate::zcode_config::get_zcode_dir()
+                    .to_string_lossy()
+                    .into_owned(),
+            })
+        }
     }
 }
 
@@ -179,6 +188,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
         AppType::Codebuddy => crate::codebuddy_config::data_dir(),
+        AppType::ZCode => crate::zcode_config::get_zcode_dir(),
     };
 
     Ok(dir)

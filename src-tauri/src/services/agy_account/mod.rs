@@ -27,6 +27,7 @@ use serde_json::Value;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::error::AppError;
+use crate::sync_utils::MutexExt;
 use keychain::AgyLoginStore;
 use oauth::{AgyOAuthError, TokenResponse};
 
@@ -36,6 +37,33 @@ const STASH_FILENAME: &str = "agy-login-stash.json";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// access token 剩不到这么久就先续期再查额度。
 const TOKEN_MARGIN: Duration = Duration::from_secs(120);
+
+/// 最近一次读到的账号表和 agy 当前登录，见 [`last_known_status`]。
+static LAST_KNOWN: std::sync::Mutex<Option<AgyAccountStatus>> = std::sync::Mutex::new(None);
+
+/// 最近一次读到的账号表和 agy 当前登录。托盘建菜单是同步的，也不该每次都起子进程读钥匙串，
+/// 就读这份：账号表每次存盘后更新，当前登录在查看状态、切号、查额度读过钥匙串后更新。
+/// 还没读过钥匙串时 `current_account_id` 为 `None`。
+pub fn last_known_status() -> Option<AgyAccountStatus> {
+    LAST_KNOWN.lock_recover().clone()
+}
+
+/// 记下账号表；`current` 为 `Some` 时连同刚从钥匙串读到的当前登录一起记，`None` 沿用上次的。
+fn remember(store: &StoreFile, current: Option<Option<String>>) {
+    let mut last = LAST_KNOWN.lock_recover();
+    let current = match current {
+        Some(current) => current,
+        None => last
+            .as_ref()
+            .and_then(|status| status.current_account_id.clone()),
+    }
+    .filter(|id| store.accounts.contains_key(id));
+    *last = Some(AgyAccountStatus {
+        accounts: sorted_accounts(store),
+        current_account_id: current,
+        supported: keychain::supported(),
+    });
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AccountData {
@@ -161,17 +189,8 @@ impl AgyAccountManager {
 
     pub fn with_login_store(data_dir: PathBuf, login: Arc<dyn AgyLoginStore>) -> Self {
         let path = data_dir.join(STORE_FILENAME);
-        let store = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                log::warn!("[AgyAccount] 账号文件解析失败，按空表处理: {error}");
-                StoreFile::default()
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreFile::default(),
-            Err(error) => {
-                log::warn!("[AgyAccount] 账号文件读取失败，按空表处理: {error}");
-                StoreFile::default()
-            }
-        };
+        let store = crate::config::load_json_or_set_aside(&path, "AgyAccount");
+        remember(&store, None);
         Self {
             data_dir,
             login,
@@ -296,6 +315,7 @@ impl AgyAccountManager {
                 }
                 Err(error) => log::warn!("[AgyAccount] 读取 agy 当前登录失败: {error}"),
             }
+            remember(&store, Some(current.clone()));
         }
         Ok(AgyAccountStatus {
             accounts: sorted_accounts(&store),
@@ -332,6 +352,7 @@ impl AgyAccountManager {
             self.persist(&store)?;
         }
         if current.as_deref() == Some(account_id) {
+            remember(&store, Some(current));
             return Ok(());
         }
 
@@ -347,6 +368,7 @@ impl AgyAccountManager {
                 let written = refresh_token_of(&credential);
                 if written.is_some() && written == expected.as_deref() {
                     log::info!("[AgyAccount] 已切换 agy 登录");
+                    remember(&store, Some(Some(account_id.to_string())));
                     return Ok(());
                 }
             }
@@ -436,6 +458,7 @@ impl AgyAccountManager {
                 log::warn!("[AgyAccount] 保存账号文件失败: {error}");
             }
         }
+        remember(&store, Some(id.clone()));
         id
     }
 
@@ -584,7 +607,9 @@ impl AgyAccountManager {
         };
         let content = serde_json::to_vec_pretty(&snapshot)
             .map_err(|source| AppError::JsonSerialize { source })?;
-        crate::config::atomic_write_private(&self.data_dir.join(STORE_FILENAME), &content)
+        crate::config::atomic_write_private(&self.data_dir.join(STORE_FILENAME), &content)?;
+        remember(store, None);
+        Ok(())
     }
 }
 

@@ -24,7 +24,6 @@ import {
   getLocaleFromLanguage,
   joinNames,
   joinClauses,
-  sumSpeedTotals,
   USD_DISPLAY,
 } from "@/components/usage/format";
 
@@ -272,10 +271,6 @@ describe("usage format helpers", () => {
     const withFirstToken = { ...session, firstTokenMs: 4_000 };
     expect(getEstimatedTokensPerSecond(withFirstToken)).toBe(90);
     expect(getOutputTokensPerSecond(withFirstToken)).toBeNull();
-    expect(sumSpeedTotals([withFirstToken])).toEqual({
-      outputTokens: 0,
-      generationMs: 0,
-    });
   });
 
   it("formats first-token time in seconds", () => {
@@ -314,22 +309,8 @@ describe("usage format helpers", () => {
   });
 
   it("aggregates speed as total output over total generation time, not a mean of rates", () => {
-    const logs = [
-      // 1000 token / 10 s = 100 tok/s
-      { outputTokens: 1_000, latencyMs: 11_000, firstTokenMs: 1_000 },
-      // 200 token / 0.5 s = 400 tok/s（逐条平均会被它拉高）
-      { outputTokens: 200, latencyMs: 1_500, firstTokenMs: 1_000 },
-      // 不计：输出不到 100
-      { outputTokens: 50, latencyMs: 1_100, firstTokenMs: 1_000 },
-      // 不计：没有首字
-      { outputTokens: 5_000, latencyMs: 9_000 },
-    ];
-    const totals = sumSpeedTotals(logs);
-    expect(totals).toEqual({ outputTokens: 1_200, generationMs: 10_500 });
-    const tps = getAggregateTokensPerSecond(
-      totals.outputTokens,
-      totals.generationMs,
-    );
+    // 1000 token / 10 s 和 200 token / 0.5 s：逐条平均是 250，总量相除是 114.29
+    const tps = getAggregateTokensPerSecond(1_200, 10_500);
     expect(tps).toBeCloseTo(114.29, 2);
     expect(getAggregateTokensPerSecond(0, 0)).toBeNull();
     expect(getAggregateTokensPerSecond(500, 0)).toBeNull();

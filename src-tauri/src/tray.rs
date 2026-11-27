@@ -64,6 +64,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Omp => "Oh My Pi",
         AppType::Copilot => "Copilot CLI",
         AppType::Codebuddy => "CodeBuddy",
+        AppType::ZCode => "ZCode",
     }
 }
 
@@ -126,6 +127,12 @@ pub struct TrayTexts {
     pub feedback_stack_default: &'static str,
     /// 反馈行：应用项目
     pub feedback_profile: &'static str,
+    /// 反馈行：托盘里切了 Antigravity 账号、agy 正开着（开着的仍用原账号），`{app}` `{name}`
+    pub feedback_account_switched: &'static str,
+    /// 官方账号区（Antigravity）子菜单的标题
+    pub header_accounts: &'static str,
+    /// 官方账号区最下面：去授权中心
+    pub manage_accounts: &'static str,
     pub tier_five_hour: &'static str,
     pub tier_weekly: &'static str,
     pub tier_fable: &'static str,
@@ -237,6 +244,9 @@ impl TrayTexts {
                 feedback_stack_default:
                     "{app}'s default provider is now {name}. Restart {app} to apply",
                 feedback_profile: "Applied project \u{201c}{name}\u{201d} to {app}",
+                feedback_account_switched: "{app} signed in as {name}. Restart open {app} sessions to apply",
+                header_accounts: "Official accounts",
+                manage_accounts: "Manage accounts…",
                 tier_five_hour: "5-hour",
                 tier_weekly: "Weekly",
                 tier_fable: "Fable",
@@ -292,6 +302,9 @@ impl TrayTexts {
                 feedback_switched: "{app}의 공급자가 {name}(으)로 전환되었습니다. 적용하려면 {app}을(를) 다시 시작하세요",
                 feedback_stack_default: "{app}의 기본 공급자가 {name}(으)로 변경되었습니다. 적용하려면 {app}을(를) 다시 시작하세요",
                 feedback_profile: "{app}에 {name} 프로젝트를 적용했습니다",
+                feedback_account_switched: "{app} 계정이 {name}(으)로 전환되었습니다. 열려 있는 {app}은(는) 다시 시작해야 적용됩니다",
+                header_accounts: "공식 계정",
+                manage_accounts: "계정 관리…",
                 tier_five_hour: "5시간",
                 tier_weekly: "주간",
                 tier_fable: "Fable",
@@ -349,6 +362,9 @@ impl TrayTexts {
                 feedback_stack_default:
                     "Standardanbieter von {app} ist jetzt {name}. {app} neu starten, um es zu übernehmen",
                 feedback_profile: "Projekt \u{201e}{name}\u{201c} auf {app} angewendet",
+                feedback_account_switched: "{app} ist jetzt als {name} angemeldet. Laufende {app}-Sitzungen neu starten, um es zu übernehmen",
+                header_accounts: "Offizielle Konten",
+                manage_accounts: "Konten verwalten…",
                 tier_five_hour: "5 Stunden",
                 tier_weekly: "Woche",
                 tier_fable: "Fable",
@@ -404,6 +420,9 @@ impl TrayTexts {
                 feedback_switched: "{app} переключён на {name}. Перезапустите {app}, чтобы применить",
                 feedback_stack_default: "Провайдер по умолчанию для {app} теперь {name}. Перезапустите {app}, чтобы применить",
                 feedback_profile: "Проект \u{00ab}{name}\u{00bb} применён к {app}",
+                feedback_account_switched: "{app} теперь использует аккаунт {name}. Перезапустите открытые сеансы {app}, чтобы применить",
+                header_accounts: "Официальные аккаунты",
+                manage_accounts: "Управление аккаунтами…",
                 tier_five_hour: "5 часов",
                 tier_weekly: "Неделя",
                 tier_fable: "Fable",
@@ -459,6 +478,9 @@ impl TrayTexts {
                 feedback_switched: "{app}, {name} sağlayıcısına geçti. Uygulamak için {app} uygulamasını yeniden başlatın",
                 feedback_stack_default: "{app} için varsayılan sağlayıcı artık {name}. Uygulamak için {app} uygulamasını yeniden başlatın",
                 feedback_profile: "{name} projesi {app} uygulamasına uygulandı",
+                feedback_account_switched: "{app} artık {name} hesabını kullanıyor. Uygulamak için açık {app} oturumlarını yeniden başlatın",
+                header_accounts: "Resmî hesaplar",
+                manage_accounts: "Hesapları yönet…",
                 tier_five_hour: "5 saatlik",
                 tier_weekly: "Haftalık",
                 tier_fable: "Fable",
@@ -516,6 +538,9 @@ impl TrayTexts {
                     "{app} を {name} に切り替えました。反映するには {app} を再起動してください",
                 feedback_stack_default: "{app} のデフォルトのプロバイダーを {name} に変更しました。反映するには {app} を再起動してください",
                 feedback_profile: "プロジェクト「{name}」を {app} に適用しました",
+                feedback_account_switched: "{app} のアカウントを {name} に切り替えました。開いている {app} は再起動すると反映されます",
+                header_accounts: "公式アカウント",
+                manage_accounts: "アカウントを管理…",
                 tier_five_hour: "5時間",
                 tier_weekly: "週間",
                 tier_fable: "Fable",
@@ -571,6 +596,9 @@ impl TrayTexts {
                 feedback_switched: "{app} 已切換到 {name}，重新啟動 {app} 後生效",
                 feedback_stack_default: "{app} 的預設供應商改為 {name}，重新啟動 {app} 後生效",
                 feedback_profile: "已把專案「{name}」套用到 {app}",
+                feedback_account_switched: "{app} 已切換到帳號 {name}，已開啟的 {app} 重新啟動後生效",
+                header_accounts: "官方帳號",
+                manage_accounts: "管理帳號…",
                 tier_five_hour: "5 小時",
                 tier_weekly: "每週",
                 tier_fable: "Fable",
@@ -626,6 +654,9 @@ impl TrayTexts {
                 feedback_switched: "{app} 已切换到 {name}，重启 {app} 后生效",
                 feedback_stack_default: "{app} 的默认供应商改为 {name}，重启 {app} 后生效",
                 feedback_profile: "已把项目「{name}」用到 {app}",
+                feedback_account_switched: "{app} 已切换到账号 {name}，已打开的 {app} 重启后生效",
+                header_accounts: "官方账号",
+                manage_accounts: "管理账号…",
                 tier_five_hour: "5 小时",
                 tier_weekly: "每周",
                 tier_fable: "Fable",
@@ -720,6 +751,10 @@ enum TierGroup {
     GeminiFlash,
     GeminiFlashLite,
     Premium,
+    /// Antigravity：Gemini 一组（5 小时 + 每周）、Claude 和 GPT 共用一组、Pro 档另有 Argon 每周
+    AgyGemini,
+    AgyThirdParty,
+    AgyArgon,
 }
 
 const TIER_GROUPS: &[(TierGroup, &[&str])] = {
@@ -742,6 +777,24 @@ const TIER_GROUPS: &[(TierGroup, &[&str])] = {
         (TierGroup::GeminiFlash, &[s::TIER_GEMINI_FLASH]),
         (TierGroup::GeminiFlashLite, &[s::TIER_GEMINI_FLASH_LITE]),
         (TierGroup::Premium, &["premium"]),
+        (
+            TierGroup::AgyGemini,
+            &[
+                crate::services::subscription_agy::TIER_AGY_GEMINI_FIVE_HOUR,
+                crate::services::subscription_agy::TIER_AGY_GEMINI_WEEKLY,
+            ],
+        ),
+        (
+            TierGroup::AgyThirdParty,
+            &[
+                crate::services::subscription_agy::TIER_AGY_THIRD_PARTY_FIVE_HOUR,
+                crate::services::subscription_agy::TIER_AGY_THIRD_PARTY_WEEKLY,
+            ],
+        ),
+        (
+            TierGroup::AgyArgon,
+            &[crate::services::subscription_agy::TIER_AGY_GEMINI_ARGON_WEEKLY],
+        ),
     ]
 };
 
@@ -759,6 +812,10 @@ fn tier_label(texts: &TrayTexts, group: TierGroup, tier_name: &str) -> &'static 
         TierGroup::GeminiFlash => texts.tier_gemini_flash,
         TierGroup::GeminiFlashLite => texts.tier_gemini_flash_lite,
         TierGroup::Premium => texts.tier_premium,
+        // 模型名，不翻译（同前端 `subscription.agyGemini` 等）
+        TierGroup::AgyGemini => "Gemini",
+        TierGroup::AgyThirdParty => "Claude/GPT",
+        TierGroup::AgyArgon => "Argon",
     }
 }
 
@@ -1682,6 +1739,61 @@ fn collect_app_snapshot(
     Ok(snapshot)
 }
 
+// ─── Antigravity 官方账号 ─────────────────────────────────────────────────────
+
+/// Antigravity 在托盘里列的是授权中心的官方账号，不是供应商卡片（它的卡片只能「打开终端」）：
+/// 勾着的是 agy 现在登着的号，点一个号就把 agy 的全局登录切过去（和授权中心的切号同一个操作）；
+/// 每个号的额度用它自己的令牌查，不用先切号。没有收录账号时这一节不出现。
+fn is_account_section(app: &AppType) -> bool {
+    *app == AppType::Agy
+}
+
+fn agy_quota_view(
+    usage_cache: &UsageCache,
+    texts: &TrayTexts,
+    account_id: &str,
+) -> Option<QuotaView> {
+    usage_cache
+        .with_agy_account(account_id, |quota| format_subscription_quota(texts, quota))
+        .flatten()
+}
+
+/// 账号表 → 应用快照。`quota_of` 取某个号的额度（单测里不经缓存）。
+fn agy_snapshot(
+    status: Option<crate::services::agy_account::AgyAccountStatus>,
+    quota_of: impl Fn(&str) -> Option<QuotaView>,
+) -> Option<AppSnapshot> {
+    let status = status.filter(|status| status.supported && !status.accounts.is_empty())?;
+    let current_id = status
+        .current_account_id
+        .filter(|id| status.accounts.iter().any(|account| account.id == *id));
+    let providers = status
+        .accounts
+        .iter()
+        .map(|account| ProviderEntry {
+            id: account.id.clone(),
+            name: account.label(),
+            hint: None,
+            needs_routing: false,
+            official: true,
+            blocked_from_routing: false,
+        })
+        .collect();
+    let quota = current_id.as_deref().and_then(&quota_of);
+    Some(AppSnapshot {
+        app: AppType::Agy,
+        mode: TrayMode::Direct,
+        providers,
+        current_id,
+        queue: Vec::new(),
+        stack_members: Vec::new(),
+        quota,
+        service_down: false,
+        needs_attention: false,
+        profiles: None,
+    })
+}
+
 // ─── 问题区的状态 ─────────────────────────────────────────────────────────────
 
 /// 启动流程（接上路由、拉起 Desktop 映射服务）走完之前不报「路由服务没在跑」：那时它本来就还没起来。
@@ -1820,6 +1932,8 @@ enum TrayFeedback {
     StackDefault { app: AppType, name: String },
     /// 应用项目：同时改了供应商、MCP、Skills、提示词。
     ProfileApplied { app: AppType, name: String },
+    /// 切了官方账号、客户端正开着：开着的还用原账号。
+    AccountSwitched { app: AppType, name: String },
 }
 
 struct FeedbackRecord {
@@ -1903,6 +2017,7 @@ fn feedback_text(texts: &TrayTexts, feedback: &TrayFeedback) -> String {
         TrayFeedback::Switched { app, name } => (texts.feedback_switched, app, name),
         TrayFeedback::StackDefault { app, name } => (texts.feedback_stack_default, app, name),
         TrayFeedback::ProfileApplied { app, name } => (texts.feedback_profile, app, name),
+        TrayFeedback::AccountSwitched { app, name } => (texts.feedback_account_switched, app, name),
     };
     fill(
         template,
@@ -1923,6 +2038,8 @@ struct MenuStatus {
     update_ready: Option<String>,
     /// 授权中心切号或代理令牌失效也会改变副标题，不能只比较路由状态。
     provider_hints: Vec<(AppType, String, Option<String>)>,
+    /// agy 现在登着的号：在授权中心或 agy 里换了号，勾要跟着挪。
+    agy_current: Option<String>,
 }
 
 // ─── 菜单模型（纯数据）────────────────────────────────────────────────────────
@@ -2012,11 +2129,17 @@ fn problem_text(texts: &TrayTexts, problem: &TrayProblem) -> String {
 
 /// 托盘 / 面板里「重启并更新」的事件 id。
 const INSTALL_UPDATE_ID: &str = "app_update:install";
+/// 打开授权中心（官方账号在那里添加、删除）。
+const AUTH_PAGE_NAV_ID: &str = "nav:page:auth";
 
 fn problem_id(problem: &TrayProblem) -> String {
     match problem {
         TrayProblem::ServiceDown { .. } => "nav:settings:routing".to_string(),
         TrayProblem::AttachFailed { app, .. } => format!("nav:app:{}:attach", app.as_str()),
+        // 账号区切号失败：原因（登录失效、钥匙串写不进去）要到授权中心处理
+        TrayProblem::SwitchFailed { app, .. } if is_account_section(app) => {
+            AUTH_PAGE_NAV_ID.to_string()
+        }
         TrayProblem::SwitchFailed { app, .. } => format!("nav:app:{}:failed", app.as_str()),
     }
 }
@@ -2178,6 +2301,9 @@ fn app_children(
     let mut children = Vec::new();
 
     let header = match snapshot.mode {
+        TrayMode::Direct if is_account_section(&snapshot.app) => {
+            Some(texts.header_accounts.to_string())
+        }
         TrayMode::Direct => Some(texts.header_direct.to_string()),
         TrayMode::Route => Some(texts.header_route.to_string()),
         TrayMode::Failover => Some(texts.header_failover.to_string()),
@@ -2227,13 +2353,18 @@ fn app_children(
     }
 
     children.push(TrayEntry::Separator);
-    children.push(TrayEntry::item(
-        format!("nav:app:{app}"),
-        fill(
-            texts.open_app_page,
-            &[("app", app_display_name(&snapshot.app))],
-        ),
-    ));
+    if is_account_section(&snapshot.app) {
+        // 账号在授权中心添加、删除
+        children.push(TrayEntry::item(AUTH_PAGE_NAV_ID, texts.manage_accounts));
+    } else {
+        children.push(TrayEntry::item(
+            format!("nav:app:{app}"),
+            fill(
+                texts.open_app_page,
+                &[("app", app_display_name(&snapshot.app))],
+            ),
+        ));
+    }
     children
 }
 
@@ -2361,6 +2492,12 @@ fn collect_snapshots(
             app_state, texts, &settings, app, running, &profiles, &accounts,
         )?);
     }
+    if visible_apps.is_visible(&AppType::Agy) {
+        let status = crate::services::agy_account::last_known_status();
+        snapshots.extend(agy_snapshot(status, |id| {
+            agy_quota_view(&app_state.usage_cache, texts, id)
+        }));
+    }
 
     let port = snapshots
         .iter()
@@ -2397,6 +2534,10 @@ fn collect_status(
                 })
             })
             .collect(),
+        agy_current: snapshots
+            .iter()
+            .find(|snapshot| is_account_section(&snapshot.app))
+            .and_then(|snapshot| snapshot.current_id.clone()),
     };
     Ok((snapshots, status))
 }
@@ -2609,6 +2750,17 @@ fn panel_rows(
                 return None;
             }
             let provider = row_provider_id(&id, app).and_then(|provider_id| {
+                if is_account_section(&snapshot.app) {
+                    let account = snapshot.providers.iter().find(|p| p.id == provider_id)?;
+                    return Some(PanelProvider {
+                        name: account.name.clone(),
+                        hint: None,
+                        icon: Some("google".to_string()),
+                        icon_color: None,
+                        quota: agy_quota_view(usage_cache, texts, provider_id)
+                            .map(|view| panel_quota(texts, &view, now, None)),
+                    });
+                }
                 let provider = rows.get(provider_id)?;
                 let source = tray_usage_source(&snapshot.app, provider);
                 Some(PanelProvider {
@@ -2664,7 +2816,13 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
     let mut apps = Vec::with_capacity(snapshots.len());
     for snapshot in &snapshots {
         let app = snapshot.app.as_str();
-        let providers = app_state.db.get_provider_rows(&snapshot.app)?.readable;
+        let accounts = is_account_section(&snapshot.app);
+        // 账号区的行是授权中心的账号，不读供应商表
+        let providers = if accounts {
+            indexmap::IndexMap::new()
+        } else {
+            app_state.db.get_provider_rows(&snapshot.app)?.readable
+        };
         let (header, rows) = panel_rows(&app_state.usage_cache, &texts, snapshot, &providers, now);
         let credits = snapshot
             .current_id
@@ -2683,6 +2841,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             name: app_display_name(&snapshot.app),
             current: snapshot.current().map(|p| p.name.clone()),
             mode: match snapshot.mode {
+                TrayMode::Direct if accounts => texts.header_accounts,
                 TrayMode::Direct => texts.header_direct,
                 TrayMode::Route | TrayMode::Failover => texts.mode_route,
                 TrayMode::Stack => texts.mode_stack,
@@ -3145,11 +3304,14 @@ pub struct TrayNavigation {
     pub intent: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_id: Option<String>,
+    /// 全局页面（`auth`：授权中心）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<String>,
 }
 
 impl TrayNavigation {
     fn is_empty(&self) -> bool {
-        self.app.is_none() && self.section.is_none()
+        self.app.is_none() && self.section.is_none() && self.page.is_none()
     }
 }
 
@@ -3157,7 +3319,7 @@ impl TrayNavigation {
 static PENDING_NAVIGATION: Mutex<Option<TrayNavigation>> = Mutex::new(None);
 
 /// 解析 `nav:…` 菜单 id：`nav:main`、`nav:settings:<分组>`、`nav:app:<应用>[:…]`、
-/// `nav:add:<应用>`、`nav:needs:<应用>:<供应商 id>`。
+/// `nav:add:<应用>`、`nav:needs:<应用>:<供应商 id>`、`nav:page:auth`。
 fn parse_nav_id(id: &str) -> Option<TrayNavigation> {
     let rest = id.strip_prefix("nav:")?;
     let mut parts = rest.splitn(3, ':');
@@ -3174,6 +3336,10 @@ fn parse_nav_id(id: &str) -> Option<TrayNavigation> {
         "main" => TrayNavigation::default(),
         "settings" => TrayNavigation {
             section: Some(target?.to_string()),
+            ..Default::default()
+        },
+        "page" if target == Some("auth") => TrayNavigation {
+            page: Some("auth".to_string()),
             ..Default::default()
         },
         "app" => TrayNavigation {
@@ -3209,6 +3375,10 @@ fn navigate(app: &tauri::AppHandle, navigation: TrayNavigation) {
     {
         // 打开过对应页面，这个应用的问题行就算看过了。
         clear_app_problems(&app_type);
+    }
+    if navigation.page.as_deref() == Some("auth") {
+        // 账号区切号失败的问题行指向授权中心
+        clear_app_problems(&AppType::Agy);
     }
     let pending = !navigation.is_empty();
     if pending {
@@ -3378,6 +3548,10 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
         log::warn!("未知应用的供应商托盘事件: {event_id}");
         return true;
     };
+    if is_account_section(&app_type) {
+        handle_agy_account_click(app, provider_id.to_string());
+        return true;
+    }
     log::info!("托盘切换 {} 到 {provider_id}", app_display_name(&app_type));
     let app_handle = app.clone();
     let provider_id = provider_id.to_string();
@@ -3412,6 +3586,59 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
         refresh_tray_menu(&app_handle);
     });
     true
+}
+
+/// 点了一个 Antigravity 账号：把 agy 的全局登录切过去（和授权中心切号同一个操作）。
+/// agy 正开着时说一句：开着的 agy 还用原账号，续期时还可能把原账号写回去。
+fn handle_agy_account_click(app: &tauri::AppHandle, account_id: String) {
+    log::info!("托盘切换 Antigravity 账号到 {account_id}");
+    let app_handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let Some(state) = app_handle.try_state::<crate::commands::AgyAccountState>() else {
+            return;
+        };
+        let manager = std::sync::Arc::clone(&state.0);
+        let before = crate::services::agy_account::last_known_status();
+        let was_current = before
+            .as_ref()
+            .and_then(|status| status.current_account_id.as_deref())
+            == Some(account_id.as_str());
+        let name = before
+            .as_ref()
+            .and_then(|status| {
+                status
+                    .accounts
+                    .iter()
+                    .find(|account| account.id == account_id)
+            })
+            .map(|account| account.label())
+            .unwrap_or_else(|| account_id.clone());
+        match manager.switch_to(&account_id).await {
+            Ok(()) => {
+                clear_app_problems(&AppType::Agy);
+                let running = !was_current
+                    && tokio::task::spawn_blocking(crate::services::agy_account::agy_running)
+                        .await
+                        .unwrap_or(false);
+                if running {
+                    record_feedback(
+                        &app_handle,
+                        TrayFeedback::AccountSwitched {
+                            app: AppType::Agy,
+                            name,
+                        },
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!("托盘切换 Antigravity 账号失败: {e}");
+                record_switch_failure(&AppType::Agy, e.to_string());
+            }
+        }
+        // 打勾项点了会自己翻转勾选：成功、没动、失败都要按实际状态重建。
+        let app = app_handle.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || refresh_tray_menu(&app)).await;
+    });
 }
 
 enum ClickOutcome {
@@ -3595,7 +3822,8 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 ///
 /// 刷新面与 `usage_view` 的展示面严格对齐 —— 每次悬停最多发
 /// `TRAY_APPS.len()` 个用量查询；按供应商用量开关查询，Codex 托管账号
-/// 未保存开关时与卡片一致默认启用。
+/// 未保存开关时与卡片一致默认启用。Antigravity 账号区另算：在用的号每次都查，
+/// 其余的号按 `AGY_IDLE_QUOTA_INTERVAL` 轮到才查（`refresh_agy_accounts`）。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
@@ -3717,7 +3945,82 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         }
     }
 
-    join_all(usage_futures).await;
+    let agy = async {
+        if visible_apps.is_visible(&AppType::Agy) {
+            refresh_agy_accounts(app).await;
+        }
+    };
+    futures::join!(join_all(usage_futures), agy);
+}
+
+/// 每个 Antigravity 账号上次替托盘查额度的时间。
+static AGY_QUOTA_QUERIES: LazyLock<Mutex<HashMap<String, std::time::Instant>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// 不在用的 Antigravity 账号多久替托盘查一次额度（在用的号跟着托盘的 10 秒节流走）。
+/// 每查一个号要发两个请求，号多时不能每次弹出都全查一遍。
+const AGY_IDLE_QUOTA_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// 托盘的 Antigravity 账号区：先读一次钥匙串（agy 现在登着哪个号、有没有收进新号），
+/// 再查到期的几个号的额度。没收录过账号时什么都不做，不碰钥匙串。
+async fn refresh_agy_accounts(app: &tauri::AppHandle) {
+    use futures::future::join_all;
+
+    if !crate::services::agy_account::keychain::supported()
+        || crate::services::agy_account::last_known_status()
+            .is_none_or(|status| status.accounts.is_empty())
+    {
+        return;
+    }
+    let Some(state) = app.try_state::<crate::commands::AgyAccountState>() else {
+        return;
+    };
+    let manager = std::sync::Arc::clone(&state.0);
+    let status = match manager.status().await {
+        Ok(status) => status,
+        Err(e) => {
+            log::debug!("[Tray] 读取 Antigravity 账号失败: {e}");
+            return;
+        }
+    };
+    // 在 agy 里或授权中心换过号：勾跟着挪（状态没变就不重建）
+    schedule_tray_status_check(app);
+
+    let due: Vec<String> = {
+        let mut queried = AGY_QUOTA_QUERIES.lock_recover();
+        let now = std::time::Instant::now();
+        status
+            .accounts
+            .iter()
+            .filter(|account| {
+                let current = status.current_account_id.as_deref() == Some(account.id.as_str());
+                let due = current
+                    || queried
+                        .get(&account.id)
+                        .is_none_or(|at| now.duration_since(*at) >= AGY_IDLE_QUOTA_INTERVAL);
+                if due {
+                    queried.insert(account.id.clone(), now);
+                }
+                due
+            })
+            .map(|account| account.id.clone())
+            .collect()
+    };
+    let Some(app_state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let queries = due.into_iter().map(|account_id| {
+        let manager = std::sync::Arc::clone(&manager);
+        let app_state = app_state.inner();
+        async move {
+            match crate::commands::agy_quota(&manager, Some(&account_id)).await {
+                Ok(quota) => {
+                    crate::commands::remember_account_quota(app, app_state, account_id, &quota)
+                }
+                Err(e) => log::debug!("[Tray] 刷新 Antigravity 账号 {account_id} 额度失败: {e}"),
+            }
+        }
+    });
+    join_all(queries).await;
 }
 
 /// 这一路额度查询打的是不是官方账号的接口。托管 Codex、Claude 账号、客户端订阅都是；

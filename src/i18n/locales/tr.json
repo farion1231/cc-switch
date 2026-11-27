@@ -1024,6 +1024,7 @@
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "örn. /home/<kullanıcı-adınız>/.dsh",
+    "browsePlaceholderZcode": "örn. /home/<kullanıcı-adınız>/.zcode",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",
     "checkForUpdates": "Güncellemeleri Kontrol Et",
@@ -1681,7 +1682,6 @@
       "filterChanges": "Değişiklikler",
       "filterLabel": "Görüntüle",
       "exportMarkdown": "Markdown dosyası olarak dışa aktar",
-      "exportShort": "Dışa aktar",
       "exported": "{{path}}'ye aktarıldı",
       "exportFailed": "Dışa aktarma başarısız oldu: {{error}}",
       "conversationRegion": "Konuşma içeriği",
@@ -2178,7 +2178,8 @@
     "autoReviewModelMainDefault": "Ana model kendini inceler (varsayılan)",
     "autoReviewModelNoList": "Bu kartta model listesi yok: Codex onayları yalnızca ChatGPT hesaplarına yönlendirme yapan bazı aktarım hizmetlerinin kabul ettiği resmî codex-auto-review modeliyle inceler; diğerleri 404 döndürür. Bir model seçmek için yukarıdaki listeye model ekleyin.",
     "officialSpeedTiersLabel": "Resmî Fast katmanını koru",
-    "officialSpeedTiersHint": "Model listesindeki GPT modellerinde resmî Fast hız katmanını korur; böylece Codex'te Fast seçildiğinde service_tier=priority gönderilir. Bunu yalnızca resmî ChatGPT hesaplarına yönlendiren aktarım hizmetleri (CPA gibi) kabul eder ve kota daha hızlı tükenir; diğer yukarı akışlar reddedebilir veya daha yüksek fiyattan faturalandırabilir. Açıldığında, resmî kart altında yaptığınız Fast seçimi bu sağlayıcıda hemen geçerli olur. Birleştirme modunda kullanılmaz. Değiştirdikten sonra Codex'i yeniden başlatın.",
+    "officialSpeedTiersHint": "Model listesindeki GPT modellerinde resmî Fast hız katmanını korur; böylece Codex'te Fast seçildiğinde service_tier=priority gönderilir. Bunu yalnızca resmî ChatGPT hesaplarına yönlendiren aktarım hizmetleri (CPA gibi) kabul eder ve kota daha hızlı tükenir; diğer yukarı akışlar reddedebilir veya daha yüksek fiyattan faturalandırabilir. Codex masaüstü uygulaması Fast'i yalnızca ChatGPT ile oturum açıkken gösterir: uygulamada oturum açıp Ayarlar'daki \"Doğrudan geçişler için resmi giriş bilgilerini koruyun\" seçeneğini açın (veya yönlendirme modunu kullanın); istekler yine bu karta gider. Oturum açılmadan Fast'i yalnızca Codex CLI kullanabilir (/fast). Açıldığında, resmî kart altında yaptığınız Fast seçimi bu sağlayıcıda hemen geçerli olur. Birleştirme modunda kullanılmaz. Değiştirdikten sonra Codex'i yeniden başlatın.",
+    "officialSpeedTiersNoList": "Bu kartta model listesi yok: Fast katmanı yalnızca model listesindeki GPT modellerine eklenir, bu yüzden şu anda açılamaz. Açmak için yukarıdaki listeye GPT modelleri ekleyin.",
     "modelListHint": "Değişikliklerden sonra Codex uygulamasını yeniden başlatın.",
     "modelListDefaultHelp": "Bu modeller Codex'nin /model menüsünde görünür; ilk satır varsayılan modeldir. Adını resmi bir GPT modelinden alan satırlar resmi girişi kullanır, dolayısıyla görünen adları, pencereleri ve akıl yürütme düzeyleri göz ardı edilir.",
     "addCatalogModel": "Manuel olarak ekle",
@@ -4387,7 +4388,8 @@
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
     },
-    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır."
+    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır.",
+    "zcodeHelp": "ZCode bir masaüstü uygulamasıdır; buradan kurulamaz veya güncellenemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.zcode/v2/provider_config.json) üzerinden bağlanır."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -5576,5 +5578,36 @@
       "toastEnabled": "Skills yönetimi açıldı",
       "toastDisabled": "Skills yönetimi kapatıldı; bulut eşitlemesi değişmedi"
     }
+  },
+  "zcode": {
+    "addModel": "Model ekle",
+    "apiKeyRequired": "API anahtarı gerekli",
+    "baseUrl": "Temel URL",
+    "baseUrlHint": "Özel API uç noktası URL'si",
+    "baseUrlRequired": "Temel URL gerekli",
+    "kind": "Sağlayıcı türü",
+    "kindHint": "Bu sağlayıcının kullandığı API protokolü",
+    "kindPlaceholder": "Sağlayıcı türünü seçin",
+    "limitContext": "Bağlam",
+    "limitOutput": "Çıktı",
+    "modelId": "Model kimliği",
+    "modelLimits": "Token sınırları",
+    "modelLimitsHint": "ZCode'un önerdiği değerleri kullanmak için boş bırakın.",
+    "models": "Modeller",
+    "modelsHint": "Model kimliği, API isteklerinde gönderilen model adıdır.",
+    "noModels": "Model ayarlanmadı",
+    "providerKey": "Sağlayıcı anahtarı",
+    "providerKeyDuplicate": "Bu anahtar zaten kullanılıyor",
+    "providerKeyHint": "~/.zcode/v2/provider_config.json içindeki benzersiz tanımlayıcı. Yalnızca harf, rakam, iki nokta, alt çizgi ve kısa çizgi kullanılabilir.",
+    "providerKeyInvalid": "Geçersiz biçim. Yalnızca harf, rakam, iki nokta, alt çizgi ve kısa çizgi kullanılabilir.",
+    "providerKeyLockedHint": "Anahtar, provider_config.json içindeki providerId değeridir ve oluşturulduktan sonra değiştirilemez.",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyRequired": "Sağlayıcı anahtarı gerekli",
+    "providerKeyStatusLoading": "Sağlayıcı anahtarının durumu yükleniyor, lütfen biraz sonra tekrar deneyin",
+    "providerName": "Sağlayıcı adı",
+    "providerNameHint": "ZCode'da gösterilen ad",
+    "providerNamePlaceholder": "Sağlayıcım",
+    "toggleModelDetails": "Model ayrıntılarını aç/kapat",
+    "activationHint": "ZCode tüm sağlayıcıları aynı anda kayıtlı tutar: kaydettiğinizde bu sağlayıcı ZCode'un listesine eklenir; etkili olması için ZCode'un sağlayıcı seçicisinden ona geçmeniz gerekir."
   }
 }

@@ -363,6 +363,26 @@ mod anchored_upgrade {
                 "/Users/me/.nvm/versions/node/v22/lib/node_modules/opencode-ai/bin/opencode.exe",
                 Some("npm_config_allow_scripts=opencode-ai npm_config_ignore_scripts=false npm_config_include=optional /Users/me/.nvm/versions/node/v22/bin/opencode upgrade || PATH='/Users/me/.nvm/versions/node/v22/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22/bin/npm i -g opencode-ai@latest --ignore-scripts=false --include=optional --allow-scripts=opencode-ai"),
             ),
+            // OpenCode 2 是另一个包（@opencode/cli）：兜底装 opencode-ai 会和它抢 `opencode`
+            // 命令（npm 报 EEXIST，pnpm / bun 静默顶掉 2.x 的入口）。
+            (
+                "opencode",
+                "/Users/me/.nvm/versions/node/v22/bin/opencode",
+                "/Users/me/.nvm/versions/node/v22/lib/node_modules/@opencode/cli/bin/opencode.exe",
+                Some("npm_config_allow_scripts=@opencode/cli npm_config_ignore_scripts=false npm_config_include=optional /Users/me/.nvm/versions/node/v22/bin/opencode upgrade || PATH='/Users/me/.nvm/versions/node/v22/bin':\"$PATH\" /Users/me/.nvm/versions/node/v22/bin/npm i -g @opencode/cli@latest --ignore-scripts=false --include=optional --allow-scripts=@opencode/cli"),
+            ),
+            (
+                "opencode",
+                "/Users/me/.bun/bin/opencode",
+                "/Users/me/.bun/install/global/node_modules/@opencode/cli/bin/opencode.exe",
+                Some("/Users/me/.bun/bin/opencode upgrade || /Users/me/.bun/bin/bun add -g @opencode/cli@latest"),
+            ),
+            (
+                "opencode",
+                "/opt/homebrew/bin/opencode",
+                "/opt/homebrew/Cellar/opencode-v2/2.4.2/bin/opencode",
+                Some("/opt/homebrew/bin/brew upgrade opencode-v2"),
+            ),
             // omp special rules: bun fallback only, no npm fallback, Nix unmanaged (None)
             (
                 "omp",
@@ -715,6 +735,13 @@ mod anchored_upgrade {
             "/Users/me/.nvm/versions/node/v22/bin:/usr/bin:/bin:/usr/sbin"
         );
         assert_eq!(merge_path_segments("/usr/bin::/bin", ""), "/usr/bin:/bin");
+    }
+
+    #[test]
+    fn pi_search_paths_include_managed_install_bin() {
+        let home = crate::config::get_home_dir();
+        let paths = build_tool_search_paths("pi");
+        assert!(paths.contains(&home.join(".pi").join("agent").join("bin")));
     }
 
     #[cfg(target_os = "macos")]

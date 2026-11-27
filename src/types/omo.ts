@@ -247,16 +247,6 @@ export const OMO_SLIM_BUILTIN_AGENTS: OmoAgentDef[] = [
   },
 ];
 
-export const OMO_SLIM_DISABLEABLE_AGENTS = [
-  { value: "orchestrator", label: "Orchestrator" },
-  { value: "oracle", label: "Oracle" },
-  { value: "librarian", label: "Librarian" },
-  { value: "explorer", label: "Explorer" },
-  { value: "designer", label: "Designer" },
-  { value: "fixer", label: "Fixer" },
-  { value: "council", label: "Council" },
-] as const;
-
 export function buildOmoProfilePreview(
   agents: Record<string, Record<string, unknown>>,
   categories: Record<string, Record<string, unknown>> | undefined,

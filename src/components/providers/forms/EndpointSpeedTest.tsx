@@ -27,6 +27,7 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   copilot: 8,
   workbuddy: 8,
   codebuddy: 8,
+  zcode: 8,
 };
 
 interface TestResult {

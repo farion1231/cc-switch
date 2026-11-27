@@ -44,6 +44,7 @@ mod usage;
 mod webdav_sync;
 mod workbuddy_account;
 mod workspace;
+mod zcode;
 
 #[cfg(test)]
 mod provider_concurrency_tests;
@@ -95,6 +96,7 @@ pub use usage::*;
 pub use webdav_sync::*;
 pub use workbuddy_account::*;
 pub use workspace::*;
+pub use zcode::*;
 
 /// 同步命令在 Tauri 2 里跑在主线程上：要等数据库连接锁（或等切换锁，切换时要拿库）的
 /// 命令放到阻塞线程池里跑，否则会话同步占着连接锁时整个窗口和托盘都跟着卡住。

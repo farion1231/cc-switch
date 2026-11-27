@@ -334,6 +334,7 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         workbuddy: false,
         pi: false,
         omp: false,
+        zcode: false,
     };
 
     for app in apps_str.split(',') {
