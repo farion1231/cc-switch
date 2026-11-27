@@ -274,6 +274,17 @@
         "manage": "xAI-Konten hinzufügen oder verwalten",
         "help": "Wenn Sie zu dieser Karte wechseln, wird die Anmeldung von Grok CLI (~/.grok/auth.json) auf das ausgewählte Konto umgestellt. Das zuvor angemeldete Konto wird zuerst in der Kontoverwaltung gespeichert und kehrt zurück, wenn Sie zur Karte „Grok-CLI-Anmeldung folgen“ wechseln.",
         "xaiAccount": "xAI-Konto"
+      },
+      "officialManaged": {
+        "addDescription": "Offizielle Konten werden zentral im Auth-Center eingerichtet und verwaltet. Hinzugefügte Konten erscheinen automatisch als eigene Karte auf der Anbieterseite.",
+        "manageAccounts": "Konten im Auth-Center verwalten",
+        "accountLabel": "Offizielles Konto",
+        "unboundAccount": "Kein offizielles Konto verknüpft",
+        "openAuthCenter": "Auth-Center öffnen",
+        "editBoundHelp": "Diese Karte ist fest mit diesem offiziellen Konto verknüpft; ein Kontowechsel innerhalb der Karte wird nicht unterstützt. Wechsle direkt zur jeweiligen Kontokarte oder verwalte Konten im Auth-Center.",
+        "editUnboundHelp": "Jedes offizielle Konto wird als eigene Karte angezeigt; ein Kontowechsel innerhalb der Karte wird nicht unterstützt. Bitte melde dich im Auth-Center an oder verwalte dort deine Konten.",
+        "bindOnce": "Mit einem Konto aus dem Auth Center verknüpfen",
+        "bindOnceHelp": "Diese Karte stammt aus der Zeit vor dem Update und ist mit keinem Konto verknüpft. Sie können sie einmalig mit einem Konto aus dem Auth Center verknüpfen; nach dem Speichern ist das nicht mehr änderbar. Die automatisch erstellte Karte für dasselbe Konto kann danach gelöscht werden."
       }
     },
     "duplicateLiveIdsLoadFailed": "Anbieterkennungen konnten nicht aus der Konfiguration gelesen werden. Bitte beheben Sie die Konfiguration und versuchen Sie es erneut",
@@ -1278,7 +1289,9 @@
       "quitFirst": "Beenden Sie WorkBuddy, bevor Sie das Konto wechseln",
       "quitFirstBody": "Beenden Sie WorkBuddy vollständig (einschließlich Menüleiste/Tray) und wechseln Sie dann erneut, sonst schreibt es seine aktuelle Anmeldung zurück.",
       "switched": "Zu „{{name}}“ gewechselt. WorkBuddy verwendet dieses Konto beim nächsten Öffnen.",
-      "switchFailed": "WorkBuddy-Konto konnte nicht gewechselt werden"
+      "switchFailed": "WorkBuddy-Konto konnte nicht gewechselt werden",
+      "accountRemoved": "Dieses Konto wurde aus dem Auth-Center entfernt",
+      "unboundManaged": "Kein offizielles Konto verknüpft. Bitte im Auth-Center anmelden"
     },
     "quota": {
       "title": "Kontingent",
@@ -5492,7 +5505,9 @@
       "addFailed": "Hinzufügen fehlgeschlagen: {{error}}",
       "switched": "CodeBuddy ist jetzt mit {{name}} angemeldet. Ein laufendes CodeBuddy wechselt automatisch, und neue Sitzungen verwenden es ebenfalls.",
       "switchFailed": "Wechseln fehlgeschlagen: {{error}}",
-      "removeHint": "CodeBuddy kann nur mit einem Konto gleichzeitig angemeldet sein. Fügen Sie eine andere offizielle Karte hinzu, um zu wechseln."
+      "removeHint": "CodeBuddy kann nur mit einem Konto gleichzeitig angemeldet sein. Fügen Sie eine andere offizielle Karte hinzu, um zu wechseln.",
+      "accountRemoved": "Dieses Konto wurde aus dem Auth-Center entfernt",
+      "unboundManaged": "Kein offizielles Konto verknüpft. Bitte im Auth-Center anmelden"
     },
     "login": {
       "confirmTitle": "Mit einem anderen CodeBuddy-Konto anmelden",

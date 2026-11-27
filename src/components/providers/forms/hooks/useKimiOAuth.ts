@@ -33,7 +33,10 @@ export function useKimiOAuth() {
   const invalidate = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: STATUS_KEY }),
-      queryClient.invalidateQueries({ queryKey: ["providers", "kimi"] }),
+      queryClient.invalidateQueries({
+        queryKey: ["providers", "kimi"],
+        refetchType: "all",
+      }),
     ]);
   }, [queryClient]);
 

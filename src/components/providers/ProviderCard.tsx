@@ -61,6 +61,7 @@ import {
   CodebuddyOfficialQuota,
   CodexOauthAccountLine,
   CopilotAccountSubtitle,
+  CopilotCliOfficialSubtitle,
   XaiAccountSubtitle,
 } from "./ProviderCardAccountLines";
 import { ProviderCardActions } from "./ProviderCardActions";
@@ -339,10 +340,12 @@ export function ProviderCard({
   // Copilot CLI 官方卡的 Premium 额度可在「配置用量查询」里开关；没设置过时，绑了授权中心
   // 账号的卡默认显示，没绑的默认不显示（打开后跟着 Copilot CLI 当前登录的账号查）。
   const isCopilotCliOfficial = appId === "copilot" && isOfficial;
+  const copilotCliBoundAccountId = isCopilotCliOfficial
+    ? resolveManagedAccountId(provider.meta, "github_copilot")?.trim() || null
+    : null;
   const copilotCliQuotaEnabled =
     isCopilotCliOfficial &&
-    (provider.meta?.usage_script?.enabled ??
-      Boolean(resolveManagedAccountId(provider.meta, "github_copilot")));
+    (provider.meta?.usage_script?.enabled ?? Boolean(copilotCliBoundAccountId));
   const isCopilot =
     appId !== "copilot" &&
     (provider.meta?.providerType === PROVIDER_TYPES.GITHUB_COPILOT ||
@@ -381,38 +384,40 @@ export function ProviderCard({
         resolveManagedAccountId(provider.meta, PROVIDER_TYPES.GITHUB_COPILOT) ??
           "default",
       ]
-    : isCodexOauth
-      ? !isBoundCodexOfficial || usageEnabled
-        ? [
-            "codex_oauth",
-            "quota",
-            resolveManagedAccountId(
-              provider.meta,
-              PROVIDER_TYPES.CODEX_OAUTH,
-            ) ?? "default",
-          ]
-        : null
-      : isXaiOauth
-        ? !grokBoundAccountId || usageEnabled
+    : copilotCliQuotaEnabled && copilotCliBoundAccountId
+      ? ["copilot", "quota", copilotCliBoundAccountId]
+      : isCodexOauth
+        ? !isBoundCodexOfficial || usageEnabled
           ? [
-              "xai_oauth",
+              "codex_oauth",
               "quota",
               resolveManagedAccountId(
                 provider.meta,
-                PROVIDER_TYPES.XAI_OAUTH,
+                PROVIDER_TYPES.CODEX_OAUTH,
               ) ?? "default",
             ]
           : null
-        : appId === "kimi" && isOfficial
-          ? ["kimi_oauth", "quota", provider.id]
-          : isOfficial && officialSubscriptionEnabled && appId !== "claude"
-            ? agyBoundAccountId
-              ? ["agy_oauth", "quota", agyBoundAccountId]
-              : subscriptionKeys.quota(appId)
-            : null;
+        : isXaiOauth
+          ? !grokBoundAccountId || usageEnabled
+            ? [
+                "xai_oauth",
+                "quota",
+                resolveManagedAccountId(
+                  provider.meta,
+                  PROVIDER_TYPES.XAI_OAUTH,
+                ) ?? "default",
+              ]
+            : null
+          : appId === "kimi" && isOfficial
+            ? ["kimi_oauth", "quota", provider.id]
+            : isOfficial && officialSubscriptionEnabled && appId !== "claude"
+              ? agyBoundAccountId
+                ? ["agy_oauth", "quota", agyBoundAccountId]
+                : subscriptionKeys.quota(appId)
+              : null;
   const quotaPlan = useQuotaPlan(
     quotaPlanKey,
-    isCopilot ? copilotPlan : undefined,
+    isCopilot || Boolean(copilotCliBoundAccountId) ? copilotPlan : undefined,
   );
   const subtitlePlan = claudeDefaultPlanLabel ?? quotaPlan;
   const planSuffix = (className = "-ms-1") =>
@@ -587,23 +592,11 @@ export function ProviderCard({
 
           {isCodebuddyOfficial ? (
             <CodebuddyOfficialAccountLine
-              provider={provider}
               accountId={codebuddyAccountId}
               manualNote={manualNote}
-              onEdit={onEdit}
             />
           ) : appId === "workbuddy" && isWorkBuddyOfficial(provider) ? (
-            <WorkBuddyOfficialAccountLine provider={provider} onEdit={onEdit} />
-          ) : codexOfficialIdentity === "native_login" ? (
-            <div className="mt-0.5 flex min-w-0 items-center gap-2 text-caption text-fg-2">
-              <span className="min-w-0 truncate" title={manualNote}>
-                {manualNote ??
-                  t("codex.followCodexLoginDescription", {
-                    defaultValue: "账号会随 Codex CLI 当前登录变化",
-                  })}
-              </span>
-              {planSuffix()}
-            </div>
+            <WorkBuddyOfficialAccountLine provider={provider} />
           ) : isCodexOauth ? (
             <CodexOauthAccountLine
               provider={provider}
@@ -611,6 +604,7 @@ export function ProviderCard({
               manualNote={manualNote}
               planSuffix={planSuffix()}
               onEdit={onEdit}
+              allowChooseAccount={!isOfficial}
             />
           ) : grokBoundAccountId ? (
             <GrokBoundAccountLine
@@ -632,6 +626,14 @@ export function ProviderCard({
               agyModel={agyModel}
               planSuffix={planSuffix("-ms-0.5")}
               fallback={oauthSubtitle}
+            />
+          ) : copilotCliBoundAccountId ? (
+            <CopilotCliOfficialSubtitle
+              providerName={provider.name}
+              accountId={copilotCliBoundAccountId}
+              manualNote={manualNote}
+              model={agyModel}
+              planSuffix={planSuffix("-ms-0.5")}
             />
           ) : agyModel ? (
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-caption text-fg-2">

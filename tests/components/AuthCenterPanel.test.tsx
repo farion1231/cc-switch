@@ -215,6 +215,7 @@ describe("AuthCenterPanel card order and visibility", () => {
         claude: false,
         "claude-desktop": false,
         codex: false,
+        grokbuild: false,
         kimi: false,
       } as Settings["visibleApps"],
     };

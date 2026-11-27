@@ -272,6 +272,17 @@
         "manage": "xAI 계정 추가 또는 관리",
         "help": "이 카드로 전환하면 Grok CLI의 로그인(~/.grok/auth.json)이 선택한 계정으로 바뀝니다. 이전에 로그인된 계정은 먼저 인증 센터에 저장되며, \"Grok CLI 로그인 따르기\" 카드로 다시 전환하면 복원됩니다.",
         "xaiAccount": "xAI 계정"
+      },
+      "officialManaged": {
+        "addDescription": "공식 계정은 인증 센터에서 통합 설정 및 관리됩니다. 계정을 추가하면 공급자 페이지에 개별 카드로 자동 표시되어 간편하게 전환할 수 있습니다.",
+        "manageAccounts": "인증 센터에서 계정 관리",
+        "accountLabel": "공식 계정",
+        "unboundAccount": "연결된 공식 계정 없음",
+        "openAuthCenter": "인증 센터 열기",
+        "editBoundHelp": "이 카드는 해당 공식 계정에 고정되어 있어 카드 내에서 계정을 전환할 수 없습니다. 다른 계정을 사용하려면 해당 계정 카드로 직접 전환하거나 인증 센터에서 관리하세요.",
+        "editUnboundHelp": "각 공식 계정은 별도의 카드로 표시되며 카드 내 계정 전환을 지원하지 않습니다. 인증 센터에서 공식 계정에 로그인하거나 관리해 주세요.",
+        "bindOnce": "인증 센터 계정에 연결",
+        "bindOnceHelp": "이 카드는 업그레이드 이전에 만들어져 연결된 계정이 없습니다. 인증 센터 계정에 한 번 연결할 수 있으며 저장 후에는 변경할 수 없습니다. 같은 계정으로 자동 생성된 카드는 이후 삭제할 수 있습니다."
       }
     },
     "duplicateLiveIdsLoadFailed": "설정에서 공급자 식별자를 읽지 못했습니다. 설정을 수정하고 다시 시도해 주세요.",
@@ -1278,7 +1289,9 @@
       "quitFirst": "계정을 전환하기 전에 WorkBuddy를 종료하세요",
       "quitFirstBody": "메뉴 막대나 시스템 트레이에 남아 있는 WorkBuddy도 완전히 종료한 다음 계정을 다시 전환하세요. 종료하지 않으면 WorkBuddy가 기존 로그인 정보를 다시 저장할 수 있습니다.",
       "switched": "\"{{name}}\"(으)로 전환했습니다. 다음에 WorkBuddy를 열면 이 계정을 사용합니다.",
-      "switchFailed": "WorkBuddy 계정을 전환할 수 없습니다"
+      "switchFailed": "WorkBuddy 계정을 전환할 수 없습니다",
+      "accountRemoved": "이 계정은 인증 센터에서 제거되었습니다",
+      "unboundManaged": "연결된 공식 계정이 없습니다. 인증 센터에서 로그인해 주세요"
     },
     "quota": {
       "title": "할당량",
@@ -5492,7 +5505,9 @@
       "addFailed": "추가하지 못했습니다: {{error}}",
       "switched": "CodeBuddy를 {{name}}(으)로 전환했습니다. 실행 중인 CodeBuddy는 자동으로 전환되며 새 세션도 이 계정을 사용합니다.",
       "switchFailed": "전환하지 못했습니다: {{error}}",
-      "removeHint": "CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요."
+      "removeHint": "CodeBuddy는 한 번에 한 계정만 로그인할 수 있습니다. 전환하려면 다른 공식 카드를 추가하세요.",
+      "accountRemoved": "이 계정은 인증 센터에서 제거되었습니다",
+      "unboundManaged": "연결된 공식 계정이 없습니다. 인증 센터에서 로그인해 주세요"
     },
     "login": {
       "confirmTitle": "다른 CodeBuddy 계정으로 로그인",

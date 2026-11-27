@@ -172,8 +172,9 @@ fn workbuddy_official_cards_never_touch_models_json() {
         Some("uid-1".to_string())
     );
 
-    // 编辑：换绑账号，文件不动
-    let mut edited = official_card("wb-official", "uid-2");
+    // 编辑：保留原绑定只改名字，文件不动且仍在 live 之外；尝试换绑账号被拒绝
+    let mut edited = official_card("wb-official", "uid-1");
+    edited.name = "Renamed".into();
     edited.meta.as_mut().unwrap().live_config_managed = Some(true);
     ProviderService::update(&state, AppType::WorkBuddy, None, edited).unwrap();
     assert_eq!(fs::read_to_string(&path).unwrap(), before);
@@ -189,6 +190,9 @@ fn workbuddy_official_cards_never_touch_models_json() {
             .and_then(|meta| meta.live_config_managed),
         Some(false)
     );
+    let rebound = official_card("wb-official", "uid-2");
+    assert!(ProviderService::update(&state, AppType::WorkBuddy, None, rebound).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), before);
 
     // 「添加到配置」被拒绝；全量同步、移除、删除都不碰文件
     assert!(ProviderService::switch(&state, AppType::WorkBuddy, "wb-official").is_err());

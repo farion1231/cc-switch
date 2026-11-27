@@ -1443,6 +1443,14 @@ pub fn run() {
                 crate::services::provider::codex_official_models::start_background_checks(
                     state.inner().clone(),
                 );
+                // 为已保存的官方账号同步独立卡片（尊重本机已删除的 dismissed 记录）。
+                let sync_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::commands::official_cards_sync::sync_all_official_account_cards_on_startup(
+                        &sync_handle,
+                    )
+                    .await;
+                });
 
                 // Backup and log maintenance can hold the database lock for a
                 // long time. Keep disk work off both the UI and async workers.

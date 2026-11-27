@@ -33,27 +33,6 @@ exports[`ProviderForm 预设新增行金标 > claude > AWS Bedrock (API Key) 1`]
 }
 `;
 
-exports[`ProviderForm 预设新增行金标 > claude > Claude Official 1`] = `
-{
-  "apiKeyLocations": [],
-  "row": {
-    "icon": "anthropic",
-    "iconColor": "#D4915D",
-    "meta": {
-      "endpointAutoSelect": true,
-    },
-    "name": "Claude Official",
-    "notes": "",
-    "presetCategory": "official",
-    "presetId": "claude-<index>",
-    "settingsConfig": {
-      "env": {},
-    },
-    "websiteUrl": "https://www.anthropic.com/claude-code",
-  },
-}
-`;
-
 exports[`ProviderForm 预设新增行金标 > claude > E-FlowCode 1`] = `
 {
   "apiKeyLocations": [
@@ -258,28 +237,6 @@ requires_openai_auth = true",
       },
     },
     "websiteUrl": "https://build.nvidia.com",
-  },
-}
-`;
-
-exports[`ProviderForm 预设新增行金标 > codex > OpenAI Official 1`] = `
-{
-  "apiKeyLocations": [],
-  "row": {
-    "icon": "openai",
-    "iconColor": "#00A67E",
-    "meta": {
-      "endpointAutoSelect": true,
-    },
-    "name": "OpenAI Official",
-    "notes": "",
-    "presetCategory": "official",
-    "presetId": "codex-<index>",
-    "settingsConfig": {
-      "auth": {},
-      "config": "",
-    },
-    "websiteUrl": "https://chatgpt.com/codex",
   },
 }
 `;

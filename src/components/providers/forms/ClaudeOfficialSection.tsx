@@ -7,10 +7,7 @@ import { authApi } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useManagedAuth } from "./hooks/useManagedAuth";
-import {
-  ManagedAccountSelect,
-  ManagedBoundAccountLine,
-} from "./shared/ManagedAccountSelect";
+import { ManagedBoundAccountLine } from "./shared/ManagedBoundAccountLine";
 import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import {
   ManagedAccountRemoveDialog,
@@ -331,61 +328,6 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
     </ManagedAccountsGroup>
   );
 };
-
-interface ClaudeAccountSelectProps {
-  value: string | null;
-  onChange: (accountId: string | null) => void;
-  /** 打开授权中心添加或管理账号 */
-  onManageAccounts?: () => void;
-}
-
-/**
- * Claude 官方卡的登录方式，和 Codex 官方卡同一套写法：托管的账号在上，「添加或管理」打开授权
- * 中心，最下面是跟随 Claude Code 登录（~/.claude，不绑号）。
- */
-export function ClaudeAccountSelect({
-  value,
-  onChange,
-  onManageAccounts,
-}: ClaudeAccountSelectProps) {
-  const { t } = useTranslation();
-  const blocked = useClaudeLoginBlocked();
-  return (
-    <ManagedAccountSelect
-      authProvider="claude_official"
-      value={value}
-      onChange={(accountId) => onChange(accountId)}
-      onManageAccounts={onManageAccounts}
-      labels={{
-        follow: t("provider.form.claudeAccount.default", {
-          defaultValue: "跟随 Claude Code 登录",
-        }),
-        followDescription: t("provider.form.claudeAccount.defaultDescription", {
-          defaultValue: "账号会随 Claude Code 当前登录变化",
-        }),
-        manage: t("provider.form.claudeAccount.manage", {
-          defaultValue: "添加或管理 Claude 账号",
-        }),
-      }}
-      help={
-        blocked === "wsl"
-          ? t("provider.form.claudeAccount.helpWsl", {
-              defaultValue:
-                "Claude 配置目录在 WSL 里，暂不支持 Claude 账号，切到这张卡不会切换 Claude Code 的登录。",
-            })
-          : blocked === "overrideDir"
-            ? t("provider.form.claudeAccount.helpTerminal", {
-                defaultValue:
-                  "设置里覆盖了 Claude 配置目录，切到这张卡不会切换 Claude Code 的登录，请从卡片「打开终端」使用选中的账号。",
-              })
-            : t("provider.form.claudeAccount.help", {
-                defaultValue:
-                  "切到这张卡后，Claude Code 的登录会实时换成选中的账号，正在运行的会话也一样。想同时用几个号，从卡片「打开终端」。",
-              })
-      }
-    />
-  );
-}
 
 /**
  * 绑了账号的 Claude 官方卡副标题（官网地址的位置），和 Codex 官方卡同一套写法：写账号，

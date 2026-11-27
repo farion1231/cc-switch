@@ -562,14 +562,14 @@ describe("buildAdditiveSections", () => {
       "codebuddy.official.expired",
     );
     expect(button(sections, "cb-gone", "add").disabledReason).toBe(
-      "codebuddy.official.accountDeleted",
+      "codebuddy.official.accountRemoved",
     );
     expect(item(sections, "cb-gone").chips.map((chip) => chip.key)).toEqual([
       "official",
       "accountDeleted",
     ]);
     expect(button(sections, "cb-unbound", "add").disabledReason).toBe(
-      "codebuddy.official.unbound",
+      "codebuddy.official.unboundManaged",
     );
     // 模型卡照旧
     button(sections, "qwen", "add").onClick();
@@ -1114,7 +1114,7 @@ describe("buildAdditiveSections — WorkBuddy official sign-in", () => {
   it("cannot add a card whose account was deleted", () => {
     const { sections } = build(base(), [wbCard("gone", "u-9")]);
     expect(button(sections, "gone", "add").disabledReason).toBe(
-      "workbuddy.official.accountDeleted",
+      "workbuddy.official.accountRemoved",
     );
     expect(item(sections, "gone").chips.map((c) => c.key)).toContain(
       "accountMissing",
@@ -1122,7 +1122,7 @@ describe("buildAdditiveSections — WorkBuddy official sign-in", () => {
     // 账号删了，即便 id 恰好对得上当前登录也不进「已添加」
     const unset = build(base(), [wbCard("none")]).sections;
     expect(button(unset, "none", "add").disabledReason).toBe(
-      "workbuddy.official.accountUnset",
+      "workbuddy.official.unboundManaged",
     );
   });
 });

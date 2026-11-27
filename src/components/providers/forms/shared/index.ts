@@ -7,3 +7,10 @@ export { FullUrlToggle } from "./FullUrlToggle";
 export { GptContextWindowHint } from "./GptContextWindowHint";
 export type { DirectModeFormatNotice } from "./DirectModeFormatWarning";
 export { NativeConfigEditor } from "./NativeConfigEditor";
+export {
+  OfficialAccountAddForm,
+  OfficialAccountManagedInfo,
+  useClaudeOfficialAddBlockedByWsl,
+  useOfficialAccountAddStep,
+} from "./OfficialAccountManaged";
+export { officialAuthTargetForPreset } from "@/lib/authBinding";

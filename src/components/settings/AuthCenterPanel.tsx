@@ -95,7 +95,7 @@ const AUTH_CARDS: readonly AuthCard[] = [
   },
   {
     target: "xai_oauth",
-    apps: ["claude", "claude-desktop", "codex"],
+    apps: ["grokbuild", "claude", "claude-desktop", "codex"],
     render: () => <XaiOAuthSection mode="manage" helpSide="bottom" />,
   },
   {

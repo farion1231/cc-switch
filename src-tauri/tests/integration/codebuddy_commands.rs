@@ -213,9 +213,14 @@ fn codebuddy_official_cards_never_touch_models_json() {
             .live_config_managed,
         Some(false)
     );
+    let mut edited = official_card("codebuddy-official-a", "u1@codebuddy.ai");
+    edited.name = "Renamed".into();
+    ProviderService::update(&state, AppType::Codebuddy, None, edited).unwrap();
+    assert_eq!(fs::read_to_string(home.models()).unwrap(), original);
+
     let mut rebound = official_card("codebuddy-official-a", "u3@codebuddy.ai");
-    rebound.name = "Renamed".into();
-    ProviderService::update(&state, AppType::Codebuddy, None, rebound).unwrap();
+    rebound.name = "Rebound".into();
+    assert!(ProviderService::update(&state, AppType::Codebuddy, None, rebound).is_err());
     assert_eq!(fs::read_to_string(home.models()).unwrap(), original);
 
     // "Add" / "remove" for models do not apply to official cards.

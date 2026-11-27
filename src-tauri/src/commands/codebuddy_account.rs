@@ -88,12 +88,27 @@ pub async fn codebuddy_account_live(
 /// 收录 CodeBuddy 当前登录的账号（已收录就更新副本）。
 #[tauri::command]
 pub async fn codebuddy_account_import_current(
+    app: tauri::AppHandle,
     state: tauri::State<'_, CodebuddyAccountState>,
+    app_state: tauri::State<'_, AppState>,
 ) -> Result<ManagedAuthAccount, String> {
     let account = state.0.import_current().await.map_err(|e| e.to_string())?;
     // 刚收录的就是 CodeBuddy 现在登着的号
     let current = Some(account.id.clone());
-    Ok(map_codebuddy_account(account, current.as_deref()))
+    let mapped = map_codebuddy_account(account, current.as_deref());
+    let entry = crate::services::provider::official_account_cards::OfficialAccountEntry {
+        id: mapped.id.clone(),
+        login: mapped.login.clone(),
+    };
+    crate::commands::official_cards_sync::sync_official_cards_and_emit(
+        &app,
+        app_state.inner(),
+        &AppType::Codebuddy,
+        &[entry],
+        true,
+    )
+    .await;
+    Ok(mapped)
 }
 
 /// 登录等待中「重新打开终端」：只再开一个终端，不重置这次登录。

@@ -13,16 +13,14 @@ import { useWorkBuddyAccountQuota } from "./workbuddyQuota";
 
 interface WorkBuddyOfficialAccountLineProps {
   provider: Provider;
-  onEdit: (provider: Provider) => void;
 }
 
 /**
  * WorkBuddy 官方登录卡的第二行：绑定账号的昵称和套餐（查到过额度时用后端给的套餐名，否则用
- * 明文画像里的版型）；账号删了就提示重新选择。
+ * 明文画像里的版型）；账号被移除或未绑定时仅作提示，不支持在卡片内切号。
  */
 export function WorkBuddyOfficialAccountLine({
   provider,
-  onEdit,
 }: WorkBuddyOfficialAccountLineProps) {
   const { t } = useTranslation();
   const bound = boundWorkBuddyAccountId(provider);
@@ -81,17 +79,14 @@ export function WorkBuddyOfficialAccountLine({
         <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">
           {bound
-            ? t("workbuddy.official.accountDeleted")
-            : t("workbuddy.official.accountUnset")}
+            ? t("workbuddy.official.accountRemoved", {
+                defaultValue: "该账号已从授权中心移除",
+              })
+            : t("workbuddy.official.unboundManaged", {
+                defaultValue: "未绑定官方账号，请前往授权中心管理",
+              })}
         </span>
       </span>
-      <button
-        type="button"
-        className="shrink-0 text-body font-medium text-action-text hover:underline"
-        onClick={() => onEdit(provider)}
-      >
-        {t("codex.chooseAccount")}
-      </button>
     </div>
   );
 }

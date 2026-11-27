@@ -83,6 +83,10 @@ export function WorkBuddyAccountSection({
   const refresh = async () => {
     await refetchStatus();
     await queryClient.invalidateQueries({ queryKey: LIVE_KEY });
+    await queryClient.invalidateQueries({
+      queryKey: ["providers", "workbuddy"],
+      refetchType: "all",
+    });
   };
 
   const importMutation = useMutation({
@@ -208,7 +212,11 @@ export function WorkBuddyAccountSection({
       );
     }
     void refetchStatus();
-  }, [reauthOutcome, refetchStatus, t]);
+    void queryClient.invalidateQueries({
+      queryKey: ["providers", "workbuddy"],
+      refetchType: "all",
+    });
+  }, [reauthOutcome, refetchStatus, queryClient, t]);
 
   const confirmRemove = () => {
     const target = removeTarget;

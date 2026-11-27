@@ -231,8 +231,7 @@ describe("ProviderCard Codex Official account identity", () => {
     expect(screen.queryByText("· Pro 200")).not.toBeInTheDocument();
   });
 
-  it("lets the current provider open account selection after its account is deleted", async () => {
-    const user = userEvent.setup();
+  it("shows unavailable state without offering in-card account selection for official cards", () => {
     const onEdit = vi.fn();
     const provider = managedProvider("OpenAI Official", "deleted-account");
     renderCard(provider, {
@@ -242,9 +241,10 @@ describe("ProviderCard Codex Official account identity", () => {
     });
 
     expect(screen.getByText("绑定的账号不可用")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "选择账号" }));
-    expect(onEdit).toHaveBeenCalledOnce();
-    expect(onEdit).toHaveBeenCalledWith(provider);
+    expect(
+      screen.queryByRole("button", { name: "选择账号" }),
+    ).not.toBeInTheDocument();
+    expect(onEdit).not.toHaveBeenCalled();
   });
 
   it("keeps existing managed OAuth quota enabled and exposes its configuration", async () => {
@@ -351,7 +351,7 @@ describe("ProviderCard Codex Official account identity", () => {
     ).toHaveClass("truncate");
   });
 
-  it("keeps the provider name on the native card and explains its login", () => {
+  it("keeps the provider name on the native card without follow-login copy", () => {
     renderCard({
       id: "codex-official",
       name: "OpenAI Official",
@@ -363,8 +363,8 @@ describe("ProviderCard Codex Official account identity", () => {
       screen.getByRole("heading", { name: "OpenAI Official" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("账号会随 Codex CLI 当前登录变化"),
-    ).toBeInTheDocument();
+      screen.queryByText("账号会随 Codex CLI 当前登录变化"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByText("codex-oauth-quota")).not.toBeInTheDocument();
   });
 
@@ -400,7 +400,7 @@ describe("ProviderCard Codex Official account identity", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("treats a legacy unbound Official card as follow-login", () => {
+  it("does not show follow-login copy or in-card account selection on legacy unbound Official card", () => {
     const provider: Provider = {
       id: "legacy-unbound",
       name: "Legacy Official",
@@ -411,8 +411,8 @@ describe("ProviderCard Codex Official account identity", () => {
     renderCard(provider, { isCurrent: true });
 
     expect(
-      screen.getByText("账号会随 Codex CLI 当前登录变化"),
-    ).toBeInTheDocument();
+      screen.queryByText("账号会随 Codex CLI 当前登录变化"),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "选择账号" }),
     ).not.toBeInTheDocument();

@@ -29,6 +29,7 @@ import {
 } from "@/config/universalProviderPresets";
 import { cn } from "@/lib/utils";
 import { usePresetStep } from "./presetStep";
+import { officialAuthTargetForPreset } from "./shared";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import {
   Select,
@@ -143,6 +144,8 @@ interface ProviderPresetSelectorProps {
   onManageUniversalProviders?: () => void;
   category?: ProviderCategory;
   barAction?: React.ReactNode;
+  /** Claude 官方预设不能跳授权中心（配置目录在 WSL，或状态还没读到）：留在表单里 */
+  claudeOfficialBlocked?: boolean;
 }
 
 /**
@@ -156,12 +159,25 @@ export function ProviderPresetSelector({
   onUniversalPresetSelect,
   onManageUniversalProviders,
   barAction,
+  claudeOfficialBlocked,
 }: Readonly<ProviderPresetSelectorProps>) {
   const step = usePresetStep();
   const registerSelector = step?.registerSelector;
   useEffect(() => registerSelector?.(), [registerSelector]);
 
   const pick = (id: string) => {
+    const picked = presetEntries.find((item) => item.id === id);
+    const authTarget = picked
+      ? officialAuthTargetForPreset(
+          step?.appId,
+          picked.preset.category,
+          claudeOfficialBlocked,
+        )
+      : null;
+    if (authTarget && step?.openAuthCenter) {
+      step.openAuthCenter(authTarget);
+      return;
+    }
     onPresetChange(id);
     step?.setStep("form");
   };

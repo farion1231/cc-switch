@@ -14,6 +14,16 @@ use crate::app_config::AppType;
 pub(crate) const CLAUDE_DESKTOP_OFFICIAL_PROVIDER_ID: &str = "claude-desktop-official";
 pub(crate) const CODEX_OFFICIAL_PROVIDER_ID: &str = "codex-official";
 pub(crate) const GROKBUILD_OFFICIAL_PROVIDER_ID: &str = "grokbuild-official";
+pub(crate) const OFFICIAL_ACCOUNT_CARD_INFIX: &str = "-official-acct-";
+pub(crate) const OFFICIAL_ACCOUNT_CARD_APPS: &[AppType] = &[
+    AppType::Claude,
+    AppType::Codex,
+    AppType::GrokBuild,
+    AppType::Agy,
+    AppType::Copilot,
+    AppType::WorkBuddy,
+    AppType::Codebuddy,
+];
 
 /// 单条官方供应商种子定义。
 pub(crate) struct OfficialProviderSeed {
@@ -88,6 +98,22 @@ pub(crate) const OFFICIAL_SEEDS: &[OfficialProviderSeed] = &[
 /// 单一事实源：直接扫描 `OFFICIAL_SEEDS`，避免在多处重复维护 id 列表。
 pub(crate) fn is_official_seed_id(id: &str) -> bool {
     OFFICIAL_SEEDS.iter().any(|seed| seed.id == id)
+}
+
+/// 按应用查询对应的内置官方预设。
+pub(crate) fn official_seed_for_app(app_type: &AppType) -> Option<&'static OfficialProviderSeed> {
+    OFFICIAL_SEEDS
+        .iter()
+        .find(|seed| seed.app_type == *app_type)
+}
+
+/// 判断 `id` 是否符合自动生成的官方账号卡片 ID 格式（`<app>-official-acct-<16 hex>`）。
+pub(crate) fn is_official_account_card_id(id: &str) -> bool {
+    OFFICIAL_ACCOUNT_CARD_APPS.iter().any(|app| {
+        let prefix = format!("{}{OFFICIAL_ACCOUNT_CARD_INFIX}", app.as_str());
+        id.strip_prefix(&prefix)
+            .is_some_and(|rest| rest.len() == 16 && rest.bytes().all(|b| b.is_ascii_hexdigit()))
+    })
 }
 
 #[cfg(test)]

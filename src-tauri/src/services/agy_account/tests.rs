@@ -103,6 +103,13 @@ mod switching {
         provider
     }
 
+    fn unbound_official_card() -> Provider {
+        let mut provider =
+            Provider::with_id("official".into(), "Antigravity".into(), json!({}), None);
+        provider.category = Some("official".into());
+        provider
+    }
+
     #[test]
     fn saving_a_new_provider_binding_changes_the_live_login() {
         let (_dir, login, manager) = manager();
@@ -111,7 +118,7 @@ mod switching {
         tauri::async_runtime::block_on(add(&manager, "bob"));
         state
             .db
-            .save_provider(&AppType::Agy, &official_card("alice"))
+            .save_provider(&AppType::Agy, &unbound_official_card())
             .unwrap();
 
         let mut card = official_card("bob");
@@ -125,8 +132,11 @@ mod switching {
         save_from_editor(&state, &manager, card.clone()).unwrap();
         assert_eq!(live_sub(&login).as_deref(), Some("alice"));
 
+        assert!(save_from_editor(&state, &manager, official_card("alice")).is_err());
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+
         card.meta = None;
-        save_from_editor(&state, &manager, card).unwrap();
+        assert!(save_from_editor(&state, &manager, card).is_err());
         assert_eq!(live_sub(&login).as_deref(), Some("alice"));
     }
 
@@ -203,7 +213,7 @@ mod switching {
         let state = AppState::new(Arc::new(Database::memory().unwrap()));
         state
             .db
-            .save_provider(&AppType::Agy, &official_card("alice"))
+            .save_provider(&AppType::Agy, &unbound_official_card())
             .unwrap();
         let before = state.db.export_sql_string_for_sync().unwrap();
 

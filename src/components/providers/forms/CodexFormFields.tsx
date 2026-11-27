@@ -68,7 +68,6 @@ import {
   Trash2,
 } from "lucide-react";
 import EndpointSpeedTest from "./EndpointSpeedTest";
-import { CodexOAuthSection } from "./CodexOAuthSection";
 import { CopilotAuthSection } from "./CopilotAuthSection";
 import {
   ApiKeySection,
@@ -179,19 +178,7 @@ interface CodexFormFieldsProps {
   websiteUrl: string;
   isPartner?: boolean;
   partnerPromotionKey?: string;
-  isCodexOauthPreset?: boolean;
-  selectedCodexAccountId?: string | null;
-  onCodexAccountSelect?: (accountId: string | null) => void;
-  onCodexAuthSelectionConfirmed?: () => void;
-  onCodexAuthSelectionInvalidated?: () => void;
   onManageAuthAccounts?: (target: ManagedAuthProvider) => void;
-  codexOauthSelectionLabel?: string;
-  codexOauthNoneOptionLabel?: string;
-  codexOauthNoneOptionDescription?: string;
-  codexOauthAllowUnboundSelection?: boolean;
-  codexOauthAllowUnboundSelectionWithoutStatus?: boolean;
-  codexOauthNativeLoginOnly?: boolean;
-  codexOauthRequireExplicitSelection?: boolean;
 
   // Base URL
   shouldShowSpeedTest: boolean;
@@ -662,19 +649,7 @@ export function CodexFormFields({
   websiteUrl,
   isPartner,
   partnerPromotionKey,
-  isCodexOauthPreset = false,
-  selectedCodexAccountId,
-  onCodexAccountSelect,
-  onCodexAuthSelectionConfirmed,
-  onCodexAuthSelectionInvalidated,
   onManageAuthAccounts,
-  codexOauthSelectionLabel,
-  codexOauthNoneOptionLabel,
-  codexOauthNoneOptionDescription,
-  codexOauthAllowUnboundSelection,
-  codexOauthAllowUnboundSelectionWithoutStatus,
-  codexOauthNativeLoginOnly,
-  codexOauthRequireExplicitSelection,
   shouldShowSpeedTest,
   codexBaseUrl,
   onBaseUrlChange,
@@ -1986,31 +1961,6 @@ export function CodexFormFields({
         />
       )}
 
-      {/* Codex OAuth 账号选择 */}
-      {isCodexOauthPreset && (
-        <CodexOAuthSection
-          mode="select"
-          selectedAccountId={selectedCodexAccountId}
-          onAccountSelect={onCodexAccountSelect}
-          onSelectionConfirmed={onCodexAuthSelectionConfirmed}
-          onSelectionInvalidated={onCodexAuthSelectionInvalidated}
-          onManageAccounts={
-            onManageAuthAccounts
-              ? () => onManageAuthAccounts("codex_oauth")
-              : undefined
-          }
-          selectionLabel={codexOauthSelectionLabel}
-          noneOptionLabel={codexOauthNoneOptionLabel}
-          noneOptionDescription={codexOauthNoneOptionDescription}
-          allowUnboundSelection={codexOauthAllowUnboundSelection}
-          allowUnboundSelectionWithoutStatus={
-            codexOauthAllowUnboundSelectionWithoutStatus
-          }
-          nativeLoginOnly={codexOauthNativeLoginOnly}
-          requireExplicitSelection={codexOauthRequireExplicitSelection}
-        />
-      )}
-
       {/* xAI OAuth 认证（Grok 订阅托管账号） */}
       {isXaiOauthPreset && (
         <XaiOAuthSection
@@ -2023,8 +1973,8 @@ export function CodexFormFields({
 
   const apiKeySection = (
     <>
-      {/* Codex API Key 输入框（托管 OAuth 预设无需 Key） */}
-      {!isCopilotPreset && !isCodexOauthPreset && !isXaiOauthPreset && (
+      {/* Codex API Key 输入框（托管 OAuth 预设与官方卡无需 Key） */}
+      {!isCopilotPreset && !isXaiOauthPreset && category !== "official" && (
         <ApiKeySection
           id="codexApiKey"
           label="API Key"

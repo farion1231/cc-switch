@@ -57,6 +57,8 @@ import {
   GptContextWindowHint,
   ModelDropdown,
   NativeConfigEditor,
+  OfficialAccountAddForm,
+  useOfficialAccountAddStep,
 } from "./shared";
 import {
   FetchedModelPicker,
@@ -66,7 +68,6 @@ import { fillKimiModel, metadataFilledAnything } from "./modelMetadataFill";
 import { RequestHeadersEditor } from "./RequestHeadersEditor";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
 import type { ProviderFormProps } from "./ProviderForm";
-import { usePresetStep } from "./presetStep";
 
 // 新加的行先用这个窗口占位（max_context_size 必填），选中模型后换成查到的值。
 const PLACEHOLDER_CONTEXT_SIZE = 262144;
@@ -139,13 +140,9 @@ export function KimiProviderForm({
   const [error, setError] = useState("");
   const { data: existing } = useProvidersQuery("kimi");
   const isEdit = Boolean(initialData);
-  const step = usePresetStep();
   const isAccountLogin = !isEdit && presetId === KIMI_ACCOUNT_PRESET_ID;
-  const showAccountLogin = isAccountLogin && (!step || step.step === "form");
-  useEffect(() => {
-    onAccountLoginChange?.(showAccountLogin);
-    return () => onAccountLoginChange?.(false);
-  }, [showAccountLogin, onAccountLoginChange]);
+  const { showOfficialAccountAdd: showAccountLogin } =
+    useOfficialAccountAddStep(isAccountLogin, onAccountLoginChange);
   const duplicate =
     !isEdit &&
     Object.prototype.hasOwnProperty.call(
@@ -438,29 +435,13 @@ export function KimiProviderForm({
   );
   if (isAccountLogin) {
     return (
-      <Form {...form}>
-        <form
-          id="provider-form"
-          className="space-y-6"
-          onSubmit={(event) => event.preventDefault()}
-        >
-          {presetSelector}
-          {showAccountLogin && (
-            <div className="space-y-3">
-              <p className="text-body text-fg-2">
-                {t("kimi.oauth.description")}
-              </p>
-              <Button
-                type="button"
-                variant="neutral"
-                onClick={() => onManageAuthAccounts?.("kimi_oauth")}
-              >
-                {t("kimi.oauth.manageAccounts")}
-              </Button>
-            </div>
-          )}
-        </form>
-      </Form>
+      <OfficialAccountAddForm
+        form={form}
+        presetSelector={presetSelector}
+        showPanel={showAccountLogin}
+        authProvider="kimi_oauth"
+        onManageAuthAccounts={onManageAuthAccounts}
+      />
     );
   }
   return (

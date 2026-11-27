@@ -1,5 +1,5 @@
 import { createContext, useContext } from "react";
-import type { AppId } from "@/lib/api";
+import type { AppId, AuthCenterTarget } from "@/lib/api";
 
 /**
  * 添加供应商分两步（v7）：先选预设，再填写。表单一直挂着（预设列表和填写状态都在表单里），
@@ -13,6 +13,8 @@ export interface PresetStepState {
   host: HTMLElement | null;
   /** 预设选择器挂上时登记；表单里没有选择器时外壳直接进第 2 步 */
   registerSelector: () => () => void;
+  /** 点击官方登录预设时直接跳转到授权中心对应分区 */
+  openAuthCenter?: (target: AuthCenterTarget) => void;
 }
 
 export const PresetStepContext = createContext<PresetStepState | null>(null);

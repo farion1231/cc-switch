@@ -788,8 +788,8 @@ function codebuddyOfficialItem(
   }
   let disabledReason: string | undefined;
   if (!accountId) {
-    disabledReason = t("codebuddy.official.unbound", {
-      defaultValue: "还没有选择账号，请编辑卡片选择一个",
+    disabledReason = t("codebuddy.official.unboundManaged", {
+      defaultValue: "未绑定官方账号，请前往授权中心登录",
     });
   } else if (!state || state.status === "loading") {
     disabledReason = t("codebuddy.official.statusLoading", {
@@ -800,8 +800,8 @@ function codebuddyOfficialItem(
       defaultValue: "无法读取 CodeBuddy 账号，请重试。",
     });
   } else if (!account) {
-    disabledReason = t("codebuddy.official.accountDeleted", {
-      defaultValue: "账号已删除，请重新选择",
+    disabledReason = t("codebuddy.official.accountRemoved", {
+      defaultValue: "该账号已从授权中心移除",
     });
     chips.push({
       key: "accountDeleted",
@@ -897,8 +897,12 @@ function workbuddyOfficialCard(
           onClick: () => input.actions.switchAccount?.(p),
           disabledReason: missing
             ? bound
-              ? t("workbuddy.official.accountDeleted")
-              : t("workbuddy.official.accountUnset")
+              ? t("workbuddy.official.accountRemoved", {
+                  defaultValue: "该账号已从授权中心移除",
+                })
+              : t("workbuddy.official.unboundManaged", {
+                  defaultValue: "未绑定官方账号，请前往授权中心登录",
+                })
             : state?.running
               ? t("workbuddy.official.quitFirst")
               : state?.switching

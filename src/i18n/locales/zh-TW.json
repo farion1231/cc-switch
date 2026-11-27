@@ -274,6 +274,17 @@
         "manage": "新增或管理 xAI 帳號",
         "help": "切到這張卡後，Grok CLI 的登入（~/.grok/auth.json）會換成選取的帳號；原本登入的帳號會先收進授權中心，切回「跟隨 Grok CLI 登入」的卡時還原。",
         "xaiAccount": "xAI 帳號"
+      },
+      "officialManaged": {
+        "addDescription": "官方帳號在授權中心統一設定與管理。新增帳號後會自動在供應商頁面顯示為獨立卡片，方便隨時切換。",
+        "manageAccounts": "前往授權中心管理帳號",
+        "accountLabel": "官方帳號",
+        "unboundAccount": "未綁定官方帳號",
+        "openAuthCenter": "前往授權中心",
+        "editBoundHelp": "此卡片固定綁定該官方帳號，不支援在卡片內切換帳號。如需使用其他帳號，請直接切換對應帳號卡片或在授權中心管理。",
+        "editUnboundHelp": "每個官方帳號皆獨立顯示為一張卡片，不支援在卡片內切換帳號。請前往授權中心登入或管理官方帳號。",
+        "bindOnce": "綁定到授權中心帳號",
+        "bindOnceHelp": "這張卡來自升級前，尚未綁定帳號。可以綁定一次授權中心帳號，儲存後無法再更改；同一帳號自動產生的卡片可以隨後刪除。"
       }
     },
     "duplicateLiveIdsLoadFailed": "讀取設定中的供應商識別碼失敗，請先修復設定後再試",
@@ -1278,7 +1289,9 @@
       "quitFirst": "請先結束 WorkBuddy 再切換帳號",
       "quitFirstBody": "完全結束 WorkBuddy（含選單列／系統匣）後再切換，否則它會把目前的登入寫回去。",
       "switched": "已切換到「{{name}}」，下次開啟 WorkBuddy 會使用這個帳號。",
-      "switchFailed": "切換 WorkBuddy 帳號失敗"
+      "switchFailed": "切換 WorkBuddy 帳號失敗",
+      "accountRemoved": "此帳號已從授權中心移除",
+      "unboundManaged": "未綁定官方帳號，請前往授權中心登入"
     },
     "quota": {
       "title": "額度",
@@ -5492,7 +5505,9 @@
       "addFailed": "新增失敗：{{error}}",
       "switched": "CodeBuddy 已切換到 {{name}}。正在執行的 CodeBuddy 會自動換過去，新開的也會使用它。",
       "switchFailed": "切換失敗：{{error}}",
-      "removeHint": "CodeBuddy 同時只能登入一個帳號，新增另一張官方卡即可切換"
+      "removeHint": "CodeBuddy 同時只能登入一個帳號，新增另一張官方卡即可切換",
+      "accountRemoved": "此帳號已從授權中心移除",
+      "unboundManaged": "未綁定官方帳號，請前往授權中心登入"
     },
     "login": {
       "confirmTitle": "登入新的 CodeBuddy 帳號",

@@ -31,7 +31,7 @@ import { proxyKeys } from "@/lib/query/proxy";
 import { piApi } from "@/lib/api/pi";
 import { providersApi } from "@/lib/api/providers";
 import { settingsApi } from "@/lib/api/settings";
-import type { AppId, ProviderSwitchEvent } from "@/lib/api";
+import type { AppId, AuthCenterTarget, ProviderSwitchEvent } from "@/lib/api";
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { useCopilotVscodeSyncNotifications } from "@/hooks/useCopilotVscodeSyncStatus";
@@ -246,9 +246,20 @@ function App() {
   );
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [hasOpenedAdd, setHasOpenedAdd] = useState(false);
+  const [authScrollTarget, setAuthScrollTarget] =
+    useState<AuthCenterTarget | null>(null);
   useEffect(() => {
     if (isAddOpen) setHasOpenedAdd(true);
   }, [isAddOpen]);
+  useEffect(() => {
+    if (currentView !== "auth") {
+      setAuthScrollTarget(null);
+    }
+  }, [currentView]);
+  const handleOpenAuthCenter = useCallback((target: AuthCenterTarget) => {
+    setAuthScrollTarget(target);
+    setCurrentView("auth");
+  }, []);
   // 供应商搜索面板：页头按钮和 ⌘F 都能打开；换应用或离开供应商页就收起
   const [providerSearchOpen, setProviderSearchOpen] = useState(false);
   const [connectionStatusSlot, setConnectionStatusSlot] =
@@ -515,6 +526,7 @@ function App() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let unsubscribeCards: (() => void) | undefined;
     let active = true;
 
     const setupListener = async () => {
@@ -551,11 +563,21 @@ function App() {
             });
           },
         );
+        const offCards = await providersApi.onOfficialCardsUpdated?.(
+          async ({ appType }) => {
+            await queryClient.invalidateQueries({
+              queryKey: ["providers", appType],
+              refetchType: "all",
+            });
+          },
+        );
         if (!active) {
           off();
+          offCards?.();
           return;
         }
         unsubscribe = off;
+        unsubscribeCards = offCards;
       } catch (error) {
         console.error("[App] Failed to subscribe provider switch event", error);
       }
@@ -565,6 +587,7 @@ function App() {
     return () => {
       active = false;
       unsubscribe?.();
+      unsubscribeCards?.();
     };
   }, [queryClient]);
 
@@ -1861,7 +1884,10 @@ function App() {
               className="min-h-0 flex-1 overflow-y-auto scroll-stable"
             >
               <div className="px-6 pb-10 pt-4">
-                <AuthCenterPanel showIntro={false} />
+                <AuthCenterPanel
+                  authScrollTarget={authScrollTarget}
+                  showIntro={false}
+                />
               </div>
             </div>
           </>
@@ -2010,6 +2036,7 @@ function App() {
             appId={activeApp}
             onSubmit={addProvider}
             modeView={formModeView}
+            onOpenAuthCenter={handleOpenAuthCenter}
           />
         )}
 

@@ -5,6 +5,7 @@ import { toast } from "@/lib/toast";
 import { authApi } from "@/lib/api";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
 import type { CodexLoginMethod, ManagedLoginMethod } from "@/lib/api/auth";
+import { appIdForAuthTarget } from "@/lib/authBinding";
 import { deliverLoginLink, readAuthOpenBrowser } from "@/lib/authLoginLink";
 import { copyText } from "@/lib/clipboard";
 import {
@@ -81,6 +82,15 @@ export function useManagedAuth(
           : false,
   });
 
+  const invalidateAppProviders = useCallback(
+    () =>
+      queryClient.invalidateQueries({
+        queryKey: ["providers", appIdForAuthTarget(authProvider)],
+        refetchType: "all",
+      }),
+    [authProvider, queryClient],
+  );
+
   const stopPolling = useCallback(() => {
     if (pollingIntervalRef.current) {
       clearInterval(pollingIntervalRef.current);
@@ -113,6 +123,7 @@ export function useManagedAuth(
           await queryClient.invalidateQueries({
             queryKey: ["managed-auth-status", authProvider],
           });
+          await invalidateAppProviders();
         }
         return cancelled;
       } catch (e) {
@@ -120,10 +131,11 @@ export function useManagedAuth(
         await queryClient.invalidateQueries({
           queryKey: ["managed-auth-status", authProvider],
         });
+        await invalidateAppProviders();
         return false;
       }
     },
-    [authProvider, queryClient],
+    [authProvider, invalidateAppProviders, queryClient],
   );
 
   const queueBackendCancellation = useCallback(
@@ -228,6 +240,7 @@ export function useManagedAuth(
             setPollingState("success");
             await refetchStatus();
             await queryClient.invalidateQueries({ queryKey });
+            await invalidateAppProviders();
             if (completionGeneration !== flowGenerationRef.current) return;
             onLoginCompleteRef.current?.(newAccount);
             setPollingState("idle");
@@ -302,11 +315,7 @@ export function useManagedAuth(
       await refetchStatus();
     },
     onSettled: async () => {
-      if (authProvider === "codex_oauth") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "codex"],
-        });
-      }
+      await invalidateAppProviders();
       // 移除/登出的 xAI 账号若正是 Grok CLI 当前登录的号，后端会把 CLI 登录让出来：
       // 没绑号的 Grok 官方卡查的就是 CLI 当前登录，要重查
       if (authProvider === "xai_oauth") {
@@ -339,11 +348,7 @@ export function useManagedAuth(
       if (authProvider === "codex_oauth") await refetchStatus();
     },
     onSettled: async () => {
-      if (authProvider === "codex_oauth") {
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", "codex"],
-        });
-      }
+      await invalidateAppProviders();
       // 移除/登出的 xAI 账号若正是 Grok CLI 当前登录的号，后端会把 CLI 登录让出来：
       // 没绑号的 Grok 官方卡查的就是 CLI 当前登录，要重查
       if (authProvider === "xai_oauth") {

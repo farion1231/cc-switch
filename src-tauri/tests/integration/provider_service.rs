@@ -3843,14 +3843,22 @@ fn grok_editor_unbinding_current_card_restores_cli_login() {
     let mut provider = row.clone();
     provider.meta = None;
     provider.settings_config = view.settings.clone();
-    ProviderService::update_from_editor(
+    assert!(ProviderService::update_from_editor(
         &state,
         AppType::GrokBuild,
         None,
         provider,
         Some(editor_save(&view.settings, "refuse")),
     )
-    .expect("save unbound card");
+    .is_err());
+    assert!(stash_path.exists(), "rejected unbind must keep the stash");
+
+    state
+        .db
+        .save_provider(&AppType::GrokBuild, &grok_official("grok-unbound", None))
+        .expect("save unbound card");
+    ProviderService::switch(&state, AppType::GrokBuild, "grok-unbound")
+        .expect("switch to unbound card");
 
     let auth: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&auth_path).unwrap()).unwrap();

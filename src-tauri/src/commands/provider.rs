@@ -1,11 +1,11 @@
+use crate::commands::{
+    agy_account::AgyAccountState, copilot::CopilotAuthState, xai_oauth::XaiOAuthState,
+};
 use indexmap::IndexMap;
 use tauri::{Emitter, Manager, State};
 
 use super::run_db_task;
 use crate::app_config::AppType;
-use crate::commands::agy_account::AgyAccountState;
-use crate::commands::copilot::CopilotAuthState;
-use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta};
 use crate::provider_kind::ProviderKind;
@@ -30,12 +30,7 @@ pub async fn get_providers(
 ) -> Result<IndexMap<String, Provider>, String> {
     let app_type = AppType::from_str(&app)?;
     // 启动会话同步也使用同一个数据库连接，等待它的锁不能占住 UI 线程。
-    let state = state.inner().clone();
-    Ok(
-        tauri::async_runtime::spawn_blocking(move || ProviderService::list(&state, app_type))
-            .await
-            .map_err(|e| format!("读取供应商列表任务失败: {e}"))??,
-    )
+    run_db_task(&state, move |state| ProviderService::list(state, app_type)).await
 }
 
 /// 库里读不出来的供应商（只给界面展示、删除）。
@@ -97,8 +92,8 @@ pub async fn add_provider(
 }
 
 #[tauri::command]
-pub async fn update_provider(
-    app_handle: tauri::AppHandle,
+pub async fn update_provider<R: tauri::Runtime>(
+    app_handle: tauri::AppHandle<R>,
     app: String,
     provider: Provider,
     #[allow(non_snake_case)] originalId: Option<String>,
@@ -174,12 +169,10 @@ pub async fn delete_provider(
     id: String,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app)?;
-    let state = state.inner().clone();
-    Ok(tauri::async_runtime::spawn_blocking(move || {
-        ProviderService::delete(&state, app_type, &id).map(|_| true)
+    run_db_task(&state, move |state| {
+        ProviderService::delete(state, app_type, &id).map(|()| true)
     })
     .await
-    .map_err(|e| format!("供应商删除任务失败: {e}"))??)
 }
 
 #[tauri::command]
@@ -1352,5 +1345,250 @@ mod native_query_credentials_tests {
                 "sk-provider".to_string()
             )
         );
+    }
+}
+
+#[cfg(test)]
+mod delete_official_account_tests {
+    use super::*;
+    use crate::commands::official_cards_sync::sync_official_cards_and_emit;
+    use crate::database::Database;
+    use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
+    use crate::services::provider::official_account_cards::{
+        load_dismissed, official_account_card_id, sync_app_cards, OfficialAccountEntry,
+    };
+    use crate::test_support::{EnvVars, TempUserHome};
+    use serial_test::serial;
+    use std::sync::Arc;
+
+    #[test]
+    #[serial]
+    fn delete_provider_marks_local_dismissed_without_removing_auth_center_accounts() {
+        let home = TempUserHome::new();
+        let _env = EnvVars::new().set("CC_SWITCH_TEST_HOME", home.path());
+        let db = Arc::new(Database::memory().unwrap());
+        let app_state = AppState::new(db.clone());
+
+        let accounts = vec![
+            OfficialAccountEntry {
+                id: "acc-1".into(),
+                login: "alice@example.com".into(),
+            },
+            OfficialAccountEntry {
+                id: "acc-2".into(),
+                login: "bob@example.com".into(),
+            },
+        ];
+        sync_app_cards(&db, &AppType::Claude, &accounts).unwrap();
+
+        let card_1 = official_account_card_id(&AppType::Claude, "acc-1");
+        let card_2 = official_account_card_id(&AppType::Claude, "acc-2");
+
+        let mut shared_card = Provider::with_id(
+            "custom-shared-acc2".into(),
+            "Shared Bob".into(),
+            serde_json::json!({ "env": {} }),
+            None,
+        );
+        shared_card.category = Some("official".into());
+        shared_card.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("claude_official".into()),
+                account_id: Some("acc-2".into()),
+            }),
+            ..Default::default()
+        });
+        db.save_provider(&AppType::Claude, &shared_card).unwrap();
+
+        let app = tauri::test::mock_builder()
+            .manage(app_state)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+
+        // Deleting card_1 marks acc-1 dismissed locally so passive sync won't resurrect it.
+        tauri::async_runtime::block_on(super::delete_provider(
+            app.state(),
+            "claude".into(),
+            card_1.clone(),
+        ))
+        .unwrap();
+        assert!(db
+            .get_provider_by_id(&card_1, &AppType::Claude)
+            .unwrap()
+            .is_none());
+        assert!(load_dismissed(&AppType::Claude).contains("acc-1"));
+
+        // Deleting card_2 does not mark acc-2 dismissed while custom-shared-acc2 still binds it.
+        tauri::async_runtime::block_on(super::delete_provider(
+            app.state(),
+            "claude".into(),
+            card_2.clone(),
+        ))
+        .unwrap();
+        assert!(db
+            .get_provider_by_id(&card_2, &AppType::Claude)
+            .unwrap()
+            .is_none());
+        assert!(!load_dismissed(&AppType::Claude).contains("acc-2"));
+
+        // Deleting the last card for acc-2 marks acc-2 dismissed locally.
+        tauri::async_runtime::block_on(super::delete_provider(
+            app.state(),
+            "claude".into(),
+            "custom-shared-acc2".into(),
+        ))
+        .unwrap();
+        assert!(load_dismissed(&AppType::Claude).contains("acc-2"));
+
+        // Passive sync (clear_dismissed=false) does not recreate dismissed cards,
+        // whereas explicit login sync (clear_dismissed=true) clears dismissed and restores the card.
+        let state_ref = app.state::<AppState>();
+        tauri::async_runtime::block_on(sync_official_cards_and_emit(
+            app.handle(),
+            state_ref.inner(),
+            &AppType::Claude,
+            &accounts,
+            false,
+        ));
+        assert!(db
+            .get_provider_by_id(&card_1, &AppType::Claude)
+            .unwrap()
+            .is_none());
+
+        tauri::async_runtime::block_on(sync_official_cards_and_emit(
+            app.handle(),
+            state_ref.inner(),
+            &AppType::Claude,
+            &accounts[..1],
+            true,
+        ));
+        assert!(db
+            .get_provider_by_id(&card_1, &AppType::Claude)
+            .unwrap()
+            .is_some());
+        assert!(!load_dismissed(&AppType::Claude).contains("acc-1"));
+        assert!(load_dismissed(&AppType::Claude).contains("acc-2"));
+    }
+
+    #[test]
+    #[serial]
+    fn get_providers_is_pure_read_and_service_rejects_switching_bound_official_card() {
+        let home = TempUserHome::new();
+        let _env = EnvVars::new().set("CC_SWITCH_TEST_HOME", home.path());
+        let db = Arc::new(Database::memory().unwrap());
+        let app_state = AppState::new(db.clone());
+
+        let mut unbound_official = Provider::with_id(
+            "claude-official".into(),
+            "Claude Official".into(),
+            serde_json::json!({ "env": {} }),
+            None,
+        );
+        unbound_official.category = Some("official".into());
+        db.save_provider(&AppType::Claude, &unbound_official)
+            .unwrap();
+
+        let accounts = vec![OfficialAccountEntry {
+            id: "acc-1".into(),
+            login: "alice@example.com".into(),
+        }];
+        sync_app_cards(&db, &AppType::Claude, &accounts).unwrap();
+
+        let app = tauri::test::mock_builder()
+            .manage(app_state)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+
+        // get_providers reads existing cards without mutating state.
+        let listed =
+            tauri::async_runtime::block_on(super::get_providers(app.state(), "claude".into()))
+                .unwrap();
+        let card_1_id = official_account_card_id(&AppType::Claude, "acc-1");
+        let mut card_1 = listed
+            .get(&card_1_id)
+            .expect("synced card for acc-1")
+            .clone();
+
+        // Editing name/notes with the same account binding succeeds.
+        card_1.name = "Work Claude".into();
+        tauri::async_runtime::block_on(super::update_provider(
+            app.handle().clone(),
+            "claude".into(),
+            card_1.clone(),
+            None,
+            None,
+        ))
+        .unwrap();
+
+        let switched_meta = |account: &str| {
+            Some(ProviderMeta {
+                auth_binding: Some(AuthBinding {
+                    source: AuthBindingSource::ManagedAccount,
+                    auth_provider: Some("claude_official".into()),
+                    account_id: Some(account.into()),
+                }),
+                ..Default::default()
+            })
+        };
+
+        // Switching the card's bound account is rejected by ProviderService::update directly too.
+        let mut switched = card_1.clone();
+        switched.meta = switched_meta("acc-2");
+        let err = ProviderService::update(
+            app.state::<AppState>().inner(),
+            AppType::Claude,
+            None,
+            switched.clone(),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("不支持切换账号"));
+
+        let err = tauri::async_runtime::block_on(super::update_provider(
+            app.handle().clone(),
+            "claude".into(),
+            switched,
+            None,
+            None,
+        ))
+        .unwrap_err();
+        assert!(err.contains("不支持切换账号"));
+
+        // An unbound official card left from before the upgrade may be bound once...
+        let mut bind_unbound = unbound_official.clone();
+        bind_unbound.meta = switched_meta("acc-1");
+        tauri::async_runtime::block_on(super::update_provider(
+            app.handle().clone(),
+            "claude".into(),
+            bind_unbound.clone(),
+            None,
+            None,
+        ))
+        .unwrap();
+
+        // ...after which it can neither be moved to another account nor unbound.
+        let mut rebind = bind_unbound.clone();
+        rebind.meta = switched_meta("acc-2");
+        let err = tauri::async_runtime::block_on(super::update_provider(
+            app.handle().clone(),
+            "claude".into(),
+            rebind,
+            None,
+            None,
+        ))
+        .unwrap_err();
+        assert!(err.contains("不支持切换账号"));
+        let mut unbind = bind_unbound;
+        unbind.meta = None;
+        let err = tauri::async_runtime::block_on(super::update_provider(
+            app.handle().clone(),
+            "claude".into(),
+            unbind,
+            None,
+            None,
+        ))
+        .unwrap_err();
+        assert!(err.contains("不支持切换账号"));
     }
 }

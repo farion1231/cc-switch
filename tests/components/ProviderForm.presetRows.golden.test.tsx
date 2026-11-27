@@ -15,8 +15,11 @@
  *
  * 替身（均不改变行内容）：
  * - JsonEditor → textarea：CodeMirror 在 jsdom 下不可靠，它只回显 value；
- * - CodexOAuthSection → 空桩：新建官方卡不动登录方式 = 跟随 Codex 当前登录；
+ * - CodexOAuthSection → 空桩；
  * - OAuth hooks → 未登录；通用配置 hooks → 未勾选、片段为空，快照与片段无关。
+ *
+ * 官方预设（Claude Official / OpenAI Official）已统一交由授权中心登录管理并自动生成独立账号卡片，
+ * 不再通过表单提交写行，下方单独验证其授权中心入口衔接。
  *
  * 预设取舍：
  * - Claude「需要格式转换的 openai_chat」：OpenRouter 现在走 Anthropic 原生，
@@ -125,7 +128,6 @@ interface GoldenCase {
 }
 
 const CLAUDE_CASES: GoldenCase[] = [
-  { preset: "Claude Official", fillApiKey: false },
   { preset: "RelaxyCode", fillApiKey: true },
   {
     preset: "AWS Bedrock (API Key)",
@@ -138,7 +140,6 @@ const CLAUDE_CASES: GoldenCase[] = [
 ];
 
 const CODEX_CASES: GoldenCase[] = [
-  { preset: "OpenAI Official", fillApiKey: false },
   { preset: "xAI (Grok)", fillApiKey: true },
   { preset: "Nvidia", fillApiKey: true },
   { preset: "E-FlowCode", fillApiKey: true },
@@ -160,6 +161,10 @@ function presetNameAt(appId: GoldenAppId, index: number): string | undefined {
 function renderForm(
   appId: GoldenAppId,
   onSubmit: (values: ProviderFormValues) => void,
+  extra?: {
+    onAccountLoginChange?: (accountLogin: boolean) => void;
+    onManageAuthAccounts?: (target: string) => void;
+  },
 ) {
   const queryClient = createTestQueryClient();
   return render(
@@ -169,6 +174,8 @@ function renderForm(
         submitLabel={SUBMIT_LABEL}
         onSubmit={onSubmit}
         onCancel={vi.fn()}
+        onAccountLoginChange={extra?.onAccountLoginChange}
+        onManageAuthAccounts={extra?.onManageAuthAccounts as never}
       />
     </QueryClientProvider>,
   );
@@ -321,4 +328,34 @@ describe("ProviderForm 预设新增行金标", () => {
       },
     );
   });
+
+  it.each<[GoldenAppId, string, string]>([
+    ["claude", "Claude Official", "claude_official"],
+    ["codex", "OpenAI Official", "codex_oauth"],
+  ])(
+    "%s official preset (%s) hands off to Auth Center (%s)",
+    async (appId, presetName, expectedAuthProvider) => {
+      const onSubmit = vi.fn();
+      const onAccountLoginChange = vi.fn();
+      const onManageAuthAccounts = vi.fn();
+      renderForm(appId, onSubmit, {
+        onAccountLoginChange,
+        onManageAuthAccounts,
+      });
+
+      clickPreset(appId, presetName);
+
+      await waitFor(() =>
+        expect(onAccountLoginChange).toHaveBeenCalledWith(true),
+      );
+      expect(
+        screen.queryByRole("button", { name: SUBMIT_LABEL }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(
+        screen.getByRole("button", { name: "前往授权中心管理账号" }),
+      );
+      expect(onManageAuthAccounts).toHaveBeenCalledWith(expectedAuthProvider);
+      expect(onSubmit).not.toHaveBeenCalled();
+    },
+  );
 });

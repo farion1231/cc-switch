@@ -56,7 +56,11 @@ import { resolveProviderIcon } from "@/utils/providerIcon";
 import { useDraftEditorProjection } from "./hooks/useDraftEditorProjection";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { GrokAccountSelect } from "./GrokOfficialAccount";
+import {
+  OfficialAccountAddForm,
+  OfficialAccountManagedInfo,
+  useOfficialAccountAddStep,
+} from "./shared";
 
 type GrokBuildProviderFormProps = Omit<ProviderFormProps, "appId">;
 
@@ -84,6 +88,7 @@ export function GrokBuildProviderForm({
   inactiveFields = [],
   onEditorBaseChange,
   onManageAuthAccounts,
+  onAccountLoginChange,
 }: GrokBuildProviderFormProps) {
   const { t } = useTranslation();
   const isDarkMode = useDarkMode();
@@ -106,6 +111,11 @@ export function GrokBuildProviderForm({
   const [selectedXaiAccountId, setSelectedXaiAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "xai_oauth"));
+  const isOfficialAccountAdd = !initialData && category === "official";
+  const { showOfficialAccountAdd } = useOfficialAccountAddStep(
+    isOfficialAccountAdd,
+    onAccountLoginChange,
+  );
   const [isPartner, setIsPartner] = useState(
     initialData?.meta?.isPartner ?? false,
   );
@@ -478,6 +488,28 @@ export function GrokBuildProviderForm({
 
   const rawConfigError = validateGrokBuildConfig(rawConfig);
 
+  const presetSelector = !initialData && (
+    <ProviderPresetSelector
+      selectedPresetId={selectedPresetId}
+      presetEntries={grokPresetEntries}
+      presetCategoryLabels={presetCategoryLabels}
+      onPresetChange={handlePresetChange}
+      category={category}
+    />
+  );
+
+  if (isOfficialAccountAdd) {
+    return (
+      <OfficialAccountAddForm
+        form={form}
+        presetSelector={presetSelector}
+        showPanel={showOfficialAccountAdd}
+        authProvider="xai_oauth"
+        onManageAuthAccounts={onManageAuthAccounts}
+      />
+    );
+  }
+
   return (
     <Form {...form}>
       <form
@@ -485,41 +517,19 @@ export function GrokBuildProviderForm({
         onSubmit={form.handleSubmit(handleSubmit)}
         className="space-y-6"
       >
-        {!initialData && (
-          <ProviderPresetSelector
-            selectedPresetId={selectedPresetId}
-            presetEntries={grokPresetEntries}
-            presetCategoryLabels={presetCategoryLabels}
-            onPresetChange={handlePresetChange}
-            category={category}
-          />
-        )}
+        {presetSelector}
 
         <BasicFormFields form={form} />
 
         {category === "official" && (
-          <GrokAccountSelect
-            value={selectedXaiAccountId}
-            onChange={(accountId, account) => {
-              setSelectedXaiAccountId(accountId);
-              // 新增时名字还是预设名：带上账号，几张官方卡一眼能分清
-              if (!initialData) {
-                const current = form.getValues("name").trim();
-                const presetName = grokBuildOfficialPreset.name;
-                if (
-                  current === presetName ||
-                  current.startsWith(`${presetName} (`)
-                ) {
-                  form.setValue(
-                    "name",
-                    account ? `${presetName} (${account.login})` : presetName,
-                  );
-                }
-              }
-            }}
-            onManageAccounts={
-              onManageAuthAccounts
-                ? () => onManageAuthAccounts("xai_oauth")
+          <OfficialAccountManagedInfo
+            authProvider="xai_oauth"
+            accountId={selectedXaiAccountId}
+            onManageAuthAccounts={onManageAuthAccounts}
+            onBind={
+              initialData &&
+              !resolveManagedAccountId(initialData.meta, "xai_oauth")
+                ? setSelectedXaiAccountId
                 : undefined
             }
           />

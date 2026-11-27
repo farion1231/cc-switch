@@ -21,14 +21,17 @@ import { mcodePresetModelSources } from "@/config/presetModelMetadata";
 import { BasicFormFields } from "./BasicFormFields";
 import { OpenCodeFormFields } from "./OpenCodeFormFields";
 import { ProviderPresetSelector } from "./ProviderPresetSelector";
-import { usePresetStep } from "./presetStep";
 import { normalizeRequestHeaders } from "./helpers/requestHeaders";
 import {
   yamlNodeFromText,
   yamlNodeToText,
   type YamlNodeError,
 } from "./helpers/yamlNode";
-import { NativeConfigEditor } from "./shared";
+import {
+  NativeConfigEditor,
+  OfficialAccountAddForm,
+  useOfficialAccountAddStep,
+} from "./shared";
 import {
   mergeOpencodeExtraOptionRows,
   toOpencodeExtraOptions,
@@ -128,13 +131,9 @@ export function McodeProviderForm({
     YamlNodeError | { kind: "schema" } | null
   >(null);
   const [presetId, setPresetId] = useState("custom");
-  const step = usePresetStep();
   const isAccountLogin = !initialData && presetId === DSH_ACCOUNT_PRESET_ID;
-  const showAccountLogin = isAccountLogin && (!step || step.step === "form");
-  useEffect(() => {
-    onAccountLoginChange?.(showAccountLogin);
-    return () => onAccountLoginChange?.(false);
-  }, [showAccountLogin, onAccountLoginChange]);
+  const { showOfficialAccountAdd: showAccountLogin } =
+    useOfficialAccountAddStep(isAccountLogin, onAccountLoginChange);
   const preset =
     presetId === "custom" || isAccountLogin
       ? undefined
@@ -229,29 +228,13 @@ export function McodeProviderForm({
   );
   if (isAccountLogin) {
     return (
-      <Form {...form}>
-        <form
-          id="provider-form"
-          className="space-y-6"
-          onSubmit={(event) => event.preventDefault()}
-        >
-          {presetSelector}
-          {showAccountLogin && (
-            <div className="space-y-3">
-              <p className="text-body text-fg-2">
-                {t("dsh.account.presetDescription")}
-              </p>
-              <Button
-                type="button"
-                variant="neutral"
-                onClick={() => onManageAuthAccounts?.("dsh_account")}
-              >
-                {t("dsh.account.manageAccounts")}
-              </Button>
-            </div>
-          )}
-        </form>
-      </Form>
+      <OfficialAccountAddForm
+        form={form}
+        presetSelector={presetSelector}
+        showPanel={showAccountLogin}
+        authProvider="dsh_account"
+        onManageAuthAccounts={onManageAuthAccounts}
+      />
     );
   }
   return (
