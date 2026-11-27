@@ -1141,6 +1141,76 @@ fn responses_request_to_chat_preserves_valid_and_unconstrained_schemas() {
 }
 
 #[test]
+fn responses_request_to_chat_strips_encrypted_schema_marker() {
+    let input = json!({
+        "model": "gemini-3.8-flash",
+        "tools": [{
+            "type": "function",
+            "name": "send_message",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string"},
+                    "message": {"type": "string", "encrypted": true},
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string", "encrypted": true}
+                    }
+                },
+                "required": ["target", "message"]
+            }
+        }, {
+            "type": "namespace",
+            "name": "agents",
+            "tools": [{
+                "type": "function",
+                "name": "followup_task",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"message": {"type": "string", "encrypted": true}}
+                }
+            }]
+        }],
+        "input": "hi"
+    });
+
+    let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+    let serialized = result["tools"].to_string();
+    assert!(!serialized.contains("encrypted"), "{serialized}");
+    assert_eq!(
+        result["tools"][0]["function"]["parameters"]["properties"]["message"],
+        json!({"type": "string"})
+    );
+    assert_eq!(
+        result["tools"][0]["function"]["parameters"]["required"],
+        json!(["target", "message"])
+    );
+}
+
+#[test]
+fn responses_request_to_chat_keeps_parameters_and_data_named_encrypted() {
+    let parameters = json!({
+        "type": "object",
+        "properties": {
+            "encrypted": {
+                "type": "boolean",
+                "default": {"encrypted": false},
+                "examples": [{"encrypted": true}]
+            }
+        },
+        "required": ["encrypted"]
+    });
+    let input = json!({
+        "model": "gpt-5.4",
+        "tools": [{"type": "function", "name": "store", "parameters": parameters.clone()}],
+        "input": "hi"
+    });
+
+    let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+    assert_eq!(result["tools"][0]["function"]["parameters"], parameters);
+}
+
+#[test]
 fn responses_request_to_chat_defaults_top_level_one_of_tool_parameters_to_object() {
     let input = json!({
         "model": "gpt-5.4",

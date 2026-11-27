@@ -2048,6 +2048,14 @@ fn sanitize_parameter_schema(schema: &mut Value, is_root: bool) {
         return;
     };
 
+    // Codex multi-agent v2 stamps a Responses-only `"encrypted": true` marker on
+    // some parameters (spawn_agent / send_message `message`). It is not a JSON
+    // Schema keyword; Gemini behind a Chat gateway rejects the whole request
+    // with `Unknown name "encrypted"` (#9168). Only schema nodes reach here, so
+    // a parameter that is itself named `encrypted` (a key of `properties`) and
+    // literal data under `default` / `examples` / `enum` stay untouched.
+    obj.remove("encrypted");
+
     if is_root && obj.get("type").and_then(Value::as_str) != Some("object") {
         obj.insert("type".to_string(), json!("object"));
     }
