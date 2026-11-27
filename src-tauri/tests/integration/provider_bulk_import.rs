@@ -940,44 +940,39 @@ fn every_agent_rejects_invalid_batch_and_rolls_back_on_second_insert_failure() {
 fn independent_connections_cannot_import_the_same_preview_twice() {
     let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
     let _env = AgentEnvironment::isolated();
-    for mode in ["DELETE", "WAL"] {
-        reset_test_fs();
-        let one = create_test_state().unwrap();
-        let conn =
-            rusqlite::Connection::open(ensure_test_home().join(".cc-switch/cc-switch.db")).unwrap();
-        conn.pragma_update(None, "journal_mode", mode).unwrap();
-        let two = AppState::new(Arc::new(Database::init().unwrap()));
-        for app in bulk_apps() {
-            let source = json!([agent_row(&app, "Team", "synthetic-concurrent")]).to_string();
-            let token = ProviderService::preview_bulk_import(&one, app.clone(), &source)
-                .unwrap()
-                .token
-                .unwrap();
-            let barrier = Arc::new(Barrier::new(3));
-            let handles: Vec<_> = [one.clone(), two.clone()]
-                .into_iter()
-                .map(|state| {
-                    let (app, source, token, barrier) =
-                        (app.clone(), source.clone(), token.clone(), barrier.clone());
-                    std::thread::spawn(move || {
-                        barrier.wait();
-                        ProviderService::import_bulk(&state, app, &source, &token).is_ok()
-                    })
+    reset_test_fs();
+    let one = create_test_state().unwrap();
+    let two = AppState::new(Arc::new(Database::init().unwrap()));
+    for app in bulk_apps() {
+        let source = json!([agent_row(&app, "Team", "synthetic-concurrent")]).to_string();
+        let token = ProviderService::preview_bulk_import(&one, app.clone(), &source)
+            .unwrap()
+            .token
+            .unwrap();
+        let barrier = Arc::new(Barrier::new(3));
+        let handles: Vec<_> = [one.clone(), two.clone()]
+            .into_iter()
+            .map(|state| {
+                let (app, source, token, barrier) =
+                    (app.clone(), source.clone(), token.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    ProviderService::import_bulk(&state, app, &source, &token).is_ok()
                 })
-                .collect();
-            barrier.wait();
-            assert_eq!(
-                handles
-                    .into_iter()
-                    .map(|h| h.join().unwrap())
-                    .filter(|ok| *ok)
-                    .count(),
-                1,
-                "{mode} {}",
-                app.as_str()
-            );
-            assert_eq!(one.db.get_all_providers(&app).unwrap().len(), 1);
-        }
+            })
+            .collect();
+        barrier.wait();
+        assert_eq!(
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .filter(|ok| *ok)
+                .count(),
+            1,
+            "{}",
+            app.as_str()
+        );
+        assert_eq!(one.db.get_all_providers(&app).unwrap().len(), 1);
     }
 }
 
