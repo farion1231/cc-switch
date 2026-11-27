@@ -69,6 +69,7 @@ mod usage_events;
 mod usage_script;
 mod window_fit;
 mod workbuddy_config;
+mod zcode_config;
 
 use crate::sync_utils::MutexExt;
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
@@ -1048,6 +1049,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
             }
+            match crate::services::provider::import_zcode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} ZCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No ZCode provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import ZCode providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1865,6 +1873,9 @@ pub fn run() {
             commands::add_custom_icon,
             commands::rename_custom_icon,
             commands::delete_custom_icon,
+            // ZCode specific
+            commands::import_zcode_providers_from_live,
+            commands::get_zcode_live_provider_ids,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,

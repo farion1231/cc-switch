@@ -108,6 +108,7 @@ fn revision(
             "local_runtime_message_rows",
             "local_runtime_messages",
         ],
+        "zcode" => &["message", "part"],
         _ => return Err(rusqlite::Error::InvalidQuery),
     };
     let tx = conn.unchecked_transaction()?;
@@ -193,6 +194,8 @@ mod tests {
             ("mcode", "local_runtime_messages"),
             ("mcode", "local_runtime_message_rows"),
             ("mcode", "local_runtime_message_row_migrations"),
+            ("zcode", "message"),
+            ("zcode", "part"),
         ] {
             let conn = Connection::open_in_memory().unwrap();
             conn.execute_batch(&format!(

@@ -77,6 +77,13 @@ export const DIRECTORY_APPS = [
     placeholderKey: "settings.browsePlaceholderDsh",
     syncsLive: false,
   },
+  {
+    app: "zcode",
+    field: "zcodeConfigDir",
+    defaultFolder: ".zcode",
+    placeholderKey: "settings.browsePlaceholderZcode",
+    syncsLive: true,
+  },
 ] as const satisfies readonly {
   app: AppId;
   field: keyof Settings;

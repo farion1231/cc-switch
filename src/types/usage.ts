@@ -221,7 +221,8 @@ export type AppType =
   | "omp"
   | "copilot"
   | "workbuddy"
-  | "codebuddy";
+  | "codebuddy"
+  | "zcode";
 
 export type AppTypeFilter = "all" | AppType;
 
@@ -240,6 +241,7 @@ export const KNOWN_APP_TYPES: ReadonlyArray<AppType> = [
   "copilot",
   "workbuddy",
   "codebuddy",
+  "zcode",
 ];
 
 const NO_CACHE_WRITE_APP_TYPES: ReadonlySet<string> = new Set([

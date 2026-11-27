@@ -1024,6 +1024,7 @@
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "örn. /home/<kullanıcı-adınız>/.dsh",
+    "browsePlaceholderZcode": "örn. /home/<kullanıcı-adınız>/.zcode",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",
     "checkForUpdates": "Güncellemeleri Kontrol Et",
@@ -4385,7 +4386,8 @@
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
     },
-    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır."
+    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır.",
+    "zcodeHelp": "ZCode bir masaüstü uygulamasıdır; buradan kurulamaz veya güncellenemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.zcode/v2/provider_config.json) üzerinden bağlanır."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -5553,5 +5555,36 @@
     "hint": "CC Switch'in daha yeni bir sürümüyle kaydedilmiş olabilir. Veriler olduğu gibi korunur, düzenlenemez veya etkinleştirilemez; güncelleme verileri geri getirir ya da kaydı silebilirsiniz.",
     "confirmTitle": "Okunamayan kaydı sil",
     "confirmMessage": "“{{name}}” silinsin mi? Yalnızca bu CC Switch kaydı silinir; uygulamaların kendi yapılandırma dosyaları değişmez."
+  },
+  "zcode": {
+    "addModel": "Model ekle",
+    "apiKeyRequired": "API anahtarı gerekli",
+    "baseUrl": "Temel URL",
+    "baseUrlHint": "Özel API uç noktası URL'si",
+    "baseUrlRequired": "Temel URL gerekli",
+    "kind": "Sağlayıcı türü",
+    "kindHint": "Bu sağlayıcının kullandığı API protokolü",
+    "kindPlaceholder": "Sağlayıcı türünü seçin",
+    "limitContext": "Bağlam",
+    "limitOutput": "Çıktı",
+    "modelId": "Model kimliği",
+    "modelLimits": "Token sınırları",
+    "modelLimitsHint": "ZCode'un önerdiği değerleri kullanmak için boş bırakın.",
+    "models": "Modeller",
+    "modelsHint": "Model kimliği, API isteklerinde gönderilen model adıdır.",
+    "noModels": "Model ayarlanmadı",
+    "providerKey": "Sağlayıcı anahtarı",
+    "providerKeyDuplicate": "Bu anahtar zaten kullanılıyor",
+    "providerKeyHint": "~/.zcode/v2/provider_config.json içindeki benzersiz tanımlayıcı. Yalnızca harf, rakam, iki nokta, alt çizgi ve kısa çizgi kullanılabilir.",
+    "providerKeyInvalid": "Geçersiz biçim. Yalnızca harf, rakam, iki nokta, alt çizgi ve kısa çizgi kullanılabilir.",
+    "providerKeyLockedHint": "Anahtar, provider_config.json içindeki providerId değeridir ve oluşturulduktan sonra değiştirilemez.",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyRequired": "Sağlayıcı anahtarı gerekli",
+    "providerKeyStatusLoading": "Sağlayıcı anahtarının durumu yükleniyor, lütfen biraz sonra tekrar deneyin",
+    "providerName": "Sağlayıcı adı",
+    "providerNameHint": "ZCode'da gösterilen ad",
+    "providerNamePlaceholder": "Sağlayıcım",
+    "toggleModelDetails": "Model ayrıntılarını aç/kapat",
+    "activationHint": "ZCode tüm sağlayıcıları aynı anda kayıtlı tutar: kaydettiğinizde bu sağlayıcı ZCode'un listesine eklenir; etkili olması için ZCode'un sağlayıcı seçicisinden ona geçmeniz gerekir."
   }
 }

@@ -117,5 +117,12 @@
     "localProxy": false,
     "routeMode": false,
     "stack": false
+  },
+  {
+    "id": "zcode",
+    "additive": true,
+    "localProxy": false,
+    "routeMode": false,
+    "stack": false
   }
 ]

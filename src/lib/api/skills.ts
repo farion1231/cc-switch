@@ -39,6 +39,7 @@ export interface SkillApps {
   copilot?: boolean;
   workbuddy?: boolean;
   codebuddy?: boolean;
+  zcode?: boolean;
 }
 
 /** 设置了访问令牌的主机（读私有仓库用，令牌本身不经前端读回） */

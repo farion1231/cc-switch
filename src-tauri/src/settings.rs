@@ -67,6 +67,8 @@ pub struct VisibleApps {
     pub workbuddy: bool,
     #[serde(default = "default_true")]
     pub codebuddy: bool,
+    #[serde(default = "default_true")]
+    pub zcode: bool,
 }
 
 impl Default for VisibleApps {
@@ -89,6 +91,7 @@ impl Default for VisibleApps {
             copilot: true,
             workbuddy: true,
             codebuddy: true,
+            zcode: true,
         }
     }
 }
@@ -114,6 +117,7 @@ impl VisibleApps {
             AppType::Copilot => self.copilot,
             AppType::WorkBuddy => self.workbuddy,
             AppType::Codebuddy => self.codebuddy,
+            AppType::ZCode => self.zcode,
         }
     }
 }
@@ -658,6 +662,9 @@ pub struct AppSettings {
     /// DeepSeek Harness 主目录（相当于 `DSH_HOME`，优先于环境变量）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dsh_config_dir: Option<String>,
+    /// ZCode 配置根目录（相当于 `~/.zcode`）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zcode_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -690,6 +697,9 @@ pub struct AppSettings {
     /// 当前 GitHub Copilot CLI 供应商 ID（卡片只用于打开终端，保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_copilot: Option<String>,
+    /// 当前 ZCode 供应商 ID（本地存储，保持结构一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_zcode: Option<String>,
 
     // ===== 本地路由（设备级）=====
     /// 写给客户端的代理主机（IP 或主机名），空/未设时按监听地址推（`0.0.0.0` → `127.0.0.1`）。
@@ -813,6 +823,7 @@ impl Default for AppSettings {
             pi_config_dir: None,
             omp_config_dir: None,
             dsh_config_dir: None,
+            zcode_config_dir: None,
             current_provider_claude: None,
             current_provider_claude_desktop: None,
             current_provider_codex: None,
@@ -823,6 +834,7 @@ impl Default for AppSettings {
             current_provider_hermes: None,
             current_provider_agy: None,
             current_provider_copilot: None,
+            current_provider_zcode: None,
             proxy_client_host: None,
             skill_sync_method: SyncMethod::default(),
             skill_storage_location: SkillStorageLocation::default(),
@@ -865,6 +877,7 @@ impl AppSettings {
             &mut self.pi_config_dir,
             &mut self.omp_config_dir,
             &mut self.dsh_config_dir,
+            &mut self.zcode_config_dir,
         ] {
             *dir = dir
                 .as_deref()
@@ -1333,6 +1346,7 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         AppType::Pi => &settings.pi_config_dir,
         AppType::Omp => &settings.omp_config_dir,
         AppType::Dsh => &settings.dsh_config_dir,
+        AppType::ZCode => &settings.zcode_config_dir,
         AppType::ClaudeDesktop
         | AppType::Mcode
         | AppType::Kimi
@@ -1342,6 +1356,14 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         | AppType::WorkBuddy => return None,
     };
     dir.as_deref().map(resolve_override_path)
+}
+
+/// ZCode 配置根目录覆盖（相当于 `~/.zcode`）
+pub fn get_zcode_override_dir() -> Option<PathBuf> {
+    read_settings()
+        .zcode_config_dir
+        .as_deref()
+        .map(resolve_override_path)
 }
 
 pub fn preserve_codex_official_auth_on_switch() -> bool {
@@ -1405,6 +1427,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Hermes => settings.current_provider_hermes.clone(),
         AppType::Agy => settings.current_provider_agy.clone(),
         AppType::Copilot => settings.current_provider_copilot.clone(),
+        AppType::ZCode => settings.current_provider_zcode.clone(),
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
@@ -1432,6 +1455,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
         AppType::Agy => settings.current_provider_agy = id_owned.clone(),
         AppType::Copilot => settings.current_provider_copilot = id_owned.clone(),
+        AppType::ZCode => settings.current_provider_zcode = id_owned.clone(),
         AppType::Pi
         | AppType::Mcode
         | AppType::Kimi
