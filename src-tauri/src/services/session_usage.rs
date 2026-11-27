@@ -183,9 +183,10 @@ pub fn sync_all_unlocked(db: &Database) -> SessionSyncResult {
                 "Kimi Code",
                 crate::services::session_usage_kimi::sync_kimi_usage,
             ),
-            ("ZCode", |db, _cursors| {
-                crate::services::session_usage_zcode::sync_zcode_usage(db)
-            }),
+            (
+                "ZCode",
+                crate::services::session_usage_zcode::sync_zcode_usage_with_cursors,
+            ),
             (
                 "GitHub Copilot CLI",
                 crate::services::session_usage_copilot::sync_copilot_usage,
