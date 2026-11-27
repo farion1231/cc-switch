@@ -3791,8 +3791,8 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 ///
 /// 刷新面与 `usage_view` 的展示面严格对齐 —— 每次悬停最多发
 /// `TRAY_APPS.len()` 个用量查询；按供应商用量开关查询，Codex 托管账号
-/// 未保存开关时与卡片一致默认启用。Antigravity 账号区另算：在用的号每次都查，
-/// 其余的号按 `AGY_IDLE_QUOTA_INTERVAL` 轮到才查（`refresh_agy_accounts`）。
+/// 未保存开关时与卡片一致默认启用。Antigravity 账号区另算：在用的号按
+/// `AGY_TRAY_QUOTA_REUSE` 问 agy，其余的号只读最后一次查到的（`refresh_agy_accounts`）。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
@@ -3922,15 +3922,12 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     futures::join!(join_all(usage_futures), agy);
 }
 
-/// 每个 Antigravity 账号上次替托盘查额度的时间。
-static AGY_QUOTA_QUERIES: LazyLock<Mutex<HashMap<String, std::time::Instant>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-/// 不在用的 Antigravity 账号多久替托盘查一次额度（在用的号跟着托盘的 10 秒节流走）。
-/// 每查一个号要发两个请求，号多时不能每次弹出都全查一遍。
-const AGY_IDLE_QUOTA_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// 托盘替 agy 当前登录的号查额度时，这么久内查过就不再起 agy（`/usage` 要启动 agy，七八秒）。
+const AGY_TRAY_QUOTA_REUSE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// 托盘的 Antigravity 账号区：先读一次钥匙串（agy 现在登着哪个号、有没有收进新号），
-/// 再查到期的几个号的额度。没收录过账号时什么都不做，不碰钥匙串。
+/// 再取每个号的额度：在用的号问 agy 的 `/usage`，别的号用切走前最后一次查到的（不发请求）。
+/// 没收录过账号时什么都不做，不碰钥匙串。
 async fn refresh_agy_accounts(app: &tauri::AppHandle) {
     use futures::future::join_all;
 
@@ -3954,38 +3951,20 @@ async fn refresh_agy_accounts(app: &tauri::AppHandle) {
     // 在 agy 里或授权中心换过号：勾跟着挪（状态没变就不重建）
     schedule_tray_status_check(app);
 
-    let due: Vec<String> = {
-        let mut queried = AGY_QUOTA_QUERIES.lock_recover();
-        let now = std::time::Instant::now();
-        status
-            .accounts
-            .iter()
-            .filter(|account| {
-                let current = status.current_account_id.as_deref() == Some(account.id.as_str());
-                let due = current
-                    || queried
-                        .get(&account.id)
-                        .is_none_or(|at| now.duration_since(*at) >= AGY_IDLE_QUOTA_INTERVAL);
-                if due {
-                    queried.insert(account.id.clone(), now);
-                }
-                due
-            })
-            .map(|account| account.id.clone())
-            .collect()
-    };
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
     };
-    let queries = due.into_iter().map(|account_id| {
+    let queries = status.accounts.into_iter().map(|account| {
         let manager = std::sync::Arc::clone(&manager);
         let app_state = app_state.inner();
         async move {
-            match crate::commands::agy_quota(&manager, Some(&account_id)).await {
+            match crate::commands::agy_quota(&manager, Some(&account.id), AGY_TRAY_QUOTA_REUSE)
+                .await
+            {
                 Ok(quota) => {
-                    crate::commands::remember_account_quota(app, app_state, account_id, &quota)
+                    crate::commands::remember_account_quota(app, app_state, account.id, &quota)
                 }
-                Err(e) => log::debug!("[Tray] 刷新 Antigravity 账号 {account_id} 额度失败: {e}"),
+                Err(e) => log::debug!("[Tray] 刷新 Antigravity 账号 {} 额度失败: {e}", account.id),
             }
         }
     });

@@ -10,3 +10,18 @@ describe("Claude Desktop OpenCode Go 预设", () => {
     expect(preset?.baseUrl).toBe("https://opencode.ai/inference/go/anthropic");
   });
 });
+
+describe("Claude Desktop Command Code 预设", () => {
+  const preset = claudeDesktopProviderPresets.find(
+    (item) => item.name === "Command Code",
+  );
+
+  it("与 Claude Code 预设一致，经路由按 OpenAI Chat 转发", () => {
+    expect(preset?.baseUrl).toBe("https://api.commandcode.ai/provider");
+    expect(preset?.mode).toBe("proxy");
+    expect(preset?.apiFormat).toBe("openai_chat");
+    expect(preset?.modelRoutes?.[0]?.upstreamModel).toBe(
+      "deepseek/deepseek-v4.1-flash",
+    );
+  });
+});

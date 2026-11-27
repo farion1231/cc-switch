@@ -1,9 +1,8 @@
 //! Antigravity CLI 官方登录的剩余额度：问 agy 自己的 `/usage` 命令
-//! （`agy -p /usage --output-format json`），这条命令不调模型、不新建会话。
+//! （`agy -p /usage --output-format json`），这条命令不调模型、不新建会话，启动 agy 要七八秒。
 //!
-//! 这是后备路径：能切号的平台（macOS、Windows）先用 CC Switch 存的令牌直接问 Google
-//! （`commands::agy_account::agy_quota`，约 1 秒），认不出 agy 的登录时才走这里；
-//! 启动 agy 要七八秒。
+//! 这是唯一的查询方式：CC Switch 不拿 agy 的令牌、也不冒充 agy 的客户端标识去问 Google，
+//! 所以只能查 agy 现在登着的那个号（别的号显示切走前最后一次查到的，见 `agy_account`）。
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -89,8 +88,7 @@ fn parse_usage(stdout: &[u8]) -> Option<Vec<QuotaTier>> {
 }
 
 /// 一组额度桶（id、剩余比例、重置时间）→ 排好序的档；一档都认不出时返回 `None`。
-/// agy 的 `/usage` 和直接查 Google 额度接口（`agy_account::quota`）返回的是同一组桶。
-pub(crate) fn collect_tiers(
+fn collect_tiers(
     buckets: impl IntoIterator<Item = (Option<String>, Option<f64>, Option<String>)>,
 ) -> Option<Vec<QuotaTier>> {
     let mut tiers: Vec<QuotaTier> = buckets

@@ -64,9 +64,13 @@ const LazyUsageTab = lazy(async () => {
 
 type Tab = "config" | "usage";
 const TAB_KEY = "cc-switch-tray-tab";
-const MAIN_MAX_HEIGHT = 620;
 /** 使用固定画布时，窗口在一次弹出里的最大高度 */
 const CANVAS_MAX_HEIGHT = 760;
+/**
+ * 主面板最高可以撑满画布：应用行带着额度条，几个应用就能超过 620，
+ * 屏幕放得下时不该让最后一行藏在滚动区里（#10034）。屏幕更矮时仍按可用高度收。
+ */
+const MAIN_MAX_HEIGHT = CANVAS_MAX_HEIGHT;
 /** 分开摆时窗口四周留的透明边距，给卡片的阴影（系统窗口阴影已关掉） */
 const SHADOW_MARGIN = 16;
 const SUB_MAX_HEIGHT = 540;

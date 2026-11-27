@@ -35,11 +35,15 @@ export const subscriptionKeys = {
 
 export const agyAuthStatusQuery = managedAuthStatusQuery("agy_oauth");
 
-/** Refresh the actual agy login and the quota shown on cards that follow it. */
+/**
+ * Refresh the actual agy login and every Antigravity quota: only the account agy is
+ * signed in with can be queried, so a switch changes which one shows live numbers.
+ */
 export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: agyAuthStatusQuery.queryKey }),
     queryClient.invalidateQueries({ queryKey: subscriptionKeys.quota("agy") }),
+    queryClient.invalidateQueries({ queryKey: ["agy_oauth", "quota"] }),
   ]);
 }
 
@@ -266,7 +270,8 @@ export function useXaiOauthQuotaByAccountId(
 }
 
 /**
- * Antigravity 账号的剩余额度（按账号 ID，用该账号自己的令牌直接查，不用先切号）。
+ * Antigravity 账号的剩余额度（按账号 ID）。agy 当前登着的号问 agy 的 `/usage`，
+ * 别的号返回切走前最后一次查到的（没有时为 not_found）。
  * 授权中心逐个账号、以及绑了这个账号的官方卡共用同一份缓存。
  */
 export function useAgyAccountQuota(

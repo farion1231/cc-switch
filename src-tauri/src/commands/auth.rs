@@ -295,19 +295,22 @@ pub async fn auth_start_login(
                 .map_err(|e| e.to_string())?;
             Ok(map_device_code_response(auth_provider, response))
         }
-        // 浏览器登录没有用户码：device_code 放这次登录的 id，verification_uri 放授权页地址
+        // 在 agy 里登录：打开终端跑 `agy`，钥匙串里的登录换了就收录（不用 agy 的 OAuth 客户端）。
+        // 重新登录也是这样：同一个号登录后按账号覆盖旧副本，所以不需要 target_account_id。
+        // 既没有用户码也没有授权页，device_code 放这次登录的 id。
         AUTH_PROVIDER_AGY_OAUTH => {
-            if target_account_id.is_some() {
-                return Err("Targeted re-authentication is only supported for Codex OAuth".into());
-            }
             let start = agy_state.0.start_login().await?;
+            if let Err(error) = crate::commands::agy_account::open_agy_login_terminal().await {
+                agy_state.0.cancel_login(&start.flow_id).await;
+                return Err(error);
+            }
             Ok(ManagedAuthDeviceCodeResponse {
                 provider: auth_provider.to_string(),
                 device_code: start.flow_id,
                 user_code: String::new(),
-                verification_uri: start.auth_url,
+                verification_uri: String::new(),
                 expires_in: start.expires_in,
-                interval: 1,
+                interval: 2,
                 browser_opened: false,
             })
         }

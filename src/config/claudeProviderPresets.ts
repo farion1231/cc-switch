@@ -1189,6 +1189,23 @@ export const providerPresets: ProviderPreset[] = [
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
   },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    // Sub2API 网关：Key 绑定分组，Claude Code 用 Claude 或「国模」分组的 Key，
+    // 地址填站点根（docs.fastaitoken.com/docs/cc-switch）；Claude 组按官方模型名透传
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://www.fastaitoken.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

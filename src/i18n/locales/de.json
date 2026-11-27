@@ -1816,6 +1816,7 @@
       "tokenplus": "TokenPlus macht KI-Programmierung zuverlässiger, günstiger und sorgenfreier: Zugriff auf Modelle mehrerer Anbieter mit einem Schlüssel, Stabilität durch intelligentes Umschalten, Ersparnisse durch optimierte Preise und Caching sowie Abrechnung, Teams und Datensicherheit an einem Ort.",
       "kimi": "Neue Kimi-Nutzer erhalten 10 % ihrer ersten erfolgreichen Aufladung als Bonus-API-Guthaben zurück, bis zu 1.000 CNY ¥.",
       "a6api": "A6API ist eine Token-Aggregationsplattform mit integrierter Echtzeit-Preisrangliste, die automatisch den günstigsten Marktpreis wählt. Reibungslos und stabil, einfach zu bedienen und ohne lästige Preisvergleiche. Jetzt registrieren und kostenloses Testguthaben sichern!",
+      "fastaitoken": "FastAIToken bietet Zugriff auf Claude, GPT und DeepSeek aus einer Hand – ab 6 % des Listenpreises, mit Rechnungsstellung für Unternehmen.",
       "sudocode": "SudoCode bietet Claude Code und Codex einen gemeinsamen API-Endpunkt; die Konsole schlüsselt Token-Verbrauch und Kosten jeder Anfrage nach Modell auf. Registrieren Sie sich und treten Sie der QQ-Gruppe 1030742788 bei, um einen Tagespass im Wert von 10 CNY ¥ zu erhalten.",
       "packycode": "PackyCode ist ein offizieller Partner von CC Switch. Registrieren Sie sich über diesen Link und geben Sie beim Aufladen den Promo-Code „cc-switch“ ein, um 10 % Rabatt zu erhalten",
       "apikeyfun": "APIKEY.FUN bietet CC-Switch-Nutzern ein Sonderangebot. Registrieren Sie sich über den exklusiven Link und erhalten Sie dauerhaft bis zu 5 % Rabatt auf Aufladungen.",
@@ -5221,7 +5222,7 @@
       "copilotHelp": "Wird von GitHub-Copilot-Vorlagen in Claude Code, Claude Desktop und Codex sowie von der Bindung an die offizielle Copilot-CLI-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "chatgptHelp": "Wird von ChatGPT-Vorlagen in Claude Code und Claude Desktop sowie von der Bindung an die offizielle Codex-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "xaiHelp": "Wird von xAI-Vorlagen in Claude Code, Claude Desktop und Codex sowie von der Bindung an die offizielle Grok-Build-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
-      "agyHelp": "Die offizielle Anmeldung der Antigravity CLI (agy). agy kann nur mit einem Konto gleichzeitig angemeldet sein; „Wechseln“ ersetzt die Anmeldung von agy durch das ausgewählte Konto, und danach gestartete agy-Sitzungen verwenden es. Das Konto, mit dem agy bereits angemeldet war, wird hier automatisch hinzugefügt, sodass es beim Wechseln nie verloren geht.",
+      "agyHelp": "Die offizielle Anmeldung der Antigravity CLI (agy). agy kann nur mit einem Konto gleichzeitig angemeldet sein; „Wechseln“ ersetzt die Anmeldung von agy durch das ausgewählte Konto, und danach gestartete agy-Sitzungen verwenden es. Das Konto, mit dem agy bereits angemeldet war, wird hier automatisch hinzugefügt, sodass es beim Wechseln nie verloren geht. „Konto hinzufügen“ öffnet ein Terminal mit agy; melde dich dort an, dann wird das Konto hier automatisch hinzugefügt. Das Kontingent stammt aus agys eigenem /usage, daher lässt sich nur das Konto prüfen, mit dem agy gerade angemeldet ist; andere Konten zeigen das zuletzt vor dem Wechsel abgefragte Kontingent.",
       "codebuddyHelp": "Die offizielle Anmeldung für CodeBuddy (China- und internationale Website). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „CodeBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „CodeBuddy-Offizielle-Anmeldung“ hinzu. „Konto hinzufügen“ öffnet ein Terminal mit codebuddy und fügt das Konto hier hinzu, sobald Sie fertig sind; ist CodeBuddy bereits angemeldet, wird es vorübergehend abgemeldet und kann wiederhergestellt werden, falls Sie abbrechen. CodeBuddy erneuert seine Tokens selbst.",
       "workbuddyHelp": "Die offizielle Anmeldung der WorkBuddy-Desktop-App. CC Switch kann sich nicht für Sie bei WorkBuddy anmelden; es kann nur das Konto speichern, mit dem WorkBuddy angemeldet ist (ein Snapshot seiner Anmeldedateien). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „WorkBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „WorkBuddy Official Sign-in“ hinzu (es wird jeweils nur eine offizielle Karte hinzugefügt). Snapshots funktionieren nur auf diesem Computer und werden nicht synchronisiert.",
       "claudeHelpTerminal": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Kartenwechsel die Anmeldung von Claude Code nicht. Wählen Sie ein Konto auf einer offiziellen Karte und verwenden Sie „Terminal öffnen“ auf der Karte.",
@@ -5278,10 +5279,13 @@
       "reauthNote": "Anmeldung abgelaufen, Wechsel dorthin nicht möglich",
       "addedOn": "Hinzugefügt am {{date}}",
       "statusLoadFailed": "Antigravity-Konten konnten nicht gelesen werden. Versuchen Sie es erneut.",
-      "empty": "Noch keine Antigravity-Konten. Das Konto, mit dem agy angemeldet ist, erscheint hier automatisch.",
+      "empty": "Noch keine Antigravity-Konten. Das Konto, mit dem agy angemeldet ist, erscheint hier automatisch; oder klicke auf „Konto hinzufügen“, um dich in agy anzumelden.",
       "removeNote": "agy bleibt angemeldet: Wenn agy dieses Konto verwendet, funktioniert es nach dem Entfernen weiter.",
       "switched": "Gewechselt. Neue agy-Sitzungen verwenden dieses Konto.",
-      "switchedWhileRunning": "Gewechselt. agy läuft: Geöffnete agy-Sitzungen verwenden weiter das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie agy und öffnen Sie es erneut."
+      "switchedWhileRunning": "Gewechselt. agy läuft: Geöffnete agy-Sitzungen verwenden weiter das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie agy und öffnen Sie es erneut.",
+      "pendingNote": "agy ist in einem Terminal geöffnet. Ist es nicht angemeldet, folge den Hinweisen; ist es angemeldet, gib /logout und dann /login mit dem hinzuzufügenden Konto ein. Danach wird es hier automatisch hinzugefügt.",
+      "reopenTerminal": "Terminal erneut öffnen",
+      "quotaNotCurrent": "Wechsle zu diesem Konto, um sein Kontingent abzufragen"
     },
     "codebuddy": {
       "mainland": "China",

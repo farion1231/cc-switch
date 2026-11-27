@@ -1551,6 +1551,27 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
   },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    settingsConfig: {
+      name: "fastaitoken",
+      // Sub2API 网关：Key 绑定分组，GPT 要用 OpenAI 分组的 Key（docs.fastaitoken.com/docs/api-manual）；
+      // 模型列表要登录才能看，模型 ID 取自官方文档示例 gpt-6.1-sol，未用真 Key 验证
+      base_url: "https://www.fastaitoken.com/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [{ id: "gpt-6.1-sol", name: "GPT-6.1 Sol" }],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-6.1-sol", provider: "fastaitoken" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

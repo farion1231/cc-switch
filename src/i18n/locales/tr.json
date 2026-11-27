@@ -1745,6 +1745,7 @@
       "tokenplus": "TokenPlus ile yapay zekâ destekli kodlama daha kararlı, ekonomik ve sorunsuz: tek anahtarla birden çok sağlayıcının modellerine erişin, akıllı geçişle kararlılığı koruyun, uygun fiyat seçimi ve önbellek optimizasyonuyla maliyetleri azaltın; faturalandırma, ekip ve veri güvenliğini tek yerden yönetin.",
       "kimi": "Yeni Kimi kullanıcıları ilk başarılı yüklemelerinin %10'unu 1.000 CNY'ye kadar bonus API kredisi olarak geri alırlar.",
       "a6api": "A6API, piyasadaki en düşük fiyatı otomatik olarak seçen, yerleşik gerçek zamanlı fiyat sıralama tablosuna sahip bir token birleştirme platformudur. Sorunsuz ve istikrarlı, kullanımı basit ve sıkıcı fiyat karşılaştırmalarına son. Ücretsiz deneme kredilerinden yararlanmak için şimdi kaydolun!",
+      "fastaitoken": "FastAIToken, Claude, GPT ve DeepSeek'e tek noktadan erişim sunar; fiyatlar liste fiyatının %6'sına kadar iner ve kurumsal fatura desteklenir.",
       "sudocode": "SudoCode, Claude Code ve Codex'e ortak tek bir API uç noktası sunar; konsol her isteğin token kullanımını ve maliyetini modele göre gösterir. Kaydolun ve 10 CNY değerinde bir günlük kart almak için 1030742788 numaralı QQ grubuna katılın.",
       "packycode": "PackyCode, CC Switch’in resmi ortağıdır. Bu bağlantıyı kullanarak kaydolun ve %10 indirimden yararlanmak için şarj sırasında \"cc-switch\" promosyon kodunu girin",
       "apikeyfun": "APIKEY.FUN, CC Switch kullanıcıları için özel bir fırsat sunuyor. Kalıcı %5'e varan yükleme indirimlerinden yararlanmak için özel bağlantı aracılığıyla kaydolun.",
@@ -5161,7 +5162,7 @@
       "copilotHelp": "Claude Code, Claude Desktop ve Codex'deki GitHub Copilot ön ayarları ve Copilot CLI'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları ve Grok Build'in resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
+      "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz. Hesap ekle, agy çalıştıran bir terminal açar; agy içinde oturum açtığınızda hesap buraya otomatik olarak eklenir. Kota agy'nin kendi /usage komutuyla sorgulanır; bu yüzden yalnızca agy'nin şu anda oturum açtığı hesap kontrol edilebilir, diğer hesaplar geçişten önce en son görülen kotayı gösterir.",
       "codebuddyHelp": "CodeBuddy'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için hesabın … menüsünden \"CodeBuddy için bu hesaba geç\" seçeneğini kullanın ya da sağlayıcı listesinde bu hesaba bağlı \"CodeBuddy Resmi Oturum\" kartını ekleyin. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
@@ -5218,10 +5219,13 @@
       "reauthNote": "Oturum süresi doldu, bu hesaba geçilemiyor",
       "addedOn": "{{date}} tarihinde eklendi",
       "statusLoadFailed": "Antigravity hesapları okunamadı. Yeniden deneyin.",
-      "empty": "Henüz Antigravity hesabı yok. agy'nin oturum açtığı hesap burada otomatik olarak görünür.",
+      "empty": "Henüz Antigravity hesabı yok. agy'nin oturum açtığı hesap burada otomatik olarak görünür; agy içinde oturum açmak için Hesap ekle'ye de tıklayabilirsiniz.",
       "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",
       "switched": "Hesap değiştirildi. Yeni agy oturumları bu hesabı kullanacak.",
-      "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın."
+      "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın.",
+      "pendingNote": "agy bir terminalde açıldı. Oturum açık değilse yönergeleri izleyin; açıksa önce /logout, ardından eklenecek hesapla /login yazın. Tamamlandığında buraya otomatik olarak eklenir.",
+      "reopenTerminal": "Terminali yeniden aç",
+      "quotaNotCurrent": "Kotasını görmek için bu hesaba geçin"
     },
     "codebuddy": {
       "mainland": "Çin",

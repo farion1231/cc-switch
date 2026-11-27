@@ -1352,6 +1352,25 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "alltokens-si",
   },
   {
+    name: "FastAIToken",
+    providerKey: "cc-switch-fastaitoken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    // Sub2API 网关：Key 绑定分组，GPT 要用 OpenAI 分组的 Key（docs.fastaitoken.com/docs/api-manual）；
+    // 模型列表要登录才能看，模型 ID 取自官方文档示例 gpt-6.1-sol，未用真 Key 验证
+    settingsConfig: {
+      name: "FastAIToken",
+      baseUrl: "https://www.fastaitoken.com/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" })],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
+  },
+  {
     name: "Amux",
     providerKey: "cc-switch-amux",
     websiteUrl: "https://amux.ai",

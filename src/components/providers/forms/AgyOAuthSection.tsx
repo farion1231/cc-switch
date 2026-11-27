@@ -1,6 +1,8 @@
 import React from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
+import { extractErrorMessage } from "@/utils/errorUtils";
 import { authApi } from "@/lib/api";
 import { agyAuthStatusQuery } from "@/lib/query/subscription";
 import { Label } from "@/components/ui/label";
@@ -33,6 +35,8 @@ interface AgyOAuthSectionProps {
 /**
  * 授权中心的 Antigravity 账号组。agy 只有一份全局登录（系统钥匙串），「默认」就是 agy 现在
  * 登着的那个号；「切换」把选中的号写进去。在这里删账号只删 CC Switch 的副本，不让 agy 登出。
+ * 「添加账号」打开终端运行 agy，用户在 agy 里登录（CC Switch 不用 agy 的 OAuth 客户端），
+ * 钥匙串里的登录换了就收录。额度只问得到 agy 当前登着的号。
  */
 export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
   helpSide,
@@ -97,7 +101,11 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
       needsReauth: account.requires_reauth,
       users: accountUsers([account.id]),
       quota: account.requires_reauth ? undefined : (
-        <AgyAccountQuota accountId={account.id} login={account.login} />
+        <AgyAccountQuota
+          accountId={account.id}
+          login={account.login}
+          isCurrent={defaultAccountId === account.id}
+        />
       ),
     };
   });
@@ -109,7 +117,7 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
       iconName="antigravity"
       help={t("authCenter.group.agyHelp", {
         defaultValue:
-          "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
+          "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。「添加账号」会打开终端运行 agy，在 agy 里登录后这里自动收录。额度用 agy 自己的 /usage 查，只查得到 agy 当前登着的号，其他号显示切走前最后一次查到的。",
       })}
       helpSide={helpSide}
       accounts={rows}
@@ -120,7 +128,7 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
       onRetryStatus={() => void refetchStatus()}
       emptyText={t("authCenter.agy.empty", {
         defaultValue:
-          "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
+          "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里，也可以点「添加账号」在 agy 里登录。",
       })}
       onAdd={addAccount}
       defaultLabel={t("authCenter.inUseBy", {
@@ -148,6 +156,18 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
         error,
         onCancel: cancelAuth,
         onRetry: addAccount,
+        pendingNote: t("authCenter.agy.pendingNote", {
+          defaultValue:
+            "已在终端打开 agy。没登录时按提示登录；已登录时先输入 /logout，再输入 /login 登录要添加的号。完成后这里会自动收录。",
+        }),
+        reopenLabel: t("authCenter.agy.reopenTerminal", {
+          defaultValue: "重新打开终端",
+        }),
+        onReopen: () => {
+          authApi.agyAccountOpenLoginTerminal().catch((e: unknown) => {
+            toast.error(extractErrorMessage(e) || String(e));
+          });
+        },
       }}
     >
       <ManagedAccountRemoveDialog

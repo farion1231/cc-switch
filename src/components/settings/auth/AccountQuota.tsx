@@ -378,7 +378,7 @@ export function CopilotAccountQuota({
   );
 }
 
-/** 按账号查的订阅额度列：xAI、Antigravity、Claude 只是查询 hook 不同 */
+/** 按账号查的订阅额度列：xAI、Claude 只是查询 hook 不同 */
 function subscriptionAccountQuota(
   useQuota: (
     accountId: string,
@@ -469,8 +469,54 @@ export function KimiAccountQuota({
   );
 }
 
-/** Antigravity 账号的剩余额度（agy_account_quota(accountId)，不用先切号） */
-export const AgyAccountQuota = subscriptionAccountQuota(useAgyAccountQuota);
+/**
+ * Antigravity 账号的剩余额度（agy_account_quota(accountId)）。只有 agy 当前登着的号查得到，
+ * 别的号显示切走前最后一次查到的；从没查到过时提示切过去才能查。
+ */
+export function AgyAccountQuota({
+  accountId,
+  login,
+  isCurrent,
+}: {
+  accountId: string;
+  login: string;
+  isCurrent: boolean;
+}) {
+  const { t, i18n } = useTranslation();
+  const display = useQuotaDisplay();
+  const {
+    data: quota,
+    isFetching: loading,
+    refetch,
+    manualIdle,
+  } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
+  const state = subscriptionQuotaState(
+    t,
+    quota,
+    loading,
+    i18n.language,
+    display,
+  );
+  return (
+    <AccountQuotaColumn
+      login={login}
+      state={
+        !state && !isCurrent && !loading && quota
+          ? {
+              kind: "note",
+              text: t("authCenter.agy.quotaNotCurrent", {
+                defaultValue: "切到这个号后才能查额度",
+              }),
+            }
+          : state
+      }
+      queriedAt={quota?.queriedAt ?? null}
+      loading={loading}
+      onRefresh={() => void refetch()}
+      idle={manualIdle}
+    />
+  );
+}
 
 /** 积分数：一万以上用紧凑写法（「12.3万」「12.3K」），放得下数值那一格 */
 function formatCredits(value: number, locale: string): string {
