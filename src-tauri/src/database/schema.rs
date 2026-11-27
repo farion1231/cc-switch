@@ -389,6 +389,31 @@ impl Database {
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
 
+        // Sanitized pending OTLP usage plus replay markers for ephemeral CLI runs
+        // (e.g. `codex exec --ephemeral`, Codex side chats, `claude -p --no-session-persistence`,
+        // `gemini -p`). Never store raw telemetry, prompts, tool output, account details, or credentials.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS otel_usage_ingest (
+                event_id TEXT PRIMARY KEY,
+                event_json TEXT,
+                created_at INTEGER NOT NULL
+            )",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_otel_usage_ingest_created_at
+             ON otel_usage_ingest(created_at)",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_otel_usage_ingest_pending
+             ON otel_usage_ingest(created_at) WHERE event_json IS NOT NULL",
+            [],
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
+
         // 19. Profiles 表（全应用共享的项目实体，payload 按 app 分槽快照
         //     供应商/MCP/Skills/Prompt；各应用分组的 current 标记在 settings 表）
         conn.execute(

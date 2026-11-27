@@ -63,6 +63,7 @@ fn create_legacy_nullable_logs_table(conn: &Connection) -> Result<(), AppError> 
                 cache_creation_tokens INTEGER NOT NULL,
                 status_code INTEGER NOT NULL,
                 created_at INTEGER NOT NULL,
+                session_id TEXT,
                 data_source TEXT,
                 input_token_semantics INTEGER NOT NULL DEFAULT 0
             )",

@@ -870,7 +870,7 @@ fn get_codex_sync_state(
 /// 2. 剥离 provider 前缀：`openai/gpt-5.4` → `gpt-5.4`
 /// 3. 剥离 ISO 日期后缀：`gpt-5.4-2026-03-05` → `gpt-5.4`
 /// 4. 剥离紧凑日期后缀：`gpt-5.4-20260305` → `gpt-5.4`
-fn normalize_codex_model(raw: &str) -> String {
+pub(crate) fn normalize_codex_model(raw: &str) -> String {
     // Step 1: 小写
     let mut name = raw.to_lowercase();
 
@@ -2512,6 +2512,71 @@ fn verified_owned_fork_prefix(
     Some(prefix)
 }
 
+/// A subagent spawned from an ephemeral parent (e.g. `codex exec --ephemeral`)
+/// has no persisted parent rollout on disk. When every billable event in the
+/// child rollout carries explicit `token_usage_record` provenance owned by the
+/// child itself, starts from a zero inherited cumulative baseline, and occurs
+/// after the fork timestamp, there is provably zero copied parent history to
+/// strip and the child can be imported without waiting for a missing parent.
+fn verified_self_owned_child_without_parent(
+    parsed: &ParsedCodexFile,
+    child_path: &Path,
+    index: &RolloutIndex,
+    child_file: Option<ParentFileStamp>,
+) -> Option<usize> {
+    let ParentResolution::Parent(parent_id) = &parsed.parent else {
+        return None;
+    };
+    if index.contains_key(parent_id)
+        || parsed.bounded_history.is_some()
+        || !parsed.has_fork_provenance
+    {
+        return None;
+    }
+    let first = parsed.token_events.first()?;
+    child_events_after_fork(parsed)?;
+    let last = first.signature.last.as_ref()?;
+    if let Some(total) = first.signature.total.as_ref() {
+        if total.input != last.input
+            || total.cached_input != last.cached_input
+            || total.output != last.output
+        {
+            return None;
+        }
+    }
+    let child_id = parsed.meta_thread_id.as_deref()?;
+    let child = read_fork_file_evidence(child_path)?;
+    if Some(child.stamp) != child_file {
+        return None;
+    }
+    for event in parsed
+        .token_events
+        .iter()
+        .filter(|event| event.event_index.is_some())
+        .chain(parsed.usage_record_events.iter())
+    {
+        let evidence = child.token_lines.get(&event.line_offset)?;
+        if evidence.thread_id != child_id {
+            return None;
+        }
+        let delta = delta_from_usage(&evidence.usage);
+        if (
+            delta.input,
+            delta.cached_input,
+            delta.cache_write_input,
+            delta.output,
+        ) != (
+            event.delta.input,
+            event.delta.cached_input,
+            event.delta.cache_write_input,
+            event.delta.output,
+        ) {
+            return None;
+        }
+    }
+    Some(0)
+}
+
 /// Called only on a replay-cache miss. Successful normal alignment needs no
 /// request-evidence scan; an idle-parent recovery shares the same prefix cache.
 fn resolve_parent_replay_prefix(
@@ -2524,9 +2589,11 @@ fn resolve_parent_replay_prefix(
 ) -> Result<usize, ParentSignatureError> {
     match resolve_parent_signatures(parent_id, cutoff, index, parsed) {
         Ok(signatures) => Ok(matching_replay_prefix(&parsed.token_events, &signatures)),
-        Err(error) => {
-            verified_owned_fork_prefix(parsed, child_path, index, child_file).ok_or(error)
-        }
+        Err(error) => verified_owned_fork_prefix(parsed, child_path, index, child_file)
+            .or_else(|| {
+                verified_self_owned_child_without_parent(parsed, child_path, index, child_file)
+            })
+            .ok_or(error),
     }
 }
 

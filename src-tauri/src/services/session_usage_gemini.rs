@@ -101,9 +101,21 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
     }
 
     // 遍历 tmp/<project_hash>/chats/session-*.json(l)
+    // 以及子代理目录 tmp/<project_hash>/chats/<parent_session>/session-*.json(l)
     let project_dirs = match fs::read_dir(&tmp_dir) {
         Ok(entries) => entries,
         Err(_) => return files,
+    };
+
+    let push_session_if_match = |path: PathBuf, files: &mut Vec<PathBuf>| {
+        let is_session = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("session-"))
+            && is_session_file(&path);
+        if is_session {
+            files.push(path);
+        }
     };
 
     for entry in project_dirs.flatten() {
@@ -112,24 +124,26 @@ fn collect_gemini_session_files(gemini_dir: &Path) -> Vec<PathBuf> {
             continue;
         }
 
-        let chat_files = match fs::read_dir(&chats_dir) {
+        let chat_entries = match fs::read_dir(&chats_dir) {
             Ok(entries) => entries,
             Err(_) => continue,
         };
 
-        for file_entry in chat_files.flatten() {
+        for file_entry in chat_entries.flatten() {
             let path = file_entry.path();
-            let is_session = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .is_some_and(|n| n.starts_with("session-"))
-                && is_session_file(&path);
-            if is_session {
-                files.push(path);
+            if path.is_dir() {
+                if let Ok(sub_entries) = fs::read_dir(&path) {
+                    for sub_entry in sub_entries.flatten() {
+                        push_session_if_match(sub_entry.path(), &mut files);
+                    }
+                }
+            } else {
+                push_session_if_match(path, &mut files);
             }
         }
     }
 
+    files.sort();
     files
 }
 
@@ -856,5 +870,25 @@ mod tests {
         )?;
         assert_eq!(proxy_inp, 50);
         Ok(())
+    }
+
+    #[test]
+    fn test_collect_gemini_session_files_includes_nested_subagent_chats() {
+        let dir = tempfile::tempdir().unwrap();
+        let chats_dir = dir.path().join("tmp").join("proj-a").join("chats");
+        let subagent_dir = chats_dir.join("parent-session-123");
+        fs::create_dir_all(&subagent_dir).unwrap();
+
+        let main_chat = chats_dir.join("session-main.json");
+        let sub_chat = subagent_dir.join("session-subagent.jsonl");
+        let ignored = subagent_dir.join("notes.json");
+        fs::write(&main_chat, "{}").unwrap();
+        fs::write(&sub_chat, "{}\n").unwrap();
+        fs::write(&ignored, "{}").unwrap();
+
+        let collected = collect_gemini_session_files(dir.path());
+        let mut expected = vec![main_chat, sub_chat];
+        expected.sort();
+        assert_eq!(collected, expected);
     }
 }

@@ -452,8 +452,11 @@ fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
         "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
          WHEN '_session' THEN 'Claude (Session)' \
+         WHEN '_claude_otel' THEN 'Claude (Temporary)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
+         WHEN '_codex_otel' THEN 'Codex (Temporary)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
+         WHEN '_gemini_otel' THEN 'Gemini (Temporary)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_agy_session' THEN 'Antigravity (Session)' \
@@ -763,13 +766,43 @@ fn session_proxy_model_match_sql(
             OR LOWER(TRIM({session_model})) = 'unknown'
             OR (
                 {session_app_type} = 'codex'
-                AND {session_data_source} = 'codex_session'
+                AND {session_data_source} IN ('codex_session', 'codex_otel')
                 AND NULLIF({p_req_model}, '') IS NOT NULL
                 AND LOWER({p_req_model}) <> 'unknown'
                 AND NULLIF({s_model}, '') IS NOT NULL
                 AND LOWER({p_req_model}) = LOWER({s_model})
             )
         )"
+    )
+}
+
+/// 参与跨源去重的会话与临时 OTel 日志来源（和 [`effective_usage_log_filter`] 同口径）。
+const DEDUP_SESSION_SOURCES_SQL: &str =
+    "'session_log', 'codex_session', 'gemini_session', 'opencode_session', \
+     'codex_otel', 'claude_otel', 'gemini_otel'";
+
+/// OTel 临时日志的可见性守卫：
+/// 1. 始终排除 `codex_otel_prewarm`（WebSocket 预热空包）；
+/// 2. 同一 `session_id` 已存在对应的持久化会话导入行时，持久化会话优先于 OTel，避免双算。
+fn otel_visibility_filter_sql(log_alias: &str) -> String {
+    let data_source = data_source_expr(log_alias);
+    let sess_data_source = data_source_expr("sess_dedup");
+    format!(
+        "({data_source} <> 'codex_otel_prewarm'
+          AND NOT (
+              {data_source} IN ('codex_otel', 'claude_otel', 'gemini_otel')
+              AND NULLIF({log_alias}.session_id, '') IS NOT NULL
+              AND EXISTS (
+                  SELECT 1
+                  FROM proxy_request_logs sess_dedup
+                  WHERE sess_dedup.session_id = {log_alias}.session_id
+                    AND (
+                        ({data_source} = 'codex_otel' AND sess_dedup.app_type = 'codex' AND {sess_data_source} = 'codex_session')
+                        OR ({data_source} = 'claude_otel' AND sess_dedup.app_type = 'claude' AND {sess_data_source} = 'session_log')
+                        OR ({data_source} = 'gemini_otel' AND sess_dedup.app_type = 'gemini' AND {sess_data_source} = 'gemini_session')
+                    )
+              )
+          ))"
     )
 }
 
@@ -785,9 +818,10 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
         &format!("{log_alias}.app_type"),
         &data_source,
     );
+    let otel_visibility = otel_visibility_filter_sql(log_alias);
     format!(
-        "NOT (
-            {data_source} IN ('session_log', 'codex_session', 'gemini_session', 'opencode_session')
+        "({otel_visibility} AND NOT (
+            {data_source} IN ({DEDUP_SESSION_SOURCES_SQL})
             AND EXISTS (
                 SELECT 1
                 FROM proxy_request_logs proxy_dedup
@@ -802,12 +836,12 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       proxy_dedup.cache_creation_tokens = {log_alias}.cache_creation_tokens
                       OR (
                           {log_alias}.cache_creation_tokens = 0
-                          AND {data_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                          AND {data_source} IN ('codex_session', 'codex_otel', 'gemini_session', 'gemini_otel', 'opencode_session')
                       )
                       OR (
                           proxy_dedup.cache_creation_tokens = 0
                           AND proxy_dedup.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
-                          AND {data_source} = 'codex_session'
+                          AND {data_source} IN ('codex_session', 'codex_otel')
                       )
                   )
                   AND proxy_dedup.created_at BETWEEN
@@ -815,18 +849,15 @@ pub(crate) fn effective_usage_log_filter(log_alias: &str) -> String {
                       AND {log_alias}.created_at + {SESSION_PROXY_DEDUP_WINDOW_SECONDS}
                   AND {model_match}
             )
-        )"
+        ))"
     )
 }
-
-/// 参与跨源去重的会话日志来源（和 [`effective_usage_log_filter`] 同口径）。
-const DEDUP_SESSION_SOURCES_SQL: &str =
-    "'session_log', 'codex_session', 'gemini_session', 'opencode_session'";
 
 /// Dashboard 读路径用的去重条件：语义和 [`effective_usage_log_filter`] 完全一致，
 /// 只是先看时间窗口里两类日志各有多少，再挑便宜的写法。
 ///
-/// - 窗口里没有成功的代理日志、或没有会话日志：不可能有重复，直接不加条件。
+/// - 窗口里没有成功的代理日志、或没有会话日志，且没有 OTel 日志：直接不加条件。
+/// - 有 OTel 日志时，始终附加 [`otel_visibility_filter_sql`]。
 /// - 代理日志更少：先从代理日志出发找出重复的会话行（一次性子查询），
 ///   主查询只做 `rowid NOT IN`，不再逐行关联。会话日志占绝大多数时快很多。
 /// - 会话日志更少：保留原来的逐行 `EXISTS`。
@@ -846,22 +877,28 @@ pub(crate) fn effective_usage_log_filter_for_range(
         .map(|v| v.saturating_add(SESSION_PROXY_DEDUP_WINDOW_SECONDS))
         .unwrap_or(i64::MAX / 2);
     let data_source = data_source_expr("c");
-    let (proxy_count, session_count): (i64, i64) = conn.query_row(
+    let (proxy_count, session_count, otel_count): (i64, i64, i64) = conn.query_row(
         &format!(
             "SELECT
                 COALESCE(SUM(CASE WHEN {data_source} = 'proxy'
                     AND c.status_code >= 200 AND c.status_code < 300 THEN 1 ELSE 0 END), 0),
                 COALESCE(SUM(CASE WHEN {data_source} IN ({DEDUP_SESSION_SOURCES_SQL})
+                    THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN {data_source} IN ('codex_otel', 'claude_otel', 'gemini_otel', 'codex_otel_prewarm')
                     THEN 1 ELSE 0 END), 0)
              FROM proxy_request_logs c
              WHERE c.created_at BETWEEN ?1 AND ?2"
         ),
         rusqlite::params![lo, hi],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
 
     if proxy_count == 0 || session_count == 0 {
-        return Ok("1 = 1".to_string());
+        return Ok(if otel_count > 0 {
+            otel_visibility_filter_sql(log_alias)
+        } else {
+            "1 = 1".to_string()
+        });
     }
     if proxy_count > session_count {
         return Ok(effective_usage_log_filter(log_alias));
@@ -876,7 +913,7 @@ pub(crate) fn effective_usage_log_filter_for_range(
         "dedup_s.app_type",
         &ds_source,
     );
-    Ok(format!(
+    let proxy_dedup_sql = format!(
         "{log_alias}.rowid NOT IN (
             SELECT dedup_s.rowid
             FROM proxy_request_logs dedup_p
@@ -896,12 +933,12 @@ pub(crate) fn effective_usage_log_filter_for_range(
                  dedup_p.cache_creation_tokens = dedup_s.cache_creation_tokens
                  OR (
                      dedup_s.cache_creation_tokens = 0
-                     AND {ds_source} IN ('codex_session', 'gemini_session', 'opencode_session')
+                     AND {ds_source} IN ('codex_session', 'codex_otel', 'gemini_session', 'gemini_otel', 'opencode_session')
                  )
                  OR (
                      dedup_p.cache_creation_tokens = 0
                      AND dedup_p.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
-                     AND {ds_source} = 'codex_session'
+                     AND {ds_source} IN ('codex_session', 'codex_otel')
                  )
              )
              AND {model_match}
@@ -910,7 +947,13 @@ pub(crate) fn effective_usage_log_filter_for_range(
               AND dedup_p.status_code < 300
               AND dedup_p.created_at BETWEEN {lo} AND {hi}
         )"
-    ))
+    );
+    if otel_count > 0 {
+        let otel_visibility = otel_visibility_filter_sql(log_alias);
+        Ok(format!("({otel_visibility} AND {proxy_dedup_sql})"))
+    } else {
+        Ok(proxy_dedup_sql)
+    }
 }
 
 /// 请求日志总数缓存：每次刷新都 `COUNT(*)` 一遍明细，大范围下最耗时。
@@ -1321,6 +1364,7 @@ impl Database {
         let fresh_input = fresh_input_sql("l");
         let app_type_expr = folded_app_type_sql("l.app_type");
         let data_source = data_source_expr("l");
+        let otel_visibility = otel_visibility_filter_sql("l");
         let sql = format!(
             "SELECT
                 COUNT(*),
@@ -1331,7 +1375,7 @@ impl Database {
                 COALESCE(SUM(l.cache_read_tokens), 0),
                 COALESCE(SUM(CASE WHEN l.status_code >= 200 AND l.status_code < 300 THEN 1 ELSE 0 END), 0)
              FROM proxy_request_logs l
-             WHERE l.session_id = ?1 AND {app_type_expr} = ?2 AND {data_source} <> 'proxy'"
+             WHERE l.session_id = ?1 AND {app_type_expr} = ?2 AND {data_source} <> 'proxy' AND {otel_visibility}"
         );
 
         let result = conn.query_row(

@@ -2475,6 +2475,11 @@
       "label": "{{app}} · 工作階段日誌",
       "hint": "未開啟路由時從用戶端的工作階段日誌讀取，無法區分是哪家供應商"
     },
+    "temporaryProvider": {
+      "short": "臨時工作階段",
+      "label": "{{app}} · 臨時工作階段",
+      "hint": "透過本地 OTLP 接收的非落盤臨時呼叫（如 --ephemeral、側邊欄助手），未經本地路由，無法區分是哪家供應商"
+    },
     "sessionAccountProvider": {
       "short": "DeepSeek 帳號",
       "label": "{{app}} · DeepSeek 帳號（OAuth）",

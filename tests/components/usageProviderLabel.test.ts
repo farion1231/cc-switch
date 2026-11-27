@@ -48,6 +48,18 @@ describe("getUsageProviderLabel", () => {
       shortLabel: "usage.sessionAccountProvider.short",
       hint: "usage.sessionAccountProvider.hint",
     });
+    // 本地 OTLP 接收的临时会话占位名（如 --ephemeral、侧边栏助手）
+    const temporaryNames = [
+      ...rust.matchAll(/THEN '([^']+ \(Temporary\))'/g),
+    ].map((m) => m[1]);
+    expect(temporaryNames).toContain("Codex (Temporary)");
+    expect(temporaryNames).toContain("Claude (Temporary)");
+    expect(temporaryNames).toContain("Gemini (Temporary)");
+    for (const name of temporaryNames) {
+      expect(getUsageProviderLabel(name, t).shortLabel).toBe(
+        "usage.temporaryProvider.short",
+      );
+    }
   });
 
   it("keeps real provider names as-is", () => {

@@ -19,6 +19,7 @@ pub mod mcp_connectivity;
 pub mod model_fetch;
 pub mod model_pricing;
 pub mod omo;
+pub mod otel_usage;
 pub mod pi_prompt_files;
 pub(crate) mod pi_state;
 pub mod plugin_manager;
