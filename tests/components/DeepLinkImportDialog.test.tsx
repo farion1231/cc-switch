@@ -175,6 +175,23 @@ describe("DeepLinkImportDialog", () => {
     },
   );
 
+  it("names the target app by its display name", async () => {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+    act(() =>
+      deliverDeepLink({
+        version: "v1",
+        resource: "provider",
+        app: "dsh",
+        name: "Imported Provider",
+        endpoint: "https://example.com/v1",
+        apiKey: "public-test-key",
+        model: "example-model",
+      }),
+    );
+    // 以前直接显示 ID 再用 CSS 首字母大写：「Dsh」「Zcode」
+    expect(await screen.findByText("DeepSeek Harness")).toBeInTheDocument();
+  });
+
   it("rereads ZCode's added providers after a link import", async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { staleTime: Infinity, retry: false } },

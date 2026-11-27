@@ -478,8 +478,8 @@ export function DeepLinkImportDialog() {
                     <div className="font-medium text-sm text-fg-2">
                       {t("deeplink.app")}
                     </div>
-                    <div className="col-span-2 text-sm font-medium capitalize">
-                      {request.app}
+                    <div className="col-span-2 text-sm font-medium">
+                      {request.app ? getAppLabel(request.app) : null}
                     </div>
                   </div>
 
