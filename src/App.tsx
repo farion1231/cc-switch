@@ -37,7 +37,7 @@ import { useProviderActions } from "@/hooks/useProviderActions";
 import { useCopilotVscodeSyncNotifications } from "@/hooks/useCopilotVscodeSyncStatus";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
 import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
-import { invalidateZcodeProviderCaches, zcodeKeys } from "@/hooks/useZcode";
+import { zcodeKeys } from "@/hooks/useZcode";
 import { hermesApi } from "@/lib/api/hermes";
 import type { ProviderEditorSave } from "@/lib/api/providers";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
@@ -126,6 +126,7 @@ import {
   useDisableCurrentOmoSlim,
 } from "@/lib/query/omo";
 import { invalidatePiProviderCaches, usePiCurrentState } from "@/lib/query/pi";
+import { refreshAdditiveLiveState as refreshAdditiveLiveStateFor } from "@/lib/query/additiveLiveState";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { EditProviderHost } from "@/components/providers/EditProviderHost";
@@ -1119,42 +1120,8 @@ function App() {
   };
 
   // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
-  const refreshAdditiveLiveState = async (app: AppId) => {
-    if (appHas(app, "piFamily")) {
-      await invalidatePiProviderCaches(queryClient, app);
-    } else if (app === "opencode") {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["opencodeLiveProviderIds"],
-        }),
-        queryClient.invalidateQueries({ queryKey: ["opencodeDefaultModel"] }),
-      ]);
-    } else if (app === "openclaw") {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: openclawKeys.liveProviderIds,
-        }),
-        queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel }),
-        queryClient.invalidateQueries({ queryKey: openclawKeys.health }),
-      ]);
-    } else if (app === "hermes") {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
-        queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
-      ]);
-    } else if (app === "zcode") {
-      await invalidateZcodeProviderCaches(queryClient);
-    } else if (
-      app === "mcode" ||
-      app === "dsh" ||
-      app === "kimi" ||
-      app === "copilot" ||
-      app === "workbuddy" ||
-      app === "codebuddy"
-    ) {
-      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
-    }
-  };
+  const refreshAdditiveLiveState = (app: AppId) =>
+    refreshAdditiveLiveStateFor(queryClient, app);
 
   const handleConfirmAction = async () => {
     if (!confirmAction) return;
