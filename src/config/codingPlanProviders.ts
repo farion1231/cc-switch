@@ -168,6 +168,8 @@ export function extractBaseUrlForUsageDetection(
       break;
     case "opencode":
     case "mcode":
+    case "dsh":
+    case "zcode":
       raw = settingsConfig.options?.baseURL;
       break;
     case "pi":
