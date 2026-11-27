@@ -1550,6 +1550,7 @@
     "agyDeleteHint": "Löschen Sie diese Sitzung in Antigravity, um auch ihren Laufzeitstatus zu entfernen",
     "mcodeDeleteHint": "In MiniMax Code löschen",
     "codebuddyDeleteHint": "Verwalten Sie diese Sitzung in CodeBuddy: Hintergrundaufgaben, Teammitglieder und der Dateiverlauf verweisen auf ihr Transkript",
+    "zcodeDeleteHint": "Löschen Sie diese Sitzung in ZCode, damit Verlauf und Nutzungsdaten konsistent bleiben",
     "groupMeta": "{{count}} Sitzungen · {{time}}",
     "bucketToday": "Heute",
     "bucketYesterday": "Gestern",

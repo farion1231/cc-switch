@@ -113,6 +113,8 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
   const isCodex = session.providerId === "codex";
   const command = session.resumeCommand;
   const deletable = canDeleteSession(session);
+  // 只能在原软件里删的会话：说明去哪里删（与列表项的提示同一来源）
+  const deleteHintKey = nativeDeleteHintKey(session);
 
   const launchLabel = launchTerminal
     ? t("sessionManager.resumeIn", {
@@ -351,20 +353,11 @@ export const SessionReaderHeader = memo(function SessionReaderHeader({
         >
           {t("sessionManager.deleteEllipsis", { defaultValue: "删除…" })}
         </DropdownMenuItem>
-        {!deletable &&
-          ["mcode", "dsh", "copilot", "workbuddy", "codebuddy"].includes(
-            session.providerId,
-          ) && (
-            <p className="px-2.5 pb-1.5 text-caption text-fg-2">
-              {t(
-                nativeDeleteHintKey(session) ??
-                  "sessionManager.mcodeDeleteHint",
-                {
-                  defaultValue: "请在 MiniMax Code 中删除",
-                },
-              )}
-            </p>
-          )}
+        {!deletable && deleteHintKey && (
+          <p className="px-2.5 pb-1.5 text-caption text-fg-2">
+            {t(deleteHintKey)}
+          </p>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

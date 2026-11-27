@@ -1479,6 +1479,7 @@
     "agyDeleteHint": "Çalışma zamanı durumunu da kaldırmak için bu oturumu Antigravity'de silin.",
     "mcodeDeleteHint": "MiniMax Code'de silin",
     "codebuddyDeleteHint": "Bu oturumu CodeBuddy'da yönetin: arka plan işleri, ekip üyeleri ve dosya geçmişi bu kayda başvurur",
+    "zcodeDeleteHint": "Geçmişin ve kullanım kayıtlarının tutarlı kalması için bu oturumu ZCode içinde silin",
     "groupMeta": "{{count}} oturumları · {{time}}",
     "bucketToday": "Bugün",
     "bucketYesterday": "Dün",

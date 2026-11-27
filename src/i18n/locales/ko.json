@@ -1549,6 +1549,7 @@
     "agyDeleteHint": "런타임 상태도 제거하려면 Antigravity에서 이 세션을 삭제하세요.",
     "mcodeDeleteHint": "MiniMax Code에서 삭제하세요.",
     "codebuddyDeleteHint": "이 세션은 CodeBuddy에서 관리하세요. 백그라운드 작업, 팀원, 파일 기록이 해당 대화 기록을 참조합니다",
+    "zcodeDeleteHint": "기록과 사용량 기록의 일관성을 유지하려면 ZCode에서 이 세션을 삭제하세요",
     "groupMeta": "세션 {{count}}개 · {{time}}",
     "bucketToday": "오늘",
     "bucketYesterday": "어제",

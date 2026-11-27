@@ -54,6 +54,14 @@ describe("session utils", () => {
         sourcePath: "/x",
       }),
     ).toBe(false);
+    // 后端拒绝删除 ZCode 会话（历史和用量记录在它自己的 db.sqlite 里）
+    const zcode = {
+      providerId: "zcode",
+      sessionId: "s",
+      sourcePath: "zcode:s",
+    };
+    expect(canDeleteSession(zcode)).toBe(false);
+    expect(nativeDeleteHintKey(zcode)).toBe("sessionManager.zcodeDeleteHint");
   });
 
   it("groups sessions by project directory, newest group first and unknown last", () => {

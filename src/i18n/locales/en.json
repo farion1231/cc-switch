@@ -1550,6 +1550,7 @@
     "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
     "codebuddyDeleteHint": "Manage this session in CodeBuddy: background jobs, teammates and file history refer to its transcript",
+    "zcodeDeleteHint": "Delete this session in ZCode so its history and usage records stay consistent",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
     "bucketYesterday": "Yesterday",

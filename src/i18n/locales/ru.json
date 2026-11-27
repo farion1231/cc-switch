@@ -1551,6 +1551,7 @@
     "agyDeleteHint": "Удалите эту сессию в Antigravity, чтобы заодно удалить её состояние выполнения",
     "mcodeDeleteHint": "Удалите её в MiniMax Code",
     "codebuddyDeleteHint": "Управляйте этим сессией в CodeBuddy: фоновые задачи, участники команды и история файлов ссылаются на его журнал",
+    "zcodeDeleteHint": "Удалите эту сессию в ZCode, чтобы история и записи об использовании оставались согласованными",
     "groupMeta": "Сессий: {{count}} · {{time}}",
     "bucketToday": "Сегодня",
     "bucketYesterday": "Вчера",

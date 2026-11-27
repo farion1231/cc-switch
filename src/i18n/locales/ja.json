@@ -1550,6 +1550,7 @@
     "agyDeleteHint": "実行状態も削除するには Antigravity でセッションを削除してください",
     "mcodeDeleteHint": "MiniMax Code で削除してください",
     "codebuddyDeleteHint": "このセッションは CodeBuddy で管理してください。バックグラウンドジョブ、チームメンバー、ファイル履歴がその記録を参照しています",
+    "zcodeDeleteHint": "履歴と使用量の記録の整合性を保つため、このセッションは ZCode で削除してください",
     "groupMeta": "{{count}} 件 · {{time}}",
     "bucketToday": "今日",
     "bucketYesterday": "昨日",
