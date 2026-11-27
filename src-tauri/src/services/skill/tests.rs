@@ -3959,6 +3959,118 @@ fn repo(owner: &str, name: &str, enabled: bool) -> SkillRepo {
 }
 
 #[tokio::test]
+async fn saved_repo_preview_respects_enable_branch_and_force_refresh() {
+    let remote = tempdir().unwrap();
+    let service = SkillService {
+        repo_fixture: Some(remote.path().to_owned()),
+        ..SkillService::new()
+    };
+    let saved = repo("team", "skills", false);
+    write_skill(&remote.path().join("one"), "one");
+    assert!(service
+        .discover_saved_repo(saved.clone(), false, None, true)
+        .await
+        .unwrap()
+        .skills
+        .is_empty());
+    let preview =
+        || service.discover_saved_repo(saved.clone(), true, Some("feature".into()), false);
+    let found = preview().await.unwrap();
+    assert_eq!(found.skills[0].repo_branch, "feature");
+    write_skill(&remote.path().join("two"), "two");
+    assert_eq!(preview().await.unwrap().skills.len(), 1);
+    assert_eq!(
+        service
+            .discover_saved_repo(saved, true, Some("feature".into()), true)
+            .await
+            .unwrap()
+            .skills
+            .len(),
+        2
+    );
+    assert_eq!(service.fixture_downloads.load(Ordering::Relaxed), 2);
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn picker_batch_shares_archive_and_reports_individual_failures() {
+    let home = tempdir().unwrap();
+    let guard = TestHomeGuard::set(home.path());
+    let _storage = StorageLocationGuard::set(&guard, SkillStorageLocation::CcSwitch);
+    let remote = tempdir().unwrap();
+    let service = SkillService {
+        repo_fixture: Some(remote.path().to_owned()),
+        ..SkillService::new()
+    };
+    let db = Arc::new(Database::memory().unwrap());
+    for name in ["one", "two"] {
+        write_skill(&remote.path().join(name), name);
+    }
+    let mut skills = vec![];
+    service
+        .scan_dir_recursive(
+            remote.path(),
+            remote.path(),
+            &repo("team", "skills", true),
+            &mut skills,
+        )
+        .unwrap();
+    let mut other = skills[0].clone();
+    other.repo_branch = "different".into();
+    assert!(service
+        .install_repo_batch(&db, &[skills[0].clone(), other], &AppType::Codex)
+        .await
+        .is_err());
+    let mut missing = skills[0].clone();
+    missing.directory = "missing".into();
+    missing.key = "team/skills:missing".into();
+    skills.insert(1, missing);
+    let outcomes = service
+        .install_repo_batch(&db, &skills, &AppType::Codex)
+        .await
+        .unwrap();
+    assert!(
+        outcomes[0].is_ok() && outcomes[1].is_err() && outcomes[2].is_ok(),
+        "{outcomes:?}"
+    );
+    assert_eq!(service.fixture_downloads.load(Ordering::Relaxed), 1);
+    assert_eq!(db.get_all_installed_skills().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn picker_saves_only_readable_sources_and_reuses_discovery() {
+    let db = Database::memory().unwrap();
+    let remote = tempdir().unwrap();
+    let archive = remote.path().join("repo");
+    let service = SkillService {
+        repo_fixture: Some(archive.clone()),
+        ..SkillService::new()
+    };
+    let source = repo("team", "skills", true);
+    assert!(service
+        .discover_and_add_repo(&db, source.clone())
+        .await
+        .is_err());
+    assert!(db.get_skill_repos().unwrap().is_empty());
+    write_skill(&archive.join("demo"), "demo");
+    let (branch, found) = service
+        .discover_and_add_repo(&db, source.clone())
+        .await
+        .unwrap();
+    assert_eq!(branch, "main");
+    assert_eq!(found.skills.len(), 1);
+    let mut conflicting = source.clone();
+    conflicting.host = "gitlab.com".into();
+    assert!(service
+        .discover_and_add_repo(&db, conflicting)
+        .await
+        .is_err());
+    assert_eq!(db.get_skill_repos().unwrap()[0].host, source.host);
+    std::fs::remove_dir_all(archive).unwrap();
+    assert_eq!(service.discover_repo(&source).await.skills.len(), 1);
+}
+
+#[tokio::test]
 async fn discover_report_lists_unreadable_repos_and_ignores_disabled_ones() {
     let remote = tempdir().expect("remote repo");
     write_skill(&remote.path().join("pdf"), "pdf");

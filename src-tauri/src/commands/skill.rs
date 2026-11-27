@@ -86,6 +86,20 @@ pub async fn install_skill_unified(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn install_repo_skills(
+    skills: Vec<DiscoverableSkill>,
+    current_app: String,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<Vec<Result<InstalledSkill, String>>, String> {
+    service
+        .0
+        .install_repo_batch(&app_state.db, &skills, &parse_app_type(&current_app)?)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// 卸载 Skill（新版统一卸载）
 #[tauri::command]
 pub async fn uninstall_skill_unified(
@@ -168,12 +182,28 @@ pub async fn discover_available_skills(
         .map_err(|e| e.to_string())
 }
 
-/// 只发现一个已保存的仓库（添加、重新启用仓库后用，不重拉其它仓库）。
-/// 仓库不存在或已停用时返回空结果。
+#[tauri::command]
+pub async fn discover_and_add_skill_repo(
+    repo: SkillRepo,
+    service: State<'_, SkillServiceState>,
+    app_state: State<'_, AppState>,
+) -> Result<(String, SkillDiscoveryResult), String> {
+    service
+        .0
+        .discover_and_add_repo(&app_state.db, repo)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// 只发现一个已保存的仓库，不重拉其它仓库。
+/// 默认跳过停用的仓库；调用方可临时读取停用仓库或指定分支，不修改已保存配置。
 #[tauri::command]
 pub async fn discover_repo_skills(
     owner: String,
     name: String,
+    include_disabled: Option<bool>,
+    branch: Option<String>,
+    force_refresh: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
@@ -184,7 +214,16 @@ pub async fn discover_repo_skills(
     else {
         return Ok(SkillDiscoveryResult::default());
     };
-    Ok(service.0.discover_repo(&repo).await)
+    service
+        .0
+        .discover_saved_repo(
+            repo,
+            include_disabled.unwrap_or(false),
+            branch,
+            force_refresh.unwrap_or(false),
+        )
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// 检查 Skills 更新，并逐仓库报告没读到的仓库

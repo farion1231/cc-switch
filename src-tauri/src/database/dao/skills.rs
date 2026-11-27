@@ -260,6 +260,21 @@ impl Database {
         Ok(())
     }
 
+    /// Discovery runs before saving. Preserve a source added concurrently.
+    pub fn insert_skill_repo(&self, repo: &SkillRepo) -> Result<(), AppError> {
+        let conn = lock_conn!(self.conn);
+        let inserted = conn.execute(
+            "INSERT INTO skill_repos (owner, name, branch, enabled, host)
+             SELECT ?1, ?2, ?3, ?4, ?5 WHERE NOT EXISTS
+             (SELECT 1 FROM skill_repos WHERE owner = ?1 COLLATE NOCASE AND name = ?2 COLLATE NOCASE)",
+            params![repo.owner, repo.name, repo.branch, repo.enabled, repo.host],
+        ).map_err(|e| AppError::Database(e.to_string()))?;
+        if inserted == 0 {
+            return Err(AppError::Database("Repository already exists".into()));
+        }
+        Ok(())
+    }
+
     /// 删除 Skill 仓库
     pub fn delete_skill_repo(&self, owner: &str, name: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);

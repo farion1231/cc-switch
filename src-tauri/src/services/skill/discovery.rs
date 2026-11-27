@@ -51,6 +51,23 @@ impl SkillService {
         Ok(SkillDiscoveryResult { skills, failures })
     }
 
+    pub async fn discover_saved_repo(
+        &self,
+        mut repo: SkillRepo,
+        include_disabled: bool,
+        branch: Option<String>,
+        force_refresh: bool,
+    ) -> Result<SkillDiscoveryResult> {
+        repo.enabled |= include_disabled;
+        if let Some(branch) = branch {
+            repo.branch = branch;
+        }
+        if force_refresh {
+            return self.discover_available_report(vec![repo], true).await;
+        }
+        Ok(self.discover_repo(&repo).await)
+    }
+
     /// 只发现一个仓库（添加、重新启用仓库时用），不碰其它仓库。
     pub async fn discover_repo(&self, repo: &SkillRepo) -> SkillDiscoveryResult {
         if !repo.enabled {
@@ -73,6 +90,34 @@ impl SkillService {
                 }
             }
         }
+    }
+
+    pub async fn discover_and_add_repo(
+        &self,
+        db: &Database,
+        mut repo: SkillRepo,
+    ) -> Result<(String, SkillDiscoveryResult)> {
+        repo.host = repo.host.trim().to_ascii_lowercase();
+        repo.enabled = true;
+        Self::validate_repo(&repo)?;
+        let started_at = Instant::now();
+        let (branch, mut skills) = self.fetch_repo_skills(&repo).await?;
+        repo.branch = branch;
+        Self::deduplicate_discoverable_skills(&mut skills);
+        skills.sort_by_key(|skill| skill.name.to_lowercase());
+        db.insert_skill_repo(&repo)?;
+        let mut cache = self.discovery_cache.lock_recover();
+        let key = Self::discovery_cache_key(&repo);
+        if cache.get(&key).is_none_or(|(at, _)| *at <= started_at) {
+            cache.insert(key, (started_at, skills.clone()));
+        }
+        Ok((
+            repo.branch,
+            SkillDiscoveryResult {
+                skills,
+                failures: Vec::new(),
+            },
+        ))
     }
 
     pub(super) fn discovery_cache_key(repo: &SkillRepo) -> RepoCacheKey {
@@ -104,7 +149,7 @@ impl SkillService {
         }
 
         let started_at = Instant::now();
-        let skills = self.fetch_repo_skills(repo).await?;
+        let (_, skills) = self.fetch_repo_skills(repo).await?;
         let mut cache = self.discovery_cache.lock_recover();
         if cache
             .get(&key)
@@ -119,7 +164,7 @@ impl SkillService {
     pub(super) async fn fetch_repo_skills(
         &self,
         repo: &SkillRepo,
-    ) -> Result<Vec<DiscoverableSkill>> {
+    ) -> Result<(String, Vec<DiscoverableSkill>)> {
         let (temp_guard, resolved_branch) = self.download_repo_bounded(repo).await?;
 
         let mut skills = Vec::new();
@@ -129,7 +174,7 @@ impl SkillService {
         self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
         Self::keep_one_per_install_name(&mut skills);
 
-        Ok(skills)
+        Ok((resolved_repo.branch, skills))
     }
 
     /// 同一仓库里安装目录名（路径最后一段）相同的技能只留一条。

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import {
   useIsMutating,
+  isCancelledError,
   useMutation,
   useQuery,
   useQueryClient,
@@ -104,15 +105,20 @@ let discoverRevalidated = false;
 let discoverForceNext = false;
 // 按仓库改过缓存就加一：被取消的旧请求晚到时不能再覆盖本地缓存
 let discoverGeneration = 0;
+let discoverRequestSeq = 0;
 
 const discoverableQuery = {
   queryKey: DISCOVERABLE_QUERY_KEY,
   queryFn: async () => {
+    const requestSeq = ++discoverRequestSeq;
     const force = discoverForceNext;
     discoverForceNext = false;
     const generation = discoverGeneration;
     const result = await skillsApi.discoverAvailable(force);
-    if (generation === discoverGeneration) {
+    if (
+      generation === discoverGeneration &&
+      requestSeq === discoverRequestSeq
+    ) {
       discoverRevalidated = true;
       writeLocalCache(DISCOVER_CACHE_KEY, result);
     }
@@ -152,21 +158,24 @@ async function patchRepoDiscovery(
   queryClient: QueryClient,
   repo: { owner: string; name: string },
   next?: SkillDiscoveryResult,
+  shouldApply?: () => boolean,
 ) {
+  discoverGeneration += 1;
   await queryClient.cancelQueries({
     queryKey: DISCOVERABLE_QUERY_KEY,
     exact: true,
   });
+  if (shouldApply && !shouldApply()) return;
   // 还没有任何发现结果（首次发现被上面取消了，或压根没开始）：没有底可以
   // 打补丁，重新整体发现一次，此时读到的仓库表已包含这次改动
   if (!queryClient.getQueryData(DISCOVERABLE_QUERY_KEY)) {
+    discoverRevalidated = false;
     void queryClient.invalidateQueries({
       queryKey: DISCOVERABLE_QUERY_KEY,
       exact: true,
     });
     return;
   }
-  discoverGeneration += 1;
   const updated = queryClient.setQueryData<SkillDiscoveryResult>(
     DISCOVERABLE_QUERY_KEY,
     (old) => replaceRepoDiscovery(old, repo, next),
@@ -184,7 +193,7 @@ const nextRepoMutation = (repo: { owner: string; name: string }) => {
   return { key, seq };
 };
 const isLatestRepoMutation = (ctx?: { key: string; seq: number }) =>
-  !!ctx && repoMutationSeq.get(ctx.key) === ctx.seq;
+  !!ctx && (repoMutationSeq.get(ctx.key) ?? 0) === ctx.seq;
 
 const selectDiscoveredSkills = (result: SkillDiscoveryResult) => result.skills;
 const selectDiscoveryFailures = (result: SkillDiscoveryResult) =>
@@ -223,6 +232,24 @@ export function useInstallSkill() {
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["skills", "installed"] }),
         queryClient.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
+      ]),
+  });
+}
+
+export function useInstallRepoSkills() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      skills,
+      currentApp,
+    }: {
+      skills: DiscoverableSkill[];
+      currentApp: AppId;
+    }) => skillsApi.installRepoSkills(skills, currentApp),
+    onSettled: () =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: ["skills", "installed"] }),
+        client.invalidateQueries({ queryKey: ["skills", "unmanaged"] }),
       ]),
   });
 }
@@ -413,6 +440,105 @@ export function useSkillRepos() {
   return useQuery({
     queryKey: ["skills", "repos"],
     queryFn: () => skillsApi.getRepos(),
+  });
+}
+
+export function useDiscoverAndAddSkillRepo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: skillsApi.discoverAndAddRepo,
+    onMutate: nextRepoMutation,
+    onSuccess: async ([, discovery], repo, ctx) => {
+      void queryClient.invalidateQueries({ queryKey: ["skills", "repos"] });
+      if (isLatestRepoMutation(ctx)) {
+        await patchRepoDiscovery(queryClient, repo, discovery, () =>
+          isLatestRepoMutation(ctx),
+        );
+      }
+    },
+  });
+}
+
+const latestPreview = new Map<string, symbol>();
+
+/** Refresh a saved source; temporary branches and disabled sources stay out of Discover. */
+export function useDiscoverSkillRepo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      repo,
+      branch,
+    }: {
+      repo: SkillRepo;
+      branch: string;
+    }) => {
+      const requestSeq = discoverRequestSeq;
+      const requestedBranch =
+        repo.branch === "" && branch === "main" ? "" : branch;
+      const discovery = await skillsApi.discoverRepo(
+        repo.owner,
+        repo.name,
+        true,
+        requestedBranch,
+        true,
+      );
+      return { discovery, requestSeq };
+    },
+    onMutate: ({ repo, branch }) => {
+      const key = `${repo.owner}/${repo.name}`;
+      const preview = Symbol();
+      if (repo.enabled && (repo.branch.trim() || "main") === branch)
+        latestPreview.set(key, preview);
+      return { key, seq: repoMutationSeq.get(key) ?? 0, preview };
+    },
+    onSuccess: ({ discovery, requestSeq }, { repo, branch }, ctx) => {
+      const isCurrent = () =>
+        isLatestRepoMutation(ctx) &&
+        latestPreview.get(ctx.key) === ctx.preview &&
+        requestSeq === discoverRequestSeq;
+      if (discovery.failures.length || !isCurrent()) return;
+      const reconcile = async () => {
+        const registry = await queryClient.fetchQuery({
+          queryKey: ["skills", "repos"],
+          queryFn: () => skillsApi.getRepos(),
+          staleTime: Infinity,
+        });
+        const current = registry.find(
+          (item) => item.owner === repo.owner && item.name === repo.name,
+        );
+        if (
+          !isCurrent() ||
+          !current?.enabled ||
+          current.branch !== repo.branch ||
+          (current.branch.trim() || "main") !== branch ||
+          (current.host || "github.com").toLowerCase() !==
+            (repo.host || "github.com").toLowerCase()
+        )
+          return;
+
+        const query = queryClient.getQueryCache().find({
+          queryKey: DISCOVERABLE_QUERY_KEY,
+          exact: true,
+        });
+        if (query && query.state.fetchStatus !== "idle") {
+          if (!query.promise) return;
+          try {
+            await query.promise;
+          } catch (error) {
+            if (!isCancelledError(error)) throw error;
+          }
+        }
+        if (!isCurrent()) return;
+        await patchRepoDiscovery(queryClient, current, discovery, isCurrent);
+      };
+      // Cache maintenance must not delay or invalidate a successful fetch.
+      void reconcile().catch((error) => {
+        console.warn(
+          "[useDiscoverSkillRepo] Could not reconcile discovery cache",
+          error,
+        );
+      });
+    },
   });
 }
 
