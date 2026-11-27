@@ -765,7 +765,9 @@ impl SkillService {
             | AppType::Kimi
             | AppType::Dsh
             | AppType::Copilot
-            | AppType::WorkBuddy => {}
+            | AppType::WorkBuddy
+            | AppType::Codebuddy => {}
+            AppType::ZCode => {}
             AppType::Pi => {
                 return Ok(crate::pi_config::get_pi_agent_dir()?.join("skills"));
             }
@@ -791,6 +793,7 @@ impl SkillService {
             AppType::Kimi => crate::kimi_config::data_dir().join("skills"),
             AppType::Copilot => crate::copilot_config::skills_dir(),
             AppType::WorkBuddy => crate::workbuddy_config::data_dir().join("skills"),
+            AppType::Codebuddy => crate::codebuddy_config::data_dir().join("skills"),
             AppType::Claude => home.join(".claude").join("skills"),
             AppType::ClaudeDesktop => home.join(".claude-desktop").join("skills"),
             AppType::Codex => home.join(".codex").join("skills"),
@@ -802,6 +805,7 @@ impl SkillService {
             AppType::Pi => crate::pi_config::get_pi_agent_dir()?.join("skills"),
             AppType::Omp => crate::omp_config::get_omp_agent_dir()?.join("skills"),
             AppType::Agy => home.join(".gemini").join("config").join("skills"),
+            AppType::ZCode => crate::zcode_config::get_zcode_dir().join("skills"),
         })
     }
 
@@ -1156,18 +1160,24 @@ impl SkillService {
                         AppType::Dsh,
                         AppType::Copilot,
                         AppType::WorkBuddy,
+                        AppType::Codebuddy,
                     ] {
                         if skill.apps.is_enabled_for(&app) {
                             let destination = Self::get_distinct_app_skills_dir(&ssot_dir, &app)?
                                 .join(&directory);
-                            Self::inspect_pi_skill_destination(&source, &destination, &directory)
-                                .with_context(|| {
+                            Self::inspect_pi_skill_destination(
+                                &source,
+                                &destination,
+                                &directory,
+                                &app,
+                            )
+                            .with_context(|| {
                                 format!(
                                     "{} Skill could not be verified; uninstall cancelled",
                                     app.as_str()
                                 )
                             })?;
-                            managed_destinations.push(destination);
+                            managed_destinations.push((app, destination));
                         }
                     }
                     let mut preserved_paths = Vec::new();
@@ -1190,6 +1200,7 @@ impl SkillService {
                                         &source,
                                         &destination,
                                         &directory,
+                                        &app,
                                     )
                                     .inspect_err(|err| {
                                         log::warn!(
@@ -1218,17 +1229,25 @@ impl SkillService {
                         Self::create_uninstall_backup_excluding(&skill, &preserved_paths)?
                             .map(|path| path.to_string_lossy().to_string());
 
-                    for destination in managed_destinations {
-                        Self::remove_verified_pi_destination(&source, &destination, &directory)
-                            .context("Managed Skill could not be removed; uninstall cancelled")?;
+                    for (app, destination) in managed_destinations {
+                        Self::remove_verified_pi_destination(
+                            &source,
+                            &destination,
+                            &directory,
+                            &app,
+                        )
+                        .context("Managed Skill could not be removed; uninstall cancelled")?;
                     }
 
                     // Pi、Omp 目录可能包含用户自己维护的同名 Skill。删除 SSOT 前仅移除
                     // 能验证为 CC Switch 部署的副本；其余路径保留并返回警告。
                     for (app, destination) in removal_paths {
-                        if let Err(err) =
-                            Self::remove_verified_pi_destination(&source, &destination, &directory)
-                        {
+                        if let Err(err) = Self::remove_verified_pi_destination(
+                            &source,
+                            &destination,
+                            &directory,
+                            &app,
+                        ) {
                             log::warn!("Skill {id} 卸载时 {app:?} 清理失败，将继续卸载: {err}");
                             pi_cleanup_incomplete = true;
                             if destination.exists() || Self::is_symlink(&destination) {
@@ -1243,6 +1262,7 @@ impl SkillService {
                             app,
                             AppType::Pi
                                 | AppType::WorkBuddy
+                                | AppType::Codebuddy
                                 | AppType::Mcode
                                 | AppType::Agy
                                 | AppType::Kimi
@@ -1372,7 +1392,7 @@ impl SkillService {
                 None
             } else {
                 let pi_destination = pi_dir.join(&directory);
-                Self::inspect_pi_skill_destination(&src, &pi_destination, &directory)
+                Self::inspect_pi_skill_destination(&src, &pi_destination, &directory, &AppType::Pi)
                     .ok()
                     .flatten()
             };
@@ -1383,26 +1403,36 @@ impl SkillService {
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
+                AppType::Codebuddy,
             ] {
                 if skill.apps.is_enabled_for(&app) {
                     let destination = Self::get_app_skills_dir(&app)?.join(&directory);
                     if let Some(deployment) =
-                        Self::inspect_pi_skill_destination(&src, &destination, &directory)
+                        Self::inspect_pi_skill_destination(&src, &destination, &directory, &app)
                             .ok()
                             .flatten()
                     {
-                        mcode_deployments.push((directory.clone(), destination, deployment));
+                        mcode_deployments.push((directory.clone(), destination, deployment, app));
                     }
                 }
             }
             // Omp 没有开关列，是否部署只看原生目录里有没有 CC Switch 的副本。
             let omp_destination = Self::get_app_skills_dir(&AppType::Omp)?.join(&directory);
-            if let Some(deployment) =
-                Self::inspect_pi_skill_destination(&src, &omp_destination, &directory)
-                    .ok()
-                    .flatten()
+            if let Some(deployment) = Self::inspect_pi_skill_destination(
+                &src,
+                &omp_destination,
+                &directory,
+                &AppType::Omp,
+            )
+            .ok()
+            .flatten()
             {
-                mcode_deployments.push((directory.clone(), omp_destination, deployment));
+                mcode_deployments.push((
+                    directory.clone(),
+                    omp_destination,
+                    deployment,
+                    AppType::Omp,
+                ));
             }
             // 优先 rename（同文件系统原子操作），失败则 copy+delete
             match fs::rename(&src, &dst) {
@@ -1434,11 +1464,15 @@ impl SkillService {
         // 3. 文件移动完成后才持久化设置
         crate::settings::set_skill_storage_location(target)?;
 
-        for (directory, destination, deployment) in mcode_deployments {
+        for (directory, destination, deployment, app) in mcode_deployments {
             let source = new_dir.join(&directory);
-            if let Err(err) =
-                Self::refresh_pi_skill_destination(&source, &destination, &directory, &deployment)
-            {
+            if let Err(err) = Self::refresh_pi_skill_destination(
+                &source,
+                &destination,
+                &directory,
+                &deployment,
+                &app,
+            ) {
                 result.errors.push(format!("{directory}: {err}"));
             }
         }
@@ -1456,9 +1490,13 @@ impl SkillService {
         for (directory, deployment) in pi_deployments {
             let source = new_dir.join(&directory);
             let destination = pi_dir.join(&directory);
-            if let Err(err) =
-                Self::refresh_pi_skill_destination(&source, &destination, &directory, &deployment)
-            {
+            if let Err(err) = Self::refresh_pi_skill_destination(
+                &source,
+                &destination,
+                &directory,
+                &deployment,
+                &AppType::Pi,
+            ) {
                 result.errors.push(format!("{directory}: {err}"));
             }
         }
@@ -1491,7 +1529,12 @@ impl SkillService {
 
         if matches!(
             app,
-            AppType::Agy | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+            AppType::Agy
+                | AppType::Kimi
+                | AppType::Dsh
+                | AppType::Copilot
+                | AppType::WorkBuddy
+                | AppType::Codebuddy
         ) {
             if !enabled && !skill.apps.is_enabled_for(app) {
                 return Ok(());
@@ -1501,7 +1544,7 @@ impl SkillService {
             let source = ssot.join(&directory);
             let native_dir = Self::get_distinct_app_skills_dir(&ssot, app)?;
             let native = native_dir.join(&directory);
-            Self::ensure_pi_skill_destination_matches(&source, &native, &directory)?;
+            Self::ensure_pi_skill_destination_matches(&source, &native, &directory, app)?;
             fs::create_dir_all(&native_dir)?;
             let staging = tempfile::Builder::new()
                 .prefix(".cc-switch-toggle-")
@@ -1712,6 +1755,7 @@ impl SkillService {
                 AppType::Dsh,
                 AppType::Copilot,
                 AppType::WorkBuddy,
+                AppType::Codebuddy,
             ] {
                 if apps.is_enabled_for(&app) {
                     let projection = (|| -> Result<()> {
@@ -1725,14 +1769,15 @@ impl SkillService {
                                     "Skill 与托管副本内容不同，拒绝替换链接: {dir_name}"
                                 ));
                             }
-                            if let Some(deployment) =
-                                Self::inspect_pi_skill_destination(&native, &native, &dir_name)?
-                            {
+                            if let Some(deployment) = Self::inspect_pi_skill_destination(
+                                &native, &native, &dir_name, &app,
+                            )? {
                                 Self::refresh_pi_skill_destination(
                                     &dest,
                                     &native,
                                     &dir_name,
                                     &deployment,
+                                    &app,
                                 )?;
                             }
                         } else {
@@ -1761,6 +1806,7 @@ impl SkillService {
                         | AppType::Agy
                         | AppType::Kimi
                         | AppType::Dsh
+                        | AppType::Codebuddy
                         | AppType::Omp
                         | AppType::Copilot
                         | AppType::WorkBuddy

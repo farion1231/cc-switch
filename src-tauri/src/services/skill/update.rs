@@ -472,14 +472,15 @@ impl SkillService {
             AppType::Omp,
             AppType::Copilot,
             AppType::WorkBuddy,
+            AppType::Codebuddy,
         ] {
             if skill.apps.is_enabled_for(&app) {
                 let destination =
                     Self::get_distinct_app_skills_dir(&ssot_dir, &app)?.join(&skill.directory);
                 if let Some(deployment) =
-                    Self::inspect_pi_skill_destination(&dest, &destination, &skill.directory)?
+                    Self::inspect_pi_skill_destination(&dest, &destination, &skill.directory, &app)?
                 {
-                    deployments.push((destination, deployment));
+                    deployments.push((destination, deployment, app));
                 }
             }
         }
@@ -494,7 +495,8 @@ impl SkillService {
             || skill.apps.kimi
             || skill.apps.dsh
             || skill.apps.copilot
-            || skill.apps.workbuddy)
+            || skill.apps.workbuddy
+            || skill.apps.codebuddy)
         {
             Self::replace_dir_staged(&source, &dest)?;
         }
@@ -506,6 +508,7 @@ impl SkillService {
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
+            || skill.apps.codebuddy
         {
             &source
         } else {
@@ -552,6 +555,7 @@ impl SkillService {
             || skill.apps.dsh
             || skill.apps.copilot
             || skill.apps.workbuddy
+            || skill.apps.codebuddy
         {
             Self::update_managed_skill_files(
                 &source,
@@ -565,6 +569,7 @@ impl SkillService {
                     AppType::Dsh,
                     AppType::Copilot,
                     AppType::WorkBuddy,
+                    AppType::Codebuddy,
                 ]
                 .iter()
                 .filter(|app| skill.apps.is_enabled_for(app))
@@ -578,12 +583,13 @@ impl SkillService {
                 },
             )?
         } else {
-            for (destination, deployment) in deployments {
+            for (destination, deployment, app) in deployments {
                 Self::refresh_pi_skill_destination(
                     &dest,
                     &destination,
                     &updated_metadata.directory,
                     &deployment,
+                    &app,
                 )?;
             }
             Self::persist_updated_skill_metadata(db, &updated_metadata)?
@@ -603,6 +609,7 @@ impl SkillService {
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
+                    | AppType::Codebuddy
             ) {
                 continue;
             }
@@ -663,7 +670,7 @@ impl SkillService {
         source: &Path,
         ssot: &Path,
         directory: &str,
-        deployments: &[(PathBuf, PiSkillDeployment)],
+        deployments: &[(PathBuf, PiSkillDeployment, AppType)],
         commit: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
         Self::update_managed_skill_files(
@@ -680,14 +687,14 @@ impl SkillService {
         source: &Path,
         ssot: &Path,
         directory: &str,
-        deployments: &[(PathBuf, PiSkillDeployment)],
+        deployments: &[(PathBuf, PiSkillDeployment, AppType)],
         native_targets: &[PathBuf],
         commit: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
         Self::validate_sync_source_dir(source, directory)?;
         let mut targets = vec![(ssot.to_path_buf(), false)];
-        for (destination, deployment) in deployments {
-            Self::ensure_pi_skill_destination_matches(ssot, destination, directory)?;
+        for (destination, deployment, app) in deployments {
+            Self::ensure_pi_skill_destination_matches(ssot, destination, directory, app)?;
             targets.push((
                 destination.clone(),
                 matches!(deployment, PiSkillDeployment::Symlink { .. }),

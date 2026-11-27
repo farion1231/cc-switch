@@ -480,6 +480,8 @@ export function loginAccountKey(
       return "deepseek";
     case "workbuddy":
       return "workbuddy";
+    case "codebuddy":
+      return "codebuddy";
     default:
       return "claude";
   }

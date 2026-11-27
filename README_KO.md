@@ -115,6 +115,11 @@ Claude Code / Codex / Gemini 공식 채널을 정가의 38% / 2% / 9%에 제공�
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>이 프로젝트를 후원해 주신 SudoCode에 감사드립니다! SudoCode는 Claude Code와 Codex가 하나의 API 엔드포인트를 함께 쓰도록 해 주어, 키 하나로 두 도구를 모두 사용할 수 있습니다. 콘솔에서는 요청마다 토큰 사용량과 비용을 모델별로 확인할 수 있어 지출이 한눈에 보입니다. CC Switch 사용자 전용 혜택: <a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">이 링크</a>로 가입한 뒤 QQ 그룹 1030742788에 참여하면 10위안 상당의 1일 이용권을 받을 수 있습니다!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>이 프로젝트를 후원해 주신 AIGoCode에 감사드립니다! AIGoCode는 토큰 종량제에 그치지 않는 구독형 AI 코딩 플랫폼입니다. 계정 하나와 월 요금제 하나로 Claude Code, Codex, Gemini를 사용할 수 있으며, 중국 본토에서 직접 연결되고 응답이 빠릅니다. <a href="https://aigocode.net/invite/CC-SWITCH">이 링크</a>로 구독하면 크레딧 10%를 추가로 받을 수 있습니다!</td>
 </tr>
@@ -367,6 +372,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 공존 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy | 공존 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **전환**: 한 번에 하나의 공급자만 활성화됩니다. **공존**: 여러 공급자가 동시에 도구 자체의 설정에 기록되며, 도구 안에서 하나를 선택합니다.
 - **로컬 라우팅**: CC Switch가 내 컴퓨터에서 요청을 전달하고 API 형식을 변환합니다. 아래 [로컬 라우팅 및 장애 조치](#로컬-라우팅-및-장애-조치)를 참고하세요. Claude Desktop 공급자는 "직접 연결" 또는 "모델 매핑"을 사용할 수 있으며, "모델 매핑"에서는 요청이 로컬 라우팅을 거칩니다.
@@ -405,7 +411,7 @@ paru -S cc-switch-bin
 
 ### MCP, 프롬프트, Skills
 
-- **통합 MCP 패널** — 모든 MCP 서버를 한곳에서 관리하고, 각각을 어떤 도구에 동기화할지 선택하며(Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), 각 도구의 기존 설정을 가져오고, Deep Link로 가져올 수 있습니다
+- **통합 MCP 패널** — 모든 MCP 서버를 한곳에서 관리하고, 각각을 어떤 도구에 동기화할지 선택하며(Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy), 각 도구의 기존 설정을 가져오고, Deep Link로 가져올 수 있습니다
 - **프롬프트** — Markdown 편집기를 갖춘 도구별 프롬프트 라이브러리입니다. 프롬프트를 활성화하면 해당 도구의 프롬프트 파일(CLAUDE.md / AGENTS.md / GEMINI.md)에 기록되며, 파일의 기존 내용은 먼저 라이브러리에 저장되므로 아무것도 사라지지 않습니다. Pi는 SYSTEM.md, APPEND_SYSTEM.md, 프롬프트 템플릿도 편집할 수 있습니다
 - **Skills** — skills.sh를 검색하거나 GitHub 저장소 또는 ZIP 파일에서 원클릭으로 설치하고, 업데이트를 확인해 한 번에 모두 업데이트하세요. 각 도구에 자동으로, 심볼릭 링크로만, 또는 복사로만 동기화할 수 있으며, 원하면 `~/.agents/skills`에 저장할 수도 있습니다
 - 세 패널 모두 검색을 지원하고, MCP와 Skills는 도구별로 한 번에 모두 켜거나 끌 수도 있습니다. 공급자, MCP 서버, 프롬프트는 콘텐츠 영역에서 전체 페이지로 편집하며, 저장하지 않은 변경 사항이 있으면 나가기 전에 경고합니다

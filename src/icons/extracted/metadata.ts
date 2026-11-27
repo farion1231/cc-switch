@@ -372,6 +372,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
     keywords: ["code0", "code0ai", "aggregator", "relay", "gateway", "gpt"],
     defaultColor: "#20C050",
   },
+  codebuddy: {
+    name: "codebuddy",
+    displayName: "CodeBuddy",
+    category: "ai-provider",
+    keywords: ["codebuddy", "tencent", "cbc"],
+    defaultColor: "currentColor",
+  },
   cohere: {
     name: "cohere",
     displayName: "Cohere",
@@ -440,6 +447,13 @@ export const iconMetadata: Record<string, IconMetadata> = {
       "gateway",
     ],
     defaultColor: "#000000",
+  },
+  zcode: {
+    name: "zcode",
+    displayName: "ZCode",
+    category: "ai-provider",
+    keywords: ["zcode", "z.ai", "zhipu", "glm", "agent", "coding"],
+    defaultColor: "#7C3AED",
   },
   teamorouter: {
     name: "teamorouter",
@@ -959,6 +973,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     displayName: "StreamLake",
     category: "ai-provider",
     keywords: ["streamlake", "vanchin", "wanqing", "万擎", "快手", "kwai"],
+  },
+  teleai: {
+    name: "teleai",
+    displayName: "TeleAI",
+    category: "ai-provider",
+    keywords: ["teleai", "天翼", "中国电信", "星辰", "xing", "telechat"],
   },
   stringai: {
     name: "stringai",

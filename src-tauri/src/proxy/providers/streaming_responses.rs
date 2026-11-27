@@ -2369,7 +2369,8 @@ fn order_anthropic_web_search_result_stream(
 ///
 /// 状态机跟踪: message_id, current_model, has_sent_message_start, item/content index map
 /// SSE 解析支持 named events (event: + data: 行)
-pub fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 'static>(
+#[cfg(test)]
+fn create_anthropic_sse_stream_from_responses<E: std::error::Error + Send + 'static>(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     create_anthropic_sse_stream_from_responses_with_web_search_options(stream, None, None)
@@ -4622,7 +4623,12 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         'stream_loop: while let Some((chunk, is_eof)) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    if let Err(error) = sse.try_push_bytes(&bytes) {
+                        if !state.terminated {
+                            yield Ok(anthropic_error_sse(&error.to_string(), "stream_error"));
+                        }
+                        return;
+                    }
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold it intact until EOF, including any pretty-
@@ -4635,6 +4641,10 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                         Some(b'{') | Some(b'[')
                     );
                     if looks_like_json && !is_eof {
+                        if let Err(error) = sse.check_pending_document_size() {
+                            yield Ok(anthropic_error_sse(&error.to_string(), "stream_error"));
+                            return;
+                        }
                         continue;
                     }
                     if looks_like_json && is_eof {

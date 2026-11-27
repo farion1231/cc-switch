@@ -18,6 +18,7 @@ impl RequestForwarder {
         body_bytes: Vec<u8>,
         request_is_streaming: bool,
         preserve_exact_header_case: bool,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<ProxyResponse, ProxyError> {
         // 确定超时
         let timeout = if self.non_streaming_timeout.is_zero() {
@@ -25,22 +26,35 @@ impl RequestForwarder {
         } else {
             self.non_streaming_timeout
         };
-
-        // 流式请求只约束「等响应头」这一段，用首包超时；body 交给 response_processor
-        // 的静默期超时。两条传输路径必须用同一个值，否则 Claude（hyper）会按非流式
-        // 超时等 10 分钟，故障转移迟迟不触发。
-        let header_timeout = if request_is_streaming {
-            if self.streaming_first_byte_timeout.is_zero() {
+        let started = tokio::time::Instant::now();
+        if deadline.is_some_and(|at| at <= started) {
+            return Err(ProxyError::Timeout(
+                "Copilot Auto request deadline elapsed".into(),
+            ));
+        }
+        // 两条传输路径都使用首包超时等待响应头，并受 Copilot Auto 总截止时间约束。
+        let effective_deadline = if request_is_streaming {
+            let configured = if self.streaming_first_byte_timeout.is_zero() {
                 timeout
             } else {
                 self.streaming_first_byte_timeout
-            }
+            };
+            let header_deadline = started + configured;
+            Some(
+                deadline
+                    .map(|at| at.min(header_deadline))
+                    .unwrap_or(header_deadline),
+            )
         } else {
-            timeout
+            deadline
         };
 
+        let send_timeout = effective_deadline
+            .map(|at| at.saturating_duration_since(started))
+            .unwrap_or(timeout);
+
         // 获取全局代理 URL（上游是本机地址时直连，不送进代理）
-        let upstream_proxy_url: Option<String> = crate::proxy::http_client::proxy_url_for(url);
+        let (upstream_proxy_url, client) = crate::proxy::http_client::upstream_for_url(url);
 
         // SOCKS5 代理不支持 CONNECT 隧道，需要用 reqwest
         let is_socks_proxy = upstream_proxy_url
@@ -55,26 +69,30 @@ impl RequestForwarder {
             log::debug!(
                 "[Forwarder] Using pooled reqwest client (preserve_exact_header_case={preserve_exact_header_case}, socks_proxy={is_socks_proxy})"
             );
-            let client = crate::proxy::http_client::get_for_url(url);
             let mut request = client.request(method.clone(), url);
             if request_is_streaming {
                 // reqwest 的 timeout 是整请求超时；流式请求交给 response_processor
                 // 的首包/静默期超时控制，避免长流被总时长误杀。
+                // Only bound waiting for response headers here. Once headers arrive the
+                // stream owns its first-chunk and idle windows; a short total reqwest
+                // timeout would truncate otherwise healthy long completions.
                 request = request.timeout(std::time::Duration::from_secs(24 * 60 * 60));
-            } else if !self.non_streaming_timeout.is_zero() {
-                request = request.timeout(self.non_streaming_timeout);
+            } else if deadline.is_some() || !self.non_streaming_timeout.is_zero() {
+                request = request.timeout(send_timeout);
             }
             for (key, value) in &headers {
                 request = request.header(key, value);
             }
             let send = request.body(body_bytes).send();
             let send_result = if request_is_streaming {
-                tokio::time::timeout(header_timeout, send)
+                let header_deadline =
+                    effective_deadline.expect("streaming requests have a header deadline");
+                tokio::time::timeout_at(header_deadline, send)
                     .await
                     .map_err(|_| {
                         ProxyError::Timeout(format!(
                             "流式响应首包超时: {}s（上游未返回响应头）",
-                            header_timeout.as_secs()
+                            send_timeout.as_secs()
                         ))
                     })?
             } else {
@@ -88,17 +106,25 @@ impl RequestForwarder {
             let uri: http::Uri = url.parse().map_err(|e| {
                 ProxyError::ForwardFailed(format!("Invalid upstream URL ({target_for_log}): {e}"))
             })?;
-            crate::proxy::hyper_client::send_request(
+            let send = crate::proxy::hyper_client::send_request(
                 uri,
                 target_for_log,
                 method.clone(),
                 headers,
                 extensions.clone(),
                 body_bytes,
-                header_timeout,
+                send_timeout,
                 upstream_proxy_url.as_deref(),
-            )
-            .await?
+            );
+            if let Some(deadline) = effective_deadline {
+                tokio::time::timeout_at(deadline, send)
+                    .await
+                    .map_err(|_| {
+                        ProxyError::Timeout("Upstream response header deadline elapsed".into())
+                    })??
+            } else {
+                send.await?
+            }
         })
     }
 }

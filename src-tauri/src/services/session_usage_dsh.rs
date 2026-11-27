@@ -1193,6 +1193,7 @@ mod tests {
                 )),
                 read_cache: Default::default(),
                 log_count_cache: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                route_revisions: Default::default(),
             };
             db.create_tables().unwrap();
             db

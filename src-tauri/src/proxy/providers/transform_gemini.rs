@@ -50,12 +50,6 @@ pub fn anthropic_to_gemini_with_shadow(
     session_id: Option<&str>,
 ) -> Result<Value, ProxyError> {
     let mut result = json!({});
-    let shadow_turns = shadow_store
-        .zip(provider_id)
-        .zip(session_id)
-        .and_then(|((store, provider_id), session_id)| store.get_session(provider_id, session_id))
-        .map(|snapshot| snapshot.turns)
-        .unwrap_or_default();
     let supports_multimodal_function_response = body
         .get("model")
         .and_then(Value::as_str)
@@ -72,17 +66,39 @@ pub fn anthropic_to_gemini_with_shadow(
     }
 
     if let Some(messages) = messages {
-        let mut contents = convert_messages_to_contents(
+        let (shadow_turns, retained_signatures) = shadow_store
+            .zip(provider_id)
+            .zip(session_id)
+            .and_then(|((store, provider_id), session_id)| {
+                let tool_call_ids: HashSet<_> = messages
+                    .iter()
+                    .filter(|message| {
+                        message.get("role").and_then(Value::as_str) == Some("assistant")
+                    })
+                    .filter_map(|message| message.get("content").and_then(Value::as_array))
+                    .flatten()
+                    .filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"))
+                    .filter_map(|block| block.get("id").and_then(Value::as_str))
+                    .filter(|id| !id.is_empty())
+                    .collect();
+                store.get_session(provider_id, session_id, tool_call_ids)
+            })
+            .map(|snapshot| (snapshot.turns, snapshot.thought_signatures))
+            .unwrap_or_default();
+
+        let (mut contents, current_turn_start) = convert_messages_to_contents(
             messages,
             &shadow_turns,
+            retained_signatures,
             supports_multimodal_function_response,
         )?;
         if body
             .get("model")
             .and_then(Value::as_str)
+            .map(str::trim)
             .is_some_and(requires_gemini_thought_signature)
         {
-            let filled = fill_skip_thought_signatures(&mut contents);
+            let filled = fill_skip_thought_signatures(&mut contents[current_turn_start..]);
             if filled > 0 {
                 log::debug!(
                     "[Claude] Filled {filled} missing Gemini thought signature(s) with the skip placeholder"
@@ -530,11 +546,13 @@ fn gemini_thinking_control(model: &str) -> Option<GeminiThinkingControl> {
 fn convert_messages_to_contents(
     messages: &[Value],
     shadow_turns: &[GeminiAssistantTurn],
+    mut thought_signature_by_id: HashMap<String, String>,
     supports_multimodal_function_response: bool,
-) -> Result<Vec<Value>, ProxyError> {
+) -> Result<(Vec<Value>, usize), ProxyError> {
     let messages = coalesce_split_tool_result_messages(messages);
     let messages = messages.as_ref();
     let mut contents = Vec::new();
+    let mut current_turn_start = 0;
     let mut used_shadow_indices = HashSet::new();
     let total_assistant_messages = messages
         .iter()
@@ -550,7 +568,7 @@ fn convert_messages_to_contents(
     // These are used to resolve tool_result→functionResponse names and to
     // attach thought signatures when replaying tool_use→functionCall.
     let mut tool_name_by_id = build_tool_name_map_from_shadow_turns(shadow_turns);
-    let mut thought_signature_by_id = build_thought_signature_map_from_shadow_turns(shadow_turns);
+    thought_signature_by_id.extend(build_thought_signature_map_from_shadow_turns(shadow_turns));
 
     // Pre-scan all assistant messages in the request body to seed
     // tool_name_by_id with every tool_use id mentioned in the conversation
@@ -592,8 +610,9 @@ fn convert_messages_to_contents(
         // A function call turn must be followed directly by its function
         // response turn, so a system message wedged between them is held
         // back until the response has been emitted.
-        if !contents.last().is_some_and(has_function_call) {
+        if !deferred_system.is_empty() && !contents.last().is_some_and(has_function_call) {
             contents.append(&mut deferred_system);
+            current_turn_start = contents.len();
         }
 
         let role = message
@@ -621,10 +640,20 @@ fn convert_messages_to_contents(
         let gemini_role = if role == "assistant" { "model" } else { "user" };
 
         let parts = if role == "assistant" {
+            let (tool_ids, tool_names) = extract_assistant_tool_use_keys(message.get("content"));
+            let has_tools = !tool_ids.is_empty() || !tool_names.is_empty();
             let positional_shadow_index = assistant_seen_index
                 .checked_sub(shadow_start_index)
                 .filter(|index| *index < effective_shadow_turns.len())
-                .filter(|index| !used_shadow_indices.contains(index));
+                .filter(|index| !used_shadow_indices.contains(index))
+                .filter(|index| {
+                    !has_tools
+                        && effective_shadow_turns[*index].tool_calls.is_empty()
+                        && !stored_parts(&effective_shadow_turns[*index].assistant_content)
+                            .is_some_and(|parts| {
+                                parts.iter().any(|part| part.get("functionCall").is_some())
+                            })
+                });
             let tool_use_match_index = find_matching_shadow_turn_for_assistant_message(
                 message.get("content"),
                 effective_shadow_turns,
@@ -682,6 +711,14 @@ fn convert_messages_to_contents(
             contents.push(json!({ "role": gemini_role, "parts": function_responses }));
             contents.push(json!({ "role": gemini_role, "parts": rest }));
             continue;
+        } else if !parts.is_empty()
+            && parts
+                .iter()
+                .all(|part| part.get("functionResponse").is_none())
+        {
+            // Only an independent user message starts another validation turn.
+            // Text and media split off a tool result above belong to that result.
+            current_turn_start = contents.len() + 1;
         }
 
         contents.push(json!({
@@ -689,9 +726,12 @@ fn convert_messages_to_contents(
             "parts": parts
         }));
     }
-    contents.append(&mut deferred_system);
+    if !deferred_system.is_empty() {
+        contents.append(&mut deferred_system);
+        current_turn_start = contents.len();
+    }
 
-    Ok(contents)
+    Ok((contents, current_turn_start))
 }
 
 /// Merges a run of consecutive user messages into one when two or more of
@@ -797,24 +837,26 @@ fn find_matching_shadow_turn_for_assistant_message(
         return None;
     }
 
-    // Prefer exact tool-call id match. With identical tool suffixes across
-    // servers (e.g. `server_a:search` and `server_b:search`) the
-    // normalized-name clause below would otherwise match an earlier shadow
-    // turn whose id is actually wrong for this message, mis-routing replay
-    // state (functionCall id / thoughtSignature) for later tool_result
-    // resolution. Only fall back to name matching when id-based lookup fails
-    // or when the incoming message carries no ids at all.
+    // Never replay another call just because its name matches. In long
+    // conversations an earlier id may have left the full-turn cache. Require
+    // the complete id set so a partial parallel turn cannot add phantom calls.
     if !tool_use_ids.is_empty() {
-        if let Some(index) = shadow_turns.iter().position(|turn| {
-            turn.tool_calls.iter().any(|tool_call| {
-                tool_call
-                    .id
-                    .as_deref()
-                    .is_some_and(|id| tool_use_ids.contains(id))
-            })
-        }) {
-            return Some(index);
-        }
+        return shadow_turns.iter().position(|turn| {
+            let mut ids = turn
+                .tool_calls
+                .iter()
+                .filter_map(|call| call.id.as_deref())
+                .filter(|id| !id.is_empty())
+                .collect::<HashSet<_>>();
+            if let Some(parts) = stored_parts(&turn.assistant_content) {
+                ids.extend(parts.iter().filter_map(|part| {
+                    part.pointer("/functionCall/id")
+                        .and_then(Value::as_str)
+                        .filter(|id| !id.is_empty())
+                }));
+            }
+            ids.len() == tool_use_ids.len() && ids.iter().all(|id| tool_use_ids.contains(*id))
+        });
     }
 
     shadow_turns.iter().enumerate().find_map(|(index, turn)| {
@@ -992,18 +1034,10 @@ fn convert_message_content_to_parts(
                     function_call["id"] = json!(id);
                 }
 
-                // Re-attach the thought_signature that Gemini originally
-                // associated with this functionCall.  The Anthropic format
-                // strips it from the tool_use block, but Gemini requires it
-                // on every functionCall part in a multi-turn tool-use
-                // exchange.  Per the Gemini wire protocol, `thoughtSignature`
-                // is a Part-level sibling of `functionCall` (it does NOT live
-                // inside the `functionCall` object); nesting it there causes
-                // the upstream to reject with `Unknown name "thoughtSignature"
-                // at 'contents[X].parts[Y].function_call'`.
-                let thought_signature = thought_signature_by_id.get(id).cloned();
+                // Thought signatures belong to the containing Part, alongside
+                // functionCall. Later parallel calls may have no signature.
                 let mut part = json!({ "functionCall": function_call });
-                if let Some(sig) = thought_signature {
+                if let Some(sig) = thought_signature_by_id.get(id) {
                     part["thoughtSignature"] = json!(sig);
                 }
                 parts.push(part);
@@ -1123,31 +1157,12 @@ fn plan_gemini_tool_result(content: Option<&Value>) -> (Value, Vec<Value>) {
     (normalize_tool_result_response(Some(&cleaned)), gemini_parts)
 }
 
-/// Thought signatures are replayed from the in-memory shadow store, so they are
-/// gone when CC Switch restarts mid tool-call turn or the turn has been evicted.
-/// Gemini 3+ then rejects the rebuilt request with "Function call is missing a
-/// thought_signature". Gemini only validates the first functionCall of each model
-/// step in the current turn (after the last user content that is not just
-/// functionResponse parts), and documents `skip_thought_signature_validator` for
-/// history it cannot trace back. Fill only those calls when they are unsigned;
-/// real signatures, parallel sibling calls and earlier turns are left as is.
+/// Fill the first unsigned function call of each step in the current turn.
+/// The documented placeholder lets Gemini accept rebuilt history whose original
+/// signature is unavailable, for example after a proxy restart.
 fn fill_skip_thought_signatures(contents: &mut [Value]) -> usize {
-    let turn_start = contents
-        .iter()
-        .rposition(|content| {
-            content.get("role").and_then(Value::as_str) == Some("user")
-                && content
-                    .get("parts")
-                    .and_then(Value::as_array)
-                    .is_some_and(|parts| {
-                        parts
-                            .iter()
-                            .any(|part| part.get("functionResponse").is_none())
-                    })
-        })
-        .map_or(0, |index| index + 1);
     let mut filled = 0;
-    for content in &mut contents[turn_start..] {
+    for content in contents {
         if content.get("role").and_then(Value::as_str) != Some("model") {
             continue;
         }
@@ -1159,18 +1174,26 @@ fn fill_skip_thought_signatures(contents: &mut [Value]) -> usize {
                     .iter_mut()
                     .find(|part| part.get("functionCall").is_some())
             })
+            .and_then(Value::as_object_mut)
         else {
             continue;
         };
-        let has_signature = first_call
-            .get("thoughtSignature")
-            .or_else(|| first_call.get("thought_signature"))
-            .and_then(Value::as_str)
-            .is_some_and(|signature| !signature.is_empty());
+        let has_signature = ["thoughtSignature", "thought_signature"]
+            .iter()
+            .any(|field| {
+                first_call
+                    .get(*field)
+                    .and_then(Value::as_str)
+                    .is_some_and(|signature| !signature.is_empty())
+            });
         if has_signature {
             continue;
         }
-        first_call["thoughtSignature"] = json!(GEMINI_SKIP_THOUGHT_SIGNATURE);
+        first_call.remove("thought_signature");
+        first_call.insert(
+            "thoughtSignature".into(),
+            json!(GEMINI_SKIP_THOUGHT_SIGNATURE),
+        );
         filled += 1;
     }
     filled
@@ -1212,12 +1235,16 @@ fn gemini_part_from_chat_image(part: &Value) -> Option<Value> {
     None
 }
 
-fn shadow_parts(content: &Value) -> Option<Vec<Value>> {
-    let mut parts = content
+fn stored_parts(content: &Value) -> Option<&[Value]> {
+    content
         .get("parts")
         .and_then(|value| value.as_array())
-        .cloned()
-        .or_else(|| content.as_array().cloned())?;
+        .or_else(|| content.as_array())
+        .map(Vec::as_slice)
+}
+
+fn shadow_parts(content: &Value) -> Option<Vec<Value>> {
+    let mut parts = stored_parts(content)?.to_vec();
     // Strip synthesized ids before these parts are replayed into a Gemini
     // request body. The shadow store records the Anthropic-facing id so that
     // a tool_result round-trip can find the tool's name, but sending the
@@ -1456,7 +1483,9 @@ fn merge_thought_signatures_from_shadow(
 ) {
     for tool_call in &turn.tool_calls {
         if let (Some(id), Some(sig)) = (&tool_call.id, &tool_call.thought_signature) {
-            thought_signature_by_id.insert(id.clone(), sig.clone());
+            if !id.is_empty() && !sig.is_empty() {
+                thought_signature_by_id.insert(id.clone(), sig.clone());
+            }
         }
     }
 }

@@ -2048,6 +2048,14 @@ fn sanitize_parameter_schema(schema: &mut Value, is_root: bool) {
         return;
     };
 
+    // Codex multi-agent v2 stamps a Responses-only `"encrypted": true` marker on
+    // some parameters (spawn_agent / send_message `message`). It is not a JSON
+    // Schema keyword; Gemini behind a Chat gateway rejects the whole request
+    // with `Unknown name "encrypted"` (#9168). Only schema nodes reach here, so
+    // a parameter that is itself named `encrypted` (a key of `properties`) and
+    // literal data under `default` / `examples` / `enum` stay untouched.
+    obj.remove("encrypted");
+
     if is_root && obj.get("type").and_then(Value::as_str) != Some("object") {
         obj.insert("type".to_string(), json!("object"));
     }
@@ -2344,6 +2352,17 @@ pub(crate) fn chat_completion_to_response_with_context(
     Ok(response)
 }
 
+/// Chat 思考转成的推理条目 id：`rs_<回复 id>_<输出序号>`（与 Anthropic 转换同一格式）。
+///
+/// 序号不能省。这条没有密文，Codex 切回官方时原样回放；`store:false` 下官方只要看到
+/// `rs_` / `rs_resp_` 后面正好是 32 位十六进制（有的上游回复 id 就是 32 位十六进制），就当成
+/// 自己签发的去回查，查不到报 404，直连模式下线程就此续不上（#9054）。末尾带上 `_<序号>`
+/// 就不会被回查（11-26 实测）。id 不能干脆去掉：Codex 会另配一个，和进行中事件的 item_id
+/// 对不上，官方供应商下思考文字不再实时显示；Grok Build 缺 id 直接解析失败。
+pub(crate) fn chat_reasoning_item_id(response_id: &str, output_index: u32) -> String {
+    format!("rs_{response_id}_{output_index}")
+}
+
 fn chat_reasoning_to_response_output_item(
     reasoning: Option<&str>,
     response_id: &str,
@@ -2354,7 +2373,7 @@ fn chat_reasoning_to_response_output_item(
     }
 
     Some(json!({
-        "id": format!("rs_{response_id}"),
+        "id": chat_reasoning_item_id(response_id, 0),
         "type": "reasoning",
         "summary": [{
             "type": "summary_text",

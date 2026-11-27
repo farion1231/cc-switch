@@ -218,7 +218,9 @@ export function EditProviderDialog({
         appId === "dsh" ||
         appId === "omp" ||
         appId === "copilot" ||
-        appId === "workbuddy"
+        appId === "workbuddy" ||
+        appId === "codebuddy" ||
+        appId === "zcode"
       ) {
         if (!cancelled) {
           setLiveSettings(null);

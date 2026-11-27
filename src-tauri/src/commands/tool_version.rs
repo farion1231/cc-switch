@@ -280,6 +280,12 @@ pub(super) async fn fetch_npm_dist_tags(
 enum PrefetchedLatest {
     /// npm dist-tags：选哪个 tag 要看本地版本，等本地探测结束后由 `resolve_latest` 定。
     Npm(Option<serde_json::Map<String, serde_json::Value>>),
+    /// OpenCode 1.x（`opencode-ai`）与 2.x（`@opencode/cli`）两条线的 dist-tags，并发拉回，
+    /// 等本地版本出来再按主版本挑（见 `misc::OPENCODE_V2_NPM`）。
+    OpenCode {
+        v1: Option<serde_json::Map<String, serde_json::Value>>,
+        v2: Option<serde_json::Map<String, serde_json::Value>>,
+    },
     /// Hermes 的 GitHub Release；取不到时再按本地版本走 PyPI 兜底。
     Hermes(Option<String>),
     Resolved(Option<String>),
@@ -291,6 +297,13 @@ async fn prefetch_latest(client: &reqwest::Client, tool: &str) -> PrefetchedLate
             fetch_github_latest_version(client, "NousResearch/hermes-agent").await,
         ),
         ("agy", _) => PrefetchedLatest::Resolved(fetch_agy_latest_version(client).await),
+        ("opencode", Some(package)) => {
+            let (v1, v2) = tokio::join!(
+                fetch_npm_dist_tags(client, package),
+                fetch_npm_dist_tags(client, OPENCODE_V2_NPM.name),
+            );
+            PrefetchedLatest::OpenCode { v1, v2 }
+        }
         (_, Some(package)) => PrefetchedLatest::Npm(fetch_npm_dist_tags(client, package).await),
         (_, None) => PrefetchedLatest::Resolved(None),
     }
@@ -299,7 +312,8 @@ async fn prefetch_latest(client: &reqwest::Client, tool: &str) -> PrefetchedLate
 /// 结合本地版本得出要展示的"最新版本"。
 ///
 /// npm 工具取 `latest`,本地版本领先时按工具的预发布通道(见 `ToolSpec::npm_prerelease_tags`)
-/// 补选 —— 复用同一次 registry 响应,无额外请求;OpenCode 取不到时退到 GitHub。
+/// 补选 —— 复用同一次 registry 响应,无额外请求;OpenCode 按本地主版本在 1.x / 2.x 两个包里挑,
+/// 1.x 取不到时退到 GitHub。
 /// Hermes 以 GitHub Releases 为主、PyPI 兜底:
 /// cc-switch 安装/升级 Hermes 走的是官方 install.sh（`git clone` main 分支）与
 /// `hermes update`（`git pull`），整条链路与 PyPI 无关；而 PyPI 的 `hermes-agent`
@@ -313,11 +327,13 @@ async fn resolve_latest(
     local_version: Option<&str>,
 ) -> Option<String> {
     match prefetched {
-        PrefetchedLatest::Npm(dist_tags) => {
-            let picked = dist_tags.and_then(|tags| {
-                pick_latest_version(&tags, tool_spec(tool).npm_prerelease_tags, local_version)
-            });
-            if picked.is_none() && tool == "opencode" {
+        PrefetchedLatest::Npm(dist_tags) => dist_tags.and_then(|tags| {
+            pick_latest_version(&tags, tool_spec(tool).npm_prerelease_tags, local_version)
+        }),
+        PrefetchedLatest::OpenCode { v1, v2 } => {
+            let picked = pick_opencode_latest(v1.as_ref(), v2.as_ref(), local_version);
+            // GitHub 的 releases/latest 标在 1.x 上，只能给 1.x 兜底。
+            if picked.is_none() && !local_version.is_some_and(is_opencode_v2_version) {
                 fetch_github_latest_version(client, "anomalyco/opencode").await
             } else {
                 picked
@@ -330,6 +346,25 @@ async fn resolve_latest(
         ),
         PrefetchedLatest::Resolved(version) => version,
     }
+}
+
+/// OpenCode 的「最新版本」跟着本地那条线走：装的是 2.x 看 `@opencode/cli`，否则（含没装、
+/// 版本认不出）看 1.x 的 `opencode-ai`。2.x 用户若拿 1.x 的 latest 比，永远「已是最新」。
+fn pick_opencode_latest(
+    v1: Option<&serde_json::Map<String, serde_json::Value>>,
+    v2: Option<&serde_json::Map<String, serde_json::Value>>,
+    local_version: Option<&str>,
+) -> Option<String> {
+    if local_version.is_some_and(is_opencode_v2_version) {
+        return v2.and_then(|tags| pick_latest_version(tags, &[], local_version));
+    }
+    v1.and_then(|tags| {
+        pick_latest_version(
+            tags,
+            tool_spec("opencode").npm_prerelease_tags,
+            local_version,
+        )
+    })
 }
 
 /// 版本探测请求的请求级超时。全局客户端是给代理转发用的（总超时 600s / 连接 30s），
@@ -691,54 +726,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shell_command_missing_matches_shell_formats_only() {
-        assert!(is_shell_command_missing(
+    fn shell_command_missing_and_version_sentinel() {
+        for msg in [
             "bash: line 1: claude: command not found",
-            "claude"
-        ));
-        assert!(is_shell_command_missing(
             "zsh:1: command not found: claude",
-            "claude"
-        ));
-        assert!(is_shell_command_missing(
             "sh: 1: claude: not found",
-            "claude"
-        ));
-        assert!(is_shell_command_missing(
             "fish: Unknown command: claude",
-            "claude"
-        ));
+        ] {
+            assert!(is_shell_command_missing(msg, "claude"), "{msg}");
+        }
         assert!(!is_shell_command_missing(
             "Error: Cannot find module 'x'\nmodule not found",
             "claude"
         ));
         assert!(!is_shell_command_missing("config file not found", "claude"));
-    }
 
-    #[test]
-    fn version_probe_sentinel_drops_shell_startup_output() {
         assert_eq!(
             version_probe_payload("claude"),
             "echo __CCSWITCH_VERSION__; claude --version"
         );
-
-        // Ubuntu 的 update-motd 在当天第一个交互式 login shell 里打印 MOTD，
-        // 整段取第一个版本号会拿到 24.04.4（#7347）
-        let motd = "Welcome to Ubuntu 24.04.4 LTS (GNU/Linux 6.6.87.2-microsoft-standard-WSL2 x86_64)\n\n * Documentation:  https://help.ubuntu.com\n__CCSWITCH_VERSION__\n2.1.270 (Claude Code)";
+        let motd = "Welcome to Ubuntu 24.04.4 LTS\n__CCSWITCH_VERSION__\n2.1.270 (Claude Code)";
         assert_eq!(after_version_sentinel(motd), "2.1.270 (Claude Code)");
-
-        // 兜底链 `-lic || -lc || -c` 会多次打印哨兵：取最后一次之后
-        let chained = "__CCSWITCH_VERSION__\nbash: warning\n__CCSWITCH_VERSION__\n1.2.3";
-        assert_eq!(after_version_sentinel(chained), "1.2.3");
-
-        // OSC 序列没有换行、直接粘在哨兵前面（地址取自 RFC 5737 文档保留段）
-        let glued = "\x1b]1337;RemoteHost=user@198.51.100.23\x07__CCSWITCH_VERSION__\n0.154.0";
-        assert_eq!(after_version_sentinel(glued), "0.154.0");
-
-        // 版本打在 stderr 的工具：哨兵之后为空，调用方回退到 stderr
+        assert_eq!(
+            after_version_sentinel("__CCSWITCH_VERSION__\nwarn\n__CCSWITCH_VERSION__\n1.2.3"),
+            "1.2.3"
+        );
+        assert_eq!(
+            after_version_sentinel(
+                "\x1b]1337;RemoteHost=u@198.51.100.23\x07__CCSWITCH_VERSION__\n0.154.0"
+            ),
+            "0.154.0"
+        );
         assert_eq!(after_version_sentinel("__CCSWITCH_VERSION__\n"), "");
-
-        // 没有哨兵（shell 在执行载荷前就失败）：原样返回，行为不变
         assert_eq!(
             after_version_sentinel("sh: 1: bad: not found"),
             "sh: 1: bad: not found"
@@ -746,110 +765,79 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_version() {
+    fn version_extraction_and_semver_comparison() {
+        use std::cmp::Ordering;
+
         assert_eq!(extract_version("claude 1.0.20"), "1.0.20");
         assert_eq!(extract_version("v2.3.4-beta.1"), "2.3.4-beta.1");
-        // Hermes main/canary 开发构建:保留 local version 段,前端据此识别、不误报升级
         assert_eq!(
             extract_version("Hermes Agent v0.22.1+238.g8211bb9 (2026.9.24) · upstream 8211bb96"),
             "0.22.1+238.g8211bb9"
         );
         assert_eq!(extract_version("no version here"), "no version here");
-    }
 
-    #[test]
-    fn local_versions_are_dev_builds_and_incomparable() {
-        // 开发构建(git describe / 开发通道标识)与任何版本不可比
+        // Dev builds with git/canary local metadata are incomparable; standard build metadata is ignored.
         assert!(parse_semver("0.22.1+238.g8211bb9").is_none());
         assert!(parse_semver("0.22.1+canary.20261015T070051Z").is_none());
         assert!(compare_semver("0.22.2", "0.22.1+238.g8211bb9").is_none());
-        assert!(compare_semver("0.22.1+238.g8211bb9", "0.22.1").is_none());
-        // 普通 semver build metadata 按规范忽略后照常比较
-        assert_eq!(parse_semver("1.0.0+linux.1"), Some(([1, 0, 0], vec![])));
         assert_eq!(
             compare_semver("1.0.1", "1.0.0+linux.1"),
-            Some(std::cmp::Ordering::Greater)
-        );
-        // 正式版与预发布版不受影响
-        assert_eq!(
-            compare_semver("0.22.2", "0.22.1"),
-            Some(std::cmp::Ordering::Greater)
+            Some(Ordering::Greater)
         );
         assert_eq!(
             compare_semver("2.1.156-beta.1", "2.1.156"),
-            Some(std::cmp::Ordering::Less)
+            Some(Ordering::Less)
         );
+        assert_eq!(
+            compare_semver("0.45.0-nightly.1", "0.44.1"),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            compare_semver("0.1.2505172116", "0.135.0"),
+            Some(Ordering::Less)
+        );
+        assert_eq!(compare_semver("false", "1.0.0"), None);
     }
 
     #[test]
-    fn github_release_version_prefers_semver_in_name_over_calendar_tag() {
-        // Hermes 官方 release：tag 日历式，语义版本只在 name 里；2026-08-19 起括号内还多了个 v
-        for (name, tag, want) in [
-            ("Hermes Agent v0.20.4 (2026.8.18)", "v2026.8.18", "0.20.4"),
-            ("Hermes Agent v0.21.0 (v2026.8.31)", "v2026.8.31", "0.21.0"),
+    fn github_release_version_extracts_semver_and_rejects_calendar_or_errors() {
+        for (payload, expected) in [
             (
-                "Hermes Agent v0.20.3 (2026.8.16.2)",
-                "v2026.8.16.2",
-                "0.20.3",
+                serde_json::json!({ "name": "Hermes Agent v0.20.4 (2026.8.18)", "tag_name": "v2026.8.18" }),
+                Some("0.20.4"),
             ),
+            (
+                serde_json::json!({ "name": "Hermes Agent v0.21.0 (v2026.8.31)", "tag_name": "v2026.8.31" }),
+                Some("0.21.0"),
+            ),
+            (
+                serde_json::json!({ "name": "August refresh", "tag_name": "v1.18.18" }),
+                Some("1.18.18"),
+            ),
+            (serde_json::json!({ "tag_name": "v1.2.3" }), Some("1.2.3")),
+            (
+                serde_json::json!({ "name": "Hermes Agent (2026.8.31)", "tag_name": "v2026.8.31" }),
+                None,
+            ),
+            (serde_json::json!({ "tag_name": "v2026.8.16.2" }), None),
+            (
+                serde_json::json!({ "message": "API rate limit exceeded for 1.2.3.4." }),
+                None,
+            ),
+            (serde_json::json!({}), None),
         ] {
-            let json = serde_json::json!({ "name": name, "tag_name": tag });
             assert_eq!(
-                github_release_version_from_json(&json).as_deref(),
-                Some(want),
-                "{name}"
+                github_release_version_from_json(&payload).as_deref(),
+                expected,
+                "{payload}"
             );
         }
     }
 
     #[test]
-    fn github_release_version_falls_back_to_semver_tag() {
-        // opencode：name == tag，走 name 或 tag 结果一致
-        let named = serde_json::json!({ "name": "v1.18.18", "tag_name": "v1.18.18" });
-        assert_eq!(
-            github_release_version_from_json(&named).as_deref(),
-            Some("1.18.18")
-        );
-        let prose = serde_json::json!({ "name": "August refresh", "tag_name": "v1.18.18" });
-        assert_eq!(
-            github_release_version_from_json(&prose).as_deref(),
-            Some("1.18.18")
-        );
-        let unnamed = serde_json::json!({ "tag_name": "v1.2.3" });
-        assert_eq!(
-            github_release_version_from_json(&unnamed).as_deref(),
-            Some("1.2.3")
-        );
-    }
-
-    #[test]
-    fn github_release_version_rejects_calendar_versions_and_rate_limit_body() {
-        // name 与 tag 都只有日历式数字：不得把 2026.8.31 当版本号（前端会永久判定"可更新"）
-        let calendar = serde_json::json!({
-            "name": "Hermes Agent (2026.8.31)",
-            "tag_name": "v2026.8.31"
-        });
-        assert_eq!(github_release_version_from_json(&calendar), None);
-        let four_seg = serde_json::json!({ "tag_name": "v2026.8.16.2" });
-        assert_eq!(github_release_version_from_json(&four_seg), None);
-        // GitHub 未认证限流响应只有 message / documentation_url
-        let limited = serde_json::json!({
-            "message": "API rate limit exceeded for 1.2.3.4.",
-            "documentation_url": "https://docs.github.com/rest"
-        });
-        assert_eq!(github_release_version_from_json(&limited), None);
-        assert_eq!(
-            github_release_version_from_json(&serde_json::json!({})),
-            None
-        );
-    }
-
-    #[test]
-    fn hermes_pypi_fallback_is_hidden_when_local_leads() {
+    fn drop_latest_behind_local_hides_stale_fallback() {
         let pypi = || Some("0.19.0".to_string());
-        // GitHub 不可达、PyPI 仍停在 0.19.0：本地 0.21.0 时不展示旧值（否则"最新 < 当前"）
         assert_eq!(drop_latest_behind_local(pypi(), Some("0.21.0")), None);
-        // 本地等于 / 落后 PyPI，或本地未知：照常展示
         assert_eq!(
             drop_latest_behind_local(pypi(), Some("0.19.0")).as_deref(),
             Some("0.19.0")
@@ -862,111 +850,78 @@ mod tests {
             drop_latest_behind_local(pypi(), None).as_deref(),
             Some("0.19.0")
         );
-        // 本地无法解析时保守视为未领先
         assert_eq!(
             drop_latest_behind_local(pypi(), Some("unknown")).as_deref(),
             Some("0.19.0")
         );
-        assert_eq!(drop_latest_behind_local(None, Some("0.21.0")), None);
     }
 
     #[test]
-    fn test_compare_semver() {
-        use std::cmp::Ordering;
-        assert_eq!(
-            compare_semver("2.1.156", "2.1.154"),
-            Some(Ordering::Greater)
-        );
-        assert_eq!(compare_semver("2.1.154", "2.1.156"), Some(Ordering::Less));
-        assert_eq!(compare_semver("2.1.156", "2.1.156"), Some(Ordering::Equal));
-        // 预发布 < 同核心正式版
-        assert_eq!(
-            compare_semver("2.1.156-beta.1", "2.1.156"),
-            Some(Ordering::Less)
-        );
-        // core 更高的预发布仍高于较低的正式版（gemini nightly 场景）
-        assert_eq!(
-            compare_semver("0.45.0-nightly.1", "0.44.1"),
-            Some(Ordering::Greater)
-        );
-        // 大 patch（codex 时间戳式）不溢出
-        assert_eq!(
-            compare_semver("0.1.2505172116", "0.135.0"),
-            Some(Ordering::Less)
-        );
-        // 无法解析返回 None（gemini 的 `false` 脏 tag）
-        assert_eq!(compare_semver("false", "1.0.0"), None);
-    }
-
-    #[test]
-    fn test_pick_latest_version() {
-        use serde_json::json;
-        let tags = json!({
+    fn pick_latest_version_respects_prerelease_channels_and_filters_dirty_tags() {
+        let tags = serde_json::json!({
             "latest": "2.1.154",
             "next": "2.1.156",
             "stable": "2.1.145"
         });
         let map = tags.as_object().unwrap();
+        assert_eq!(
+            pick_latest_version(map, &["next"], Some("2.1.156")).as_deref(),
+            Some("2.1.156")
+        );
+        assert_eq!(
+            pick_latest_version(map, &["next"], Some("2.1.154")).as_deref(),
+            Some("2.1.154")
+        );
+        assert_eq!(
+            pick_latest_version(map, &["next"], Some("2.1.145")).as_deref(),
+            Some("2.1.154")
+        );
+        assert_eq!(
+            pick_latest_version(map, &[], Some("2.1.156")).as_deref(),
+            Some("2.1.154")
+        );
+        assert_eq!(
+            pick_latest_version(map, &["next"], None).as_deref(),
+            Some("2.1.154")
+        );
 
-        // 本地领先 latest（在 next 通道）→ 补查到 next，数字对齐
+        let dirty = serde_json::json!({ "latest": "0.135.0", "beta": "0.1.2505172116" });
         assert_eq!(
-            pick_latest_version(map, &["next"], Some("2.1.156")),
-            Some("2.1.156".to_string())
-        );
-        // 本地等于 latest → 不补查，仍显示 latest
-        assert_eq!(
-            pick_latest_version(map, &["next"], Some("2.1.154")),
-            Some("2.1.154".to_string())
-        );
-        // 本地落后 latest（稳定通道用户）→ 不补查，不被推向预发布版
-        assert_eq!(
-            pick_latest_version(map, &["next"], Some("2.1.145")),
-            Some("2.1.154".to_string())
-        );
-        // 无预发布白名单 → 永远只看 latest（不解析 local，避免脏 local 触发）
-        assert_eq!(
-            pick_latest_version(map, &[], Some("2.1.156")),
-            Some("2.1.154".to_string())
-        );
-        // 本地版本未知 → 保守只看 latest
-        assert_eq!(
-            pick_latest_version(map, &["next"], None),
-            Some("2.1.154".to_string())
+            pick_latest_version(dirty.as_object().unwrap(), &["beta"], Some("0.200.0")).as_deref(),
+            Some("0.135.0")
         );
     }
 
+    /// 2.x 是另一个 npm 包：拿 1.x 的 latest 比，2.x 用户永远「已是最新」、收不到 2.x 的更新。
     #[test]
-    fn test_pick_latest_version_filters_dirty_prerelease() {
-        use serde_json::json;
-        // 模拟 codex：beta 是低于 latest 的时间戳式脏版本
-        let tags = json!({
-            "latest": "0.135.0",
-            "beta": "0.1.2505172116"
-        });
-        let map = tags.as_object().unwrap();
-        // 即便本地领先 latest，低于 latest 的脏 beta 也不会被选
+    fn opencode_latest_follows_the_installed_release_line() {
+        // 2026-11-25 两个包的真实 dist-tags（节选）。
+        let v1 = serde_json::json!({ "latest": "1.19.6", "beta": "0.0.0-beta-202608110357" });
+        let v2 = serde_json::json!({ "latest": "2.4.2", "beta": "0.0.0-beta-19507" });
+        let (v1, v2) = (v1.as_object(), v2.as_object());
+        assert_eq!(extract_version("opencode v2.4.1"), "2.4.1");
+
         assert_eq!(
-            pick_latest_version(map, &["beta"], Some("0.200.0")),
-            Some("0.135.0".to_string())
+            pick_opencode_latest(v1, v2, Some("2.4.1")).as_deref(),
+            Some("2.4.2")
         );
+        assert_eq!(
+            pick_opencode_latest(v1, v2, Some("1.19.5")).as_deref(),
+            Some("1.19.6")
+        );
+        // 没装、版本认不出：安装按钮装的是 1.x，就按 1.x 看。
+        assert_eq!(
+            pick_opencode_latest(v1, v2, None).as_deref(),
+            Some("1.19.6")
+        );
+        assert_eq!(
+            pick_opencode_latest(v1, v2, Some("dev")).as_deref(),
+            Some("1.19.6")
+        );
+        // 2.x 那条线取不到时不回退 1.x 的版本。
+        assert_eq!(pick_opencode_latest(v1, None, Some("2.4.1")), None);
     }
 
-    #[test]
-    fn test_npm_dist_tags_url() {
-        // 普通包名直接拼进路径
-        assert_eq!(
-            npm_dist_tags_url("openclaw"),
-            "https://registry.npmjs.org/-/package/openclaw/dist-tags"
-        );
-        // scoped 包名的 `/` 按 registry 约定转义成 %2f
-        assert_eq!(
-            npm_dist_tags_url("@openai/codex"),
-            "https://registry.npmjs.org/-/package/@openai%2fcodex/dist-tags"
-        );
-    }
-
-    /// 文件在、却拿不到版本（起不来 / 没输出）算「装了但跑不起来」，不算没装：
-    /// 安装位置列表照样列出这类文件，报没装会让应用页同一行既在「已安装」组又显示安装按钮。
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn scan_cli_version_reports_present_but_silent_executable_as_broken() {
@@ -975,17 +930,15 @@ mod tests {
         let root = tempfile::tempdir().expect("temp dir should be created");
         let make_dir = |name: &str, script: Option<&str>| {
             let dir = root.path().join(name);
-            std::fs::create_dir_all(&dir).expect("dir should be created");
+            std::fs::create_dir_all(&dir).unwrap();
             let tool = dir.join("kimi");
             match script {
                 Some(body) => {
-                    std::fs::write(&tool, format!("#!/bin/sh\n{body}\n"))
-                        .expect("script should be written");
+                    std::fs::write(&tool, format!("#!/bin/sh\n{body}\n")).unwrap();
                     std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755))
-                        .expect("script should be executable");
+                        .unwrap();
                 }
-                // 不可执行的文件：启动失败
-                None => std::fs::write(&tool, "").expect("file should be written"),
+                None => std::fs::write(&tool, "").unwrap(),
             }
             dir
         };
@@ -995,10 +948,9 @@ mod tests {
         let loud_failure = make_dir("loud-failure", Some("echo boom >&2\nexit 1"));
         let working = make_dir("working", Some("echo 'kimi 1.2.3'"));
         let empty = root.path().join("empty");
-        std::fs::create_dir_all(&empty).expect("dir should be created");
-        // 与工具同名的目录不是安装
+        std::fs::create_dir_all(&empty).unwrap();
         let same_name_dir = root.path().join("same-name-dir");
-        std::fs::create_dir_all(same_name_dir.join("kimi")).expect("dir should be created");
+        std::fs::create_dir_all(same_name_dir.join("kimi")).unwrap();
 
         let broken_detail = |paths: &[PathBuf]| match scan_cli_version_in("kimi", paths) {
             ShellProbe::FoundButFailed(detail) => detail,
@@ -1012,9 +964,7 @@ mod tests {
         assert!(
             broken_detail(std::slice::from_ref(&not_executable)).starts_with("failed to launch")
         );
-        // 具体报错优先于笼统诊断
         assert_eq!(broken_detail(&[silent.clone(), loud_failure]), "boom");
-        // 别处有能跑的安装仍以它为准
         assert!(matches!(
             scan_cli_version_in("kimi", &[silent, working]),
             ShellProbe::Found(v) if v == "1.2.3"

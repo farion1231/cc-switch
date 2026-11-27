@@ -134,11 +134,6 @@ export const sessionsApi = {
     });
   },
 
-  /** 在 Finder / 文件管理器中显示本地路径（绝对路径或 file://，决策 D3） */
-  async revealPath(path: string): Promise<boolean> {
-    return await invoke("reveal_session_path", { path });
-  },
-
   /** 弹出保存对话框把会话存成 Markdown 文件；取消时返回 null，成功返回保存路径 */
   async exportMarkdown(
     defaultName: string,

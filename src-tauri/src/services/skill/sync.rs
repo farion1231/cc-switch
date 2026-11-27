@@ -60,12 +60,13 @@ impl SkillService {
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
+                | AppType::Codebuddy
         ) {
             return Ok(());
         }
         let destination = app_dir.join(directory);
         if destination.exists() || Self::is_symlink(&destination) {
-            Self::ensure_pi_skill_destination_matches(source, &destination, directory)?;
+            Self::ensure_pi_skill_destination_matches(source, &destination, directory, app)?;
         }
         Ok(())
     }
@@ -94,8 +95,9 @@ impl SkillService {
         source: &Path,
         destination: &Path,
         directory: &str,
+        app: &AppType,
     ) -> Result<()> {
-        Self::inspect_pi_skill_destination(source, destination, directory).map(|_| ())
+        Self::inspect_pi_skill_destination(source, destination, directory, app).map(|_| ())
     }
 
     pub(super) fn link_points_to_managed_copy(resolved: &Path, source: &Path) -> bool {
@@ -109,6 +111,7 @@ impl SkillService {
         source: &Path,
         destination: &Path,
         directory: &str,
+        app: &AppType,
     ) -> Result<Option<PiSkillDeployment>> {
         if !destination.exists() && !Self::is_symlink(destination) {
             return Ok(None);
@@ -143,7 +146,8 @@ impl SkillService {
         }
 
         Err(anyhow!(
-            "Pi 中已存在同名但内容不同的 Skill，拒绝覆盖或删除: {directory}"
+            "{} 中已存在同名但内容不同的 Skill，拒绝覆盖或删除: {directory}",
+            app.display_name()
         ))
     }
 
@@ -151,8 +155,9 @@ impl SkillService {
         source: &Path,
         destination: &Path,
         directory: &str,
+        app: &AppType,
     ) -> Result<()> {
-        match Self::inspect_pi_skill_destination(source, destination, directory)? {
+        match Self::inspect_pi_skill_destination(source, destination, directory, app)? {
             Some(_) => Self::remove_path(destination),
             None => Ok(()),
         }
@@ -163,14 +168,16 @@ impl SkillService {
         destination: &Path,
         directory: &str,
         deployment: &PiSkillDeployment,
+        app: &AppType,
     ) -> Result<()> {
         Self::validate_sync_source_dir(source, directory)?;
+        let label = app.display_name();
 
         match deployment {
             PiSkillDeployment::Symlink { expected_target } => {
                 if !Self::is_symlink(destination) {
                     return Err(anyhow!(
-                        "Pi 中的 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
+                        "{label} 中的 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
                     ));
                 }
                 let target = fs::read_link(destination)?;
@@ -184,7 +191,7 @@ impl SkillService {
                 };
                 if &resolved != expected_target {
                     return Err(anyhow!(
-                        "Pi 中的 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
+                        "{label} 中的 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
                     ));
                 }
                 Self::remove_path(destination)?;
@@ -199,7 +206,7 @@ impl SkillService {
                     )
                 {
                     return Err(anyhow!(
-                        "Pi 中的 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
+                        "{label} 中的 Skill 已在操作期间发生变化，拒绝覆盖: {directory}"
                     ));
                 }
                 Self::replace_dest_with_copy(source, destination, directory)?;
@@ -248,9 +255,10 @@ impl SkillService {
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
+                | AppType::Codebuddy
         ) && (dest.exists() || Self::is_symlink(&dest))
         {
-            Self::ensure_pi_skill_destination_matches(&source, &dest, &directory)?;
+            Self::ensure_pi_skill_destination_matches(&source, &dest, &directory, app)?;
         }
 
         let sync_method = Self::get_sync_method();
@@ -456,9 +464,10 @@ impl SkillService {
                     | AppType::Omp
                     | AppType::Copilot
                     | AppType::WorkBuddy
+                    | AppType::Codebuddy
             ) {
                 let source = ssot_dir.join(&directory);
-                Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory)?;
+                Self::ensure_pi_skill_destination_matches(&source, &skill_path, &directory, app)?;
             }
             Self::remove_path(&skill_path)?;
             log::debug!("Skill {directory} 已从 {app:?} 删除");
@@ -528,7 +537,7 @@ impl SkillService {
             .map(|skill| (skill.directory.to_lowercase(), skill))
             .collect();
 
-        // Unselected MCode, Agy, Kimi, Copilot and WorkBuddy directories may have been installed outside CC Switch.
+        // Unselected MCode, Agy, Kimi, Copilot, WorkBuddy and CodeBuddy directories may have been installed outside CC Switch.
         // Explicit disable/uninstall handles removal of managed deployments.
         if app_dir.exists()
             && !matches!(
@@ -539,6 +548,7 @@ impl SkillService {
                     | AppType::Dsh
                     | AppType::Copilot
                     | AppType::WorkBuddy
+                    | AppType::Codebuddy
             )
         {
             for entry in fs::read_dir(&app_dir)? {

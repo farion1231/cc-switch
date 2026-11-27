@@ -6,6 +6,15 @@ import type { AppId } from "./types";
 
 export type HealthStatus = "operational" | "degraded" | "failed";
 
+/** 连不上的原因（后端 `proxy::error::NetworkErrorKind`） */
+export type NetworkErrorKind =
+  | "blocked"
+  | "refused"
+  | "timeout"
+  | "dns"
+  | "tls"
+  | "other";
+
 export interface StreamCheckResult {
   status: HealthStatus;
   success: boolean;
@@ -14,6 +23,7 @@ export interface StreamCheckResult {
   httpStatus?: number;
   testedAt: number;
   retryCount: number;
+  errorKind?: NetworkErrorKind;
 }
 
 // ===== 连通性检查 API =====

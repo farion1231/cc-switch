@@ -1,3 +1,7 @@
+use std::io;
+
+pub(crate) const MAX_SSE_EVENT_BYTES: usize = 64 * 1024 * 1024;
+
 #[inline]
 pub(crate) fn strip_sse_field<'a>(line: &'a str, field: &str) -> Option<&'a str> {
     let value = line.strip_prefix(field)?.strip_prefix(':')?;
@@ -122,8 +126,8 @@ pub(crate) struct SseBuffer {
     consumed: usize,
     /// Where the next delimiter scan starts; always `>= consumed`.
     scan_from: usize,
-    /// Start of the current unterminated event in `self.text` (tracked when
-    /// `max_pending_bytes` is set); always `>= consumed` and `<= text.len()`.
+    /// Start of the current unterminated event during bounded framing;
+    /// always `>= consumed` and `<= text.len()`.
     current_event_start: usize,
     max_pending_bytes: Option<usize>,
     skip_delimiter_state: Option<SkipDelimiterState>,
@@ -148,18 +152,54 @@ impl SseBuffer {
 
     /// Append raw bytes; multi-byte characters split across chunks are held
     /// back until complete (see [`append_utf8_safe`]).
-    pub(crate) fn push_bytes(&mut self, mut bytes: &[u8]) {
+    pub(crate) fn push_bytes(&mut self, bytes: &[u8]) {
+        if let Some(limit) = self.max_pending_bytes {
+            let _ = self.push_bounded_bytes::<false>(bytes, limit);
+        } else if !bytes.is_empty() {
+            self.compact();
+            append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
+        }
+    }
+
+    /// Append upstream data for a converter. A missing event can change the
+    /// meaning of the response, so the caller must stop the stream on error.
+    pub(crate) fn try_push_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.push_bounded_bytes::<true>(bytes, self.max_event_bytes())
+    }
+
+    /// JSON fallback documents can include blank lines and must fit as a whole.
+    pub(crate) fn check_pending_document_size(&self) -> io::Result<()> {
+        let limit = self.max_event_bytes();
+        if self
+            .pending()
+            .len()
+            .saturating_add(self.utf8_remainder.len())
+            > limit
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Upstream JSON fallback document exceeds {limit} bytes"),
+            ));
+        }
+        Ok(())
+    }
+
+    fn max_event_bytes(&self) -> usize {
+        self.max_pending_bytes.unwrap_or(MAX_SSE_EVENT_BYTES)
+    }
+
+    fn push_bounded_bytes<const FAIL: bool>(
+        &mut self,
+        mut bytes: &[u8],
+        max_pending_bytes: usize,
+    ) -> io::Result<()> {
         if bytes.is_empty() {
-            return;
+            return Ok(());
         }
         self.compact();
-        let Some(max_pending_bytes) = self.max_pending_bytes else {
-            append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
-            return;
-        };
 
         while !bytes.is_empty() {
-            if let Some(mut state) = self.skip_delimiter_state {
+            if let Some(mut state) = self.skip_delimiter_state.filter(|_| !FAIL) {
                 match state.advance_until_delimiter(bytes) {
                     Some(next_offset) => {
                         self.skip_delimiter_state = None;
@@ -168,7 +208,7 @@ impl SseBuffer {
                     }
                     None => {
                         self.skip_delimiter_state = Some(state);
-                        return;
+                        return Ok(());
                     }
                 }
             }
@@ -180,6 +220,9 @@ impl SseBuffer {
             match state.advance_until_delimiter(bytes) {
                 Some(next_offset) => {
                     if self.event_would_overflow(next_offset, max_pending_bytes) {
+                        if FAIL {
+                            return Err(oversized_event(max_pending_bytes));
+                        }
                         self.discard_current_event();
                     } else {
                         append_utf8_safe(
@@ -193,15 +236,19 @@ impl SseBuffer {
                 }
                 None => {
                     if self.event_would_overflow(bytes.len(), max_pending_bytes) {
+                        if FAIL {
+                            return Err(oversized_event(max_pending_bytes));
+                        }
                         self.discard_current_event();
                         self.skip_delimiter_state = Some(state);
                     } else {
                         append_utf8_safe(&mut self.text, &mut self.utf8_remainder, bytes);
                     }
-                    return;
+                    return Ok(());
                 }
             }
         }
+        Ok(())
     }
 
     pub(crate) fn push_str(&mut self, mut text: &str) {
@@ -325,6 +372,13 @@ impl SseBuffer {
             self.consumed = 0;
         }
     }
+}
+
+fn oversized_event(limit: usize) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("Upstream SSE event exceeds {limit} bytes"),
+    )
 }
 
 /// Append raw bytes to a UTF-8 `String` buffer, correctly handling multi-byte
@@ -724,6 +778,33 @@ mod tests {
         assert_eq!(
             replacement_count, 4,
             "each invalid byte should produce one U+FFFD"
+        );
+    }
+
+    #[test]
+    fn strict_sse_limit_is_per_event_across_chunk_boundaries() {
+        let input = "data: 中\r\n\r\ndata: second\n\n";
+        assert!(input.len() > 14);
+        for split in 0..=input.len() {
+            let mut sse = SseBuffer::with_max_pending_bytes(14);
+            let mut blocks = Vec::new();
+            for chunk in [&input.as_bytes()[..split], &input.as_bytes()[split..]] {
+                sse.try_push_bytes(chunk).unwrap();
+                blocks.extend(drain_blocks(&mut sse));
+            }
+            assert_eq!(blocks, ["data: 中", "data: second"], "split {split}");
+        }
+    }
+
+    #[test]
+    fn strict_json_fallback_limit_counts_the_whole_document() {
+        let mut sse = SseBuffer::with_max_pending_bytes(16);
+        sse.try_push_bytes(b"{\n\n  \"x\": [\n\n").unwrap();
+        sse.check_pending_document_size().unwrap();
+        sse.try_push_bytes(b"1, 2, 3]}\n").unwrap();
+        assert_eq!(
+            sse.check_pending_document_size().unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
         );
     }
 

@@ -83,6 +83,12 @@ fn native_connection(app: &AppType, spec: &Value) -> Option<Value> {
         }
         AppType::Copilot => super::copilot::transport_spec(spec),
         AppType::WorkBuddy => super::workbuddy::transport_spec(spec),
+        AppType::Codebuddy => super::codebuddy::transport_spec(spec),
+        AppType::ZCode => {
+            let mut value = spec.clone();
+            value.as_object_mut()?.remove("enabled");
+            value
+        }
         AppType::ClaudeDesktop | AppType::OpenClaw => return None,
     };
     Some(without_empty_collections(native))

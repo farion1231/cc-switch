@@ -31,10 +31,8 @@ import {
   TRANSCRIPT_DONE_GRACE_MS,
   useBlockContent,
   useSessionImage,
-  useSessionMessagesQuery,
   useSessionTranscript,
 } from "@/lib/query/sessions";
-import { useSessionMessagesQuery as legacyExport } from "@/lib/query";
 
 const message = (content: string, turnId = "t1"): SessionMessage => ({
   role: "user",
@@ -243,19 +241,6 @@ describe("useSessionTranscript", () => {
     });
     expect(api.streamMessages).not.toHaveBeenCalled();
     expect(result.current.isLoading).toBe(false);
-  });
-});
-
-describe("useSessionMessagesQuery", () => {
-  it("一次性读取；旧入口 @/lib/query 仍可用", async () => {
-    expect(legacyExport).toBe(useSessionMessagesQuery);
-    api.getMessages.mockResolvedValue([message("a")]);
-    const { result } = renderHook(
-      () => useSessionMessagesQuery("claude", "/a"),
-      { wrapper: wrapperWith(newClient()) },
-    );
-    await waitFor(() => expect(result.current.data).toHaveLength(1));
-    expect(api.getMessages).toHaveBeenCalledWith("claude", "/a");
   });
 });
 

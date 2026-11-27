@@ -179,6 +179,44 @@ describe("useProviderActions", () => {
     );
   });
 
+  it.each(["opencode", "mcode", "dsh", "zcode", "codebuddy"] as const)(
+    "says added to config when adding a %s provider",
+    async (app) => {
+      switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(() => useProviderActions(app), {
+        wrapper,
+      });
+      await act(async () => {
+        await result.current.switchProvider(
+          createProvider({ category: "custom" }),
+        );
+      });
+      expect(toastSuccessMock).toHaveBeenCalledWith("已添加到配置", {
+        closeButton: true,
+      });
+    },
+  );
+
+  it.each(["hermes", "kimi"] as const)(
+    "keeps the switch wording when %s sets its default provider",
+    async (app) => {
+      switchProviderMutateAsync.mockResolvedValueOnce(undefined);
+      const { wrapper } = createWrapper();
+      const { result } = renderHook(() => useProviderActions(app), {
+        wrapper,
+      });
+      await act(async () => {
+        await result.current.switchProvider(
+          createProvider({ category: "custom" }),
+        );
+      });
+      expect(toastSuccessMock).toHaveBeenCalledWith("切换成功！", {
+        closeButton: true,
+      });
+    },
+  );
+
   it.each(["codex", "gemini", "grokbuild", "claude-desktop"] as const)(
     "reports a %s route switch without a restart when the client config is unchanged",
     async (app) => {

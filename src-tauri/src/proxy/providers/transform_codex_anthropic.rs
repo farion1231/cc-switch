@@ -317,6 +317,10 @@ pub fn responses_request_to_anthropic(
     let adaptive_by_default = crate::proxy::thinking_optimizer::adaptive_thinking_is_default(model);
     let cannot_disable_thinking =
         crate::proxy::thinking_optimizer::thinking_cannot_be_disabled(model);
+    // Opus 5.5 / Sonnet 5.5 reject `disabled` but accept a tool turn the model
+    // answered without thinking, so unsigned tool history keeps adaptive thinking.
+    let thinking_history_is_valid = thinking_history_is_valid
+        || crate::proxy::thinking_optimizer::accepts_unsigned_tool_history(model);
 
     // max_output_tokens → max_tokens (required)
     let max_tokens = body
@@ -351,7 +355,7 @@ pub fn responses_request_to_anthropic(
         if let Some(effort) = reasoning_effort.and_then(codex_effort_to_anthropic) {
             result["output_config"] = json!({ "effort": effort });
         } else if explicitly_disabled && cannot_disable_thinking {
-            // Fable/Mythos cannot turn thinking off. `low` is the closest safe
+            // These models cannot turn thinking off. `low` is the closest safe
             // representation of Codex's explicit `none` request.
             result["output_config"] = json!({ "effort": "low" });
         }
@@ -2279,6 +2283,60 @@ mod tests {
         let paired_assistant = &messages[messages.len() - 2];
         assert_eq!(paired_assistant["role"], "assistant");
         assert_eq!(paired_assistant["content"][0]["type"], "tool_use");
+    }
+
+    #[test]
+    fn test_unsigned_tool_history_keeps_adaptive_thinking_on_models_that_cannot_disable_it() {
+        // #9943: Opus 5.5 / Sonnet 5.5 400 on `thinking: disabled`, and Codex tool turns
+        // replayed without a signed thinking block used to fall back to exactly that.
+        for model in [
+            "claude-opus-5-5",
+            "claude-opus-5-5[1m]",
+            "claude-sonnet-5-5",
+        ] {
+            let input = json!({
+                "model": model,
+                "max_output_tokens": 4096,
+                "temperature": 0.5,
+                "reasoning": { "effort": "high" },
+                "tools": [{ "type": "function", "name": "Read", "parameters": {"type": "object"} }],
+                "input": [
+                    { "role": "user", "content": "read the file" },
+                    { "type": "function_call", "call_id": "c1", "name": "Read", "arguments": "{}" },
+                    { "type": "function_call_output", "call_id": "c1", "output": "ok" }
+                ]
+            });
+
+            let result = responses_request_to_anthropic(input, 4096).unwrap();
+
+            assert_eq!(
+                result["thinking"],
+                json!({ "type": "adaptive" }),
+                "model={model}"
+            );
+            assert_eq!(result["output_config"]["effort"], "high", "model={model}");
+            assert!(result.get("temperature").is_none(), "model={model}");
+            let messages = result["messages"].as_array().unwrap();
+            assert_eq!(
+                messages[messages.len() - 2]["content"][0]["type"],
+                "tool_use"
+            );
+        }
+    }
+
+    #[test]
+    fn test_explicit_none_effort_keeps_adaptive_thinking_on_opus_5_5() {
+        let input = json!({
+            "model": "claude-opus-5-5",
+            "max_output_tokens": 4096,
+            "reasoning": { "effort": "none" },
+            "input": [{ "role": "user", "content": "hi" }]
+        });
+
+        let result = responses_request_to_anthropic(input, 4096).unwrap();
+
+        assert_eq!(result["thinking"]["type"], "adaptive");
+        assert_eq!(result["output_config"]["effort"], "low");
     }
 
     #[test]

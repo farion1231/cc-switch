@@ -615,12 +615,10 @@ describe("SessionMarkdown", () => {
   describe("local paths", () => {
     it("renders file:// links as a path chip instead of a link", async () => {
       const user = userEvent.setup();
-      const onRevealPath = vi.fn();
       const { container } = render(
         <SessionMarkdown
           content="See [config](file:///Users/me/proj/src/config.rs)."
           projectDir="/Users/me/proj"
-          onRevealPath={onRevealPath}
         />,
       );
 
@@ -640,7 +638,9 @@ describe("SessionMarkdown", () => {
       await user.click(
         screen.getByRole("button", { name: "在 Finder 中显示" }),
       );
-      expect(onRevealPath).toHaveBeenCalledWith("/Users/me/proj/src/config.rs");
+      expect(invokeMock).toHaveBeenCalledWith("reveal_session_path", {
+        path: "/Users/me/proj/src/config.rs",
+      });
     });
 
     it("renders local image paths as a shortened path chip", async () => {

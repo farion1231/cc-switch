@@ -235,7 +235,7 @@
         "account": "帳號",
         "accountFollow": "跟隨 agy 目前登入",
         "accountMissing": "不在這台電腦上的帳號",
-        "accountHelp": "選了帳號的話，「開啟終端機」前會先把 agy 的登入切換到它（全域生效，之後新開的 agy 都用它）。帳號在授權中心新增。"
+        "accountHelp": "儲存新的綁定帳號後，新開啟的 agy 會使用它。用這張卡片開啟終端機時也會切回綁定帳號。帳號可在授權中心新增。"
       },
       "gemini": {
         "model": "模型",
@@ -917,6 +917,14 @@
     "minimizeToTrayDescription": "勾選後點擊關閉按鈕會隱藏至系統匣，取消則直接退出應用程式。",
     "useAppWindowControls": "啟用應用程式等級視窗按鈕",
     "useAppWindowControlsDescription": "開啟後使用應用程式自建的最小化、最大化/還原、關閉按鈕；關閉後沿用系統視窗模式。",
+    "copilotVscode": {
+      "enable": "套用至 VS Code Copilot 外掛程式",
+      "description": "開啟後自動將 CLI 中已加入的模型和金鑰套用至偵測到的全部 VS Code 設定，後續供應商變更自動同步。",
+      "pending": "VS Code 連動待同步",
+      "pendingDescription": "VS Code 可能仍使用上次設定，可重試同步最新變更。",
+      "noTargets": "找不到 VS Code 設定，請先啟動一次 VS Code 後重試。",
+      "failed": "同步至 VS Code Copilot 失敗"
+    },
     "enableClaudePluginIntegration": "套用至 Claude Code 外掛程式",
     "enableClaudePluginIntegrationDescription": "開啟後 VS Code Claude Code 外掛程式的供應商將隨本軟體切換",
     "skipClaudeOnboarding": "跳過 Claude Code 初次安裝確認",
@@ -1016,6 +1024,7 @@
     "browsePlaceholderPi": "例如：/home/<您的帳號>/.pi/agent",
     "browsePlaceholderOmp": "例如：/home/<您的帳號>/.omp/agent",
     "browsePlaceholderDsh": "例如：/home/<您的帳號>/.dsh",
+    "browsePlaceholderZcode": "例如：/home/<您的帳號>/.zcode",
     "browseDirectory": "瀏覽目錄",
     "resetDefault": "還原預設目錄（需儲存後生效）",
     "checkForUpdates": "檢查更新",
@@ -1539,6 +1548,8 @@
     "deleteEllipsis": "刪除",
     "selectSessionLabel": "選擇 {{title}}",
     "mcodeDeleteHint": "請在 MiniMax Code 中刪除",
+    "codebuddyDeleteHint": "請在 CodeBuddy 中管理此會話：背景任務、團隊成員和檔案歷史都引用它的記錄",
+    "zcodeDeleteHint": "請在 ZCode 中刪除此會話，以保持會話歷史和用量記錄一致",
     "agyDeleteHint": "請在 Antigravity 中刪除工作階段，以同步清理執行狀態",
     "groupMeta": "{{count}} 個工作階段 · {{time}}",
     "bucketToday": "今天",
@@ -1743,7 +1754,6 @@
       "filterChanges": "變更",
       "filterLabel": "檢視",
       "exportMarkdown": "匯出為 Markdown 檔案",
-      "exportShort": "匯出",
       "exported": "已匯出到 {{path}}",
       "exportFailed": "匯出失敗：{{error}}",
       "conversationRegion": "對話內容",
@@ -1806,7 +1816,7 @@
       "tokenplus": "TokenPlus，讓 AI 程式開發更穩、更省、更省心：一個 Key 暢用多家模型，智慧切換保障穩定、價格優選與快取最佳化節省成本，帳單、團隊和資料安全一站管理。",
       "kimi": "Kimi 新使用者首次成功儲值，即可獲贈儲值金額 10% 的 API 額度，最高贈送 ¥1000。",
       "a6api": "A6API 是一家 Token 聚合站，內建即時價格排行自動篩選全網最低價，滑順穩定不卡頓，簡易操作省去比價繁瑣，註冊獲得體驗金！",
-      "sudocode": "SudoCode 讓 Claude Code 與 Claude Desktop 使用 Claude Opus 5，Codex 使用 GPT-5.6，一個 Key 統一管理。CC Switch 使用者註冊並加入 QQ 群 726213516，聯絡群主領取人民幣 ¥10 試用額度。",
+      "sudocode": "SudoCode 讓 Claude Code 與 Codex 共用一個 API 入口，主控台依模型列出每次請求的 Token 用量與費用。CC Switch 使用者註冊後加入 QQ 群 1030742788，即可領取價值人民幣 ¥10 的日卡。",
       "packycode": "PackyCode 是 CC Switch 的官方合作夥伴，使用此連結註冊並在儲值時填寫「cc-switch」優惠碼，可以享受 9 折優惠",
       "apikeyfun": "APIKEY.FUN 為 CC Switch 的使用者提供了特別優惠，透過專屬連結註冊，可享受最高儲值永久 95 折優惠。",
       "apinebula": "APINEBULA 為 CC Switch 使用者提供特別優惠：使用專屬連結註冊並在儲值時填寫「ccswitch」優惠碼，可享 9 折優惠。",
@@ -2048,6 +2058,7 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "例如：company.ghe.com",
+    "autoModelName": "GitHub Copilot 自動選擇",
     "form": {
       "officialTitle": "使用 Copilot CLI 自己的 GitHub 登入",
       "officialHint": "「開啟終端機」以這張卡的模型啟動 copilot；綁定授權中心的帳號後改用該帳號啟動。",
@@ -2238,7 +2249,8 @@
     "autoReviewModelMainDefault": "主模型自己審批（預設）",
     "autoReviewModelNoList": "這張卡沒有模型列表：Codex 會用官方的 codex-auto-review 審批，只有部分轉發 ChatGPT 帳號的中轉認得它，不認就會回報 404。在上面的模型列表裡加上模型後就能選。",
     "officialSpeedTiersLabel": "保留官方 Fast 檔",
-    "officialSpeedTiersHint": "讓模型列表裡的 GPT 模型保留官方的 Fast 速度檔，Codex 選了 Fast 後請求會帶 service_tier=priority。只有轉發官方 ChatGPT 帳號的中轉（如 CPA）才認得，會更快消耗額度；其他上游可能報錯或按更高價計費。開啟後，先前在官方卡下選過的 Fast 會立刻在這家生效。聚合模式下不生效。改完需要重新啟動 Codex。",
+    "officialSpeedTiersHint": "讓模型列表裡的 GPT 模型保留官方的 Fast 速度檔，Codex 選了 Fast 後請求會帶 service_tier=priority。只有轉發官方 ChatGPT 帳號的中轉（如 CPA）才認得，會更快消耗額度；其他上游可能報錯或按更高價計費。Codex 桌面版要登入 ChatGPT 才顯示 Fast：在桌面版登入後，開啟設定裡的「非接管切換時保留官方登入」（或使用路由模式），請求仍發往這張卡；不登入時只有命令列版能用（/fast）。開啟後，先前在官方卡下選過的 Fast 會立刻在這家生效。聚合模式下不生效。改完需要重新啟動 Codex。",
+    "officialSpeedTiersNoList": "這張卡沒有模型列表：Fast 檔只加在模型列表裡的 GPT 模型上，所以現在打不開。在上面的模型列表裡加上 GPT 模型後才能開啟。",
     "modelListHint": "修改後需要重新啟動 Codex。",
     "modelListDefaultHelp": "這些模型會出現在 Codex 的 /model 裡，第一行是預設模型。名稱是官方 GPT 模型的行依官方條目產生，行裡的顯示名、視窗和思考等級不生效。",
     "addCatalogModel": "手動新增",
@@ -2376,6 +2388,7 @@
     "loginWith": {
       "deepseek": "使用 DeepSeek 帳號登入",
       "workbuddy": "用 WorkBuddy 帳號登入",
+      "codebuddy": "用 CodeBuddy 帳號登入",
       "kimi": "使用 Kimi 帳號登入",
       "claude": "用 Claude 帳號登入",
       "chatgpt": "用 ChatGPT 帳號登入",
@@ -2769,6 +2782,7 @@
       "duration": "耗時",
       "durationEstimated": "耗時（估算）",
       "speedTooFew": "輸出不到 100 token，不算速度",
+      "speedBurst": "疑似緩衝後突發吐出，不算速度",
       "speedEstimateTooFew": "輸出不到 200 token，不估速度",
       "noTimingSession": "工作階段日誌沒有計時資料",
       "noFirstToken": "沒有首字計時，不算速度",
@@ -3058,6 +3072,8 @@
       "invalidOverrideDsh": "DeepSeek Harness 的獨立 MCP 設定無效，請填寫完整的連線參數。",
       "invalidOverrideCopilot": "GitHub Copilot CLI 的獨立 MCP 設定無效，請填寫完整的連線參數。",
       "invalidOverrideWorkbuddy": "WorkBuddy 的獨立 MCP 設定無效，請填寫完整的連線參數。",
+      "invalidOverrideCodebuddy": "CodeBuddy 的獨立 MCP 設定無效，請填寫完整的連線參數。",
+      "invalidOverrideZcode": "ZCode 的獨立 MCP 設定無效，請填寫完整的連線參數。",
       "invalidOverrideAgy": "Antigravity 的獨立 MCP 設定無效，請填寫完整的連線參數。",
       "invalidOverrideOmp": "Oh My Pi 的獨立 MCP 設定無效，請填寫完整的連線參數。"
     },
@@ -4062,7 +4078,29 @@
     "reachableSlow": "{{providerName}} 連通但較慢 ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} 無法連通: {{message}}",
     "unreachableHint": "無法建立連線（DNS / 連線 / TLS / 逾時）。請檢查 base_url 與網路。",
+    "hint": {
+      "blocked": "系統拒絕了這次連線，通常是防火牆或安全軟體攔截了 CC Switch。請在防火牆裡允許 CC Switch 連網，連線區域網路位址也需要放行。",
+      "refused": "位址可以到達，但這個連接埠上沒有服務在執行。請確認服務已經啟動、連接埠填寫正確。",
+      "timeout": "連線逾時。請檢查網路和位址是否正確；也可能是防火牆或安全軟體攔截了連線但沒有回應。",
+      "dns": "網域名稱解析失敗。請檢查位址裡的網域有沒有寫錯，或者網路、DNS 是否正常。",
+      "tls": "HTTPS 連線失敗（憑證或交握出錯）。請檢查位址該用 http 還是 https，以及伺服器憑證是否有效。"
+    },
     "error": "{{providerName}} 檢查出錯：{{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "檢查 CC Switch 更新失敗",
+      "description": "CC Switch 啟動時會存取 dl.ccswitch.io（備用 github.com）查詢有沒有新版本，這次沒有成功：{{detail}}。不影響其他功能；如果是網路或防火牆攔截了，可以忽略。"
+    },
+    "modelsDevSyncFailed": {
+      "title": "同步模型定價失敗",
+      "description": "CC Switch 會定期從 models.dev 取得模型價格，用來計算用量費用，這次沒有成功：{{detail}}。不影響其他功能。"
+    },
+    "networkError": "連不上伺服器",
+    "mute": "不再提示",
+    "disableModelsDevSync": "關閉自動同步",
+    "modelsDevSyncDisabled": "已關閉模型定價自動同步，可以在「使用統計 → 模型定價」裡重新開啟。",
+    "disableFailed": "關閉失敗：{{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "路由總開關",
@@ -4411,6 +4449,7 @@
     "visibleHelp": "關掉後，這個應用不再出現在側欄、系統匣選單、MCP / Skills 的應用欄，以及提示詞和工作階段的應用下拉選單裡。只是不顯示：它的供應商、MCP 等設定都還在，它自己的設定檔也不會被改動。",
     "desktopHelp": "Claude Desktop 是桌面應用，不能在這裡安裝或升級；CC Switch 透過它的設定檔接入。",
     "workbuddyHelp": "WorkBuddy 是桌面應用程式，無法在這裡安裝或升級，它會自行更新；CC Switch 透過它的設定檔（~/.workbuddy/models.json）接入。",
+    "zcodeHelp": "ZCode 是桌面應用程式，無法在此安裝或升級，由它自行更新。CC Switch 透過設定檔（~/.zcode/v2/provider_config.json）與它對接。",
     "desktopUnsupported": "目前系統不支援",
     "desktopConnected": "已接入",
     "desktopNotConnected": "未接入",
@@ -4683,6 +4722,7 @@
     },
     "updatedAt": "{{time}}更新",
     "clickToRefresh": "點擊重新查詢",
+    "manualIdle": "點重新整理查詢額度",
     "resetCredits": {
       "label": "重設",
       "left": "重設剩餘 {{count}} 次",
@@ -4810,6 +4850,7 @@
       "failedTitle": "有應用沒有讀到",
       "filesTitle": "讀取了哪些檔案",
       "claudeNote": "（頂層 mcpServers）",
+      "codebuddyNote": "（依 .mcp.json → mcp.json → ~/.codebuddy.json 讀取最先存在的一個）",
       "dshNote": "（寫入所有已初始化的 profile：web、desktop、headless、acp。home 層級的 ~/.dsh/cordis.patch.yml 不讀取也不改寫，其中的 MCP 請在該檔案裡管理）",
       "ok": "知道了"
     },
@@ -4967,9 +5008,9 @@
       "disableAria": "在這個應用裡停用選中的 {{count}} 個 Skill",
       "uninstall": "解除安裝"
     },
-    "piColumnTitle": "Pi 按 ~/.pi/agent/skills 裡有沒有這個目錄來判斷",
+    "piColumnTitle": "Pi 會讀取 ~/.agents/skills，因此未勾選但存在於該路徑的 skills 仍可直接使用",
     "piHelpTitle": "Pi 怎麼算啟用",
-    "piHelp": "看 ~/.pi/agent/skills 裡有沒有這個目錄。",
+    "piHelp": "Pi 會讀取 ~/.agents/skills，因此未勾選但存在於該路徑的 skills 仍可直接使用。",
     "pop": {
       "onlyApp": "只看在 {{app}} 啟用的",
       "showAll": "顯示全部 Skill"
@@ -5199,10 +5240,11 @@
     "helpTitle": "授權中心是什麼",
     "group": {
       "helpTitle": "{{service}} 帳號怎麼用",
-      "copilotHelp": "用於 Claude Code、Claude Desktop 的 GitHub Copilot 預設。沒指定帳號的供應商用「預設」帳號。",
+      "copilotHelp": "用於 Claude Code、Claude Desktop、Codex 的 GitHub Copilot 預設，以及 Copilot CLI 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
-      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設。沒指定帳號的供應商用「預設」帳號。",
+      "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設，以及 Grok Build 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。",
+      "codebuddyHelp": "CodeBuddy 的官方登入（國內版、國際版都在這裡）。要切換帳號，請在帳號的「…」裡選「將 CodeBuddy 切換到這個帳號」，或在供應商列表裡新增綁定它的「CodeBuddy 官方登入」卡。「新增帳號」會開啟終端機執行 codebuddy，登入後這裡自動收錄；已登入時會先讓 CodeBuddy 暫時登出原來的帳號，放棄可恢復。權杖由 CodeBuddy 自己續期。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在帳號的「…」裡選「將 WorkBuddy 切換到這個帳號」，或在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
       "claudeHelpWsl": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。Claude 設定目錄在 WSL 裡時暫不支援，後續會跟進。",
@@ -5249,7 +5291,6 @@
       "reauthed": "{{login}} 已重新登入。"
     },
     "quota": {
-      "updating": "更新中…",
       "loading": "正在查詢額度…",
       "refresh": "重新整理額度",
       "refreshAria": "重新整理 {{login}} 的額度",
@@ -5263,6 +5304,33 @@
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
       "switched": "已切換，新開的 agy 會使用這個帳號。",
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。"
+    },
+    "codebuddy": {
+      "mainland": "國內版",
+      "global": "國際版",
+      "expiredNote": "登入已過期，需要重新登入",
+      "addedOn": "{{date}}收錄",
+      "imported": "已收錄 {{login}}。",
+      "uncollected": "CodeBuddy 目前登入的是 {{login}}，還沒收錄到這裡。",
+      "importCurrent": "收錄目前帳號",
+      "unrecognized": "無法辨識 CodeBuddy 的登入檔格式",
+      "unrecognizedNote": "可能由 WorkBuddy 加密託管。CC Switch 不會改動它，也無法切換帳號。",
+      "statusLoadFailed": "無法讀取 CodeBuddy 帳號，請重試。",
+      "empty": "還沒有 CodeBuddy 帳號。點「新增帳號」登入，或收錄 CodeBuddy 目前登入的帳號。",
+      "login": "登入新帳號",
+      "current": "CodeBuddy 使用中",
+      "pendingNote": "已在終端機開啟 codebuddy，依提示登入（沒有出現登入畫面就輸入 /login），完成後這裡會自動收錄。",
+      "reopenTerminal": "重新開啟終端機",
+      "removeNote": "只刪除 CC Switch 裡的副本，不會讓 CodeBuddy 登出。",
+      "localOnly": "帳號副本只儲存在這台電腦上，不會隨雲端同步，換電腦後需要重新收錄。",
+      "quota": {
+        "credits": "積分",
+        "enterprise": "企業版",
+        "unlimited": "不限量",
+        "detail": "積分剩餘 {{remaining}} / 共 {{total}}，已用 {{used}}",
+        "usedDetail": "本週期已用 {{used}} 積分",
+        "refreshPending": "權杖待 CodeBuddy 續期，切到這個帳號用一次後再查"
+      }
     },
     "workbuddy": {
       "addedOn": "{{date}}收錄",
@@ -5316,6 +5384,10 @@
     "openBrowser": {
       "title": "登入時自動開啟瀏覽器",
       "description": "關掉後只複製登入連結，由你自己選瀏覽器開啟，適合用獨立的瀏覽器環境管理多個帳號。"
+    },
+    "autoQuota": {
+      "title": "自動查詢額度",
+      "description": "關掉後，官方帳號的額度只在你點重新整理時查詢，開啟授權中心、卡片定時重新整理和懸停系統匣都不會自動去查。DeepSeek 帳號的餘額和登入狀態一起顯示，不受這個開關影響。"
     }
   },
   "kimi": {
@@ -5412,6 +5484,49 @@
       "legacyModelsJson": "Oh My Pi 目錄裡仍是舊的 models.json，omp 會在下次啟動時將它遷移為 models.yml。請先執行一次 omp，再回來新增供應商。"
     }
   },
+  "codebuddy": {
+    "empty": {
+      "title": "尚未新增自訂模型",
+      "description": "CodeBuddy 官方模型由 CodeBuddy 自行管理；要切換官方帳號，為帳號建立一張「CodeBuddy 官方登入」卡，在這裡點「新增」。~/.codebuddy/models.json 中已有的自訂模型會自動顯示在這裡。點擊右上角的 +，從預設或自訂設定新增模型。"
+    },
+    "modelsHint": "模型 ID 寫入 models.json 的 id，也是 /model 中選擇的名稱，通常就是介面的模型名稱，新增後不可修改。顯示名稱與上方的「名稱」是同一個值。",
+    "modelIdDuplicate": "此模型 ID 已被使用，請更換",
+    "modelIdInvalid": "模型 ID 不能以空格開頭或結尾。",
+    "vendor": "廠商標籤",
+    "urlHint": "填寫完整路徑，通常以 /chat/completions 結尾；支援 ${VAR} 環境變數參照。",
+    "urlInvalid": "請輸入有效的 http(s) 位址。",
+    "apiKeyPlaceholder": "輸入 API Key，或寫成 ${MY_API_KEY} 參照環境變數",
+    "maxInputTokens": "最大輸入 Token",
+    "maxOutputTokens": "最大輸出 Token",
+    "jsonHint": "對應 models.json 中的一筆模型設定（id 由上方模型 ID 決定）。儲存後 CodeBuddy 會自動重新載入。",
+    "official": {
+      "presetName": "CodeBuddy 官方登入",
+      "account": "登入帳號",
+      "accountHint": "選擇這張卡要用的 CodeBuddy 帳號。CodeBuddy 同時只能登入一個帳號：在供應商列表裡點這張卡的「新增」，CodeBuddy 的登入就會換成它，正在執行的 CodeBuddy 也會自動換過去。",
+      "accountDeleted": "帳號已刪除，請重新選擇",
+      "accountDeletedChip": "帳號已刪除",
+      "unbound": "還沒有選擇帳號，請編輯卡片選擇一個",
+      "statusLoading": "正在讀取帳號…",
+      "expired": "這個帳號的登入已過期，請在授權中心重新登入後再新增",
+      "importCurrent": "收錄目前登入（{{login}}）",
+      "adding": "正在新增…",
+      "added": "已新增 {{name}}，CodeBuddy 已登入這個帳號。正在執行的 CodeBuddy 會自動換過去，新開的也會使用它。",
+      "addFailed": "新增失敗：{{error}}",
+      "switched": "CodeBuddy 已切換到 {{name}}。正在執行的 CodeBuddy 會自動換過去，新開的也會使用它。",
+      "switchFailed": "切換失敗：{{error}}",
+      "removeHint": "CodeBuddy 同時只能登入一個帳號，新增另一張官方卡即可切換"
+    },
+    "login": {
+      "confirmTitle": "登入新的 CodeBuddy 帳號",
+      "confirmMessage": "CodeBuddy 目前登入的是 {{login}}，同一時間只能登入一個帳號。繼續後會先把它收錄到授權中心，再讓 CodeBuddy 暫時登出（不刪除登入資訊、不通知伺服器），然後開啟終端機登入新帳號。\n\n寫入後，正在執行的 CodeBuddy 工作階段會暫時變為未登入，直到你完成登入。中途放棄可以一鍵恢復原來的登入。",
+      "confirm": "繼續登入",
+      "signedInHint": "CodeBuddy 已登入時，登入新帳號會先讓它暫時登出原來的帳號：寫入後，正在執行的 CodeBuddy 工作階段會暫時變為未登入，直到你完成登入。",
+      "pendingReplacing": "已讓 CodeBuddy 暫時登出原來的帳號，並在終端機開啟了 codebuddy。依提示登入新帳號，完成後這裡會自動收錄。",
+      "restore": "恢復原來的登入",
+      "restored": "已恢復原來的 CodeBuddy 登入。",
+      "restoreFailed": "沒能恢復原來的登入（CodeBuddy 可能正在寫入登入檔）。可以在授權中心重新登入，或在終端機裡登入。"
+    }
+  },
   "dsh": {
     "empty": {
       "title": "新增 DeepSeek Harness 供應商",
@@ -5462,5 +5577,36 @@
     "hint": "可能由較新版本的 CC Switch 寫入。資料已原樣保留，無法編輯或啟用；升級後即可恢復，也可以刪除。",
     "confirmTitle": "刪除無法讀取的項目",
     "confirmMessage": "刪除「{{name}}」？只刪除 CC Switch 中的這筆記錄，不變更各應用自己的設定檔。"
+  },
+  "zcode": {
+    "addModel": "新增模型",
+    "apiKeyRequired": "API Key 不能為空",
+    "baseUrl": "基礎 URL",
+    "baseUrlHint": "自訂 API 端點位址",
+    "baseUrlRequired": "基礎 URL 不能為空",
+    "kind": "供應商類型",
+    "kindHint": "此供應商使用的 API 協定格式",
+    "kindPlaceholder": "選擇供應商類型",
+    "limitContext": "上下文",
+    "limitOutput": "輸出",
+    "modelId": "模型 ID",
+    "modelLimits": "Token 限制",
+    "modelLimitsHint": "留空則沿用 ZCode 的建議值。",
+    "models": "模型",
+    "modelsHint": "模型 ID 就是請求介面時傳送的模型名稱。",
+    "noModels": "未設定任何模型",
+    "providerKey": "供應商識別碼",
+    "providerKeyDuplicate": "此識別碼已被使用",
+    "providerKeyHint": "在 ~/.zcode/v2/provider_config.json 中的唯一識別碼。僅能使用字母、數字、冒號、底線和連字號。",
+    "providerKeyInvalid": "格式無效。僅能使用字母、數字、冒號、底線和連字號。",
+    "providerKeyLockedHint": "識別碼就是 provider_config.json 裡的 providerId，建立後不能再修改。",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyRequired": "供應商識別碼不能為空",
+    "providerKeyStatusLoading": "正在載入供應商識別碼狀態，請稍後再試",
+    "providerName": "供應商名稱",
+    "providerNameHint": "在 ZCode 中顯示的名稱",
+    "providerNamePlaceholder": "我的供應商",
+    "toggleModelDetails": "切換模型詳情",
+    "activationHint": "ZCode 的供應商是疊加式的：儲存後寫入 ZCode 的供應商清單，但需要在 ZCode 應用的供應商選擇器中手動切換到該供應商才會實際生效。"
   }
 }

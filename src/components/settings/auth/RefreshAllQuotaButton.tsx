@@ -8,6 +8,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { DSH_ACCOUNT_STATUS_KEY } from "@/components/providers/DshAccount";
+import {
+  WORKBUDDY_QUOTA_KEY,
+  markWorkBuddyQuotaForceRefresh,
+} from "@/components/providers/workbuddyQuota";
+import { markCodebuddyQuotaForceRefresh } from "@/lib/query/subscription";
 
 /** 授权中心各组账号行的额度缓存：`[服务, "quota", 账号]` */
 const QUOTA_SERVICES = new Set([
@@ -17,11 +22,21 @@ const QUOTA_SERVICES = new Set([
   "xai_oauth",
   "kimi_oauth",
   "agy_oauth",
+  "codebuddy_oauth",
 ]);
+
+/**
+ * 当前页面上（有组件在用）的账号额度。只手动查询时这些 query 是 disabled 的，
+ * `queryClient.refetchQueries` 会把 disabled 的过滤掉，所以要直接对 query 调 `fetch()`。
+ */
+function isShownAccountQuotaQuery(query: Query): boolean {
+  return query.getObserversCount() > 0 && isAccountQuotaQuery(query);
+}
 
 function isAccountQuotaQuery({ queryKey }: Query): boolean {
   const [service, kind] = queryKey;
   if (service === DSH_ACCOUNT_STATUS_KEY[0]) return true;
+  if (service === WORKBUDDY_QUOTA_KEY[0]) return true;
   return (
     typeof service === "string" &&
     QUOTA_SERVICES.has(service) &&
@@ -44,12 +59,16 @@ export function RefreshAllQuotaButton() {
       variant="quiet"
       size="regular"
       disabled={fetching}
-      onClick={() =>
-        void queryClient.refetchQueries({
-          type: "active",
-          predicate: isAccountQuotaQuery,
-        })
-      }
+      onClick={() => {
+        markCodebuddyQuotaForceRefresh();
+        markWorkBuddyQuotaForceRefresh();
+        void Promise.all(
+          queryClient
+            .getQueryCache()
+            .findAll({ predicate: isShownAccountQuotaQuery })
+            .map((query) => query.fetch().catch(() => undefined)),
+        );
+      }}
     >
       <RefreshCw
         className={cn("h-4 w-4", fetching && "motion-safe:animate-spin")}

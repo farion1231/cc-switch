@@ -172,6 +172,30 @@ type TestProvider = {
   meta?: Record<string, any>;
 };
 
+describe("options.baseURL apps", () => {
+  it("reads DeepSeek Harness and ZCode cards like OpenCode", () => {
+    for (const appId of ["dsh", "zcode"]) {
+      expect(
+        extractBaseUrlForUsageDetection(appId, {
+          options: { baseURL: "https://open.bigmodel.cn/api/anthropic" },
+        }),
+      ).toBe("https://open.bigmodel.cn/api/anthropic");
+    }
+    // ZCode 是智谱的客户端：GLM Coding Plan 卡新建时就要自动开额度
+    const zcode = injectCodingPlanUsageScript("zcode", {
+      settingsConfig: {
+        kind: "anthropic",
+        options: { baseURL: "https://open.bigmodel.cn/api/anthropic" },
+      },
+    }) as TestProvider;
+    expect(zcode.meta?.usage_script).toMatchObject({
+      enabled: true,
+      templateType: "token_plan",
+      codingPlanProvider: "zhipu",
+    });
+  });
+});
+
 describe("injectCodingPlanUsageScript", () => {
   const inject = (appId: string, provider: TestProvider) =>
     injectCodingPlanUsageScript(appId, provider);

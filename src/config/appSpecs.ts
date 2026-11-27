@@ -32,7 +32,7 @@ export interface AppCaps {
   plugins: boolean;
   /**
    * 能用授权中心里的托管账号。Antigravity、Grok 官方卡只算明确绑了号的（没绑的跟着
-   * 客户端自己的登录）；WorkBuddy 官方登录卡一定绑了号。
+   * 客户端自己的登录）；WorkBuddy、CodeBuddy 官方登录卡一定绑了号。
    */
   managedAccount: boolean;
   /** Pi 一族：Oh My Pi 是 Pi 的分支，供应商表单、启用状态和用量脚本命令与 Pi 共用 */
@@ -268,6 +268,34 @@ export const APP_SPECS = {
     prompts: true,
     plugins: false,
     managedAccount: true,
+    piFamily: false,
+    editorView: false,
+    officialSubscription: false,
+  },
+  codebuddy: {
+    localProxy: false,
+    routeMode: false,
+    stack: false,
+    additive: true,
+    skills: true,
+    mcp: true,
+    prompts: true,
+    plugins: false,
+    managedAccount: true,
+    piFamily: false,
+    editorView: false,
+    officialSubscription: false,
+  },
+  zcode: {
+    localProxy: false,
+    routeMode: false,
+    stack: false,
+    additive: true,
+    skills: true,
+    mcp: true,
+    prompts: true,
+    plugins: false,
+    managedAccount: false,
     piFamily: false,
     editorView: false,
     officialSubscription: false,

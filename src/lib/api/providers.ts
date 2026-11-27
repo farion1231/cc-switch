@@ -265,6 +265,20 @@ export const providersApi = {
     return await invoke("get_opencode_live_provider_ids");
   },
 
+  /**
+   * 从 ZCode live 配置导入供应商到数据库
+   */
+  async importZCodeFromLive(): Promise<number> {
+    return await invoke("import_zcode_providers_from_live");
+  },
+
+  /**
+   * 获取 ZCode live 配置中的供应商 ID 列表
+   */
+  async getZCodeLiveProviderIds(): Promise<string[]> {
+    return await invoke("get_zcode_live_provider_ids");
+  },
+
   /** OpenCode 顶层 model（`<provider>/<model>`），没写时为 null */
   async getOpenCodeDefaultModel(): Promise<string | null> {
     return await invoke("get_opencode_default_model");

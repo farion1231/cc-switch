@@ -212,6 +212,69 @@ pub fn describe_reqwest_error(error: reqwest::Error) -> String {
     describe_error_chain(&error.without_url())
 }
 
+/// 连不上的原因，给界面挑一句用户看得懂的提示用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NetworkErrorKind {
+    /// 系统拒绝发起连接：多半是防火墙或安全软件拦了本程序（Windows 10013、Unix EACCES/EPERM）
+    Blocked,
+    /// 地址到得了，但端口上没有服务
+    Refused,
+    Timeout,
+    Dns,
+    Tls,
+    Other,
+}
+
+/// 沿 `source()` 链判断连不上的原因。
+///
+/// 按 `io::ErrorKind` 判断而不是匹配错误文本：系统给的错误文本是本地化的（中文 Windows 上
+/// 10013 是「以一种访问权限不允许的方式…」）。DNS 和 TLS 没有对应的 ErrorKind，只能认
+/// hyper / rustls 自己的英文文本。
+pub fn classify_error_chain(error: &(dyn std::error::Error + 'static)) -> NetworkErrorKind {
+    let (mut dns, mut blocked, mut refused, mut timeout, mut tls) =
+        (false, false, false, false, false);
+    let mut current = Some(error);
+    while let Some(cause) = current {
+        if let Some(io) = cause.downcast_ref::<std::io::Error>() {
+            match io.kind() {
+                std::io::ErrorKind::PermissionDenied => blocked = true,
+                std::io::ErrorKind::ConnectionRefused => refused = true,
+                std::io::ErrorKind::TimedOut => timeout = true,
+                _ => {}
+            }
+        }
+        let text = cause.to_string().to_ascii_lowercase();
+        if text.starts_with("dns error") || text.contains("failed to lookup address") {
+            dns = true;
+        }
+        if text.contains("certificate") || text.contains("tls") || text.contains("handshake") {
+            tls = true;
+        }
+        current = cause.source();
+    }
+    if dns {
+        NetworkErrorKind::Dns
+    } else if blocked {
+        NetworkErrorKind::Blocked
+    } else if refused {
+        NetworkErrorKind::Refused
+    } else if timeout {
+        NetworkErrorKind::Timeout
+    } else if tls {
+        NetworkErrorKind::Tls
+    } else {
+        NetworkErrorKind::Other
+    }
+}
+
+pub fn classify_reqwest_error(error: &reqwest::Error) -> NetworkErrorKind {
+    if error.is_timeout() {
+        return NetworkErrorKind::Timeout;
+    }
+    classify_error_chain(error)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,8 +322,77 @@ mod tests {
             .expect_err("connection should be refused");
         assert!(error.is_connect());
 
+        assert_eq!(classify_reqwest_error(&error), NetworkErrorKind::Refused);
         let text = describe_reqwest_error(error);
         assert!(text.starts_with("error sending request: "), "{text}");
         assert!(!text.contains("secret-token"), "{text}");
+    }
+
+    /// 外层文本可指定的错误，模拟 hyper_util 的 ConnectError（「dns error」「tcp connect error」）
+    #[derive(Debug)]
+    struct Labeled(&'static str, Option<std::io::Error>);
+
+    impl std::fmt::Display for Labeled {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Labeled {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            self.1
+                .as_ref()
+                .map(|e| e as &(dyn std::error::Error + 'static))
+        }
+    }
+
+    fn io(kind: std::io::ErrorKind, text: &str) -> Option<std::io::Error> {
+        Some(std::io::Error::new(kind, text.to_string()))
+    }
+
+    #[test]
+    fn classify_error_chain_reads_io_kind_not_localized_text() {
+        use std::io::ErrorKind;
+        let cases = [
+            (
+                Labeled(
+                    "tcp connect error",
+                    io(
+                        ErrorKind::PermissionDenied,
+                        "以一种访问权限不允许的方式做了一个访问套接字的尝试。 (os error 10013)",
+                    ),
+                ),
+                NetworkErrorKind::Blocked,
+            ),
+            (
+                Labeled("tcp connect error", io(ErrorKind::ConnectionRefused, "x")),
+                NetworkErrorKind::Refused,
+            ),
+            (
+                Labeled("tcp connect error", io(ErrorKind::TimedOut, "x")),
+                NetworkErrorKind::Timeout,
+            ),
+            (
+                Labeled("dns error", io(ErrorKind::Other, "x")),
+                NetworkErrorKind::Dns,
+            ),
+            (
+                Labeled(
+                    "error sending request",
+                    io(
+                        ErrorKind::InvalidData,
+                        "invalid peer certificate: UnknownIssuer",
+                    ),
+                ),
+                NetworkErrorKind::Tls,
+            ),
+            (
+                Labeled("connection reset", io(ErrorKind::ConnectionReset, "x")),
+                NetworkErrorKind::Other,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(classify_error_chain(&error), expected, "{error:?}");
+        }
     }
 }
