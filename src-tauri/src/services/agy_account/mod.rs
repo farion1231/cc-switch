@@ -10,35 +10,34 @@
 //!   token）；不认识的号直接收录，切走也不会丢。认不出格式的整条暂存到 `agy-login-stash.json`。
 //! - 从 CC Switch 删账号只删自己的副本，永远不动钥匙串（不替 agy 登出）。
 //! - 不自动换号：额度用完、请求出错都不切，切换只由用户触发。
-//! - 查额度时令牌快过期就续期，续期结果只存 CC Switch 的副本，不写钥匙串：agy 在用的号由
-//!   agy 自己续期（Google 不轮换 refresh token，两边各自的 access token 同时有效）。
+//! - 不发任何网络请求，不用 agy 的身份：不用 agy 的 OAuth 客户端登录或续期，也不拿 agy 的令牌
+//!   去问 Google。加号是在 agy 里登录（`start_login` 打开终端运行 agy，钥匙串变了就收录）；
+//!   认账号只解本地的 id_token / 邮箱；令牌由 agy 自己续期（Google 不轮换 refresh token，
+//!   副本里过期的 access token 切过去后 agy 会自己换新）。
+//! - 额度只问 agy 自己的 `/usage`，所以只查得到 agy 当前登着的号；查到的按账号记下
+//!   （`last_quota`），切走的号显示切走前最后一次查到的。
 
+pub mod identity;
 pub mod keychain;
-pub mod oauth;
-pub mod quota;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{oneshot, Mutex, Semaphore};
+use tokio::sync::Mutex;
 
 use crate::error::AppError;
+use crate::services::subscription::SubscriptionQuota;
 use crate::sync_utils::MutexExt;
 use keychain::AgyLoginStore;
-use oauth::{AgyOAuthError, TokenResponse};
 
 const STORE_FILENAME: &str = "agy_accounts.json";
 const STASH_FILENAME: &str = "agy-login-stash.json";
-/// 浏览器登录最多等这么久，过了就当放弃。
+/// 在 agy 里登录最多等这么久，过了就当放弃。
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-/// access token 剩不到这么久就先续期再查额度。
-const TOKEN_MARGIN: Duration = Duration::from_secs(120);
-/// 同时向上游查额度的并发上限，避免多账号冷启动或批量刷新时一拥而上。
-const MAX_CONCURRENT_QUOTA_QUERIES: usize = 3;
 
 /// 最近一次读到的账号表和 agy 当前登录，见 [`last_known_status`]。
 static LAST_KNOWN: std::sync::Mutex<Option<AgyAccountStatus>> = std::sync::Mutex::new(None);
@@ -81,6 +80,9 @@ struct AccountData {
     authenticated_at: i64,
     #[serde(default)]
     requires_reauth: bool,
+    /// agy 登着这个号时最后一次查到的额度（`/usage`），切走后照样显示
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_quota: Option<SubscriptionQuota>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -145,24 +147,15 @@ pub struct AgyAccountStatus {
     pub supported: bool,
 }
 
-/// 查某个账号额度失败的原因。
-#[derive(Debug)]
-pub enum AccountQuotaError {
-    NotFound,
-    /// refresh token 失效，只能重新登录
-    NeedsReauth,
-    Failed(String),
-}
-
 pub struct LoginStart {
     pub flow_id: String,
-    pub auth_url: String,
     pub expires_in: u64,
 }
 
+/// 一次「添加账号」：记着开始时钥匙串里那份登录，变了就是用户在 agy 里登录了新的。
 struct PendingLogin {
-    result: oneshot::Receiver<Result<TokenResponse, AgyOAuthError>>,
-    task: tokio::task::AbortHandle,
+    baseline: Option<String>,
+    deadline: Instant,
 }
 
 /// 钥匙串里当前那份登录，解出来认得是谁时带上身份。
@@ -170,10 +163,21 @@ enum LiveLogin {
     None,
     Known {
         credential: Value,
-        claims: oauth::IdentityClaims,
+        claims: identity::IdentityClaims,
     },
     /// 读得到但解不开或认不出账号
     Unrecognized(String),
+}
+
+impl LiveLogin {
+    /// 用来判断钥匙串里的登录换没换：认得出的按 refresh token，认不出的按原文。
+    fn fingerprint(&self) -> Option<String> {
+        match self {
+            Self::None => None,
+            Self::Known { credential, .. } => refresh_token_of(credential).map(str::to_string),
+            Self::Unrecognized(raw) => Some(raw.clone()),
+        }
+    }
 }
 
 pub struct AgyAccountManager {
@@ -182,8 +186,6 @@ pub struct AgyAccountManager {
     /// 账号表；同时充当所有改动（含写钥匙串）的互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
-    /// 限制同时查额度的并发数
-    quota_permits: Semaphore,
 }
 
 impl AgyAccountManager {
@@ -200,107 +202,89 @@ impl AgyAccountManager {
             login,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
-            quota_permits: Semaphore::new(MAX_CONCURRENT_QUOTA_QUERIES),
         }
     }
 
-    // ---------- 浏览器登录 ----------
+    // ---------- 在 agy 里登录 ----------
 
+    /// 开始「添加账号」：先把 agy 现在登着的号收进来（用户接着在 agy 里 `/logout`，
+    /// 原来的登录就只剩 CC Switch 这份），再记下钥匙串现在的样子。终端由调用方打开。
     pub async fn start_login(&self) -> Result<LoginStart, AppError> {
         if !keychain::supported() {
             return Err(keychain::unsupported_error());
         }
-        let (listener, port) = oauth::bind_callback()
-            .await
-            .map_err(|error| AppError::Message(error.to_string()))?;
-        let pkce = oauth::PkcePair::generate();
-        let redirect_uri = oauth::redirect_uri(port);
-        let auth_url = oauth::authorization_url(&redirect_uri, &pkce);
-        let flow_id = pkce.state.clone();
-
-        let (sender, receiver) = oneshot::channel();
-        let task = tokio::spawn(async move {
-            let outcome = match tokio::time::timeout(
-                LOGIN_TIMEOUT,
-                oauth::wait_for_code(listener, &pkce.state),
-            )
-            .await
-            {
-                Ok(Ok(code)) => oauth::exchange_code(&code, &redirect_uri, &pkce.verifier).await,
-                Ok(Err(error)) => Err(error),
-                Err(_) => Err(AgyOAuthError::Denied("timeout".into())),
-            };
-            let _ = sender.send(outcome);
-        });
-
+        let baseline = {
+            let mut store = self.store.lock().await;
+            let live = self.read_live(&store, true).await?;
+            let baseline = live.fingerprint();
+            if let LiveLogin::Unrecognized(raw) = &live {
+                self.stash_unrecognized(raw)?;
+            }
+            let (current, changed) = absorb(&mut store, live, false);
+            if changed {
+                self.persist(&store)?;
+            }
+            remember(&store, Some(current));
+            baseline
+        };
+        let flow_id = uuid::Uuid::new_v4().to_string();
         let mut pending = self.pending.lock().await;
         // 同时只留一个进行中的登录：再点一次「添加账号」就丢掉上一个
-        for (_, old) in pending.drain() {
-            old.task.abort();
-        }
+        pending.clear();
         pending.insert(
             flow_id.clone(),
             PendingLogin {
-                result: receiver,
-                task: task.abort_handle(),
+                baseline,
+                deadline: Instant::now() + LOGIN_TIMEOUT,
             },
         );
         Ok(LoginStart {
             flow_id,
-            auth_url,
             expires_in: LOGIN_TIMEOUT.as_secs(),
         })
     }
 
-    /// 还没回来时返回 `Ok(None)`；成功时收录账号并返回它。
+    /// 钥匙串里还是开始时那份（或没登录）时返回 `Ok(None)`；换成认得出的登录就收录并返回它。
     pub async fn poll_login(&self, flow_id: &str) -> Result<Option<AgyAccount>, AppError> {
-        let outcome = {
+        let baseline = {
             let mut pending = self.pending.lock().await;
-            let Some(entry) = pending.get_mut(flow_id) else {
-                return Err(AppError::localized(
-                    "agy.account.login_expired",
-                    "这次登录已结束，请重新添加账号",
-                    "This sign-in has ended. Add the account again.",
-                ));
+            let Some(entry) = pending.get(flow_id) else {
+                return Err(login_ended());
             };
-            match entry.result.try_recv() {
-                Err(oneshot::error::TryRecvError::Empty) => return Ok(None),
-                Err(oneshot::error::TryRecvError::Closed) => {
-                    pending.remove(flow_id);
-                    return Err(AppError::Message("登录被中断".into()));
-                }
-                Ok(outcome) => {
-                    pending.remove(flow_id);
-                    outcome
-                }
+            if Instant::now() >= entry.deadline {
+                pending.remove(flow_id);
+                return Err(login_ended());
             }
+            entry.baseline.clone()
         };
-        let tokens = outcome.map_err(|error| AppError::Message(error.to_string()))?;
-        let credential = oauth::new_credential(&tokens).ok_or_else(|| {
-            AppError::localized(
-                "agy.account.missing_refresh_token",
-                "Google 没有返回长期登录凭据，请重新添加并在授权页同意全部权限",
-                "Google did not return a long-lived credential. Add the account again and accept all permissions.",
-            )
-        })?;
-        let claims = credential["id_token"]
-            .as_str()
-            .and_then(oauth::identity)
-            .ok_or_else(|| AppError::Message("Google 返回的身份信息不完整".into()))?;
-        let mut store = self.store.lock().await;
-        let account = upsert(&mut store, credential, &claims);
-        self.persist(&store)?;
-        Ok(Some(account))
+        let account = {
+            let mut store = self.store.lock().await;
+            let live = match self.read_live(&store, false).await {
+                Ok(live) => live,
+                Err(error) => {
+                    log::debug!("[AgyAccount] 等待登录时读取钥匙串失败: {error}");
+                    return Ok(None);
+                }
+            };
+            if !matches!(live, LiveLogin::Known { .. }) || live.fingerprint() == baseline {
+                return Ok(None);
+            }
+            let (id, changed) = absorb(&mut store, live, true);
+            let Some(id) = id else {
+                return Ok(None);
+            };
+            if changed {
+                self.persist(&store)?;
+            }
+            remember(&store, Some(Some(id.clone())));
+            store.accounts.get(&id).map(AgyAccount::from)
+        };
+        self.pending.lock().await.remove(flow_id);
+        Ok(account)
     }
 
     pub async fn cancel_login(&self, flow_id: &str) -> bool {
-        match self.pending.lock().await.remove(flow_id) {
-            Some(entry) => {
-                entry.task.abort();
-                true
-            }
-            None => false,
-        }
+        self.pending.lock().await.remove(flow_id).is_some()
     }
 
     // ---------- 状态与切换 ----------
@@ -421,52 +405,9 @@ impl AgyAccountManager {
 
     // ---------- 额度 ----------
 
-    /// 用这个账号自己的令牌查剩余额度（不用先切号）。令牌被拒时强制续期再试一次。
-    pub async fn quota(&self, account_id: &str) -> Result<quota::AccountQuota, AccountQuotaError> {
-        self.quota_with(
-            account_id,
-            |token| async move { quota::fetch(&token).await },
-        )
-        .await
-    }
-
-    async fn quota_with<F, Fut>(
-        &self,
-        account_id: &str,
-        mut fetch: F,
-    ) -> Result<quota::AccountQuota, AccountQuotaError>
-    where
-        F: FnMut(String) -> Fut,
-        Fut: std::future::Future<Output = Result<quota::AccountQuota, quota::QuotaError>>,
-    {
-        let _permit = self
-            .quota_permits
-            .acquire()
-            .await
-            .map_err(|_| AccountQuotaError::Failed("quota semaphore closed".into()))?;
-        let token = self.access_token(account_id).await?;
-        match fetch(token).await {
-            Ok(result) => Ok(result),
-            Err(quota::QuotaError::Unauthorized) => {
-                let token = self.refresh_account(account_id).await?;
-                fetch(token)
-                    .await
-                    .map_err(|error| AccountQuotaError::Failed(error.to_string()))
-            }
-            Err(error) => Err(AccountQuotaError::Failed(error.to_string())),
-        }
-    }
-
-    /// agy 现在登着的号的额度（跟随 agy 登录的卡片用）。钥匙串里没有认得出的已收录账号时
-    /// 返回 `None`（没登录、读不到、格式不认识、或用户在 CC Switch 里删过这个号），由调用方
-    /// 改问 agy 自己。
-    pub async fn live_quota(&self) -> Option<Result<quota::AccountQuota, AccountQuotaError>> {
-        let account_id = self.live_account_id().await?;
-        Some(self.quota(&account_id).await)
-    }
-
-    /// 把钥匙串里的登录收进账号表，返回它对应的已收录账号。
-    async fn live_account_id(&self) -> Option<String> {
+    /// agy 现在登着哪个已收录的号（顺手把钥匙串里的登录收进账号表）。没登录、读不到、
+    /// 格式不认识、或用户在 CC Switch 里删过这个号时为 `None`。
+    pub async fn current_account_id(&self) -> Option<String> {
         if !keychain::supported() {
             return None;
         }
@@ -488,87 +429,32 @@ impl AgyAccountManager {
         id
     }
 
-    /// 这个账号还能用的 access token。副本里的令牌还有效且未失效时直接用；需要续期或账号已标为
-    /// 失效时再去读钥匙串，把 agy 续过的令牌或重新登录的结果收回来。
-    async fn access_token(&self, account_id: &str) -> Result<String, AccountQuotaError> {
-        {
-            let mut store = self.store.lock().await;
-            if let Some(account) = store.accounts.get(account_id) {
-                if !account.requires_reauth {
-                    if let Some(token) =
-                        oauth::usable_access_token(&account.credential, TOKEN_MARGIN)
-                    {
-                        return Ok(token.to_string());
-                    }
-                }
-            }
-            if keychain::supported() {
-                if let Ok(live) = self.read_live(&store, false).await {
-                    if absorb(&mut store, live, false).1 {
-                        if let Err(error) = self.persist(&store) {
-                            log::warn!("[AgyAccount] 保存账号文件失败: {error}");
-                        }
-                    }
-                }
-            }
-            let account = store
-                .accounts
-                .get(account_id)
-                .ok_or(AccountQuotaError::NotFound)?;
-            if account.requires_reauth {
-                return Err(AccountQuotaError::NeedsReauth);
-            }
-            if let Some(token) = oauth::usable_access_token(&account.credential, TOKEN_MARGIN) {
-                return Ok(token.to_string());
-            }
-        }
-        self.refresh_account(account_id).await
-    }
-
-    /// 续期并存回 CC Switch 的副本（不写钥匙串）。续期时不持锁，存回前确认副本没被换掉。
-    async fn refresh_account(&self, account_id: &str) -> Result<String, AccountQuotaError> {
-        let refresh_token = {
-            let store = self.store.lock().await;
-            let account = store
-                .accounts
-                .get(account_id)
-                .ok_or(AccountQuotaError::NotFound)?;
-            refresh_token_of(&account.credential)
-                .ok_or(AccountQuotaError::NeedsReauth)?
-                .to_string()
-        };
-        let outcome = oauth::refresh(&refresh_token).await;
+    /// 记下 agy 登着这个号时查到的额度。
+    pub async fn record_quota(&self, account_id: &str, quota: &SubscriptionQuota) {
         let mut store = self.store.lock().await;
-        let account = store.accounts.get_mut(account_id).filter(|account| {
-            refresh_token_of(&account.credential) == Some(refresh_token.as_str())
-        });
-        let result = match outcome {
-            Ok(tokens) => {
-                if let Some(account) = account {
-                    oauth::apply_refresh(&mut account.credential, &tokens);
-                }
-                Ok(tokens.access_token)
-            }
-            Err(AgyOAuthError::InvalidGrant) => {
-                if let Some(account) = account {
-                    account.requires_reauth = true;
-                }
-                Err(AccountQuotaError::NeedsReauth)
-            }
-            Err(error) => return Err(AccountQuotaError::Failed(error.to_string())),
+        let Some(account) = store.accounts.get_mut(account_id) else {
+            return;
         };
+        account.last_quota = Some(quota.clone());
         if let Err(error) = self.persist(&store) {
             log::warn!("[AgyAccount] 保存账号文件失败: {error}");
         }
-        result
+    }
+
+    /// 这个号最后一次查到的额度（可能是很久以前的，看 `queried_at`）。
+    pub async fn last_quota(&self, account_id: &str) -> Option<SubscriptionQuota> {
+        self.store
+            .lock()
+            .await
+            .accounts
+            .get(account_id)?
+            .last_quota
+            .clone()
     }
 
     // ---------- 内部 ----------
 
-    /// 读钥匙串里 agy 当前的登录并认出是谁。`store` 用来认 agy 1.5 起的新格式：那份 JSON 不再带
-    /// id_token，只有 `id_token_email`（可能带 `writer_id`），先按 refresh token、再按邮箱对已收录的号；
-    /// 都对不上（agy 里新登录的号）时用 access token 问 Google（若 access token 已过期则先拿
-    /// refresh token 续期）。
+    /// 读钥匙串里 agy 当前的登录并认出是谁（只看本地数据，见 [`identify`]）。
     async fn read_live(
         &self,
         store: &StoreFile,
@@ -586,43 +472,16 @@ impl AgyAccountManager {
         let Some(raw) = raw else {
             return Ok(LiveLogin::None);
         };
-        let Some(mut credential) = keychain::decode(&raw)
+        let Some(credential) = keychain::decode(&raw)
             .ok()
             .filter(|credential| refresh_token_of(credential).is_some())
         else {
             return Ok(LiveLogin::Unrecognized(raw));
         };
-        if let Some(claims) = credential["id_token"].as_str().and_then(oauth::identity) {
-            return Ok(LiveLogin::Known { credential, claims });
-        }
-        if let Some(claims) = match_stored(store, &credential) {
-            return Ok(LiveLogin::Known { credential, claims });
-        }
-        let token = oauth::usable_access_token(&credential, Duration::ZERO).map(str::to_string);
-        if let Some(token) = token {
-            if let Some(mut claims) = oauth::fetch_identity(&token).await {
-                if claims.email.is_none() {
-                    claims.email = live_email(&credential);
-                }
-                return Ok(LiveLogin::Known { credential, claims });
-            }
-        }
-        if let Some(refresh_token) = refresh_token_of(&credential).map(str::to_string) {
-            if let Ok(tokens) = oauth::refresh(&refresh_token).await {
-                oauth::apply_refresh(&mut credential, &tokens);
-                let claims = match credential["id_token"].as_str().and_then(oauth::identity) {
-                    Some(claims) => Some(claims),
-                    None => oauth::fetch_identity(&tokens.access_token).await,
-                };
-                if let Some(mut claims) = claims {
-                    if claims.email.is_none() {
-                        claims.email = live_email(&credential);
-                    }
-                    return Ok(LiveLogin::Known { credential, claims });
-                }
-            }
-        }
-        Ok(LiveLogin::Unrecognized(raw))
+        Ok(match identify(store, &credential) {
+            Some(claims) => LiveLogin::Known { credential, claims },
+            None => LiveLogin::Unrecognized(raw),
+        })
     }
 
     fn stash_unrecognized(&self, raw: &str) -> Result<(), AppError> {
@@ -662,15 +521,7 @@ fn absorb(
     let sub = claims.sub.clone().unwrap_or_default();
     if let Some(existing) = store.accounts.get_mut(&sub) {
         let mut changed = false;
-        // CC Switch 查额度续期只存自己的副本、不写钥匙串：同一条 refresh token 下若副本里的
-        // 过期时间比钥匙串那份还新，保留副本，别被钥匙串里的旧令牌冲掉。
-        let stored_is_newer = refresh_token_of(&existing.credential)
-            == refresh_token_of(&credential)
-            && matches!(
-                (token_expiry(&existing.credential), token_expiry(&credential)),
-                (Some(stored), Some(live_exp)) if stored > live_exp
-            );
-        if !stored_is_newer && existing.credential != credential {
+        if existing.credential != credential {
             existing.credential = credential;
             existing.requires_reauth = false;
             changed = true;
@@ -683,8 +534,8 @@ fn absorb(
     }
     let dismissed = store.dismissed.contains(&sub);
     if dismissed && !import_dismissed {
-        // 旧版删过的号只有 `dismissed` 里的 sub、没有邮箱：第一次经 userinfo 认出后顺手把邮箱
-        // 补进 `dismissed_emails`，往后查看状态就能直接走本地 `match_stored`，不再每次持锁发请求。
+        // 旧版删过的号只有 `dismissed` 里的 sub、没有邮箱：经 id_token 认出后顺手把邮箱
+        // 补进 `dismissed_emails`，agy 换成只存邮箱的格式后也能靠 `match_stored` 认出来。
         let changed = claims
             .email
             .or_else(|| live_email(&credential))
@@ -715,7 +566,11 @@ fn fill(slot: &mut Option<String>, value: Option<String>) -> bool {
     }
 }
 
-fn upsert(store: &mut StoreFile, credential: Value, claims: &oauth::IdentityClaims) -> AgyAccount {
+fn upsert(
+    store: &mut StoreFile,
+    credential: Value,
+    claims: &identity::IdentityClaims,
+) -> AgyAccount {
     let sub = claims.sub.clone().unwrap_or_default();
     store.dismissed.retain(|id| *id != sub);
     store.dismissed_emails.remove(&sub);
@@ -731,6 +586,7 @@ fn upsert(store: &mut StoreFile, credential: Value, claims: &oauth::IdentityClai
             credential: Value::Null,
             authenticated_at: now,
             requires_reauth: false,
+            last_quota: None,
         });
     entry.credential = credential;
     entry.requires_reauth = false;
@@ -754,11 +610,6 @@ fn refresh_token_of(credential: &Value) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
-fn token_expiry(credential: &Value) -> Option<chrono::DateTime<chrono::FixedOffset>> {
-    let expiry = credential.pointer("/token/expiry")?.as_str()?;
-    chrono::DateTime::parse_from_rfc3339(expiry).ok()
-}
-
 /// agy 1.5 起写进钥匙串的邮箱（替代了 id_token）。
 fn live_email(credential: &Value) -> Option<String> {
     credential
@@ -769,9 +620,9 @@ fn live_email(credential: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 不带 id_token 的登录对应哪个已收录（或已删但仍在钥匙串里）的号：同一个 refresh token
-/// 优先，其次邮箱相同（在 agy 里重新登录过同一个号，或刚在 CC Switch 里删掉的号）。
-fn match_stored(store: &StoreFile, credential: &Value) -> Option<oauth::IdentityClaims> {
+/// 这份登录对应哪个已收录（或已删但仍在钥匙串里）的号：同一个 refresh token 优先，
+/// 其次邮箱相同（在 agy 里重新登录过同一个号，或刚在 CC Switch 里删掉的号）。
+fn match_stored(store: &StoreFile, credential: &Value) -> Option<identity::IdentityClaims> {
     let refresh_token = refresh_token_of(credential)?;
     let email = live_email(credential);
     if let Some(account) = store
@@ -788,7 +639,7 @@ fn match_stored(store: &StoreFile, credential: &Value) -> Option<oauth::Identity
             })
         })
     {
-        return Some(oauth::IdentityClaims {
+        return Some(identity::IdentityClaims {
             sub: Some(account.sub.clone()),
             email: email.or_else(|| account.email.clone()),
             name: None,
@@ -800,12 +651,42 @@ fn match_stored(store: &StoreFile, credential: &Value) -> Option<oauth::Identity
         .dismissed_emails
         .iter()
         .find(|(_, stored)| stored.eq_ignore_ascii_case(&email))?;
-    Some(oauth::IdentityClaims {
+    Some(identity::IdentityClaims {
         sub: Some(sub.clone()),
         email: Some(stored_email.clone()),
         name: None,
         picture: None,
     })
+}
+
+/// 钥匙串里这份登录是谁：先对已收录（或已删）的号——同一个 refresh token、再同一个邮箱，
+/// 账号 id 沿用已有的；对不上时看 id_token 的 `sub`（agy 1.5 以前）；再没有就用
+/// `id_token_email` 当 id（agy 1.5 起只存邮箱）。都没有的认不出。
+fn identify(store: &StoreFile, credential: &Value) -> Option<identity::IdentityClaims> {
+    let token_claims = credential["id_token"].as_str().and_then(identity::identity);
+    match (match_stored(store, credential), token_claims) {
+        (Some(stored), Some(mut claims)) => {
+            claims.sub = stored.sub;
+            claims.email = claims.email.or(stored.email);
+            Some(claims)
+        }
+        (Some(stored), None) => Some(stored),
+        (None, Some(claims)) => Some(claims),
+        (None, None) => live_email(credential).map(|email| identity::IdentityClaims {
+            sub: Some(identity::email_account_id(&email)),
+            email: Some(email),
+            name: None,
+            picture: None,
+        }),
+    }
+}
+
+fn login_ended() -> AppError {
+    AppError::localized(
+        "agy.account.login_expired",
+        "这次登录已结束，请重新添加账号",
+        "This sign-in has ended. Add the account again.",
+    )
 }
 
 async fn run_blocking<T: Send + 'static>(

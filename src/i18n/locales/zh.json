@@ -5221,7 +5221,7 @@
       "copilotHelp": "用于 Claude Code、Claude Desktop、Codex 的 GitHub Copilot 预设，以及 Copilot CLI 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "chatgptHelp": "用于 Claude Code、Claude Desktop 的 ChatGPT 预设，以及 Codex 官方登录绑定。没指定账号的供应商用「默认」账号。",
       "xaiHelp": "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设，以及 Grok Build 官方登录绑定。没指定账号的供应商用「默认」账号。",
-      "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。",
+      "agyHelp": "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。「添加账号」会打开终端运行 agy，在 agy 里登录后这里自动收录。额度用 agy 自己的 /usage 查，只查得到 agy 当前登着的号，其他号显示切走前最后一次查到的。",
       "codebuddyHelp": "CodeBuddy 的官方登录（国内版、国际版都在这里）。要切换账号，在账号的「…」里选「切换 CodeBuddy 到这个账号」，或在供应商列表里添加绑定了它的「CodeBuddy 官方登录」卡。「添加账号」会打开终端运行 codebuddy，登录后这里自动收录；已登录时会先让 CodeBuddy 暂时退出原来的登录，放弃可恢复。令牌由 CodeBuddy 自己续期。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登录。CC Switch 不能替 WorkBuddy 登录，只能收录它当前登着的账号（整组登录文件的快照）。要切换账号，在账号的「…」里选「切换 WorkBuddy 到这个账号」，或在供应商列表里添加绑定了它的「WorkBuddy 官方登录」卡（同一时间只有一张在「已添加」）。快照只在这台电脑上有效，不会随云同步。",
       "claudeHelpTerminal": "Claude Code 的官方订阅账号（Pro / Max / Team）。设置里覆盖了 Claude 配置目录，切卡不会切换 Claude Code 的登录；在官方卡上选一个账号，再从卡片「打开终端」使用。",
@@ -5278,10 +5278,13 @@
       "reauthNote": "登录凭据已失效，切不过去",
       "addedOn": "{{date}}添加",
       "statusLoadFailed": "无法读取 Antigravity 账号，请重试。",
-      "empty": "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里。",
+      "empty": "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里，也可以点「添加账号」在 agy 里登录。",
       "removeNote": "不会让 agy 退出登录：agy 现在登着的号删掉后仍然可用。",
       "switched": "已切换，新开的 agy 会使用这个账号。",
-      "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。"
+      "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。",
+      "pendingNote": "已在终端打开 agy。没登录时按提示登录；已登录时先输入 /logout，再输入 /login 登录要添加的号。完成后这里会自动收录。",
+      "reopenTerminal": "重新打开终端",
+      "quotaNotCurrent": "切到这个号后才能查额度"
     },
     "codebuddy": {
       "mainland": "国内版",

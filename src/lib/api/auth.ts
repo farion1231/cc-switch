@@ -142,6 +142,11 @@ export async function agyAccountIsRunning(): Promise<boolean> {
   return invoke<boolean>("agy_account_is_running");
 }
 
+/** 「添加账号」等待中再开一个跑 `agy` 的终端（不重置这次登录）。 */
+export async function agyAccountOpenLoginTerminal(): Promise<void> {
+  return invoke("agy_account_open_login_terminal");
+}
+
 /** WorkBuddy 桌面端这边的登录情况：在不在运行、有没有登录、认不认得出、收录过没有。 */
 export interface WorkBuddyLiveState {
   running: boolean;

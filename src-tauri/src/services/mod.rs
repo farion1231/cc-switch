@@ -3,6 +3,7 @@ pub mod auto_sync;
 pub mod backup_storage;
 pub mod balance;
 pub mod claude_account;
+pub(crate) mod code_assist_plan;
 pub mod codebuddy_account;
 pub mod codex_oauth_models;
 pub mod codex_session_compression;
