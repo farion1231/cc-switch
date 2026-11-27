@@ -183,7 +183,7 @@ export const XaiOAuthSection: React.FC<XaiOAuthSectionProps> = ({
         iconName="xai"
         help={t("authCenter.group.xaiHelp", {
           defaultValue:
-            "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设。没指定账号的供应商用「默认」账号。",
+            "用于 Claude Code、Claude Desktop、Codex 的 xAI 预设，以及 Grok Build 官方登录绑定。没指定账号的供应商用「默认」账号。",
         })}
         helpSide={helpSide}
         accounts={rows}

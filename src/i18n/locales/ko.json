@@ -5218,9 +5218,9 @@
     "helpTitle": "인증 센터란?",
     "group": {
       "helpTitle": "{{service}} 계정의 사용 방식",
-      "copilotHelp": "Claude Code와 Claude Desktop의 GitHub Copilot 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
+      "copilotHelp": "Claude Code, Claude Desktop 및 Codex의 GitHub Copilot 프리셋과 Copilot CLI의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "chatgptHelp": "Claude Code와 Claude Desktop의 ChatGPT 프리셋 및 Codex의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
-      "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋에서 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
+      "xaiHelp": "Claude Code, Claude Desktop 및 Codex의 xAI 프리셋과 Grok Build의 공식 로그인 연결에 사용합니다. 계정을 선택하지 않은 공급자는 기본 계정을 사용합니다.",
       "agyHelp": "Antigravity CLI(agy)의 공식 로그인입니다. agy는 한 번에 하나의 계정에만 로그인할 수 있습니다. 전환하면 agy의 로그인이 선택한 계정으로 교체되며 이후 시작한 agy 세션에서 사용됩니다. 기존에 agy에 로그인된 계정은 자동으로 여기에 추가되므로 다른 계정으로 전환해도 사라지지 않습니다.",
       "codebuddyHelp": "CodeBuddy의 공식 로그인입니다(중국 사이트와 국제 사이트 모두). 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘CodeBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 \"CodeBuddy 공식 로그인\" 카드의 추가를 클릭하세요. \"계정 추가\"는 터미널에서 codebuddy를 열고, 로그인을 마치면 계정을 여기에 추가합니다. CodeBuddy가 이미 로그인되어 있으면 잠시 로그아웃되며, 중단하면 원래 로그인을 복원할 수 있습니다. 토큰은 CodeBuddy가 직접 갱신합니다.",
       "workbuddyHelp": "WorkBuddy 데스크톱 앱의 공식 로그인입니다. CC Switch는 사용자를 대신해 WorkBuddy에 로그인할 수 없으며, 현재 로그인된 계정의 로그인 파일 전체를 스냅샷으로 저장합니다. 계정을 전환하려면 계정의 ‘…’ 메뉴에서 ‘WorkBuddy에서 이 계정 사용’을 선택하거나, 공급자 목록에서 해당 계정에 연결된 ‘WorkBuddy 공식 로그인’ 카드의 ‘추가’를 클릭하세요. ‘추가됨’ 상태인 공식 카드는 동시에 하나만 유지됩니다. 스냅샷은 이 컴퓨터에서만 사용할 수 있으며 클라우드로 동기화되지 않습니다.",

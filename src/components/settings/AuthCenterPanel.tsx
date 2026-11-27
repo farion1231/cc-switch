@@ -65,6 +65,8 @@ function findScrollContainer(element: HTMLElement): HTMLElement | null {
   return null;
 }
 
+type HelpSide = "top" | "bottom";
+
 interface AuthCard {
   target: AuthCenterTarget;
   /**
@@ -72,7 +74,7 @@ interface AuthCard {
    * （Copilot、ChatGPT、xAI 也能在 Claude Code 等应用里当供应商用，只看一个应用会把还在用的卡藏掉）。
    */
   apps: readonly AppId[];
-  render: () => ReactNode;
+  render: (helpSide: HelpSide) => ReactNode;
   available?: () => boolean;
 }
 
@@ -81,48 +83,50 @@ const AUTH_CARDS: readonly AuthCard[] = [
   {
     target: "claude_official",
     apps: ["claude"],
-    render: () => <ClaudeOfficialSection helpSide="bottom" />,
+    render: (helpSide) => <ClaudeOfficialSection helpSide={helpSide} />,
   },
   {
     target: "github_copilot",
     apps: ["copilot", "claude", "claude-desktop", "codex"],
-    render: () => <CopilotAuthSection />,
+    render: (helpSide) => <CopilotAuthSection helpSide={helpSide} />,
   },
   {
     target: "codex_oauth",
     apps: ["codex", "claude", "claude-desktop"],
-    render: () => <CodexOAuthSection showAccountQuota />,
+    render: (helpSide) => (
+      <CodexOAuthSection showAccountQuota helpSide={helpSide} />
+    ),
   },
   {
     target: "xai_oauth",
-    apps: ["claude", "claude-desktop", "codex"],
-    render: () => <XaiOAuthSection mode="manage" helpSide="bottom" />,
+    apps: ["grokbuild", "claude", "claude-desktop", "codex"],
+    render: (helpSide) => <XaiOAuthSection mode="manage" helpSide={helpSide} />,
   },
   {
     target: "kimi_oauth",
     apps: ["kimi"],
-    render: () => <KimiAccountLogin helpSide="bottom" />,
+    render: (helpSide) => <KimiAccountLogin helpSide={helpSide} />,
   },
   {
     target: "dsh_account",
     apps: ["dsh"],
-    render: () => <DshAccountLogin helpSide="bottom" />,
-  },
-  {
-    target: "codebuddy_oauth",
-    apps: ["codebuddy"],
-    render: () => <CodebuddyAccountSection helpSide="bottom" />,
+    render: (helpSide) => <DshAccountLogin helpSide={helpSide} />,
   },
   {
     target: "agy_oauth",
     apps: ["agy"],
-    render: () => <AgyOAuthSection helpSide="bottom" />,
+    render: (helpSide) => <AgyOAuthSection helpSide={helpSide} />,
     available: canSwitchAgyAccount,
   },
   {
     target: "workbuddy_account",
     apps: ["workbuddy"],
-    render: () => <WorkBuddyAccountSection helpSide="top" />,
+    render: (helpSide) => <WorkBuddyAccountSection helpSide={helpSide} />,
+  },
+  {
+    target: "codebuddy_oauth",
+    apps: ["codebuddy"],
+    render: (helpSide) => <CodebuddyAccountSection helpSide={helpSide} />,
   },
 ];
 
@@ -158,7 +162,7 @@ function useOrderedAuthCards(
 }
 
 /**
- * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、CodeBuddy、WorkBuddy，一组一张卡片；
+ * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、WorkBuddy、CodeBuddy，一组一张卡片；
  * macOS、Windows 上另有 Antigravity 一组（切 agy 的官方登录：macOS 钥匙串、Windows 凭据管理器）。
  * WorkBuddy 收录桌面端登录的快照再切换（macOS 已确认路径，Windows / Linux 按推断路径）。
  * 卡片的顺序和显示跟侧栏的应用设置走（见 `useOrderedAuthCards`）。
@@ -258,17 +262,22 @@ export function AuthCenterPanel({
       )}
       <OpenBrowserToggle />
       <AutoQuotaToggle />
-      {cards.map((card) => (
-        <div
-          key={card.target}
-          ref={(element) => {
-            if (element) sectionRefs.current.set(card.target, element);
-            else sectionRefs.current.delete(card.target);
-          }}
-        >
-          {card.render()}
-        </div>
-      ))}
+      {cards.map((card, index) => {
+        // 多张卡片时，最后一张贴近底部，说明卡向上弹；只有一张时贴近顶部，照常向下弹
+        const helpSide: HelpSide =
+          cards.length > 1 && index === cards.length - 1 ? "top" : "bottom";
+        return (
+          <div
+            key={card.target}
+            ref={(element) => {
+              if (element) sectionRefs.current.set(card.target, element);
+              else sectionRefs.current.delete(card.target);
+            }}
+          >
+            {card.render(helpSide)}
+          </div>
+        );
+      })}
     </div>
   );
 }

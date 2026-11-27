@@ -5147,9 +5147,9 @@
     "helpTitle": "Hesaplar Nedir?",
     "group": {
       "helpTitle": "{{service}} hesapları nasıl kullanılır?",
-      "copilotHelp": "Claude Code ve Claude Desktop'deki GitHub Copilot ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
+      "copilotHelp": "Claude Code, Claude Desktop ve Codex'deki GitHub Copilot ön ayarları ve Copilot CLI'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
+      "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları ve Grok Build'in resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
       "codebuddyHelp": "CodeBuddy'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için hesabın … menüsünden \"CodeBuddy için bu hesaba geç\" seçeneğini kullanın ya da sağlayıcı listesinde bu hesaba bağlı \"CodeBuddy Resmi Oturum\" kartını ekleyin. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",

@@ -237,6 +237,34 @@ describe("Auth Center account groups", () => {
     expect(screen.getByRole("combobox")).toBeInTheDocument();
     expect(screen.queryByTestId("xai-quota")).not.toBeInTheDocument();
   });
+
+  it("forwards helpSide and updated help copy to HelpTip", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CopilotAuthSection helpSide="top" />);
+
+    await user.click(
+      screen.getByRole("button", { name: "GitHub Copilot 账号怎么用" }),
+    );
+    const copilotTip = await screen.findByRole("tooltip");
+    expect(copilotTip).toHaveAttribute("data-side", "top");
+    expect(copilotTip).toHaveTextContent(/Codex/);
+    expect(copilotTip).toHaveTextContent(/Copilot CLI/);
+
+    rerender(<CodexOAuthSection showAccountQuota helpSide="top" />);
+    await user.click(
+      screen.getByRole("button", { name: "ChatGPT 账号怎么用" }),
+    );
+    expect(await screen.findByRole("tooltip")).toHaveAttribute(
+      "data-side",
+      "top",
+    );
+
+    rerender(<XaiOAuthSection mode="manage" helpSide="bottom" />);
+    await user.click(screen.getByRole("button", { name: "xAI 账号怎么用" }));
+    const xaiTip = await screen.findByRole("tooltip");
+    expect(xaiTip).toHaveAttribute("data-side", "bottom");
+    expect(xaiTip).toHaveTextContent(/Grok Build/);
+  });
 });
 
 describe("subscriptionQuotaState", () => {
