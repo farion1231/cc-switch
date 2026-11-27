@@ -12,9 +12,12 @@ import { createInstance } from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  invalidateManagedAuthQuotaCaches,
   useClaudeAccountQuota,
   useCodebuddyAccountQuota,
+  useCodexOauthQuota,
 } from "@/lib/query/subscription";
+import { useQuotaPlan } from "@/lib/query/accountPlans";
 import { useWorkBuddyAccountQuota } from "@/components/providers/workbuddyQuota";
 import { SubscriptionQuotaView } from "@/components/SubscriptionQuotaFooter";
 import { AutoQuotaToggle } from "@/components/settings/auth/AutoQuotaToggle";
@@ -23,13 +26,17 @@ import zh from "@/i18n/locales/zh.json";
 
 const mocks = vi.hoisted(() => ({
   getClaudeAccountQuota: vi.fn(),
+  getCodexOauthQuota: vi.fn(),
   workbuddyAccountQuota: vi.fn(),
   codebuddyAccountQuota: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
 }));
 vi.mock("@/lib/api/subscription", () => ({
-  subscriptionApi: { getClaudeAccountQuota: mocks.getClaudeAccountQuota },
+  subscriptionApi: {
+    getClaudeAccountQuota: mocks.getClaudeAccountQuota,
+    getCodexOauthQuota: mocks.getCodexOauthQuota,
+  },
 }));
 vi.mock("@/lib/api/settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/settings")>()),
@@ -78,6 +85,7 @@ const newClient = () =>
 describe("manual-only official quota (#8990)", () => {
   beforeEach(() => {
     mocks.getClaudeAccountQuota.mockReset().mockResolvedValue(quota);
+    mocks.getCodexOauthQuota.mockReset().mockResolvedValue(quota);
     mocks.workbuddyAccountQuota.mockReset().mockResolvedValue({
       snapshot: null,
       current: false,
@@ -297,5 +305,57 @@ describe("manual-only official quota (#8990)", () => {
         officialQuotaManualOnly: true,
       }),
     );
+  });
+
+  it("clears the default Codex quota snapshot on account switch without auto-refetching in manual-only mode", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    mocks.getCodexOauthQuota
+      .mockResolvedValueOnce({
+        ...quota,
+        tool: "codex",
+        planName: "Plus",
+      })
+      .mockResolvedValueOnce({
+        ...quota,
+        tool: "codex",
+        success: false,
+        error: "API error (HTTP 500)",
+        planName: null,
+      });
+
+    const client = newClient();
+    const { result } = renderHook(
+      () => ({
+        quota: useCodexOauthQuota(undefined),
+        plan: useQuotaPlan(["codex_oauth", "quota", "default"]),
+      }),
+      { wrapper: wrapperFor(client) },
+    );
+
+    await waitFor(() => expect(result.current.quota.manualIdle).toBe(true));
+    expect(mocks.getCodexOauthQuota).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await result.current.quota.refetch();
+    });
+    await waitFor(() => expect(result.current.quota.data?.success).toBe(true));
+    expect(result.current.plan).toBe("Plus");
+    expect(result.current.quota.manualIdle).toBe(false);
+
+    await act(async () => {
+      await invalidateManagedAuthQuotaCaches(client, "codex_oauth");
+    });
+
+    expect(result.current.quota.data).toBeUndefined();
+    expect(result.current.quota.manualIdle).toBe(true);
+    expect(result.current.plan).toBeNull();
+    expect(mocks.getCodexOauthQuota).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await result.current.quota.refetch();
+    });
+    await waitFor(() => expect(result.current.quota.data?.success).toBe(false));
+    expect(result.current.quota.data?.error).toBe("API error (HTTP 500)");
+    expect(result.current.plan).toBeNull();
   });
 });

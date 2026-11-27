@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 import { useSwitchProviderMutation } from "@/lib/query/mutations";
+import { useSubscriptionQuota } from "@/lib/query/subscription";
 import { server } from "../msw/server";
 import { createTestQueryClient } from "../utils/testQueryClient";
 
@@ -101,4 +102,68 @@ describe("provider switch result transport", () => {
       client.clear();
     },
   );
+
+  it("does not block Claude provider switch while an active quota query is hanging", async () => {
+    let quotaCalls = 0;
+    let trayCalls = 0;
+    server.use(
+      http.post("http://tauri.local/get_settings", () =>
+        HttpResponse.json({ officialQuotaManualOnly: false }),
+      ),
+      http.post("http://tauri.local/get_subscription_quota", () => {
+        quotaCalls += 1;
+        if (quotaCalls === 1) {
+          return HttpResponse.json({
+            tool: "claude",
+            credentialStatus: "valid",
+            credentialMessage: null,
+            success: true,
+            tiers: [],
+            extraUsage: null,
+            error: null,
+            queriedAt: 1,
+          });
+        }
+        return new Promise(() => {});
+      }),
+      http.post("http://tauri.local/switch_provider", () =>
+        HttpResponse.json({ warnings: [] }),
+      ),
+      http.post("http://tauri.local/update_tray_menu", () => {
+        trayCalls += 1;
+        return HttpResponse.json(true);
+      }),
+    );
+
+    const client = createTestQueryClient();
+    const statusKey = ["managed-auth-status", "claude_official"];
+    const defaultPlanKey = ["claude_official", "default_plan"];
+    const quotaKey = ["subscription", "quota", "claude"];
+    client.setQueryData(statusKey, { accounts: [] });
+    client.setQueryData(defaultPlanKey, { subscriptionType: "pro" });
+
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => ({
+        quota: useSubscriptionQuota("claude", true),
+        switchMutation: useSwitchProviderMutation("claude"),
+      }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.quota.isSuccess).toBe(true));
+
+    await act(async () => {
+      await result.current.switchMutation.mutateAsync("provider-b");
+    });
+
+    expect(trayCalls).toBe(1);
+    expect(quotaCalls).toBe(2);
+    expect(client.getQueryState(statusKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(defaultPlanKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(quotaKey)?.isInvalidated).toBe(true);
+    client.clear();
+  });
 });

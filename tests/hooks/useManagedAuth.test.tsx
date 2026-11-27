@@ -12,9 +12,13 @@ const apiMocks = vi.hoisted(() => ({
   authCancelLogin: vi.fn(),
   authRemoveAccount: vi.fn(),
   authLogout: vi.fn(),
+  authSetDefaultAccount: vi.fn(),
+  agyAccountIsRunning: vi.fn(),
 }));
 const toastMocks = vi.hoisted(() => ({
   success: vi.fn(),
+  warning: vi.fn(),
+  error: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -27,6 +31,10 @@ vi.mock("@/lib/api", () => ({
     authLogout: (...args: unknown[]) => apiMocks.authLogout(...args),
     authRemoveAccount: (...args: unknown[]) =>
       apiMocks.authRemoveAccount(...args),
+    authSetDefaultAccount: (...args: unknown[]) =>
+      apiMocks.authSetDefaultAccount(...args),
+    agyAccountIsRunning: (...args: unknown[]) =>
+      apiMocks.agyAccountIsRunning(...args),
   },
   settingsApi: {
     openExternal: vi.fn().mockResolvedValue(undefined),
@@ -40,6 +48,8 @@ vi.mock("@/lib/clipboard", () => ({
 vi.mock("sonner", () => ({
   toast: {
     success: toastMocks.success,
+    warning: toastMocks.warning,
+    error: toastMocks.error,
   },
 }));
 
@@ -207,6 +217,8 @@ describe("useManagedAuth", () => {
     apiMocks.authCancelLogin.mockReset().mockResolvedValue(true);
     apiMocks.authRemoveAccount.mockReset().mockResolvedValue(undefined);
     apiMocks.authLogout.mockReset().mockResolvedValue(undefined);
+    apiMocks.authSetDefaultAccount.mockReset().mockResolvedValue(undefined);
+    apiMocks.agyAccountIsRunning.mockReset().mockResolvedValue(false);
   });
 
   describe.each(["codex_oauth", "agy_oauth"] as const)(
@@ -686,5 +698,116 @@ describe("useManagedAuth", () => {
       ).toBe(true),
     );
     expect(queryClient.getQueryState(quotaKey)?.isInvalidated).toBe(false);
+  });
+
+  it("resets shared default and account quota caches on removeAccount and logout", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    apiMocks.authRemoveAccount.mockResolvedValue(undefined);
+    apiMocks.authLogout.mockResolvedValue(undefined);
+    queryClient.setQueryData(["codex_oauth", "quota", "default"], { ok: 1 });
+    queryClient.setQueryData(["codex_oauth", "quota", "acct-1"], { ok: 1 });
+    queryClient.setQueryData(["copilot", "quota", "default"], { ok: 1 });
+    queryClient.setQueryData(["copilot", "quota", "acct-gh"], { ok: 1 });
+
+    const codex = renderHook(() => useManagedAuth("codex_oauth"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() =>
+      expect(codex.result.current.isStatusSuccess).toBe(true),
+    );
+    act(() => codex.result.current.removeAccount("acct-1"));
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData(["codex_oauth", "quota", "acct-1"]),
+      ).toBeUndefined(),
+    );
+    expect(
+      queryClient.getQueryData(["codex_oauth", "quota", "default"]),
+    ).toBeUndefined();
+
+    const copilot = renderHook(() => useManagedAuth("github_copilot"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() =>
+      expect(copilot.result.current.isStatusSuccess).toBe(true),
+    );
+    act(() => copilot.result.current.logout());
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData(["copilot", "quota", "acct-gh"]),
+      ).toBeUndefined(),
+    );
+    expect(
+      queryClient.getQueryData(["copilot", "quota", "default"]),
+    ).toBeUndefined();
+  });
+
+  it("resets default quota and invalidates plan caches on setDefaultAccount across providers", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    apiMocks.authSetDefaultAccount.mockResolvedValue(undefined);
+    apiMocks.agyAccountIsRunning.mockResolvedValue(false);
+    queryClient.setQueryData(["claude_official", "default_plan"], {
+      plan: "max",
+    });
+    queryClient.setQueryData(["subscription", "quota", "claude"], { ok: 1 });
+    queryClient.setQueryData(["xai_oauth", "quota", "default"], { ok: 1 });
+    queryClient.setQueryData(["subscription", "quota", "agy"], { ok: 1 });
+
+    const claude = renderHook(() => useManagedAuth("claude_official"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() =>
+      expect(claude.result.current.isStatusSuccess).toBe(true),
+    );
+    act(() => claude.result.current.setDefaultAccount("acct-1"));
+    await waitFor(() => {
+      expect(
+        queryClient.getQueryState(["claude_official", "default_plan"])
+          ?.isInvalidated,
+      ).toBe(true);
+      expect(
+        queryClient.getQueryData(["subscription", "quota", "claude"]),
+      ).toBeUndefined();
+    });
+
+    const xai = renderHook(() => useManagedAuth("xai_oauth"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(xai.result.current.isStatusSuccess).toBe(true));
+    act(() => xai.result.current.setDefaultAccount("acct-1"));
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData(["xai_oauth", "quota", "default"]),
+      ).toBeUndefined(),
+    );
+
+    const agy = renderHook(() => useManagedAuth("agy_oauth"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(agy.result.current.isStatusSuccess).toBe(true));
+    const agyStatusCallsBefore = apiMocks.authGetStatus.mock.calls.filter(
+      ([provider]) => provider === "agy_oauth",
+    ).length;
+    act(() => agy.result.current.setDefaultAccount("acct-1"));
+    await waitFor(() => {
+      expect(
+        apiMocks.authGetStatus.mock.calls.filter(
+          ([provider]) => provider === "agy_oauth",
+        ).length,
+      ).toBeGreaterThan(agyStatusCallsBefore);
+      expect(
+        queryClient.getQueryData(["subscription", "quota", "agy"]),
+      ).toBeUndefined();
+    });
   });
 });

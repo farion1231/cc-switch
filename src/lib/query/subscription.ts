@@ -14,7 +14,7 @@ import type {
   ClaudeAccountPlan,
   SubscriptionQuota,
 } from "@/types/subscription";
-import type { ManagedAuthStatus } from "@/lib/api/auth";
+import type { ManagedAuthProvider, ManagedAuthStatus } from "@/lib/api/auth";
 import { resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { appHas } from "@/config/appSpecs";
@@ -41,6 +41,94 @@ export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
     queryClient.invalidateQueries({ queryKey: agyAuthStatusQuery.queryKey }),
     queryClient.invalidateQueries({ queryKey: subscriptionKeys.quota("agy") }),
   ]);
+}
+
+/** Refresh Claude official auth accounts, default plan, and Claude quota caches. */
+export async function invalidateClaudeOfficialLoginCaches(
+  queryClient: QueryClient,
+) {
+  void queryClient
+    .invalidateQueries({
+      queryKey: subscriptionKeys.quota("claude"),
+    })
+    .catch(() => undefined);
+  await Promise.all([
+    queryClient.invalidateQueries({
+      queryKey: managedAuthStatusQueryKey("claude_official"),
+    }),
+    queryClient.invalidateQueries({
+      queryKey: ["claude_official", "default_plan"],
+    }),
+  ]);
+}
+
+/**
+ * Refresh shared quota / default-plan caches when an Auth Center account is
+ * removed, logged out, or switched as default.
+ */
+export async function invalidateManagedAuthQuotaCaches(
+  queryClient: QueryClient,
+  authProvider: ManagedAuthProvider,
+  options?: { accountId?: string; allAccounts?: boolean },
+) {
+  const statusKeys: Array<readonly unknown[]> = [];
+  const quotaKeys: Array<readonly unknown[]> = [];
+  const accountId = options?.accountId?.trim();
+  const allAccounts = options?.allAccounts === true;
+
+  if (authProvider === "agy_oauth") {
+    statusKeys.push(agyAuthStatusQuery.queryKey);
+    quotaKeys.push(subscriptionKeys.quota("agy"));
+    if (allAccounts) {
+      quotaKeys.push(["agy_oauth", "quota"]);
+    } else if (accountId) {
+      quotaKeys.push(["agy_oauth", "quota", accountId]);
+    }
+  } else if (authProvider === "codex_oauth") {
+    quotaKeys.push(["codex_oauth", "quota", "default"]);
+    if (allAccounts) {
+      quotaKeys.push(["codex_oauth", "quota"]);
+    } else if (accountId) {
+      quotaKeys.push(["codex_oauth", "quota", accountId]);
+    }
+  } else if (authProvider === "github_copilot") {
+    quotaKeys.push(["copilot", "quota", "default"]);
+    if (allAccounts) {
+      quotaKeys.push(["copilot", "quota"]);
+    } else if (accountId) {
+      quotaKeys.push(["copilot", "quota", accountId]);
+    }
+  } else if (authProvider === "xai_oauth") {
+    quotaKeys.push(["xai_oauth", "quota", "default"]);
+    if (allAccounts) {
+      quotaKeys.push(["xai_oauth", "quota"]);
+    } else if (accountId) {
+      quotaKeys.push(["xai_oauth", "quota", accountId]);
+    }
+  } else if (authProvider === "claude_official") {
+    statusKeys.push(["claude_official", "default_plan"]);
+    quotaKeys.push(subscriptionKeys.quota("claude"));
+    if (allAccounts) {
+      quotaKeys.push(["claude_official", "quota"]);
+    } else if (accountId) {
+      quotaKeys.push(["claude_official", "quota", accountId]);
+    }
+  } else if (authProvider === "codebuddy_oauth") {
+    if (allAccounts) {
+      quotaKeys.push(["codebuddy_oauth", "quota"]);
+    } else if (accountId) {
+      quotaKeys.push(["codebuddy_oauth", "quota", accountId]);
+    }
+  }
+
+  void Promise.all(
+    quotaKeys.map((queryKey) =>
+      queryClient.resetQueries({ queryKey }).catch(() => undefined),
+    ),
+  );
+  await Promise.all(
+    statusKeys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+  );
 }
 
 /**
@@ -97,6 +185,9 @@ function useQuotaKeepLastGood(
   }>({ key: scopeKey, snap: null });
   if (lastGoodRef.current.key !== scopeKey) {
     lastGoodRef.current = { key: scopeKey, snap: null };
+  }
+  if (query.data === undefined && query.dataUpdatedAt === 0 && !query.isError) {
+    lastGoodRef.current.snap = null;
   }
   const { data, lastGood } = resolveDisplayUsage(
     query.data,

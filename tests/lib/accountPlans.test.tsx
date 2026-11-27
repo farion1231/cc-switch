@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
-import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
+import { useAccountQuotaPlans, useQuotaPlan } from "@/lib/query/accountPlans";
 
 function setup() {
   const client = new QueryClient();
@@ -71,5 +71,32 @@ describe("useAccountQuotaPlans", () => {
       { wrapper },
     );
     expect(result.current).toEqual({ a: "Max" });
+  });
+
+  it("clears the displayed plan when the quota query is reset while keeping last plan on failure", () => {
+    const { client, wrapper } = setup();
+    client.setQueryData(["codex_oauth", "quota", "default"], {
+      success: true,
+      planName: "Pro",
+    });
+    const { result } = renderHook(
+      () => useQuotaPlan(["codex_oauth", "quota", "default"]),
+      { wrapper },
+    );
+    expect(result.current).toBe("Pro");
+
+    act(() => {
+      client.setQueryData(["codex_oauth", "quota", "default"], {
+        success: false,
+      });
+    });
+    expect(result.current).toBe("Pro");
+
+    act(() => {
+      void client.resetQueries({
+        queryKey: ["codex_oauth", "quota", "default"],
+      });
+    });
+    expect(result.current).toBeNull();
   });
 });

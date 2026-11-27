@@ -24,7 +24,10 @@ import type { Provider, VisibleApps } from "@/types";
 import { KNOWN_APP_TYPES, type AppTypeFilter } from "@/types/usage";
 import type { EnvConflict } from "@/types/env";
 import type { SubscriptionQuota } from "@/types/subscription";
-import { invalidateGrokCliLoginCaches } from "@/lib/query/subscription";
+import {
+  invalidateClaudeOfficialLoginCaches,
+  invalidateGrokCliLoginCaches,
+} from "@/lib/query/subscription";
 import { providersQueryOptions, useProvidersQuery } from "@/lib/query/queries";
 import { useSettingsQuery } from "@/lib/query/settings";
 import { proxyKeys } from "@/lib/query/proxy";
@@ -357,6 +360,11 @@ function App() {
   // 新增页和编辑页共用的表单很大，启动后空闲时先拉好（编辑页在 EditProviderHost 里预取）
   useEffect(() => preloadOnIdle(loadAddProviderDialog), []);
   const [usageProvider, setUsageProvider] = useState<Provider | null>(null);
+  const [usageModalSession, setUsageModalSession] = useState(0);
+  const openUsageScriptModal = useCallback((provider: Provider) => {
+    setUsageModalSession((n) => n + 1);
+    setUsageProvider(provider);
+  }, []);
   const [confirmAction, setConfirmAction] = useState<{
     provider: Provider;
     action: "remove" | "delete";
@@ -532,9 +540,7 @@ function App() {
             }
             if (event.appType === "claude") {
               // 托盘切卡、应用项目同样可能把默认登录收成新账号
-              await queryClient.invalidateQueries({
-                queryKey: ["managed-auth-status", "claude_official"],
-              });
+              await invalidateClaudeOfficialLoginCaches(queryClient);
             }
             if (event.appType === "grokbuild") {
               // 托盘切卡同样可能把 Grok CLI 原登录收成新账号、换成绑定的号
@@ -1633,7 +1639,7 @@ function App() {
     onDelete: (provider: Provider) =>
       setConfirmAction({ provider, action: "delete" }),
     onDuplicate: handleDuplicateProvider,
-    onConfigureUsage: setUsageProvider,
+    onConfigureUsage: openUsageScriptModal,
     onOpenWebsite: handleOpenWebsite,
     onOpenTerminal:
       activeApp === "claude" ||
@@ -1990,7 +1996,7 @@ function App() {
 
         {effectiveUsageProvider && (
           <UsageScriptModal
-            key={effectiveUsageProvider.id}
+            key={`${activeApp}:${effectiveUsageProvider.id}:${usageModalSession}`}
             provider={effectiveUsageProvider}
             appId={activeApp}
             isOpen={Boolean(usageProvider)}

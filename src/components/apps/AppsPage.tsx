@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { settingsApi, type AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { CLAUDE_DESKTOP_STATUS_QUERY_KEY } from "@/lib/query/queries";
 import type { ToolInstallationOverview } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
@@ -196,7 +197,7 @@ export function AppsPage() {
   const { settings, updateSettings, autoSaveSettings } = useSettings();
   const tableRef = useRef<HTMLDivElement>(null);
   const { data: desktopStatus, isPending: isDesktopStatusPending } = useQuery({
-    queryKey: ["claude-desktop-status"],
+    queryKey: CLAUDE_DESKTOP_STATUS_QUERY_KEY,
     queryFn: () => providersApi.getClaudeDesktopStatus(),
     staleTime: 30_000,
   });

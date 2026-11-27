@@ -23,6 +23,7 @@ import type { OpenClawProviderConfig, Provider } from "@/types";
 import { getOpencodeDeclaredModels } from "@/components/providers/forms/helpers/opencodeFormUtils";
 import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
+import { CLAUDE_DESKTOP_STATUS_QUERY_KEY } from "@/lib/query/queries";
 import {
   extractErrorMessage,
   translatePiProviderMutationError,
@@ -281,7 +282,9 @@ export function ProviderList({
       if (imported) {
         queryClient.invalidateQueries({ queryKey: ["providers", appId] });
         if (appId === "claude-desktop") {
-          queryClient.invalidateQueries({ queryKey: ["claudeDesktopStatus"] });
+          queryClient.invalidateQueries({
+            queryKey: CLAUDE_DESKTOP_STATUS_QUERY_KEY,
+          });
         }
         toast.success(t("provider.importCurrentDescription"));
       } else {
@@ -615,7 +618,7 @@ export function ProviderList({
 
   const renderCard = (provider: Provider, presentation: CardPresentation) => (
     <SortableProviderCard
-      key={provider.id}
+      key={`${appId}:${provider.id}`}
       provider={provider}
       appId={appId}
       presentation={presentation}

@@ -64,6 +64,9 @@ export function UniversalProviderFormModal({
 
   // Populate before paint so opening the panel never shows empty/stale fields.
   useLayoutEffect(() => {
+    setShowApiKey(false);
+    setSyncConfirmOpen(false);
+    setPendingProvider(null);
     if (editingProvider) {
       // 编辑模式：加载现有数据
       setName(editingProvider.name);

@@ -32,6 +32,8 @@ const sortProviders = (
   return Object.fromEntries(sortedEntries);
 };
 
+export const CLAUDE_DESKTOP_STATUS_QUERY_KEY = ["claudeDesktopStatus"] as const;
+
 export interface ProvidersQueryData {
   providers: Record<string, Provider>;
   currentProviderId: string;

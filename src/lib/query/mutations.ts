@@ -16,11 +16,13 @@ import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
 import { invalidateZcodeProviderCaches } from "@/hooks/useZcode";
 import { proxyKeys } from "@/lib/query/proxy";
+import { CLAUDE_DESKTOP_STATUS_QUERY_KEY } from "@/lib/query/queries";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
 import {
   invalidateAgyLoginCaches,
+  invalidateClaudeOfficialLoginCaches,
   invalidateGrokCliLoginCaches,
 } from "@/lib/query/subscription";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
@@ -171,11 +173,23 @@ export const useAddProviderMutation = (appId: AppId) => {
         }),
       );
     },
-    onSettled: async () => {
+    onSettled: async (_data, _error, variables) => {
       if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
       } else if (appId === "agy") {
         await invalidateAgyLoginCaches(queryClient);
+      } else if (
+        appId === "claude" &&
+        (variables.category === "official" ||
+          variables.meta?.authBinding?.authProvider === "claude_official")
+      ) {
+        await invalidateClaudeOfficialLoginCaches(queryClient);
+      } else if (
+        appId === "grokbuild" &&
+        (variables.category === "official" ||
+          variables.ensureGrokBuildOfficialSeed)
+      ) {
+        await invalidateGrokCliLoginCaches(queryClient);
       }
     },
   });
@@ -246,7 +260,7 @@ export const useUpdateProviderMutation = (appId: AppId) => {
         }),
       );
     },
-    onSettled: async () => {
+    onSettled: async (_data, _error, variables) => {
       if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
       } else if (appId === "agy") {
@@ -260,6 +274,13 @@ export const useUpdateProviderMutation = (appId: AppId) => {
         // 保存当前绑号的 Grok 官方卡会把原 CLI 登录收进授权中心再写入绑定的号；
         // 写入失败前也可能已经收过：成功失败都重读
         await invalidateGrokCliLoginCaches(queryClient);
+      } else if (
+        appId === "claude" &&
+        (variables.provider.category === "official" ||
+          variables.provider.meta?.authBinding?.authProvider ===
+            "claude_official")
+      ) {
+        await invalidateClaudeOfficialLoginCaches(queryClient);
       }
     },
   });
@@ -362,15 +383,13 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["providers", appId] });
       if (appId === "claude") {
-        // 切到绑了账号的官方卡时，后端可能把原来的默认登录收成了新账号：授权中心要重读
-        await queryClient.invalidateQueries({
-          queryKey: ["managed-auth-status", "claude_official"],
-        });
+        // 切到绑了账号的官方卡时，后端可能把原来的默认登录收成了新账号：授权中心和套餐缓存要重读
+        await invalidateClaudeOfficialLoginCaches(queryClient);
       }
       if (appId === "claude-desktop") {
         await queryClient.invalidateQueries({ queryKey: proxyKeys.status });
         await queryClient.invalidateQueries({
-          queryKey: ["claudeDesktopStatus"],
+          queryKey: CLAUDE_DESKTOP_STATUS_QUERY_KEY,
         });
       }
 

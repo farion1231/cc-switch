@@ -23,12 +23,16 @@ export function useQuotaPlansByKey(
     (onChange: () => void) => queryClient.getQueryCache().subscribe(onChange),
     [queryClient],
   );
-  // 快照是字符串，缓存里别的查询变了也不会白白重渲染；null＝这次没查成功，沿用上次的
+  // 快照是字符串，缓存里别的查询变了也不会白白重渲染；
+  // false＝无缓存或已被重置（清空旧值），null＝这次没查成功（沿用上次的）。
   const snapshot = useSyncExternalStore(subscribe, () =>
     JSON.stringify(
-      entries.map(([name, key]): [string, string | null] => {
+      entries.map(([name, key]): [string, string | null | false] => {
         const data = queryClient.getQueryData(key);
-        if (!data || (data as PlanCarrier).success === false) {
+        if (data === undefined) {
+          return [name, false];
+        }
+        if ((data as PlanCarrier).success === false) {
           return [name, null];
         }
         return [name, pick(data)?.trim() || ""];
@@ -38,10 +42,10 @@ export function useQuotaPlansByKey(
   const lastRef = useRef<Record<string, string>>({});
 
   return useMemo(() => {
-    const seen = JSON.parse(snapshot) as [string, string | null][];
+    const seen = JSON.parse(snapshot) as [string, string | null | false][];
     const plans: Record<string, string> = {};
     for (const [name, plan] of seen) {
-      const shown = plan ?? lastRef.current[name];
+      const shown = plan === null ? lastRef.current[name] : plan || "";
       if (shown) plans[name] = shown;
     }
     lastRef.current = plans;

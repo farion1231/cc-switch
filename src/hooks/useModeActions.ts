@@ -6,6 +6,7 @@ import type { AppId } from "@/lib/api";
 import { providersApi } from "@/lib/api/providers";
 import { proxyApi } from "@/lib/api/proxy";
 import { proxyKeys } from "@/lib/query/proxy";
+import { invalidateClaudeOfficialLoginCaches } from "@/lib/query/subscription";
 import type { AppMode } from "@/types/proxy";
 import { APP_DISPLAY_NAME } from "@/components/shell/AppGlyph";
 
@@ -97,6 +98,9 @@ export function useModeActions(app: AppId) {
           await providersApi.switch(useProviderId, app);
         }
         await refresh();
+        if (app === "claude") {
+          await invalidateClaudeOfficialLoginCaches(queryClient);
+        }
         toast.success(
           [
             t("mode.toast.exited", { app: appName, provider: providerName }),
@@ -108,12 +112,15 @@ export function useModeActions(app: AppId) {
         );
       } catch (error) {
         await refresh();
+        if (app === "claude") {
+          await invalidateClaudeOfficialLoginCaches(queryClient);
+        }
         throw error;
       } finally {
         setPending(false);
       }
     },
-    [app, appName, refresh, restartHint, t],
+    [app, appName, queryClient, refresh, restartHint, t],
   );
 
   return { enter, exitToDirect, pending, restartHint };
