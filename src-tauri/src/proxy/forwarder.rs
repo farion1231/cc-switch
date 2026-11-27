@@ -2352,7 +2352,8 @@ impl RequestForwarder {
             }
         }
         // 请求体到这里定稿；之后只读不改（日志哈希、序列化）
-        let mut filtered_body = prepare_upstream_request_body(filtered_body);
+        let mut filtered_body =
+            prepare_upstream_request_body(filtered_body, codex_responses_to_anthropic);
         if privacy_dirty {
             self.apply_privacy_filter(app_type, &mut filtered_body, "upstream");
         }

@@ -718,7 +718,7 @@ fn prepare_upstream_request_body_filters_private_fields_and_canonicalizes_order(
         "a": 2
     });
 
-    let prepared = prepare_upstream_request_body(body);
+    let prepared = prepare_upstream_request_body(body, false);
 
     assert!(prepared.get("_internal").is_none());
     assert!(prepared["tools"][0]["parameters"]["properties"]

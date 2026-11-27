@@ -67,15 +67,23 @@ pub fn filter_private_params(body: Value) -> Value {
 /// let output = filter_private_params_with_whitelist(input, &["_metadata"]);
 /// // output 包含 _metadata，不包含 _internal_id
 /// ```
-pub fn filter_private_params_with_whitelist(mut body: Value, whitelist: &[String]) -> Value {
+pub fn filter_private_params_with_whitelist(body: Value, whitelist: &[String]) -> Value {
+    filter_private_params_with_scope(body, whitelist, FilterScope::Normal)
+}
+
+/// Preserve JSON Schema instance values only on the Codex-to-Anthropic bridge.
+pub fn filter_codex_anthropic_private_params(body: Value) -> Value {
+    filter_private_params_with_scope(body, &[], FilterScope::CodexAnthropicRequest)
+}
+
+fn filter_private_params_with_scope(
+    mut body: Value,
+    whitelist: &[String],
+    scope: FilterScope,
+) -> Value {
     let whitelist_set: HashSet<&str> = whitelist.iter().map(|s| s.as_str()).collect();
     let mut removed_keys = Vec::new();
-    filter_recursive_with_whitelist(
-        &mut body,
-        FilterScope::Normal,
-        &mut removed_keys,
-        &whitelist_set,
-    );
+    filter_recursive_with_whitelist(&mut body, scope, &mut removed_keys, &whitelist_set);
     if !removed_keys.is_empty() {
         log::debug!("[BodyFilter] 过滤私有参数: {removed_keys:?}");
     }
@@ -89,6 +97,11 @@ enum FilterScope {
     Normal,
     /// JSON Schema 的字段名表：名字由用户定义，不按私有字段过滤。
     SchemaNameMap,
+    CodexAnthropicRequest,
+    CodexAnthropicTools,
+    CodexAnthropicTool,
+    AnthropicInputSchema,
+    AnthropicSchemaNameMap,
     /// 工具调用的参数：是用户数据（`_id`、`_meta`、`__typename`……），原样透传。
     UserData,
 }
@@ -117,31 +130,72 @@ fn filter_recursive_with_whitelist(
             map.retain(|key, val| {
                 if key.starts_with('_')
                     && !whitelist.contains(key.as_str())
-                    && scope != FilterScope::SchemaNameMap
+                    && !matches!(
+                        scope,
+                        FilterScope::SchemaNameMap | FilterScope::AnthropicSchemaNameMap
+                    )
                 {
                     if log::log_enabled!(log::Level::Debug) {
                         removed_keys.push(key.clone());
                     }
                     false
                 } else {
-                    let child_scope = if matches_schema_name_map(key) {
-                        FilterScope::SchemaNameMap
-                    } else if is_tool_argument_key(key, is_tool_use, has_name) {
-                        FilterScope::UserData
-                    } else {
-                        FilterScope::Normal
-                    };
+                    let child_scope = child_scope(scope, key, is_tool_use, has_name);
                     filter_recursive_with_whitelist(val, child_scope, removed_keys, whitelist);
                     true
                 }
             });
         }
         Value::Array(arr) => {
+            let element_scope = if scope == FilterScope::CodexAnthropicTools {
+                FilterScope::CodexAnthropicTool
+            } else {
+                scope
+            };
             for value in arr {
-                filter_recursive_with_whitelist(value, scope, removed_keys, whitelist);
+                filter_recursive_with_whitelist(value, element_scope, removed_keys, whitelist);
             }
         }
         _ => {}
+    }
+}
+
+fn child_scope(scope: FilterScope, key: &str, is_tool_use: bool, has_name: bool) -> FilterScope {
+    use FilterScope::*;
+    match (scope, key) {
+        (CodexAnthropicRequest, "tools") => CodexAnthropicTools,
+        (CodexAnthropicTool, "input_schema") | (AnthropicSchemaNameMap, _) => AnthropicInputSchema,
+        (AnthropicInputSchema, "const" | "enum" | "default" | "examples" | "dependentRequired") => {
+            UserData
+        }
+        (AnthropicInputSchema, key)
+            if matches_schema_name_map(key)
+                || matches!(key, "dependentSchemas" | "dependencies") =>
+        {
+            AnthropicSchemaNameMap
+        }
+        (
+            AnthropicInputSchema,
+            "additionalItems"
+            | "additionalProperties"
+            | "allOf"
+            | "anyOf"
+            | "contains"
+            | "contentSchema"
+            | "else"
+            | "if"
+            | "items"
+            | "not"
+            | "oneOf"
+            | "prefixItems"
+            | "propertyNames"
+            | "then"
+            | "unevaluatedItems"
+            | "unevaluatedProperties",
+        ) => AnthropicInputSchema,
+        (_, key) if matches_schema_name_map(key) => SchemaNameMap,
+        (_, key) if is_tool_argument_key(key, is_tool_use, has_name) => UserData,
+        _ => Normal,
     }
 }
 

@@ -255,6 +255,14 @@ pub(super) fn merge_json_override_inner(
     }
 }
 
-pub(super) fn prepare_upstream_request_body(request_body: Value) -> Value {
-    canonicalize_value(filter_private_params_with_whitelist(request_body, &[]))
+pub(super) fn prepare_upstream_request_body(
+    request_body: Value,
+    codex_responses_to_anthropic: bool,
+) -> Value {
+    let filtered_body = if codex_responses_to_anthropic {
+        crate::proxy::body_filter::filter_codex_anthropic_private_params(request_body)
+    } else {
+        filter_private_params_with_whitelist(request_body, &[])
+    };
+    canonicalize_value(filtered_body)
 }
