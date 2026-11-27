@@ -256,6 +256,9 @@ pub(super) fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::pat
     #[cfg(target_os = "windows")]
     {
         let extensionless = dir.join(tool);
+        if tool == "omp" && is_tern_owned_omp(&extensionless) {
+            return Vec::new();
+        }
         let exe = dir.join(format!("{tool}.exe"));
         let mut candidates = vec![dir.join(format!("{tool}.cmd"))];
         if let Some(exe) = windows_preferred_tool_executable(tool, &exe) {
@@ -752,6 +755,34 @@ fn is_vscode_copilot_shim(tool: &str, path: &Path) -> bool {
             .contains("/copilot-shim/")
 }
 
+/// Tern owns its managed OMP executable; it is not a standalone installation for CC Switch.
+#[cfg(windows)]
+fn is_tern_owned_omp(path: &Path) -> bool {
+    let compatible = windows_shell_compatible_path(path);
+    let is_under = |root: PathBuf| {
+        let root = windows_shell_compatible_path(&root);
+        compatible
+            .ancestors()
+            .any(|parent| parent.as_os_str().eq_ignore_ascii_case(root.as_os_str()))
+    };
+
+    [dirs::data_local_dir(), dirs::data_dir()]
+        .into_iter()
+        .flatten()
+        .any(|data| is_under(data.join("Tern")))
+        || compatible.ancestors().any(|root| {
+            std::fs::read(root.join("manager.json"))
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                .and_then(|manifest| manifest.get("manager")?.as_str().map(str::to_owned))
+                .is_some_and(|manager| manager.eq_ignore_ascii_case("tern"))
+        })
+        || compatible
+            .ancestors()
+            .skip(1)
+            .any(|parent| parent.join("tern.exe").is_file() && parent.join("tern.com").is_file())
+}
+
 /// OpenCode Desktop has shipped both root-level and Electron `resources/` CLI sidecars.
 /// Some Electron releases omitted the sidecar; `resources/app.asar` still identifies the
 /// Desktop bundle, so skip its GUI instead of probing `opencode.exe` with `--version`.
@@ -759,7 +790,10 @@ fn is_vscode_copilot_shim(tool: &str, path: &Path) -> bool {
 /// Also skips launchers that only share the tool's name (`is_foreign_pip_launcher`).
 #[cfg(target_os = "windows")]
 fn windows_preferred_tool_executable(tool: &str, path: &Path) -> Option<std::path::PathBuf> {
-    if is_foreign_pip_launcher(tool, path) || is_vscode_copilot_shim(tool, path) {
+    if is_foreign_pip_launcher(tool, path)
+        || is_vscode_copilot_shim(tool, path)
+        || (tool == "omp" && is_tern_owned_omp(path))
+    {
         return None;
     }
     if tool == "opencode"
