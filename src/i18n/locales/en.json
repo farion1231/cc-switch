@@ -235,7 +235,7 @@
         "account": "Account",
         "accountFollow": "Follow agy's current sign-in",
         "accountMissing": "An account not on this computer",
-        "accountHelp": "With an account selected, Open Terminal first switches agy's sign-in to it (this applies globally: agy sessions started afterwards use it). Add accounts in the Auth Center."
+        "accountHelp": "Saving a new account binding switches the sign-in for new agy sessions. Opening a terminal from this card also switches to its bound account. Add accounts in the Auth Center."
       },
       "gemini": {
         "model": "Model",
@@ -917,6 +917,14 @@
     "minimizeToTrayDescription": "When checked, clicking the close button will hide to system tray, otherwise the app will exit directly.",
     "useAppWindowControls": "Enable app-level window controls",
     "useAppWindowControlsDescription": "Use built-in minimize, maximize/restore, and close buttons in the app header.",
+    "copilotVscode": {
+      "enable": "Apply to VS Code Copilot extension",
+      "description": "Automatically apply the CLI's added models and API keys to all detected VS Code profiles. Provider changes sync automatically.",
+      "pending": "VS Code model sync pending",
+      "pendingDescription": "VS Code may still use the previous configuration. Retry to sync the latest changes.",
+      "noTargets": "No VS Code configuration found. Start VS Code once, then try again.",
+      "failed": "Failed to sync VS Code Copilot"
+    },
     "enableClaudePluginIntegration": "Apply to Claude Code extension",
     "enableClaudePluginIntegrationDescription": "When enabled, the VS Code Claude Code extension provider will switch with this app",
     "skipClaudeOnboarding": "Skip Claude Code first-run confirmation",
@@ -1016,6 +1024,7 @@
     "browsePlaceholderPi": "e.g., /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "e.g., /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "e.g., /home/<your-username>/.dsh",
+    "browsePlaceholderZcode": "e.g., /home/<your-username>/.zcode",
     "browseDirectory": "Browse Directory",
     "resetDefault": "Reset to default directory (takes effect after saving)",
     "checkForUpdates": "Check for Updates",
@@ -1540,6 +1549,8 @@
     "selectSessionLabel": "Select {{title}}",
     "agyDeleteHint": "Delete this session in Antigravity to also remove its runtime state",
     "mcodeDeleteHint": "Delete it in MiniMax Code",
+    "codebuddyDeleteHint": "Manage this session in CodeBuddy: background jobs, teammates and file history refer to its transcript",
+    "zcodeDeleteHint": "Delete this session in ZCode so its history and usage records stay consistent",
     "groupMeta": "{{count}} sessions · {{time}}",
     "bucketToday": "Today",
     "bucketYesterday": "Yesterday",
@@ -1743,7 +1754,6 @@
       "filterChanges": "Changes",
       "filterLabel": "View",
       "exportMarkdown": "Export as Markdown file",
-      "exportShort": "Export",
       "exported": "Exported to {{path}}",
       "exportFailed": "Export failed: {{error}}",
       "conversationRegion": "Conversation content",
@@ -1806,7 +1816,7 @@
       "tokenplus": "TokenPlus makes AI coding more reliable, affordable, and worry-free: access models from multiple providers with one key, maintain stability through intelligent switching, save with optimized pricing and caching, and manage billing, teams, and data security in one place.",
       "kimi": "New Kimi users get 10% of their first successful top-up back as bonus API credit, up to CNY ¥1,000.",
       "a6api": "A6API is a token aggregation platform with a built-in real-time price leaderboard that automatically picks the lowest price on the market. Smooth and stable, simple to operate, and no more tedious price comparisons. Register now to claim free trial credits!",
-      "sudocode": "With one SudoCode key, Claude Code and Claude Desktop use Claude Opus 5, while Codex uses GPT-5.6. Sign up, join QQ group 726213516, and contact the group owner to claim CNY ¥10 in trial credit.",
+      "sudocode": "SudoCode gives Claude Code and Codex one shared API endpoint, and its console breaks down each request's token usage and cost by model. Sign up, then join QQ group 1030742788 to claim a day pass worth CNY ¥10.",
       "packycode": "PackyCode is an official partner of CC Switch. Register using this link and enter \"cc-switch\" promo code during recharge to get 10% off",
       "apikeyfun": "APIKEY.FUN offers a special deal for CC Switch users. Register through the exclusive link to enjoy up to permanent 5% off top-ups.",
       "apinebula": "APINEBULA offers CC Switch users a special discount: register using the link and enter the \"ccswitch\" promo code during your first top-up to get 10% off.",
@@ -2048,6 +2058,7 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "e.g. company.ghe.com",
+    "autoModelName": "GitHub Copilot Auto",
     "form": {
       "officialTitle": "Uses Copilot CLI's GitHub sign-in",
       "officialHint": "Open Terminal starts copilot with this card's model. Bind an Auth Center account to start it with that account.",
@@ -2239,7 +2250,8 @@
     "autoReviewModelMainDefault": "Main model reviews itself (default)",
     "autoReviewModelNoList": "This card has no model list: Codex reviews approvals with the official codex-auto-review, which only some relays that forward to ChatGPT accounts accept; the rest return 404. Add models to the list above to pick one.",
     "officialSpeedTiersLabel": "Keep official Fast tier",
-    "officialSpeedTiersHint": "Keeps the official Fast speed tier on GPT models in the model list, so choosing Fast in Codex sends service_tier=priority. Only relays that forward to official ChatGPT accounts (such as CPA) accept it, and it uses quota faster; other upstreams may reject it or bill it at a higher price. Once on, a Fast choice you made under the official card takes effect on this provider right away. Not used in aggregation mode. Restart Codex after changing it.",
+    "officialSpeedTiersHint": "Keeps the official Fast speed tier on GPT models in the model list, so choosing Fast in Codex sends service_tier=priority. Only relays that forward to official ChatGPT accounts (such as CPA) accept it, and it uses quota faster; other upstreams may reject it or bill it at a higher price. The Codex desktop app shows Fast only while it is signed in with ChatGPT: sign in there and turn on \"Keep official login for direct switches\" in Settings (or use routing mode), and requests still go to this card. Without a sign-in only the Codex CLI can use it (/fast). Once on, a Fast choice you made under the official card takes effect on this provider right away. Not used in aggregation mode. Restart Codex after changing it.",
+    "officialSpeedTiersNoList": "This card has no model list: the Fast tier is only added to GPT models in the model list, so it can't be turned on yet. Add GPT models to the list above to turn it on.",
     "modelListHint": "Restart Codex after changes.",
     "modelListDefaultHelp": "These models appear in Codex's /model menu; the first row is the default model. Rows named after an official GPT model use the official entry, so their display name, window and reasoning levels are ignored.",
     "addCatalogModel": "Add manually",
@@ -2376,6 +2388,7 @@
     "loginWith": {
       "deepseek": "Sign in with a DeepSeek account",
       "workbuddy": "Sign in with a WorkBuddy account",
+      "codebuddy": "Sign in with a CodeBuddy account",
       "kimi": "Sign in with a Kimi account",
       "claude": "Sign in with a Claude account",
       "chatgpt": "Sign in with a ChatGPT account",
@@ -2769,6 +2782,7 @@
       "duration": "Duration",
       "durationEstimated": "Duration (estimated)",
       "speedTooFew": "Under 100 output tokens, so no speed",
+      "speedBurst": "Arrived in a buffered burst, so no speed",
       "speedEstimateTooFew": "Under 200 output tokens, so no estimate",
       "noTimingSession": "Session logs have no timing data",
       "noFirstToken": "No first-token timing, so no speed",
@@ -4059,7 +4073,29 @@
     "reachableSlow": "{{providerName}} reachable but slow ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}} unreachable: {{message}}",
     "unreachableHint": "Could not establish a connection (DNS / connect / TLS / timeout). Check the base_url and your network.",
+    "hint": {
+      "blocked": "The system refused the connection. This usually means a firewall or security software is blocking CC Switch. Allow CC Switch network access in your firewall; local network addresses need it too.",
+      "refused": "The address is reachable, but nothing is listening on that port. Make sure the service is running and the port is correct.",
+      "timeout": "The connection timed out. Check your network and the address; a firewall or security software may also be dropping the connection silently.",
+      "dns": "The domain name could not be resolved. Check the domain in the address for typos, and check your network and DNS.",
+      "tls": "The HTTPS connection failed (certificate or handshake error). Check whether the address should use http or https, and whether the server certificate is valid."
+    },
     "error": "{{providerName}} check error: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "Couldn't check for CC Switch updates",
+      "description": "At startup CC Switch contacts dl.ccswitch.io (with github.com as a fallback) to look for a new version, and this time it failed: {{detail}}. Nothing else is affected; if your network or firewall blocks it, you can ignore this."
+    },
+    "modelsDevSyncFailed": {
+      "title": "Couldn't sync model pricing",
+      "description": "CC Switch periodically fetches model prices from models.dev to calculate usage costs, and this time it failed: {{detail}}. Nothing else is affected."
+    },
+    "networkError": "couldn't reach the server",
+    "mute": "Don't show again",
+    "disableModelsDevSync": "Turn off auto sync",
+    "modelsDevSyncDisabled": "Model pricing auto sync is off. You can turn it back on under Usage Statistics → Model Pricing.",
+    "disableFailed": "Couldn't turn it off: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Routing Master Switch",
@@ -4408,6 +4444,7 @@
     "visibleHelp": "When off, the app no longer appears in the sidebar, the tray menu, the MCP / Skills app columns, or the app pickers on Prompts and Sessions. It is only hidden: its providers, MCP servers and other settings stay, and its own config files are left untouched.",
     "desktopHelp": "Claude Desktop is a desktop app and can't be installed or upgraded here; CC Switch connects to it through its config file.",
     "workbuddyHelp": "WorkBuddy is a desktop app and can't be installed or upgraded here; it updates itself. CC Switch connects to it through its config file (~/.workbuddy/models.json).",
+    "zcodeHelp": "ZCode is a desktop app and can't be installed or upgraded here; it updates itself. CC Switch connects to it through its config file (~/.zcode/v2/provider_config.json).",
     "desktopUnsupported": "Not supported on this system",
     "desktopConnected": "Connected",
     "desktopNotConnected": "Not connected",
@@ -4680,6 +4717,7 @@
     },
     "updatedAt": "Updated {{time}}",
     "clickToRefresh": "Click to check again",
+    "manualIdle": "Click refresh to query quota",
     "resetCredits": {
       "label": "Resets",
       "left": "Resets left: {{count}}",
@@ -4807,6 +4845,7 @@
       "failedTitle": "Some apps couldn't be read",
       "filesTitle": "Which files were read",
       "claudeNote": " (top-level mcpServers)",
+      "codebuddyNote": " (the first existing of .mcp.json, mcp.json, ~/.codebuddy.json)",
       "dshNote": " (written to every initialized profile: web, desktop, headless, acp. The home-level ~/.dsh/cordis.patch.yml is neither read nor written; manage the MCP servers in it there)",
       "ok": "Got it"
     },
@@ -4958,9 +4997,9 @@
       "disableAria": "Turn off the {{count}} selected Skills in",
       "uninstall": "Uninstall"
     },
-    "piColumnTitle": "Pi counts a Skill as enabled when its folder exists in ~/.pi/agent/skills",
+    "piColumnTitle": "Pi also reads ~/.agents/skills, so unchecked skills in that path are still directly available",
     "piHelpTitle": "How Pi counts as enabled",
-    "piHelp": "Whether the folder exists in ~/.pi/agent/skills.",
+    "piHelp": "Pi also reads ~/.agents/skills, so unchecked skills in that path are still directly available.",
     "pop": {
       "onlyApp": "Show only ones enabled in {{app}}",
       "showAll": "Show all Skills"
@@ -5190,10 +5229,11 @@
     "helpTitle": "What is Accounts?",
     "group": {
       "helpTitle": "How {{service}} accounts are used",
-      "copilotHelp": "Used by GitHub Copilot presets in Claude Code and Claude Desktop. Providers without a chosen account use the Default one.",
+      "copilotHelp": "Used by GitHub Copilot presets in Claude Code, Claude Desktop and Codex, and by Copilot CLI's official-login binding. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
-      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex. Providers without a chosen account use the Default one.",
+      "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex, and by Grok Build's official-login binding. Providers without a chosen account use the Default one.",
       "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it.",
+      "codebuddyHelp": "The official sign-in for CodeBuddy (both the China and international sites). To switch accounts, choose \"Switch CodeBuddy to this account\" in the account's … menu, or add the \"CodeBuddy Official Sign-in\" card linked to it in the provider list. \"Add account\" opens a terminal running codebuddy and adds the account here once you finish; if CodeBuddy is already signed in, it's signed out for now and can be restored if you give up. CodeBuddy refreshes its own tokens.",
       "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, choose “Switch WorkBuddy to this account” in the account's … menu, or add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
@@ -5240,7 +5280,6 @@
       "reauthed": "Signed in again as {{login}}."
     },
     "quota": {
-      "updating": "Updating…",
       "loading": "Checking quota…",
       "refresh": "Refresh quota",
       "refreshAria": "Refresh quota for {{login}}",
@@ -5254,6 +5293,33 @@
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
       "switched": "Switched. New agy sessions will use this account.",
       "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again."
+    },
+    "codebuddy": {
+      "mainland": "China",
+      "global": "International",
+      "expiredNote": "Sign-in expired, sign in again",
+      "addedOn": "Added {{date}}",
+      "imported": "Added {{login}}.",
+      "uncollected": "CodeBuddy is signed in as {{login}}, which isn't in this list yet.",
+      "importCurrent": "Add current account",
+      "unrecognized": "CodeBuddy's sign-in file is in an unrecognized format",
+      "unrecognizedNote": "It may be encrypted by WorkBuddy. CC Switch leaves it untouched and can't switch accounts.",
+      "statusLoadFailed": "Couldn't read CodeBuddy accounts. Try again.",
+      "empty": "No CodeBuddy accounts yet. Click Add account to sign in, or add the account CodeBuddy is signed in with.",
+      "login": "Sign in to new account",
+      "current": "In use by CodeBuddy",
+      "pendingNote": "Opened codebuddy in a terminal. Follow the prompts to sign in (type /login if no sign-in screen appears); the account is added here once you finish.",
+      "reopenTerminal": "Reopen terminal",
+      "removeNote": "Only removes CC Switch's copy. CodeBuddy stays signed in.",
+      "localOnly": "Account copies are kept only on this computer and are not synced. Add accounts again on another computer.",
+      "quota": {
+        "credits": "Credits",
+        "enterprise": "Enterprise",
+        "unlimited": "Unlimited",
+        "detail": "{{remaining}} of {{total}} credits left, {{used}} used",
+        "usedDetail": "{{used}} credits used this cycle",
+        "refreshPending": "Token awaiting renewal by CodeBuddy. Switch to this account and use it once, then check again."
+      }
     },
     "workbuddy": {
       "addedOn": "Added {{date}}",
@@ -5307,6 +5373,10 @@
     "openBrowser": {
       "title": "Open the browser when signing in",
       "description": "Turn this off to only copy the sign-in link and open it in a browser of your choice — handy when you keep accounts in separate browser profiles."
+    },
+    "autoQuota": {
+      "title": "Query quota automatically",
+      "description": "When off, official account quotas are only queried when you click refresh: opening the Auth Center, scheduled card refreshes and hovering the tray won't query them. DeepSeek account balances are shown with the sign-in status and aren't affected by this switch."
     }
   },
   "kimi": {
@@ -5403,6 +5473,49 @@
       "legacyModelsJson": "Oh My Pi still has a legacy models.json, which omp migrates to models.yml on its next start. Run omp once, then add the provider again."
     }
   },
+  "codebuddy": {
+    "empty": {
+      "title": "No custom models yet",
+      "description": "CodeBuddy's official models are managed by CodeBuddy itself. To switch official accounts, create a \"CodeBuddy Official Sign-in\" card for the account and click Add here. Custom models already in ~/.codebuddy/models.json appear here automatically. Use the + button in the top-right corner to add a preset or custom model."
+    },
+    "modelsHint": "The model ID is the id written to models.json and the name you pick in /model, usually the endpoint's model name. It can't be changed once added. The display name is the same value as Name above.",
+    "modelIdDuplicate": "This model ID is already in use",
+    "modelIdInvalid": "The model ID can't start or end with a space.",
+    "vendor": "Vendor label",
+    "urlHint": "Use the full path, usually ending in /chat/completions. ${VAR} environment references work.",
+    "urlInvalid": "Enter a valid http(s) URL.",
+    "apiKeyPlaceholder": "Enter an API key, or reference an environment variable as ${MY_API_KEY}",
+    "maxInputTokens": "Max input tokens",
+    "maxOutputTokens": "Max output tokens",
+    "jsonHint": "One model entry in models.json (its id comes from Model ID above). CodeBuddy reloads the file on its own after you save.",
+    "official": {
+      "presetName": "CodeBuddy Official Sign-in",
+      "account": "Account",
+      "accountHint": "Choose the CodeBuddy account this card uses. CodeBuddy can only be signed in to one account at a time: click Add on this card in the provider list to sign CodeBuddy in to it, and a running CodeBuddy picks it up automatically.",
+      "accountDeleted": "Account removed. Choose another one.",
+      "accountDeletedChip": "Account removed",
+      "unbound": "No account chosen yet. Edit the card to choose one.",
+      "statusLoading": "Loading accounts…",
+      "expired": "This account's sign-in has expired. Sign in again in the Auth Center before adding it.",
+      "importCurrent": "Add current sign-in ({{login}})",
+      "adding": "Adding…",
+      "added": "Added {{name}}. CodeBuddy is now signed in to this account; a running CodeBuddy switches automatically, and new sessions use it too.",
+      "addFailed": "Couldn't add: {{error}}",
+      "switched": "CodeBuddy is now signed in to {{name}}. A running CodeBuddy switches automatically, and new sessions use it too.",
+      "switchFailed": "Couldn't switch: {{error}}",
+      "removeHint": "CodeBuddy can only be signed in to one account at a time. Add another official card to switch."
+    },
+    "login": {
+      "confirmTitle": "Sign in to another CodeBuddy account",
+      "confirmMessage": "CodeBuddy is signed in as {{login}} and can only use one account at a time. Continuing first adds that account to the Auth Center, then signs CodeBuddy out for now (the sign-in is kept and no server is contacted), and opens a terminal to sign in to the new account.\n\nAfter this, running CodeBuddy sessions show as signed out until you finish signing in. If you give up, you can restore the original sign-in with one click.",
+      "confirm": "Continue",
+      "signedInHint": "While CodeBuddy is signed in, signing in to a new account first signs it out of the current one: running CodeBuddy sessions show as signed out until you finish signing in.",
+      "pendingReplacing": "Signed CodeBuddy out of the current account for now and opened codebuddy in a terminal. Follow the prompts to sign in to the new account; it's added here once you finish.",
+      "restore": "Restore original sign-in",
+      "restored": "Restored the original CodeBuddy sign-in.",
+      "restoreFailed": "Couldn't restore the original sign-in (CodeBuddy may be writing its sign-in file). Sign in again from the Auth Center or a terminal."
+    }
+  },
   "dsh": {
     "empty": {
       "title": "Add a DeepSeek Harness provider",
@@ -5453,5 +5566,36 @@
     "hint": "It may have been saved by a newer version of CC Switch. The stored data is kept as is and can't be edited or enabled; upgrading restores it, or you can delete it.",
     "confirmTitle": "Delete unreadable entry",
     "confirmMessage": "Delete “{{name}}”? Only this CC Switch record is removed; the apps' own config files are not changed."
+  },
+  "zcode": {
+    "addModel": "Add Model",
+    "apiKeyRequired": "API Key is required",
+    "baseUrl": "Base URL",
+    "baseUrlHint": "Custom API endpoint URL",
+    "baseUrlRequired": "Base URL is required",
+    "kind": "Provider Kind",
+    "kindHint": "API protocol format used by this provider",
+    "kindPlaceholder": "Select provider kind",
+    "limitContext": "Context",
+    "limitOutput": "Output",
+    "modelId": "Model ID",
+    "modelLimits": "Token Limits",
+    "modelLimitsHint": "Leave blank to use ZCode's recommended values.",
+    "models": "Models",
+    "modelsHint": "Model ID is the model name sent in API requests.",
+    "noModels": "No models configured",
+    "providerKey": "Provider Key",
+    "providerKeyDuplicate": "This key is already in use",
+    "providerKeyHint": "Unique identifier in ~/.zcode/v2/provider_config.json. Use letters, numbers, colons, underscores, and hyphens only.",
+    "providerKeyInvalid": "Invalid format. Use letters, numbers, colons, underscores, and hyphens only.",
+    "providerKeyLockedHint": "The key is the providerId in provider_config.json and can't be changed after creation.",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyRequired": "Provider key is required",
+    "providerKeyStatusLoading": "Loading provider key status, please try again later",
+    "providerName": "Provider Name",
+    "providerNameHint": "Display name shown in ZCode",
+    "providerNamePlaceholder": "My Provider",
+    "toggleModelDetails": "Toggle model details",
+    "activationHint": "ZCode keeps all providers live at once: saving adds this provider to ZCode's list, but you must switch to it inside ZCode's provider picker for it to take effect."
   }
 }

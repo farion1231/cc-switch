@@ -649,6 +649,15 @@ export const piModelCatalog = {
       maxTokens: 16_384,
     },
   },
+  "teleai/xing4.1-preview": {
+    capabilities: {
+      name: "Xing4.1-Preview",
+      reasoning: true,
+      input: ["text"],
+      contextWindow: 1_024_000,
+      maxTokens: 128_000,
+    },
+  },
   "xai/grok-4.3": {
     capabilities: {
       name: "Grok 4.3",

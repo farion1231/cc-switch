@@ -15,6 +15,7 @@ import {
   copilotGetModels,
   copilotGetModelsForAccount,
   type CopilotModel,
+  type CopilotModelOptions,
 } from "@/lib/api/copilot";
 import {
   fetchModelsForConfig,
@@ -60,16 +61,25 @@ vi.mock("@/components/providers/forms/shared", async (importOriginal) => {
 type Props = ComponentProps<typeof CodexFormFields>;
 type ProviderKind = "copilot" | "xai" | "config";
 
+function modelOptions(
+  models: CopilotModel[],
+  autoRoutingSupported = false,
+): CopilotModelOptions {
+  return { models, autoRoutingSupported };
+}
+
 function pendingModels() {
-  let resolve!: (models: Array<CopilotModel & FetchedModel>) => void;
+  let resolve!: (options: CopilotModelOptions) => void;
   let reject!: (reason: Error) => void;
-  const promise = new Promise<Array<CopilotModel & FetchedModel>>(
-    (res, rej) => {
-      resolve = res;
-      reject = rej;
-    },
-  );
-  return { promise, resolve, reject };
+  const promise = new Promise<CopilotModelOptions>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return {
+    promise,
+    resolve: (models: CopilotModel[]) => resolve(modelOptions(models)),
+    reject,
+  };
 }
 
 function advertisedModel(id = "model-1"): CopilotModel & FetchedModel {
@@ -169,10 +179,9 @@ describe("Codex model-fetch lifecycle", () => {
       ...advertisedModel("chat-model"),
       supported_endpoints: ["/chat/completions"],
     };
-    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
-      responsesModel,
-      chatModel,
-    ]);
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+      modelOptions([responsesModel, chatModel]),
+    );
     const props = {
       ...makeProps("copilot"),
       copilotApiFormat: "openai_chat" as const,
@@ -206,10 +215,12 @@ describe("Codex model-fetch lifecycle", () => {
   it.each(["gpt-6-astra", "claude-model"])(
     "prefers an available GPT model without replacing a valid selection (%s)",
     async (currentModel) => {
-      vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
-        advertisedModel("claude-model"),
-        advertisedModel("gpt-available"),
-      ]);
+      vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+        modelOptions([
+          advertisedModel("claude-model"),
+          advertisedModel("gpt-available"),
+        ]),
+      );
       const props = { ...makeProps("copilot"), codexModel: currentModel };
       render(<Harness {...props} />);
       fireEvent.click(fetchButton());
@@ -225,8 +236,20 @@ describe("Codex model-fetch lifecycle", () => {
   it.each(providerKinds)(
     "loads %s models through the existing provider route",
     async (kind) => {
-      const pending = pendingModels();
-      fetchMockFor(kind).mockReturnValue(pending.promise);
+      const copilotPending = pendingModels();
+      let resolveOther!: (models: FetchedModel[]) => void;
+      const otherPromise = new Promise<FetchedModel[]>((resolve) => {
+        resolveOther = resolve;
+      });
+      if (kind === "copilot") {
+        vi.mocked(copilotGetModelsForAccount).mockReturnValue(
+          copilotPending.promise,
+        );
+      } else if (kind === "xai") {
+        vi.mocked(fetchXaiOauthModels).mockReturnValue(otherPromise);
+      } else {
+        vi.mocked(fetchModelsForConfig).mockReturnValue(otherPromise);
+      }
       const props = makeProps(kind);
       render(<Harness {...props} />);
 
@@ -250,7 +273,10 @@ describe("Codex model-fetch lifecycle", () => {
         );
       }
 
-      await act(async () => pending.resolve([advertisedModel()]));
+      await act(async () => {
+        if (kind === "copilot") copilotPending.resolve([advertisedModel()]);
+        else resolveOther([advertisedModel()]);
+      });
       await waitFor(() => expect(fetchButton()).toBeEnabled());
       expect(screen.getByTestId("model-options")).toHaveTextContent("model-1");
       // 列表上的按钮拉取成功后直接打开选择弹窗，不再弹成功提示
@@ -275,7 +301,8 @@ describe("Codex model-fetch lifecycle", () => {
   it.each(providerKinds.filter((kind) => kind !== "copilot"))(
     "keeps the empty-list notification for %s",
     async (kind) => {
-      fetchMockFor(kind).mockResolvedValue([]);
+      if (kind === "xai") vi.mocked(fetchXaiOauthModels).mockResolvedValue([]);
+      else vi.mocked(fetchModelsForConfig).mockResolvedValue([]);
       render(<Harness {...makeProps(kind)} />);
       fireEvent.click(fetchButton());
 
@@ -289,21 +316,65 @@ describe("Codex model-fetch lifecycle", () => {
     },
   );
 
-  it("explains an account without picker-enabled Copilot models", async () => {
-    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([]);
-    render(<Harness {...makeProps("copilot")} />);
+  it("offers only Auto when hidden account models provide zero-discount capability", async () => {
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+      modelOptions([], true),
+    );
+    const props = makeProps("copilot");
+    render(<Harness {...props} />);
     fireEvent.click(fetchButton());
 
-    await waitFor(() =>
-      expect(toast.info).toHaveBeenCalledWith("copilot.noPickerModels"),
+    await waitFor(() => expect(fetchButton()).toBeEnabled());
+    expect(screen.getByTestId("model-options")).toHaveTextContent(
+      "copilot-fusion-auto",
     );
+    expect(screen.getByTestId("model-options")).not.toHaveTextContent(
+      "kimi-k3",
+    );
+    expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
+      expect.objectContaining({ model: "copilot-fusion-auto" }),
+    ]);
     expect(toast.success).not.toHaveBeenCalled();
   });
 
+  it("keeps editable Auto catalog metadata when refreshing the model list", async () => {
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+      modelOptions([], true),
+    );
+    const props = {
+      ...makeProps("copilot"),
+      catalogModels: [
+        {
+          model: "copilot-fusion-auto[1M]",
+          displayName: "My Auto route",
+          contextWindow: 1_000_000,
+          baseInstructions: "Custom Auto instructions",
+          reasoningLevels: ["low", "high"],
+          inputModalities: ["text", "image"],
+        },
+      ],
+    };
+    render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+
+    await waitFor(() =>
+      expect(props.onCatalogModelsChange).toHaveBeenCalledWith([
+        expect.objectContaining({
+          model: "copilot-fusion-auto",
+          displayName: "My Auto route",
+          contextWindow: 1_000_000,
+          baseInstructions: "Custom Auto instructions",
+          reasoningLevels: ["low", "high"],
+          inputModalities: ["text", "image"],
+        }),
+      ]),
+    );
+  });
+
   it("explains Copilot models that do not support the selected format", async () => {
-    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
-      advertisedModel("responses-model"),
-    ]);
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+      modelOptions([advertisedModel("responses-model")]),
+    );
     render(
       <Harness
         {...makeProps("copilot")}
@@ -348,8 +419,20 @@ describe("Codex model-fetch lifecycle", () => {
   it.each(providerKinds)(
     "ignores stale %s results after the request identity changes",
     async (kind) => {
-      const pending = pendingModels();
-      fetchMockFor(kind).mockReturnValue(pending.promise);
+      const copilotPending = pendingModels();
+      let resolveOther!: (models: FetchedModel[]) => void;
+      const otherPromise = new Promise<FetchedModel[]>((resolve) => {
+        resolveOther = resolve;
+      });
+      if (kind === "copilot") {
+        vi.mocked(copilotGetModelsForAccount).mockReturnValue(
+          copilotPending.promise,
+        );
+      } else if (kind === "xai") {
+        vi.mocked(fetchXaiOauthModels).mockReturnValue(otherPromise);
+      } else {
+        vi.mocked(fetchModelsForConfig).mockReturnValue(otherPromise);
+      }
       const props = makeProps(kind);
       const view = render(<Harness {...props} />);
       fireEvent.click(fetchButton());
@@ -362,22 +445,33 @@ describe("Codex model-fetch lifecycle", () => {
         />,
       );
 
-      await act(async () => pending.resolve([advertisedModel()]));
+      await act(async () => {
+        if (kind === "copilot") copilotPending.resolve([advertisedModel()]);
+        else resolveOther([advertisedModel()]);
+      });
       await waitFor(() => expect(fetchButton()).toBeEnabled());
-      expect(screen.queryByTestId("model-options")).not.toBeInTheDocument();
+      const options = screen.queryByTestId("model-options");
+      if (kind === "copilot") {
+        // With no fetched account capability, Auto is not published either.
+        expect(options).toBeNull();
+      } else {
+        expect(options).not.toBeInTheDocument();
+      }
       expect(props.onCatalogModelsChange).not.toHaveBeenCalled();
       expect(toast.success).not.toHaveBeenCalled();
     },
   );
 
   it("keeps Copilot filtering, applies reported prompt limits and selects a default model", async () => {
-    vi.mocked(copilotGetModels).mockResolvedValue([
-      advertisedModel(),
-      {
-        ...advertisedModel("messages-only"),
-        supported_endpoints: ["/v1/messages"],
-      },
-    ]);
+    vi.mocked(copilotGetModels).mockResolvedValue(
+      modelOptions([
+        advertisedModel(),
+        {
+          ...advertisedModel("messages-only"),
+          supported_endpoints: ["/v1/messages"],
+        },
+      ]),
+    );
     const props = {
       ...makeProps("copilot"),
       selectedGitHubAccountId: null,
@@ -400,16 +494,38 @@ describe("Codex model-fetch lifecycle", () => {
     );
   });
 
+  it("publishes Auto from account capability metadata without attaching it to a concrete model", async () => {
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+      modelOptions([advertisedModel("gpt-auto-pool")], true),
+    );
+    const props = makeProps("copilot");
+    render(<Harness {...props} />);
+    fireEvent.click(fetchButton());
+    await waitFor(() =>
+      expect(props.onCatalogModelsChange).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ model: "copilot-fusion-auto" }),
+          expect.objectContaining({ model: "gpt-auto-pool" }),
+        ]),
+      ),
+    );
+    expect(screen.getByTestId("model-options")).toHaveTextContent(
+      "copilot-fusion-auto",
+    );
+  });
+
   it("overrides stale managed metadata with live Copilot capabilities", async () => {
-    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
-      {
-        ...advertisedModel(),
-        context_window: 922_000,
-        supports_parallel_tool_calls: true,
-        supports_vision: true,
-        reasoning_effort: ["none", "low", "medium", "high", "xhigh"],
-      },
-    ]);
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+      modelOptions([
+        {
+          ...advertisedModel(),
+          context_window: 922_000,
+          supports_parallel_tool_calls: true,
+          supports_vision: true,
+          reasoning_effort: ["none", "low", "medium", "high", "xhigh"],
+        },
+      ]),
+    );
     const props = {
       ...makeProps("copilot"),
       catalogModels: [
@@ -441,12 +557,14 @@ describe("Codex model-fetch lifecycle", () => {
   });
 
   it("preserves existing managed metadata when Copilot omits it", async () => {
-    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
-      {
-        ...advertisedModel(),
-        context_window: undefined,
-      },
-    ]);
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+      modelOptions([
+        {
+          ...advertisedModel(),
+          context_window: undefined,
+        },
+      ]),
+    );
     const props = {
       ...makeProps("copilot"),
       catalogModels: [
@@ -496,9 +614,9 @@ describe("Codex model-fetch lifecycle", () => {
   ])(
     "maps Copilot vision=$vision with previous modalities=$previous",
     async ({ vision, previous, expected }) => {
-      vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
-        { ...advertisedModel(), supports_vision: vision },
-      ]);
+      vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+        modelOptions([{ ...advertisedModel(), supports_vision: vision }]),
+      );
       const props = {
         ...makeProps("copilot"),
         catalogModels: previous
@@ -521,12 +639,14 @@ describe("Codex model-fetch lifecycle", () => {
   );
 
   it("clears stale reasoning levels when Copilot explicitly reports none", async () => {
-    vi.mocked(copilotGetModelsForAccount).mockResolvedValue([
-      {
-        ...advertisedModel(),
-        reasoning_effort: [],
-      },
-    ]);
+    vi.mocked(copilotGetModelsForAccount).mockResolvedValue(
+      modelOptions([
+        {
+          ...advertisedModel(),
+          reasoning_effort: [],
+        },
+      ]),
+    );
     const props = {
       ...makeProps("copilot"),
       catalogModels: [

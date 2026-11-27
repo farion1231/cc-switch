@@ -394,6 +394,173 @@ fn import_still_accepts_a_genuine_export() -> Result<(), AppError> {
     Ok(())
 }
 
+#[cfg(unix)]
+#[test]
+#[serial]
+fn export_sql_sets_private_0600_permissions() -> Result<(), AppError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let test_home = TestHomeGuard::new();
+    let db = Database::memory()?;
+    let out_path = test_home.path().join("exported.sql");
+    db.export_sql(&out_path)?;
+
+    let mode = std::fs::metadata(&out_path)
+        .map_err(|e| AppError::io(&out_path, e))?
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(
+        mode, 0o600,
+        "exported SQL contains credentials and must be 0600 on Unix, got {mode:o}"
+    );
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn backup_filename_validation_rejects_traversal_nul_and_colon_targets() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let db = Database::memory()?;
+
+    for bad in ["foo\0bar.db", ".db", "../evil.db", "a/b.db", "a\\b.db"] {
+        let restore_err = db
+            .restore_from_backup(bad)
+            .expect_err(&format!("restore_from_backup must reject '{bad}'"));
+        assert!(
+            restore_err.to_string().contains("Invalid backup filename"),
+            "restore_from_backup('{bad}') should fail validation, got: {restore_err}"
+        );
+        let delete_err =
+            Database::delete_backup(bad).expect_err(&format!("delete_backup must reject '{bad}'"));
+        assert!(
+            delete_err.to_string().contains("Invalid backup filename"),
+            "delete_backup('{bad}') should fail validation, got: {delete_err}"
+        );
+        let rename_old_err = Database::rename_backup(bad, "safe")
+            .expect_err(&format!("rename_backup must reject old filename '{bad}'"));
+        assert!(
+            rename_old_err
+                .to_string()
+                .contains("Invalid backup filename"),
+            "rename_backup('{bad}', 'safe') should fail validation, got: {rename_old_err}"
+        );
+        let rename_new_err = Database::rename_backup("valid.db", bad)
+            .expect_err(&format!("rename_backup must reject new name '{bad}'"));
+        assert!(
+            !rename_new_err.to_string().contains("not found"),
+            "rename_backup('valid.db', '{bad}') should fail validation before filesystem access, got: {rename_new_err}"
+        );
+    }
+
+    // Colons are always rejected in newly created rename target names (cross-platform),
+    // and rejected for existing filenames on Windows (drive-relative paths / NTFS ADS).
+    for colon_name in ["C:foo.db", "c:evil.db", "foo.db:stream.db"] {
+        let rename_new_err = Database::rename_backup("valid.db", colon_name).expect_err(&format!(
+            "rename_backup must reject colon in new name '{colon_name}'"
+        ));
+        assert!(
+            !rename_new_err.to_string().contains("not found"),
+            "rename_backup('valid.db', '{colon_name}') should fail validation before filesystem access, got: {rename_new_err}"
+        );
+
+        #[cfg(windows)]
+        {
+            let restore_err = db
+                .restore_from_backup(colon_name)
+                .expect_err(&format!("restore_from_backup must reject '{colon_name}'"));
+            assert!(
+                restore_err.to_string().contains("Invalid backup filename"),
+                "restore_from_backup('{colon_name}') should fail validation, got: {restore_err}"
+            );
+            let delete_err = Database::delete_backup(colon_name)
+                .expect_err(&format!("delete_backup must reject '{colon_name}'"));
+            assert!(
+                delete_err.to_string().contains("Invalid backup filename"),
+                "delete_backup('{colon_name}') should fail validation, got: {delete_err}"
+            );
+            let rename_old_err = Database::rename_backup(colon_name, "safe").expect_err(&format!(
+                "rename_backup must reject old filename '{colon_name}'"
+            ));
+            assert!(
+                rename_old_err
+                    .to_string()
+                    .contains("Invalid backup filename"),
+                "rename_backup('{colon_name}', 'safe') should fail validation, got: {rename_old_err}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[serial]
+fn unix_colon_named_backup_supports_list_restore_rename_and_delete() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let backup_dir = crate::config::get_app_config_dir().join("backups");
+    std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+
+    // Seed a valid backup snapshot containing a sentinel provider and save it under
+    // legacy colon-containing Unix filenames (e.g. timestamped manual renames).
+    let source = Database::memory()?;
+    {
+        let conn = crate::database::lock_conn!(source.conn);
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config, meta)
+             VALUES ('colon-sentinel', 'claude', 'Colon Backup Provider', '{}', '{}')",
+            [],
+        )?;
+    }
+    let seeded_path = source
+        .backup_database_file()?
+        .expect("seeded backup should be created");
+
+    let colon_backup = "上线前-14:30.db";
+    let colon_backup_path = backup_dir.join(colon_backup);
+    std::fs::copy(&seeded_path, &colon_backup_path)
+        .map_err(|e| AppError::io(&colon_backup_path, e))?;
+
+    let colon_delete_target = "上线前-15:45.db";
+    let colon_delete_path = backup_dir.join(colon_delete_target);
+    std::fs::copy(&seeded_path, &colon_delete_path)
+        .map_err(|e| AppError::io(&colon_delete_path, e))?;
+
+    // 1. list_backups includes colon-named Unix backups.
+    let listed = Database::list_backups()?;
+    assert!(
+        listed.iter().any(|entry| entry.filename == colon_backup),
+        "list_backups must include legacy colon-named backup '{colon_backup}'"
+    );
+
+    // 2. restore_from_backup succeeds on colon-named Unix backup.
+    let target = Database::memory()?;
+    target.restore_from_backup(colon_backup)?;
+    {
+        let conn = crate::database::lock_conn!(target.conn);
+        let name: String = conn.query_row(
+            "SELECT name FROM providers WHERE id = 'colon-sentinel' AND app_type = 'claude'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(name, "Colon Backup Provider");
+    }
+
+    // 3. rename_backup can rename a colon-named Unix backup to a clean name,
+    //    while still refusing colons in the new target name.
+    assert!(Database::rename_backup(colon_backup, "still:colon").is_err());
+    let renamed = Database::rename_backup(colon_backup, "before-release-1430")?;
+    assert_eq!(renamed, "before-release-1430.db");
+    assert!(!colon_backup_path.exists());
+    assert!(backup_dir.join(&renamed).exists());
+
+    // 4. delete_backup can delete a colon-named Unix backup.
+    Database::delete_backup(colon_delete_target)?;
+    assert!(!colon_delete_path.exists());
+
+    Ok(())
+}
+
 #[test]
 #[serial]
 fn import_clears_custom_icons_that_fail_validation() -> Result<(), AppError> {

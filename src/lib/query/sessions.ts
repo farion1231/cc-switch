@@ -45,20 +45,6 @@ export const stableKey = (value: unknown): string => {
   return JSON.stringify(value);
 };
 
-// ─── 一次性读取（旧接口，复制整段等场景） ─────────────────────────────────
-
-export const useSessionMessagesQuery = (
-  providerId?: string,
-  sourcePath?: string,
-) => {
-  return useQuery<SessionMessage[]>({
-    queryKey: sessionKeys.messages(providerId, sourcePath),
-    queryFn: async () => sessionsApi.getMessages(providerId!, sourcePath!),
-    enabled: Boolean(providerId && sourcePath),
-    staleTime: 30 * 1000,
-  });
-};
-
 // ─── 分块流式读取 ─────────────────────────────────────────────────────────
 
 export type TranscriptHeader = Extract<TranscriptChunk, { type: "header" }>;

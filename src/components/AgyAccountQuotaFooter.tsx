@@ -26,6 +26,7 @@ const AgyAccountQuotaFooter: React.FC<AgyAccountQuotaFooterProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useAgyAccountQuota(accountId, {
     enabled: true,
     autoQuery: isCurrent && autoQueryInterval > 0,
@@ -37,6 +38,7 @@ const AgyAccountQuotaFooter: React.FC<AgyAccountQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
+      idle={manualIdle}
       appIdForExpiredHint="agy"
       inline={inline}
       display={display}

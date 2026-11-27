@@ -174,24 +174,22 @@ describe("sessionsApi · 阅读页命令（P2 契约）", () => {
     ]);
   });
 
-  it("getImage / revealPath", async () => {
+  it("getImage", async () => {
     const image: ImageRef = {
       source: { kind: "local_file", path: "/tmp/a.png" },
       mediaType: "image/png",
       size: 3,
     };
     const bytes = new ArrayBuffer(3);
-    core.invoke.mockResolvedValueOnce(bytes).mockResolvedValueOnce(true);
+    core.invoke.mockResolvedValueOnce(bytes);
     await expect(
       sessionsApi.getImage("codex", "/b.jsonl", image),
     ).resolves.toBe(bytes);
-    await expect(sessionsApi.revealPath("/tmp/a.png")).resolves.toBe(true);
     expect(core.invoke.mock.calls).toEqual([
       [
         "get_session_image",
         { providerId: "codex", sourcePath: "/b.jsonl", image },
       ],
-      ["reveal_session_path", { path: "/tmp/a.png" }],
     ]);
   });
 });

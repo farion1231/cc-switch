@@ -250,9 +250,13 @@ describe("AppsPage manual install and uninstall commands", () => {
         screen.queryByRole("option", { name: "Homebrew (formula)" }),
       ).not.toBeInTheDocument();
       await user.click(await screen.findByRole("option", { name: "pnpm" }));
-      expect(dialog.getAllByRole("listitem")).toHaveLength(2);
+      expect(dialog.getAllByRole("listitem")).toHaveLength(3);
       expect(
         dialog.getByText("pnpm remove -g opencode-ai"),
+      ).toBeInTheDocument();
+      // OpenCode 2 is a separate package.
+      expect(
+        dialog.getByText("pnpm remove -g @opencode/cli"),
       ).toBeInTheDocument();
       expect(dialog.getByText("pnpm remove -g openclaw")).toBeInTheDocument();
       expect(dialog.queryByText("Codex")).not.toBeInTheDocument();
@@ -264,6 +268,9 @@ describe("AppsPage manual install and uninstall commands", () => {
       ).toBeInTheDocument();
       expect(
         dialog.queryByText("bun remove -g opencode-ai"),
+      ).not.toBeInTheDocument();
+      expect(
+        dialog.queryByText("bun remove -g @opencode/cli"),
       ).not.toBeInTheDocument();
       expect(
         dialog.getByText("settings.manualUninstallOpenClawHint"),

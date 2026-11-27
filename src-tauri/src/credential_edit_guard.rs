@@ -150,7 +150,9 @@ fn native_auth(app: &AppType, settings: &Value) -> Result<Value, AppError> {
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => return Err(unsupported()),
+        | AppType::WorkBuddy
+        | AppType::Codebuddy
+        | AppType::ZCode => return Err(unsupported()),
     })
 }
 
@@ -186,7 +188,9 @@ fn inline_key(app: &AppType, settings: &Value) -> Result<Option<String>, AppErro
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => return Err(unsupported()),
+        | AppType::WorkBuddy
+        | AppType::Codebuddy
+        | AppType::ZCode => return Err(unsupported()),
     })
 }
 

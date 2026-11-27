@@ -1141,6 +1141,76 @@ fn responses_request_to_chat_preserves_valid_and_unconstrained_schemas() {
 }
 
 #[test]
+fn responses_request_to_chat_strips_encrypted_schema_marker() {
+    let input = json!({
+        "model": "gemini-3.8-flash",
+        "tools": [{
+            "type": "function",
+            "name": "send_message",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string"},
+                    "message": {"type": "string", "encrypted": true},
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string", "encrypted": true}
+                    }
+                },
+                "required": ["target", "message"]
+            }
+        }, {
+            "type": "namespace",
+            "name": "agents",
+            "tools": [{
+                "type": "function",
+                "name": "followup_task",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"message": {"type": "string", "encrypted": true}}
+                }
+            }]
+        }],
+        "input": "hi"
+    });
+
+    let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+    let serialized = result["tools"].to_string();
+    assert!(!serialized.contains("encrypted"), "{serialized}");
+    assert_eq!(
+        result["tools"][0]["function"]["parameters"]["properties"]["message"],
+        json!({"type": "string"})
+    );
+    assert_eq!(
+        result["tools"][0]["function"]["parameters"]["required"],
+        json!(["target", "message"])
+    );
+}
+
+#[test]
+fn responses_request_to_chat_keeps_parameters_and_data_named_encrypted() {
+    let parameters = json!({
+        "type": "object",
+        "properties": {
+            "encrypted": {
+                "type": "boolean",
+                "default": {"encrypted": false},
+                "examples": [{"encrypted": true}]
+            }
+        },
+        "required": ["encrypted"]
+    });
+    let input = json!({
+        "model": "gpt-5.4",
+        "tools": [{"type": "function", "name": "store", "parameters": parameters.clone()}],
+        "input": "hi"
+    });
+
+    let result = responses_to_chat_completions_with_reasoning(input, None, true).unwrap();
+    assert_eq!(result["tools"][0]["function"]["parameters"], parameters);
+}
+
+#[test]
 fn responses_request_to_chat_defaults_top_level_one_of_tool_parameters_to_object() {
     let input = json!({
         "model": "gpt-5.4",
@@ -1808,6 +1878,28 @@ fn chat_response_to_responses_extracts_reasoning_details() {
         "Need to inspect the code."
     );
     assert_eq!(result["output"][1]["content"][0]["text"], "Done");
+}
+
+#[test]
+fn chat_completion_reasoning_item_id_avoids_official_lookup_shape() {
+    // #9054：`rs_resp_<32 位十六进制>` 会被官方 store:false 下按 id 回查 404，带序号就不会。
+    let input = json!({
+        "id": "dba7d7f2a5431337cbcef8bcb6e27b76",
+        "model": "glm-5",
+        "choices": [{
+            "message": {"role": "assistant", "reasoning_content": "Think.", "content": "Done"},
+            "finish_reason": "stop"
+        }]
+    });
+
+    let result =
+        chat_completion_to_response_with_context(input, &CodexToolContext::default()).unwrap();
+
+    assert_eq!(result["output"][0]["type"], "reasoning");
+    assert_eq!(
+        result["output"][0]["id"],
+        "rs_resp_dba7d7f2a5431337cbcef8bcb6e27b76_0"
+    );
 }
 
 #[test]

@@ -23,7 +23,8 @@ export interface DeepLinkImportRequest {
     | "kimi"
     | "dsh"
     | "omp"
-    | "workbuddy";
+    | "workbuddy"
+    | "zcode";
   name?: string;
   enabled?: boolean;
 

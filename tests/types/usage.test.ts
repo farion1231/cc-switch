@@ -1,5 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { getCacheWriteAvailability, omitsCacheWrites } from "@/types/usage";
+import { APP_IDS } from "@/config/appSpecs";
+import {
+  KNOWN_APP_TYPES,
+  getCacheWriteAvailability,
+  omitsCacheWrites,
+} from "@/types/usage";
+
+describe("KNOWN_APP_TYPES", () => {
+  it("matches the default app order in APP_IDS", () => {
+    expect(KNOWN_APP_TYPES).toEqual(
+      APP_IDS.filter((app) =>
+        (KNOWN_APP_TYPES as readonly string[]).includes(app),
+      ),
+    );
+  });
+});
 
 describe("getCacheWriteAvailability", () => {
   it("distinguishes cache-write support across fixed protocols", () => {

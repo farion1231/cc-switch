@@ -251,7 +251,9 @@ pub(crate) fn plan(input: AuthInput<'_>) -> AuthPlan {
         .filter(|auth| !managed && !residue && codex_auth_has_login_material(auth));
 
     if let Some(row_auth) = input.leaving_official {
-        if native.is_none() && !managed {
+        // 已确认的第三方 API Key 残留不代表用户主动登出，
+        // 不能因此使暂存的原生 OAuth 登录失效。
+        if native.is_none() && !managed && !residue {
             match oauth_identity(row_auth) {
                 Some(id) => {
                     stash.take(&id);
@@ -449,6 +451,59 @@ mod tests {
         assert_eq!(away.auth, None);
         assert!(away.login_on_disk);
         assert_eq!(away.stash, None);
+    }
+
+    #[test]
+    fn third_party_residue_does_not_invalidate_stashed_oauth_when_leaving_official() {
+        let alice = login("alice");
+
+        // 模拟 auth.json 中残留的 DeepSeek API Key。
+        let relay_key = "sk-relay";
+        let residue = json!({
+            "OPENAI_API_KEY": relay_key
+        });
+
+        // 模拟数据库中的官方卡也保存了同一个 Key。
+        let official_row_auth = residue.clone();
+
+        let third_party_keys = vec![relay_key.to_string()];
+
+        // 原本已经暂存的 ChatGPT OAuth 登录。
+        let mut stash = ready();
+        stash.put(&alice);
+        let stash_before = stash.clone();
+
+        let alice_id = key("alice");
+
+        // 模拟：从官方卡切换到第三方供应商。
+        let away = plan(AuthInput {
+            third_party_keys: &third_party_keys,
+            leaving_official: Some(&official_row_auth),
+            ..input(
+                Some(&residue),
+                AuthTarget::ThirdParty { preserve: true },
+                stash,
+            )
+        });
+
+        // 第三方残留 Key 应当从 auth.json 清除。
+        assert_eq!(away.auth, Some(None));
+        assert!(!away.login_on_disk);
+
+        // 关键断言：不能因为第三方 Key 残留而删除 Alice 的 OAuth。
+        let resulting_stash = away.stash.as_ref().unwrap_or(&stash_before);
+
+        assert_eq!(
+            resulting_stash.logins.get(&alice_id),
+            Some(&alice),
+            "third-party API key residue must not invalidate the stashed OAuth login"
+        );
+
+        assert_eq!(
+            resulting_stash.last.as_deref(),
+            Some(alice_id.as_str()),
+            "the last stashed OAuth identity must remain intact"
+        );
     }
 
     #[test]

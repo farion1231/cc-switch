@@ -75,6 +75,7 @@ describe("useDirectorySettings", () => {
       if (app === "pi") return "/remote/pi";
       if (app === "omp") return "/remote/omp";
       if (app === "dsh") return "/remote/dsh";
+      if (app === "zcode") return "/remote/zcode";
       return "/remote/hermes";
     });
     selectConfigDirectoryMock.mockReset();
@@ -102,6 +103,7 @@ describe("useDirectorySettings", () => {
       pi: "/remote/pi",
       omp: "/remote/omp",
       dsh: "/remote/dsh",
+      zcode: "/remote/zcode",
     });
   });
 

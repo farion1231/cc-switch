@@ -2,6 +2,7 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { authApi } from "@/lib/api";
+import { agyAuthStatusQuery } from "@/lib/query/subscription";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -179,25 +180,43 @@ interface AgyAccountSelectProps {
 }
 
 /**
- * Antigravity 官方卡的账号：不选就跟着 agy 当前的登录；选了的话「打开终端」前先把 agy
- * 切到这个号。账号在授权中心添加。
+ * 绑定变更在保存时生效。没绑定账号的卡跟着 agy 当前登录。
  */
 export function AgyAccountSelect({ value, onChange }: AgyAccountSelectProps) {
   const { t } = useTranslation();
-  const { data } = useQuery({
-    queryKey: ["managed-auth-status", "agy_oauth"],
-    queryFn: () => authApi.authGetStatus("agy_oauth"),
-    staleTime: 30000,
-  });
+  const { data } = useQuery(agyAuthStatusQuery);
   const accounts = data?.accounts ?? [];
+  const activeAccount = accounts.find(
+    (account) => account.id === data?.default_account_id,
+  );
+  const inUse = t("authCenter.inUseBy", { app: "agy" });
+  const [initialValue] = React.useState(value);
+  const willSwitch =
+    value !== null && value !== initialValue && value !== activeAccount?.id;
+  const { data: agyRunning } = useQuery({
+    queryKey: ["agy-running"],
+    queryFn: () => authApi.agyAccountIsRunning(),
+    enabled: willSwitch,
+    staleTime: 0,
+  });
   // 绑的号在这台电脑上不存在（别的设备同步来的、或已删掉）时也要显示出来，别悄悄改成「跟随」
   const missing = value !== null && !accounts.some((a) => a.id === value);
 
   return (
     <div className="space-y-2">
-      <Label htmlFor="agy-account">
-        {t("provider.form.agy.account", { defaultValue: "账号" })}
-      </Label>
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <Label htmlFor="agy-account">
+          {t("provider.form.agy.account", { defaultValue: "账号" })}
+        </Label>
+        {activeAccount && (
+          <span
+            className="truncate text-caption text-fg-2"
+            title={activeAccount.login}
+          >
+            {inUse} · {activeAccount.login}
+          </span>
+        )}
+      </div>
       <Select
         value={value ?? FOLLOW}
         onValueChange={(next) => {
@@ -236,9 +255,14 @@ export function AgyAccountSelect({ value, onChange }: AgyAccountSelectProps) {
       <p className="text-caption text-fg-2">
         {t("provider.form.agy.accountHelp", {
           defaultValue:
-            "选了账号的话，「打开终端」前会先把 agy 的登录切到它（全局生效，之后新开的 agy 都用它）。账号在授权中心添加。",
+            "保存新的绑定账号后，新开的 agy 会使用它。用这张卡打开终端时也会切回绑定账号。账号在授权中心添加。",
         })}
       </p>
+      {willSwitch && agyRunning && (
+        <p className="text-caption text-warning-text">
+          {t("provider.openTerminalDialog.agySwitchRunning")}
+        </p>
+      )}
     </div>
   );
 }

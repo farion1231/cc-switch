@@ -139,24 +139,31 @@ export const pluginMarketplacesQuery = (app: PluginApp) => ({
 type ReconcileTarget = "installed" | "catalog" | "marketplaces";
 type InstalledPatch = (entries: PluginEntry[]) => PluginEntry[];
 
-const sameEntry = (a: PluginEntry, b: PluginEntry) =>
-  a.id === b.id && (a.scope ?? null) === (b.scope ?? null);
+/** Claude Code 非 user 范围（project / local）条目的项目路径；其它范围和应用返回 null。 */
+export const projectPathOf = (entry: PluginEntry): string | null =>
+  entry.scope === "user" ? null : entry.projectPath?.trim() || null;
 
-/** 乐观补丁：都按条目 id 作用在「当前」数据上，几个操作交错时互不覆盖。 */
+/** 同一插件可在不同项目装多份 local / project 范围，按 id、scope 和 projectPath 共同识别。 */
+export const samePluginEntry = (a: PluginEntry, b: PluginEntry) =>
+  a.id === b.id &&
+  (a.scope || null) === (b.scope || null) &&
+  projectPathOf(a) === projectPathOf(b);
+
+/** 乐观补丁：都按条目身份作用在「当前」数据上，几个操作交错时互不覆盖。 */
 export const pluginPatches = {
   setEnabled:
     (target: PluginEntry, enabled: boolean): InstalledPatch =>
     (entries) =>
-      entries.map((e) => (sameEntry(e, target) ? { ...e, enabled } : e)),
+      entries.map((e) => (samePluginEntry(e, target) ? { ...e, enabled } : e)),
   remove:
     (target: PluginEntry): InstalledPatch =>
     (entries) =>
-      entries.filter((e) => !sameEntry(e, target)),
+      entries.filter((e) => !samePluginEntry(e, target)),
   /** 加回（卸载失败时）或加入（装好后）；已经在就不重复加。 */
   add:
     (target: PluginEntry, index?: number): InstalledPatch =>
     (entries) => {
-      if (entries.some((e) => sameEntry(e, target))) return entries;
+      if (entries.some((e) => samePluginEntry(e, target))) return entries;
       const next = [...entries];
       next.splice(index ?? next.length, 0, target);
       return next;
@@ -191,6 +198,7 @@ export function installedFromCatalog(
     manageable: true,
     removable: true,
     scope: app === "claude" ? "user" : null,
+    projectPath: null,
   };
 }
 

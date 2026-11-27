@@ -128,6 +128,7 @@ export interface PanelLayout {
 }
 
 export const SHOW_EVENT = "tray-panel-show";
+export const HIDE_EVENT = "tray-panel-hide";
 export const CHANGED_EVENT = "tray-panel-changed";
 
 export const trayPanelApi = {

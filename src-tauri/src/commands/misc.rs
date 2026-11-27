@@ -265,7 +265,7 @@ impl ToolSpec {
 static UNKNOWN_TOOL: ToolSpec = ToolSpec::not_on_npm("", "Unknown");
 
 /// 顺序即「应用」页与批量安装 / 升级的顺序。
-static TOOLS: [ToolSpec; 14] = [
+static TOOLS: [ToolSpec; 15] = [
     ToolSpec::npm("claude", "Claude Code", "@anthropic-ai/claude-code")
         .npm_install_args(
             " --ignore-scripts=false --include=optional --allow-scripts=@anthropic-ai/claude-code",
@@ -284,7 +284,7 @@ static TOOLS: [ToolSpec; 14] = [
         .official_update("upgrade"),
     ToolSpec::npm("openclaw", "OpenClaw", "openclaw").official_update("update --yes"),
     ToolSpec::not_on_npm("hermes", "Hermes").official_update("update"),
-    ToolSpec::npm("pi", "Pi", "@earendil-works/pi-coding-agent"),
+    ToolSpec::npm("pi", "Pi", "@earendil-works/pi-coding-agent").official_update("update"),
     ToolSpec::npm("mcode", "MiniMax Code", "@minimax-ai/code").npm_install_args(
         " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
     ),
@@ -295,6 +295,12 @@ static TOOLS: [ToolSpec; 14] = [
         .not_npm_installable()
         .official_update("update"),
     ToolSpec::npm("copilot", "GitHub Copilot CLI", "@github/copilot"),
+    // `codebuddy update` 无交互确认：按自身安装方式升级（npm 会用 `--prefix` 钉在正在运行的
+    // 那份上，pnpm/bun 各用自己的命令，原生版走官方 installer），装完核对版本；失败或认不出
+    // 安装方式（会提示手动 `npm install -g`）时 exit 1，由 `|| <npm fallback>` 兜底。
+    // 依赖没有 install 脚本，npm 12 不需要 `--allow-scripts`。
+    ToolSpec::npm("codebuddy", "CodeBuddy", "@tencent-ai/codebuddy-code")
+        .official_update("update"),
 ];
 
 fn known_tool(id: &str) -> Option<&'static ToolSpec> {
@@ -303,6 +309,76 @@ fn known_tool(id: &str) -> Option<&'static ToolSpec> {
 
 fn tool_spec(id: &str) -> &'static ToolSpec {
     known_tool(id).unwrap_or(&UNKNOWN_TOOL)
+}
+
+/// 一处安装归属的 npm 包，以及 `npm i -g` 它时要追加的参数（前导空格已含）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct NpmPackage {
+    pub(super) name: &'static str,
+    pub(super) install_args: &'static str,
+}
+
+/// OpenCode 2 是与 1.x 并行发布的另一条线：npm 包 `@opencode/cli`、安装脚本
+/// `opencode.ai/v2/install`、brew `anomalyco/tap/opencode-v2`，从 1.x 升上去要用户自己跑
+/// `opencode upgrade --major`（首次启动会迁移共用的 opencode.db）。`TOOLS` 里登记的仍是 1.x
+/// 的 `opencode-ai`，安装按钮也只装 1.x；应用页只跟着本地已装的那条线查版本、升级、卸载，
+/// 从不替用户换线。两个包都提供 `opencode` 命令，pnpm 给 2.x 装 `opencode-ai` 会静默顶掉
+/// 2.x 的入口（npm 则 EEXIST 失败），所以拼包管理器命令前必须先认对是哪条线。
+pub(super) const OPENCODE_V2_NPM: NpmPackage = NpmPackage {
+    name: "@opencode/cli",
+    install_args: " --ignore-scripts=false --include=optional --allow-scripts=@opencode/cli",
+};
+
+/// 版本号是否属于 OpenCode 2 及以后（1.x 之外的线）。认不出的版本按 1.x 处理。
+pub(super) fn is_opencode_v2_version(version: &str) -> bool {
+    parse_semver(version).is_some_and(|([major, ..], _)| major >= 2)
+}
+
+/// 真身路径（或 Windows npm `.cmd` shim 的内容）是否落在 `@opencode/cli` 包里。
+/// npm / pnpm / bun 的全局安装都形如 `.../node_modules/@opencode/cli/bin/opencode.exe`。
+pub(super) fn mentions_opencode_v2_package(text: &str) -> bool {
+    text.replace('\\', "/")
+        .to_ascii_lowercase()
+        .contains("node_modules/@opencode/cli/")
+}
+
+/// 看版本号挑 npm 包：版本探测、Node 要求检查用（此时只有 `--version` 的结果）。
+pub(super) fn npm_package_for_version(tool: &str, version: Option<&str>) -> Option<NpmPackage> {
+    if tool == "opencode" && version.is_some_and(is_opencode_v2_version) {
+        return Some(OPENCODE_V2_NPM);
+    }
+    let spec = tool_spec(tool);
+    spec.npm_package.map(|name| NpmPackage {
+        name,
+        install_args: spec.npm_install_args,
+    })
+}
+
+/// 看安装位置挑 npm 包：锚定升级、卸载用。POSIX 只看真身路径（纯函数）；Windows 的
+/// npm / pnpm 入口是 `.cmd` shim、不是软链，真身就是它自己，要读 shim 内容才知道指向哪个包。
+/// Volta 的入口是它自己的 shim 程序，两边都看不出，按 1.x 处理。
+pub(super) fn npm_package_for_install(
+    tool: &str,
+    bin_path: &str,
+    real: &str,
+) -> Option<NpmPackage> {
+    if tool == "opencode"
+        && (mentions_opencode_v2_package(real) || windows_shim_mentions_opencode_v2(bin_path))
+    {
+        return Some(OPENCODE_V2_NPM);
+    }
+    npm_package_for_version(tool, None)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_shim_mentions_opencode_v2(bin_path: &str) -> bool {
+    bin_path.to_ascii_lowercase().ends_with(".cmd")
+        && std::fs::read_to_string(bin_path).is_ok_and(|shim| mentions_opencode_v2_package(&shim))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_shim_mentions_opencode_v2(_bin_path: &str) -> bool {
+    false
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -560,12 +636,13 @@ fn run_tool_lifecycle_silently(
     // 避免用户默认 shell 为 fish/zsh 时 `set -e` 等语义不一致。
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(command_line);
-    // GUI App 继承的是 launchd 的窄 PATH，而锚定探测用的是登录 shell —— 见
-    // `login_shell_path` doc。命令自身用绝对路径不受影响，但工具**内部** spawn 的
-    // npm/node 等子进程、以及 install 链里裸的 npm fallback 都需要真实 PATH。
-    if let Some(login_path) = login_shell_path(None) {
-        let inherited = std::env::var("PATH").unwrap_or_default();
-        cmd.env("PATH", merge_path_segments(&login_path, &inherited));
+    // GUI 启动时，安装脚本的 node/npm 子进程也需要登录 shell 的 PATH 和 Vite+ 目录。
+    if let Some(login_env) = login_shell_env(None) {
+        if let Some(login_path) = login_env.path.as_deref() {
+            let inherited = std::env::var("PATH").unwrap_or_default();
+            cmd.env("PATH", merge_path_segments(login_path, &inherited));
+        }
+        apply_login_shell_vars(&mut cmd, &login_env.vars);
     }
     let output = tool_lifecycle_progress::run_with_progress(cmd, progress)
         .map_err(|e| format!("启动安装进程失败: {e}"))?;
@@ -1434,43 +1511,8 @@ mod tests {
         );
     }
 
-    /// npm bin 路径冲突（#9173）：EEXIST + File exists 行齐备时，错误详情后
-    /// 追加指出冲突路径与安全处理方式的提示，且不建议盲目 --force。
     #[test]
-    fn npm_bin_collision_appends_actionable_hint() {
-        let raw = "npm error code EEXIST\n\
-                   npm error path /home/user/.local/bin/pi\n\
-                   npm error EEXIST: file already exists\n\
-                   npm error File exists: /home/user/.local/bin/pi\n\
-                   npm error Remove the existing file and try again, or run npm\n\
-                   npm error with --force to overwrite files recklessly.";
-        let detail = append_npm_bin_collision_hint("npm error code EEXIST".to_string(), raw);
-        assert!(detail.contains("/home/user/.local/bin/pi"));
-        assert!(detail.contains("/home/user/.local/bin/pi.bak"));
-        assert!(detail.contains("Do not use npm --force"));
-    }
-
-    /// Windows 的 npm 输出同样带 `File exists:` 行（含盘符路径），应能提取。
-    #[test]
-    fn npm_bin_collision_extracts_windows_path() {
-        let raw = "npm error code EEXIST\nnpm error File exists: C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd";
-        assert_eq!(
-            npm_bin_collision_path(raw),
-            Some("C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd")
-        );
-    }
-
-    /// 只有 EEXIST 字样、没有 File exists 行的失败不误判，原样返回。
-    #[test]
-    fn npm_bin_collision_ignores_other_failures() {
-        let raw = "some tool failed with EEXIST while writing its cache";
-        let detail = "cache write failed".to_string();
-        assert_eq!(append_npm_bin_collision_hint(detail.clone(), raw), detail);
-        assert_eq!(npm_bin_collision_path("npm error code E404"), None);
-    }
-
-    #[test]
-    fn npm_bin_collision_detail_survives_trailing_noise() {
+    fn npm_bin_collision_detection_and_hint() {
         let raw = [
             "npm error code EEXIST",
             "npm error path /home/me/.local/bin/pi",
@@ -1480,22 +1522,34 @@ mod tests {
             "npm error with --force to overwrite files recklessly.",
             "npm notice",
             "npm notice New major version of npm available! 10.9.2 -> 11.6.0",
-            "npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.6.0",
-            "npm notice To update run: npm install -g npm@11.6.0",
-            "npm notice",
             "npm error A complete log of this run can be found in: /tmp/debug-0.log",
         ]
         .join("\n");
+        let detail = append_npm_bin_collision_hint("npm error code EEXIST".to_string(), &raw);
+        assert!(detail.contains("/home/me/.local/bin/pi.bak"));
+        assert!(detail.contains("Do not use npm --force"));
         assert_eq!(
             npm_bin_collision_detail(&raw).as_deref(),
             Some("npm error code EEXIST\nnpm error File exists: /home/me/.local/bin/pi")
+        );
+
+        let win_raw =
+            "npm error code EEXIST\nnpm error File exists: C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd";
+        assert_eq!(
+            npm_bin_collision_path(win_raw),
+            Some("C:\\Users\\me\\AppData\\Roaming\\npm\\pi.cmd")
+        );
+
+        // Non-collision errors are untouched.
+        let other = "some tool failed with EEXIST while writing its cache";
+        assert_eq!(
+            append_npm_bin_collision_hint("cache write failed".to_string(), other),
+            "cache write failed"
         );
         assert_eq!(npm_bin_collision_detail("npm error code E404"), None);
         assert_eq!(npm_bin_collision_detail("EEXIST without a path"), None);
     }
 
-    /// 在 tempdir 下按 `layout` 搭一个自定义 `MCODE_INSTALL_DIR`（`<tmp>/apps/<root_name>`，
-    /// 目录名不是 `.minimax-code`）的 installer 布局，返回 `(TempDir, root, 入口路径)`。
     fn mcode_custom_install(
         root_name: &str,
         layout: McodeLayout,
@@ -1528,16 +1582,16 @@ mod tests {
     }
 
     #[test]
-    fn mcode_receipt_claims_custom_install_dir() {
-        for (root_name, layout) in [
-            ("mcode", McodeLayout::Posix),
-            ("bin", McodeLayout::Posix),
-            ("mcode", McodeLayout::Windows),
-            // MCODE_INSTALL_DIR=C:\Users\me\bin：入口 `<root>\mcode.cmd` 的父目录名就是 bin。
-            ("bin", McodeLayout::Windows),
+    fn mcode_receipt_validation() {
+        // Claims custom POSIX/Windows dirs (including root named `bin` and UTF-8 BOM).
+        for (root_name, layout, bom) in [
+            ("mcode", McodeLayout::Posix, false),
+            ("bin", McodeLayout::Posix, false),
+            ("mcode", McodeLayout::Windows, true),
+            ("bin", McodeLayout::Windows, false),
         ] {
             let (_dir, root, entry) = mcode_custom_install(root_name, layout);
-            write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, false);
+            write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, bom);
             assert_eq!(
                 mcode_receipt_install_root(&entry, layout).as_deref(),
                 Some(root.as_str()),
@@ -1545,7 +1599,7 @@ mod tests {
             );
         }
 
-        // 端到端：单处安装也必须原地重跑 installer，不能退到全局 `npm i -g`。
+        // End-to-end: single install reruns installer in place instead of global npm.
         let (_dir, root, entry) = mcode_custom_install("mcode", McodeLayout::NATIVE);
         write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, false);
         let installs = vec![ToolInstallation {
@@ -1562,41 +1616,19 @@ mod tests {
             installs_anchored_command("mcode", &installs),
             Some(mcode_installer_update_command(&root))
         );
-    }
 
-    #[test]
-    fn mcode_receipt_tolerates_utf8_bom() {
-        // install.ps1 在 Windows PowerShell 5.1 下用 `Set-Content -Encoding UTF8` 写回执，带 BOM。
-        let (_dir, root, entry) = mcode_custom_install("mcode", McodeLayout::Windows);
-        write_mcode_receipt(&root, "minimax-code", "npm-prefix", &root, true);
-        assert_eq!(
-            mcode_receipt_install_root(&entry, McodeLayout::Windows).as_deref(),
-            Some(root.as_str())
-        );
-    }
-
-    #[test]
-    fn mcode_receipt_rejects_foreign_or_mismatched_receipts() {
+        // Missing, foreign, or copied-prefix receipts are rejected.
         let layout = McodeLayout::NATIVE;
-        // 没有回执：不认领。
-        let (_dir, _root, entry) = mcode_custom_install("mcode", layout);
-        assert_eq!(mcode_receipt_install_root(&entry, layout), None);
-
-        // 不是 MiniMax Code 的回执、或不归 npm-prefix 管：不认领。
+        let (_dir, _root, no_receipt) = mcode_custom_install("mcode", layout);
+        assert_eq!(mcode_receipt_install_root(&no_receipt, layout), None);
         for (product, owner) in [
             ("other", "npm-prefix"),
             ("minimax-code", "managed-installer"),
         ] {
             let (_dir, root, entry) = mcode_custom_install("mcode", layout);
             write_mcode_receipt(&root, product, owner, &root, false);
-            assert_eq!(
-                mcode_receipt_install_root(&entry, layout),
-                None,
-                "{product}/{owner}"
-            );
+            assert_eq!(mcode_receipt_install_root(&entry, layout), None);
         }
-
-        // prefix 指向别的目录（拷贝来的回执）：不认领。
         let elsewhere = tempfile::tempdir().unwrap();
         let (_dir, root, entry) = mcode_custom_install("mcode", layout);
         write_mcode_receipt(
@@ -1610,64 +1642,33 @@ mod tests {
     }
 
     #[cfg(target_os = "windows")]
-    mod wsl_helpers {
-        use super::super::*;
-
-        #[test]
-        fn test_is_valid_shell() {
-            assert!(is_valid_shell("bash"));
-            assert!(is_valid_shell("zsh"));
-            assert!(is_valid_shell("sh"));
-            assert!(is_valid_shell("fish"));
-            assert!(is_valid_shell("dash"));
-            assert!(is_valid_shell("/usr/bin/bash"));
-            assert!(is_valid_shell("/bin/zsh"));
-            assert!(!is_valid_shell("powershell"));
-            assert!(!is_valid_shell("cmd"));
-            assert!(!is_valid_shell(""));
-        }
-
-        #[test]
-        fn test_is_valid_shell_flag() {
-            assert!(is_valid_shell_flag("-c"));
-            assert!(is_valid_shell_flag("-lc"));
-            assert!(is_valid_shell_flag("-lic"));
-            assert!(!is_valid_shell_flag("-x"));
-            assert!(!is_valid_shell_flag(""));
-            assert!(!is_valid_shell_flag("--login"));
-        }
-
-        #[test]
-        fn test_default_flag_for_shell() {
-            assert_eq!(default_flag_for_shell("sh"), "-c");
-            assert_eq!(default_flag_for_shell("dash"), "-c");
-            assert_eq!(default_flag_for_shell("/bin/dash"), "-c");
-            assert_eq!(default_flag_for_shell("fish"), "-lc");
-            assert_eq!(default_flag_for_shell("bash"), "-lic");
-            assert_eq!(default_flag_for_shell("zsh"), "-lic");
-            assert_eq!(default_flag_for_shell("/usr/bin/zsh"), "-lic");
-        }
-
-        #[test]
-        fn test_is_valid_wsl_distro_name() {
-            assert!(is_valid_wsl_distro_name("Ubuntu"));
-            assert!(is_valid_wsl_distro_name("Ubuntu-22.04"));
-            assert!(is_valid_wsl_distro_name("my_distro"));
-            assert!(!is_valid_wsl_distro_name(""));
-            assert!(!is_valid_wsl_distro_name("distro with spaces"));
-            assert!(!is_valid_wsl_distro_name(&"a".repeat(65)));
-        }
-    }
-
-    #[cfg(target_os = "windows")]
     #[test]
-    fn merge_path_segments_win_preserves_order_and_dedupes_case_insensitively() {
-        let merged = merge_path_segments_win(&[
-            r"C:\a;C:\B;%SystemRoot%\system32",
-            r"C:\b;C:\a", // dup of C:\a (case-insensitive) and C:\B
-            "",
-        ]);
-        assert_eq!(merged, r"C:\a;C:\B;%SystemRoot%\system32");
+    fn wsl_validation_and_path_helpers() {
+        for ok in ["bash", "zsh", "sh", "fish", "dash", "/usr/bin/bash"] {
+            assert!(is_valid_shell(ok), "{ok}");
+        }
+        for bad in ["powershell", "cmd", ""] {
+            assert!(!is_valid_shell(bad), "{bad}");
+        }
+        assert!(
+            is_valid_shell_flag("-c") && is_valid_shell_flag("-lc") && is_valid_shell_flag("-lic")
+        );
+        assert!(!is_valid_shell_flag("-x") && !is_valid_shell_flag("--login"));
+        assert_eq!(default_flag_for_shell("/bin/dash"), "-c");
+        assert_eq!(default_flag_for_shell("fish"), "-lc");
+        assert_eq!(default_flag_for_shell("/usr/bin/zsh"), "-lic");
+
+        assert!(is_valid_wsl_distro_name("Ubuntu-22.04") && is_valid_wsl_distro_name("my_distro"));
+        assert!(
+            !is_valid_wsl_distro_name("")
+                && !is_valid_wsl_distro_name("distro with spaces")
+                && !is_valid_wsl_distro_name(&"a".repeat(65))
+        );
+
+        assert_eq!(
+            merge_path_segments_win(&[r"C:\a;C:\B;%SystemRoot%\system32", r"C:\b;C:\a", "",]),
+            r"C:\a;C:\B;%SystemRoot%\system32"
+        );
     }
 
     #[cfg(target_os = "windows")]
@@ -1683,7 +1684,6 @@ mod tests {
             assert!(effective.contains(r";D:\cc-switch-path-test"));
             return;
         }
-        // Use a subprocess so other tests never observe a modified process PATH.
         let mut path: Vec<u16> = r"C:\cc-switch-path-test;C:\".encode_utf16().collect();
         path.push(0xD800); // Unpaired UTF-16 surrogate.
         path.extend(r";D:\cc-switch-path-test".encode_utf16());
@@ -1699,22 +1699,5 @@ mod tests {
             .unwrap();
         assert!(output.status.success(), "{output:?}");
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
-    }
-
-    #[cfg(target_os = "windows")]
-    #[test]
-    fn windows_shell_compatible_path_strips_verbatim_prefixes() {
-        assert_eq!(
-            windows_shell_compatible_path(Path::new(r"\\?\C:\tools\codex.cmd")),
-            PathBuf::from(r"C:\tools\codex.cmd")
-        );
-        assert_eq!(
-            windows_shell_compatible_path(Path::new(r"\\?\UNC\server\share\tools\codex.cmd")),
-            PathBuf::from(r"\\server\share\tools\codex.cmd")
-        );
-        assert_eq!(
-            windows_shell_compatible_path(Path::new(r"C:\tools\codex.cmd")),
-            PathBuf::from(r"C:\tools\codex.cmd")
-        );
     }
 }

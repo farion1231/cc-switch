@@ -158,6 +158,7 @@ impl SkillService {
                     | AppType::Dsh
                     | AppType::Copilot
                     | AppType::WorkBuddy
+                    | AppType::Codebuddy
             ) && !skill.apps.is_enabled_for(&app)
             {
                 continue;

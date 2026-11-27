@@ -1,0 +1,19 @@
+{
+  "version": "4.0.42",
+  "items": [
+    {
+      "type": "new",
+      "zh": "GitHub Copilot 支持 Auto 自动选模型，Free 账号也能用",
+      "zh-TW": "GitHub Copilot 支援 Auto 自動選模型，Free 帳號也能用",
+      "en": "GitHub Copilot supports Auto model selection, including on Free accounts",
+      "ja": "GitHub Copilot の Auto モデル自動選択に対応（Free アカウントも可）"
+    },
+    {
+      "type": "fix",
+      "zh": "修复所有供应商卡片都显示「agy 在用」",
+      "zh-TW": "修正所有供應商卡片都顯示「agy 使用中」",
+      "en": "Fixed the \"In use by agy\" badge appearing on every provider card",
+      "ja": "すべてのプロバイダーカードに「agy で使用中」が表示される問題を修正"
+    }
+  ]
+}

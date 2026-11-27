@@ -180,6 +180,16 @@ function ImportStatusMessage({
         <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
         <div className="space-y-1.5">
           <p className="font-semibold">{t("settings.importPartialSuccess")}</p>
+          {backupId ? (
+            <p className="text-xs text-warning-text">
+              {t("settings.backupId")}: {backupId}
+            </p>
+          ) : null}
+          {errorMessage ? (
+            <p className="text-xs text-warning-text whitespace-pre-line">
+              {errorMessage}
+            </p>
+          ) : null}
           <p className="text-warning-text">{t("settings.importPartialHint")}</p>
         </div>
       </div>

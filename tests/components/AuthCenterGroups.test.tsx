@@ -237,6 +237,34 @@ describe("Auth Center account groups", () => {
     expect(screen.getByRole("combobox")).toBeInTheDocument();
     expect(screen.queryByTestId("xai-quota")).not.toBeInTheDocument();
   });
+
+  it("forwards helpSide and updated help copy to HelpTip", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CopilotAuthSection helpSide="top" />);
+
+    await user.click(
+      screen.getByRole("button", { name: "GitHub Copilot 账号怎么用" }),
+    );
+    const copilotTip = await screen.findByRole("tooltip");
+    expect(copilotTip).toHaveAttribute("data-side", "top");
+    expect(copilotTip).toHaveTextContent(/Codex/);
+    expect(copilotTip).toHaveTextContent(/Copilot CLI/);
+
+    rerender(<CodexOAuthSection showAccountQuota helpSide="top" />);
+    await user.click(
+      screen.getByRole("button", { name: "ChatGPT 账号怎么用" }),
+    );
+    expect(await screen.findByRole("tooltip")).toHaveAttribute(
+      "data-side",
+      "top",
+    );
+
+    rerender(<XaiOAuthSection mode="manage" helpSide="bottom" />);
+    await user.click(screen.getByRole("button", { name: "xAI 账号怎么用" }));
+    const xaiTip = await screen.findByRole("tooltip");
+    expect(xaiTip).toHaveAttribute("data-side", "bottom");
+    expect(xaiTip).toHaveTextContent(/Grok Build/);
+  });
 });
 
 describe("subscriptionQuotaState", () => {
@@ -413,5 +441,41 @@ describe("AccountQuotaColumn", () => {
       "whitespace-nowrap",
     );
     expect(valueCell).not.toHaveClass("truncate");
+  });
+
+  it("keeps the last-updated text while refreshing so the quota bar does not shift", async () => {
+    const { QuotaRefreshCell } = await import(
+      "@/components/settings/auth/AccountQuota"
+    );
+    const queriedAt = Date.now() - 11 * 24 * 60 * 60 * 1000;
+    const { container, rerender } = render(
+      <QuotaRefreshCell
+        login="me@example.com"
+        queriedAt={queriedAt}
+        loading={false}
+        onRefresh={vi.fn()}
+      />,
+    );
+    const cell = container.querySelector(".auth-quota-refresh");
+    const before = cell?.textContent;
+    expect(before).toBe("usage.daysAgo");
+
+    rerender(
+      <QuotaRefreshCell
+        login="me@example.com"
+        queriedAt={queriedAt}
+        loading
+        onRefresh={vi.fn()}
+      />,
+    );
+    // 刷新中只转圈，文字不换成「更新中…」，格子宽度不变
+    expect(container.querySelector(".auth-quota-refresh")?.textContent).toBe(
+      before,
+    );
+    const button = screen.getByRole("button", {
+      name: "刷新 me@example.com 的额度",
+    });
+    expect(button).toHaveAttribute("aria-busy", "true");
+    expect(button).toHaveAttribute("aria-disabled", "true");
   });
 });

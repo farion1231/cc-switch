@@ -29,7 +29,9 @@ fn provider(app: &AppType) -> Provider {
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => {
+        | AppType::WorkBuddy
+        | AppType::Codebuddy
+        | AppType::ZCode => {
             json!({"apiKey":"test-key-a", "baseUrl":"https://example.com", "model":"model-a"})
         }
     };
@@ -58,6 +60,8 @@ fn credential_guard_all_app_configs_allow_model_edits_but_reject_key_and_destina
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
+                | AppType::Codebuddy
+                | AppType::ZCode
         ) {
             assert!(db.save_provider(&app, &original).is_err());
             assert!(db.get_provider_by_id(&original.id, &app).unwrap().is_none());

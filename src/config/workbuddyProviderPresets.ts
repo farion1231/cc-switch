@@ -25,7 +25,7 @@ export interface WorkBuddyReasoning {
 
 /**
  * WorkBuddy 自定义模型（`~/.workbuddy/models.json`）里单个模型条目的字段，
- * 与 WorkBuddy / CodeBuddy Code 文档的 models.json 字段一致。
+ * 与 WorkBuddy / CodeBuddy 文档的 models.json 字段一致。
  */
 export interface WorkBuddyModel {
   id: string;
@@ -215,8 +215,7 @@ export const workbuddyProviderPresets: WorkBuddyProviderPreset[] =
     ];
   });
 
-/** 授权中心里 WorkBuddy 账号的 provider 标识（官方登录卡的 `meta.authBinding.authProvider`）。 */
-export const WORKBUDDY_ACCOUNT_AUTH_PROVIDER = "workbuddy_account";
+export { WORKBUDDY_ACCOUNT_AUTH_PROVIDER } from "./workbuddyOfficialMeta";
 
 /**
  * 「WorkBuddy 官方登录」：不是自定义模型，卡片只绑定授权中心里的一个 WorkBuddy 账号，

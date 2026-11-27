@@ -230,22 +230,26 @@ fn pathext_prefers_cmd_over_exe(pathext: Option<&str>) -> bool {
 }
 
 /// 同一目录里 `<tool>.cmd` 和 `<tool>.exe` 并存时，命令行敲 `<tool>` 只会按 PATHEXT
-/// 顺序命中其中一个，另一个被遮住。调用方只对已知是同一处安装多出来的入口用它
-/// （Hermes 换成 `.exe` 启动器后留下的旧 `hermes.cmd`，#8839）。
+/// 顺序命中其中一个，另一个被遮住。返回遮住 `path` 的那个同目录兄弟（没有则 `None`）。
 #[cfg(any(target_os = "windows", test))]
-fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
-    let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
-        return false;
-    };
+fn pathext_shadowing_sibling(path: &Path, pathext: Option<&str>) -> Option<std::path::PathBuf> {
+    let ext = path.extension().and_then(|ext| ext.to_str())?;
     let cmd_first = pathext_prefers_cmd_over_exe(pathext);
     let shadowing_ext = if ext.eq_ignore_ascii_case("cmd") && !cmd_first {
         "exe"
     } else if ext.eq_ignore_ascii_case("exe") && cmd_first {
         "cmd"
     } else {
-        return false;
+        return None;
     };
-    path.with_extension(shadowing_ext).is_file()
+    Some(path.with_extension(shadowing_ext)).filter(|sibling| sibling.is_file())
+}
+
+/// `path` 是否被同目录的 PATHEXT 兄弟遮住。调用方只对已知是同一处安装多出来的入口用它
+/// （Hermes 的 bin 目录里 `hermes.cmd` 与 `hermes.exe` 并存，#8839 / #9931）。
+#[cfg(any(target_os = "windows", test))]
+fn shadowed_by_pathext_sibling(path: &Path, pathext: Option<&str>) -> bool {
+    pathext_shadowing_sibling(path, pathext).is_some()
 }
 
 pub(super) fn tool_executable_candidates(tool: &str, dir: &Path) -> Vec<std::path::PathBuf> {
@@ -441,6 +445,40 @@ fn expand_env_chars_with_lookup(
 /// 构建某工具的候选搜索目录（原生安装优先，PATH 兜底）。
 /// 单探兜底 (`scan_cli_version`) 与全量枚举 (`enumerate_tool_installations`) 共用，
 /// 确保两条路径看到的是同一组安装位置。
+/// 在终端里启动 CLI 时用的可执行文件：按工具搜索路径找，跳过版本管理器的 shim 目录
+/// （mise/asdf/scoop 的 shim 可能已失效，例如 `mise ERROR codebuddy is not a valid shim`），
+/// 找不到真实安装时再退回 shim。都没有就返回 `None`，由调用方用裸命令名兜底。
+pub(crate) fn locate_cli_for_terminal(tool: &str) -> Option<std::path::PathBuf> {
+    let mut shim = None;
+    for dir in build_tool_search_paths(tool) {
+        let in_shims = dir.file_name().is_some_and(|name| name == "shims");
+        for candidate in tool_executable_candidates(tool, &dir) {
+            if !is_launchable_file(&candidate) {
+                continue;
+            }
+            if !in_shims {
+                return Some(candidate);
+            }
+            shim.get_or_insert(candidate);
+        }
+    }
+    shim
+}
+
+#[cfg(unix)]
+fn is_launchable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    path.metadata()
+        .map(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_launchable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
 pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
     let home = crate::config::get_home_dir();
 
@@ -475,6 +513,20 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
             push_unique_path(&mut search_paths, home.join(".bun").join("bin"));
         }
     }
+    if tool == "pi" {
+        if let Some(agent_dir) = std::env::var_os("PI_CODING_AGENT_DIR")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+        {
+            push_unique_path(&mut search_paths, agent_dir.join("bin"));
+        }
+        if !home.as_os_str().is_empty() {
+            push_unique_path(
+                &mut search_paths,
+                home.join(".pi").join("agent").join("bin"),
+            );
+        }
+    }
     if !home.as_os_str().is_empty() {
         push_unique_path(&mut search_paths, home.join(".local/bin"));
         push_unique_path(&mut search_paths, home.join(".npm-global/bin"));
@@ -483,8 +535,22 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
         extend_mise_node_search_paths(&mut search_paths, &home);
     }
 
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(pnpm_home) = std::env::var_os("PNPM_HOME").filter(|value| !value.is_empty()) {
+            let pnpm_home = std::path::PathBuf::from(pnpm_home);
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
+    }
+
     #[cfg(target_os = "macos")]
     {
+        if !home.as_os_str().is_empty() {
+            let pnpm_home = home.join("Library").join("pnpm");
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/opt/homebrew/bin"),
@@ -510,6 +576,11 @@ pub(super) fn build_tool_search_paths(tool: &str) -> Vec<std::path::PathBuf> {
 
     #[cfg(target_os = "linux")]
     {
+        if !home.as_os_str().is_empty() {
+            let pnpm_home = home.join(".local/share/pnpm");
+            push_unique_path(&mut search_paths, pnpm_home.join("bin"));
+            push_unique_path(&mut search_paths, pnpm_home);
+        }
         push_unique_path(
             &mut search_paths,
             std::path::PathBuf::from("/usr/local/bin"),
@@ -651,12 +722,12 @@ fn windows_runnable_sibling_for_extensionless_tool(path: &Path) -> Option<std::p
         .find(|candidate| candidate.is_file())
 }
 
-/// Pi ships only through npm, but PyPI has an unrelated Python 2 package also named
-/// `pi` whose console script lands in a Python `Scripts` dir as `pi.exe`. That file is
-/// never the Pi coding agent: probing it reports a Python traceback as "installed but
-/// broken", and uninstall would target it (#9267). Only pip's own layout is matched
-/// (`<tool>.exe` directly inside a `Scripts` dir); npm writes `.cmd` shims, so a custom
-/// npm prefix under some `Scripts` folder is left alone.
+/// Pi ships via npm and its managed installer (both using `.cmd`/script launchers on Windows),
+/// while PyPI has an unrelated Python 2 package also named `pi` whose console script lands in
+/// a Python `Scripts` dir as `pi.exe`. That file is never the Pi coding agent: probing it
+/// reports a Python traceback as "installed but broken", and uninstall would target it (#9267).
+/// Only pip's own layout is matched (`<tool>.exe` directly inside a `Scripts` dir); npm writes
+/// `.cmd` shims, so a custom npm prefix under some `Scripts` folder is left alone.
 #[cfg(any(target_os = "windows", test))]
 fn is_foreign_pip_launcher(tool: &str, path: &Path) -> bool {
     tool == "pi"
@@ -720,15 +791,27 @@ fn windows_preferred_tool_executable(tool: &str, path: &Path) -> Option<std::pat
     )
 }
 
+/// `where` 在同一目录里按文件名顺序列出（`hermes.cmd` 排在 `hermes.exe` 前），不按
+/// PATHEXT；命令行实际执行的是 PATHEXT 靠前的那个，所以先换成遮住它的同目录兄弟，
+/// 兄弟不可探测时再退回 `where` 给的这一行（#9931）。
 #[cfg(target_os = "windows")]
-fn windows_preferred_path_default(tool: &str, raw: &str) -> Option<std::path::PathBuf> {
+fn windows_preferred_path_default(
+    tool: &str,
+    raw: &str,
+    pathext: Option<&str>,
+) -> Option<std::path::PathBuf> {
     raw.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .filter(|line| {
             !is_windows_app_execution_alias_dir(Path::new(line).parent().unwrap_or(Path::new("")))
         })
-        .find_map(|line| windows_preferred_tool_executable(tool, Path::new(line)))
+        .find_map(|line| {
+            let path = Path::new(line);
+            pathext_shadowing_sibling(path, pathext)
+                .and_then(|sibling| windows_preferred_tool_executable(tool, &sibling))
+                .or_else(|| windows_preferred_tool_executable(tool, path))
+        })
 }
 
 #[cfg(target_os = "windows")]
@@ -1046,14 +1129,48 @@ fn first_abs_path_line(raw: &str) -> Option<&str> {
     raw.lines().map(str::trim).find(|l| l.starts_with('/'))
 }
 
-/// 从 `env` 输出里取 `PATH=` 那行的值。要求值以 `/` 开头——PATH 首段必是绝对路径，
-/// 这条约束顺带跳过"某个多行值的环境变量恰好有一行以 `PATH=` 开头"的污染，
-/// 与 `first_abs_path_line` 对交互式 shell 噪音的容错同理。
 #[cfg(not(target_os = "windows"))]
-fn path_line_from_env_output(raw: &str) -> Option<&str> {
-    raw.lines()
-        .filter_map(|line| line.strip_prefix("PATH="))
-        .find(|value| value.starts_with('/'))
+const LOGIN_ENV_MARKER: &str = "\0__CC_SWITCH_ENV__\0";
+
+#[cfg(not(target_os = "windows"))]
+#[derive(Default)]
+pub(super) struct LoginShellEnv {
+    pub(super) path: Option<String>,
+    pub(super) vars: Vec<(String, String)>,
+}
+
+#[cfg(not(target_os = "windows"))]
+fn parse_login_shell_env_output(raw: &str) -> Option<LoginShellEnv> {
+    let (_, records) = raw.split_once(LOGIN_ENV_MARKER)?;
+    let mut env = LoginShellEnv::default();
+    for (key, value) in records
+        .split('\0')
+        .filter_map(|entry| entry.split_once('='))
+    {
+        if !value.starts_with('/') {
+            continue;
+        }
+        match key {
+            "PATH" => env.path = Some(value.to_owned()),
+            "VP_HOME" | "VP_BIN_DIR" | "VP_DATA_DIR" | "VP_CACHE_DIR" | "XDG_DATA_HOME"
+            | "XDG_CONFIG_HOME" | "XDG_CACHE_HOME" | "XDG_STATE_HOME" => {
+                env.vars.push((key.to_owned(), value.to_owned()));
+            }
+            _ => {}
+        }
+    }
+    Some(env)
+}
+
+/// 只补齐当前进程环境里缺失的登录 shell 变量，避免覆盖终端启动（如 `pnpm dev`）或测试里
+/// 显式设置的会话覆盖；调用方再通过 `apply_extra_env` 覆盖应用配置目录等强约束变量。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn apply_login_shell_vars(cmd: &mut std::process::Command, vars: &[(String, String)]) {
+    for (key, value) in vars {
+        if std::env::var_os(key).is_none() {
+            cmd.env(key, value);
+        }
+    }
 }
 
 /// 合并两段 PATH：`primary` 全部保留在前，`extra` 中未出现过的段按序追加。
@@ -1071,32 +1188,10 @@ pub(crate) fn merge_path_segments(primary: &str, extra: &str) -> String {
     merged.join(":")
 }
 
-/// 用与 `resolve_path_default` 相同的登录 shell 解析用户的真实 PATH，
-/// 供 `run_tool_lifecycle_silently` 注入给安装/升级脚本，也供
-/// `run_detected_tool_command_with_timeout` 注入给运行时调用的 CLI。
-///
-/// **要解决的不对称**：探测阶段（`try_get_version` / `resolve_path_default`）跑的是
-/// `$SHELL -lic`，会读 `.zshrc`/`.zprofile`，看得到 nvm / homebrew / volta；而执行阶段
-/// 是非登录 `bash -c`，继承的是 launchd 给 GUI App 的 PATH，通常只有
-/// `/usr/bin:/bin:/usr/sbin:/sbin`。锚定命令自己用绝对路径调用执行体，本不受这条影响
-/// ——但有两类漏网：
-/// 1. **执行体在内部再 spawn 第三方 CLI**：`grok update` 靠 `npm view` 查最新版本
-///    （见 `grok_native_update_command`），npm 又是 `#!/usr/bin/env node` 脚本；
-///    未来任何 self-update 内部调 node/git/python 同理。
-/// 2. **install 分支的 `<官方 installer> || npm i -g <pkg>@latest`**：`||` 右侧是裸命令，
-///    窄 PATH 下必然 exit 127，等于没有兜底。
-///
-/// 把执行阶段的 PATH 拉平到探测阶段的水平，一次消除这两类。
-///
-/// **用 `/usr/bin/env` 而不是 `echo $PATH`**：`$PATH` 在 fish 里是 list 类型，
-/// `"$PATH"` 展开成空格分隔而非冒号分隔；`env` 打印的则是子进程的真实环境，
-/// 任何 shell 下格式都正确。写绝对路径又绕过了 alias / function / PATH 三重不确定性
-/// （交互式 shell 会加载用户 alias）。
-///
-/// 解析不到（含超过 `deadline`）时返回 `None`，调用方保持原有行为（不注入），
-/// 不引入新的失败模式。
+/// 从登录 shell 读取 PATH 和 Vite+ 的目录配置，供 GUI 启动的 CLI 子进程使用。
+/// Homebrew 安装的 Vite+ shim 缺少这些目录时，可能把 `pi list` 当成 `vp list`（#9960）。
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<String> {
+pub(super) fn login_shell_env(deadline: Option<CommandDeadline>) -> Option<LoginShellEnv> {
     use std::process::{Command, Stdio};
     let shell = std::env::var("SHELL")
         .ok()
@@ -1105,9 +1200,14 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg("/usr/bin/env")
-        // 与 `resolve_path_default` 相同：交互式 rc 不能读到继承来的 stdin，
-        // 也不能因持有控制终端被作业控制停住。
+        // ENVIRON includes exported variables and preserves fish's colon-separated PATH.
+        // NUL separates records even on macOS versions without env -0.
+        .arg(
+            r#"exec /usr/bin/env awk 'BEGIN {
+            printf "%c__CC_SWITCH_ENV__%c", 0, 0
+            for (key in ENVIRON) printf "%s=%s%c", key, ENVIRON[key], 0
+        }'"#,
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1117,30 +1217,60 @@ pub(crate) fn login_shell_path(deadline: Option<CommandDeadline>) -> Option<Stri
     if !out.status.success() {
         return None;
     }
-    let raw = decode_command_output(&out.stdout);
-    Some(path_line_from_env_output(&raw)?.to_string())
+    parse_login_shell_env_output(&decode_command_output(&out.stdout))
 }
 
-/// [`login_shell_path`] 的进程级缓存：GUI 启动后 PATH 不会再变，解析一次、全进程共用
-/// （MCP 连通性检测、Codex 模型目录探测）。限时 10 秒，免得卡住的 shell 配置让每次调用都等；
-/// 第一次调用会阻塞，异步代码里放进 `spawn_blocking`。
+/// [`login_shell_env`] 的进程级缓存：GUI 启动后登录 shell 环境不会再变，解析一次、全进程共用。
+/// 限时 10 秒，免得卡住的 shell 配置让每次调用都等；第一次调用会阻塞，异步代码里放进 `spawn_blocking`。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn cached_login_shell_env() -> Option<&'static LoginShellEnv> {
+    static LOGIN_SHELL_ENV: std::sync::LazyLock<Option<LoginShellEnv>> =
+        std::sync::LazyLock::new(|| {
+            login_shell_env(CommandDeadline::from_timeout(Some(
+                std::time::Duration::from_secs(10),
+            )))
+        });
+    LOGIN_SHELL_ENV.as_ref()
+}
+
+/// [`login_shell_env`] 的 PATH 视图（MCP 连通性检测、Codex 模型目录探测复用）。
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn cached_login_shell_path() -> Option<String> {
-    static LOGIN_SHELL_PATH: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| {
-        login_shell_path(CommandDeadline::from_timeout(Some(
-            std::time::Duration::from_secs(10),
-        )))
-    });
-    LOGIN_SHELL_PATH.clone()
+    cached_login_shell_env().and_then(|env| env.path.clone())
+}
+
+#[cfg(not(target_os = "windows"))]
+const COMMAND_V_MARKER: &str = "__CC_SWITCH_COMMAND_V__";
+
+/// 从 `echo __CC_SWITCH_COMMAND_V__; command -v <tool>` 的输出里取标记之后的绝对路径行。
+/// 交互式登录 shell（`-lic`）启动时 `.zshrc` 可能把任意带 `/` 的路径打印到 stdout，
+/// 甚至在 `<tool>` 是别名（`alias pi=...`）时也会残留前序路径；只看最后一个标记之后
+/// 的输出才能避免被启动噪音截胡（#9960）。
+#[cfg(not(target_os = "windows"))]
+fn command_v_abs_path_line(raw: &str) -> Option<&str> {
+    let lines: Vec<&str> = raw.lines().map(str::trim).collect();
+    let tail = match lines.iter().rposition(|&line| line == COMMAND_V_MARKER) {
+        Some(index) => &lines[index + 1..],
+        None => &lines[..],
+    };
+    tail.iter().copied().find(|line| line.starts_with('/'))
+}
+
+/// PATH 命中的默认入口：同时保留原始入口路径（执行时维持软链/multicall shim 的
+/// `argv[0]` 身份）和 `canonicalize` 后的真身路径（去重与身份比对用）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ResolvedPathDefault {
+    pub(super) launcher: std::path::PathBuf,
+    pub(super) real: std::path::PathBuf,
 }
 
 /// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
-/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
+/// 同时返回原始入口与 canonicalize 后的真身。
 #[cfg(not(target_os = "windows"))]
-pub(super) fn resolve_path_default(
+pub(super) fn resolve_path_default_entry(
     tool: &str,
     deadline: Option<CommandDeadline>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<Option<ResolvedPathDefault>, String> {
     use std::process::{Command, Stdio};
 
     let shell = std::env::var("SHELL")
@@ -1150,7 +1280,7 @@ pub(super) fn resolve_path_default(
     let flag = default_flag_for_shell(&shell);
     let mut cmd = Command::new(shell);
     cmd.arg(flag)
-        .arg(format!("command -v {tool}"))
+        .arg(format!("echo {COMMAND_V_MARKER}; command -v {tool}"))
         // 改 spawn 后 stdin 不再像 output() 那样默认置 null，须显式关闭：
         // 继承来的 stdin 可能是终端/管道，交互式 rc 里的读操作会永久阻塞。
         .stdin(Stdio::null())
@@ -1165,12 +1295,24 @@ pub(super) fn resolve_path_default(
         return Ok(None);
     }
     let raw = decode_command_output(&out.stdout);
-    // 不能死取第一行：交互式 .zshrc 可能先打印欢迎语（如 "🚀 Welcome back"），
-    // command -v 的真实路径在其后；取第一个 `/` 开头的行才稳。
-    let Some(first) = first_abs_path_line(&raw) else {
+    let Some(first) = command_v_abs_path_line(&raw) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(first).ok())
+    let launcher = std::path::PathBuf::from(first);
+    let Some(real) = std::fs::canonicalize(&launcher).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedPathDefault { launcher, real }))
+}
+
+/// 用与 `try_get_version` 相同的登录 shell 解析 PATH 默认命中的可执行文件路径，
+/// canonicalize 后作为"命令行默认 / 升级目标"的锚点（与升级会作用的那处对齐）。
+#[cfg(not(target_os = "windows"))]
+pub(super) fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_entry(tool, deadline)?.map(|entry| entry.real))
 }
 
 #[cfg(target_os = "windows")]
@@ -1202,10 +1344,10 @@ fn windows_path_lookup_command(
 }
 
 #[cfg(target_os = "windows")]
-pub(super) fn resolve_path_default(
+pub(super) fn resolve_path_default_entry(
     tool: &str,
     deadline: Option<CommandDeadline>,
-) -> Result<Option<std::path::PathBuf>, String> {
+) -> Result<Option<ResolvedPathDefault>, String> {
     // Restrict `where` to the merged effective PATH. A bare `where {tool}` also
     // searches the current directory first, which would let a project-local
     // `codex.cmd` be executed by a passive version check. The `$PATH:pattern`
@@ -1223,10 +1365,25 @@ pub(super) fn resolve_path_default(
     // `where` lists every match on PATH in order. Skip entries that cannot be
     // safely probed (App Execution Aliases and Desktop GUI executables) and keep
     // looking so a later real CLI can still be the PATH default.
-    let Some(preferred) = windows_preferred_path_default(tool, &raw) else {
+    let pathext = std::env::var("PATHEXT").ok();
+    let Some(preferred) = windows_preferred_path_default(tool, &raw, pathext.as_deref()) else {
         return Ok(None);
     };
-    Ok(std::fs::canonicalize(preferred).ok())
+    let Some(real) = std::fs::canonicalize(&preferred).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(ResolvedPathDefault {
+        launcher: preferred,
+        real,
+    }))
+}
+
+#[cfg(target_os = "windows")]
+pub(super) fn resolve_path_default(
+    tool: &str,
+    deadline: Option<CommandDeadline>,
+) -> Result<Option<std::path::PathBuf>, String> {
+    Ok(resolve_path_default_entry(tool, deadline)?.map(|entry| entry.real))
 }
 
 /// 升级预检/冲突诊断的单条子进程探测预算。枚举会对每个工具开一次登录 shell、对每处
@@ -1272,6 +1429,9 @@ pub(super) fn run_probe_version_command(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some(env) = cached_login_shell_env() {
+        apply_login_shell_vars(&mut cmd, &env.vars);
+    }
     isolate_child_process_group(&mut cmd);
     let child = cmd.spawn().map_err(|e| e.to_string())?;
     wait_child_output(
@@ -1395,7 +1555,7 @@ pub(super) fn enumerate_tool_installations(tool: &str) -> Vec<ToolInstallation> 
     let current_path = effective_path_string();
     #[cfg(not(target_os = "windows"))]
     let current_path = install_probe_base_path(
-        cached_login_shell_path().as_deref(),
+        cached_login_shell_env().and_then(|env| env.path.as_deref()),
         &effective_path_os().unwrap_or_default(),
     );
 
@@ -1468,9 +1628,14 @@ pub(super) fn list_tool_install_locations(tool: &str) -> Vec<ToolInstallLocation
     if let Some(default) = path_default
         .filter(|path| path.is_file() && !located.iter().any(|install| &install.real == path))
     {
+        // 默认入口是 canonicalize 过的真身，Windows 上带 `\\?\` 前缀，展示时去掉。
+        #[cfg(target_os = "windows")]
+        let shown = windows_shell_compatible_path(&default);
+        #[cfg(not(target_os = "windows"))]
+        let shown = default.clone();
         locations.push(ToolInstallLocation {
             source: infer_install_source_for_tool(tool, &default, &default),
-            path: default.display().to_string(),
+            path: shown.display().to_string(),
             is_path_default: true,
         });
     }
@@ -1533,17 +1698,28 @@ pub(super) fn locate_default_tool(
     tool: &str,
     deadline: Option<CommandDeadline>,
 ) -> Result<std::path::PathBuf, String> {
-    let path_default = resolve_path_default(tool, deadline)?;
+    let path_default = resolve_path_default_entry(tool, deadline)?;
+    locate_default_tool_in(tool, path_default, &build_tool_search_paths(tool), deadline)
+}
 
+fn locate_default_tool_in(
+    tool: &str,
+    path_default: Option<ResolvedPathDefault>,
+    search_paths: &[std::path::PathBuf],
+    #[cfg_attr(target_os = "windows", allow(unused_variables))] deadline: Option<CommandDeadline>,
+) -> Result<std::path::PathBuf, String> {
     let mut seen = std::collections::HashSet::new();
     let mut candidates = Vec::new();
-    for dir in build_tool_search_paths(tool) {
-        for candidate in tool_executable_candidates(tool, &dir) {
+    for dir in search_paths {
+        for candidate in tool_executable_candidates(tool, dir) {
             if !candidate.exists() {
                 continue;
             }
             let real = std::fs::canonicalize(&candidate).unwrap_or_else(|_| candidate.clone());
-            if path_default.as_ref() == Some(&real) {
+            if path_default
+                .as_ref()
+                .is_some_and(|default| default.real == real)
+            {
                 return Ok(candidate);
             }
             if seen.insert(real.clone()) {
@@ -1552,8 +1728,10 @@ pub(super) fn locate_default_tool(
         }
     }
 
-    if let Some(path) = path_default {
-        return Ok(path);
+    if let Some(default) = path_default {
+        // 保留原始入口路径而非 canonicalize 后的真身：指向 multicall 二进制（如 pnpm/mise/volta）
+        // 的软链如果展开后直接执行，会丢失 `argv[0]` 身份导致跑成宿主工具本身（#9960）。
+        return Ok(default.launcher);
     }
 
     #[cfg(not(target_os = "windows"))]
