@@ -1,6 +1,12 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import userEvent from "@testing-library/user-event";
+import {
+  AUTH_CENTER_APPS,
+  readAuthCenterPreferences,
+  updateAuthCenterPreferences,
+} from "@/lib/authCenterPreferences";
 import type { Settings } from "@/types";
 import { APP_IDS } from "@/config/appSpecs";
 
@@ -46,6 +52,13 @@ vi.mock("@/components/providers/forms/CodebuddyAccountSection", () => ({
 vi.mock("@/components/providers/DshAccount", () => ({
   DshAccountLogin: () => <div data-testid="dsh" />,
 }));
+
+beforeEach(() => {
+  localStorage.removeItem("cc-switch.authCenter.apps");
+});
+afterEach(() => {
+  localStorage.removeItem("cc-switch.authCenter.apps");
+});
 
 let resizeCallbacks: Array<() => void> = [];
 
@@ -236,5 +249,190 @@ describe("AuthCenterPanel card order and visibility", () => {
     mocks.canSwitchAgy = false;
     render(<AuthCenterPanel />);
     expect(cardOrder()).not.toContain("agy");
+  });
+});
+
+describe("AuthCenterPanel app preferences", () => {
+  beforeEach(() => {
+    mocks.canSwitchAgy = false;
+  });
+  const sectionOrder = () =>
+    screen
+      .getAllByTestId(/^(claude|copilot|codex|xai|kimi|dsh|agy|workbuddy)$/)
+      .map((element) => element.dataset.testid);
+
+  it("reorders cards and remembers the order after reopening the panel", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<AuthCenterPanel />);
+    expect(sectionOrder().slice(0, 3)).toEqual(["claude", "copilot", "codex"]);
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    expect(
+      screen.getByRole("button", { name: "Claude 上移一位" }),
+    ).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "ChatGPT 上移一位" }));
+    expect(sectionOrder().slice(0, 3)).toEqual(["claude", "codex", "copilot"]);
+    unmount();
+
+    render(<AuthCenterPanel />);
+    expect(sectionOrder().slice(0, 3)).toEqual(["claude", "codex", "copilot"]);
+  });
+
+  it("sorts through the drag handle using the keyboard and supports cancelling", async () => {
+    const user = userEvent.setup();
+    render(<AuthCenterPanel />);
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    const handles = screen.getAllByRole("button", { name: /^拖动调整/ });
+    for (const handle of handles) {
+      const row = handle.parentElement!;
+      row.getBoundingClientRect = () => {
+        const top = Array.from(row.parentElement!.children).indexOf(row) * 40;
+        return {
+          x: 0,
+          y: top,
+          left: 0,
+          right: 400,
+          top,
+          bottom: top + 40,
+          width: 400,
+          height: 40,
+          toJSON: () => ({}),
+        };
+      };
+    }
+    handles[0].focus();
+    await user.keyboard("[Space][ArrowDown][Space]");
+    expect(sectionOrder().slice(0, 2)).toEqual(["copilot", "claude"]);
+    expect(readAuthCenterPreferences().order.slice(0, 2)).toEqual([
+      "github_copilot",
+      "claude_official",
+    ]);
+
+    handles[0].focus();
+    await user.keyboard("[Space][ArrowUp][Escape]");
+    expect(sectionOrder().slice(0, 2)).toEqual(["copilot", "claude"]);
+  });
+
+  it("hides apps, keeps their switches available, and can restore defaults", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<AuthCenterPanel />);
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    await user.click(screen.getByRole("switch", { name: "显示 Claude" }));
+    expect(screen.queryByTestId("claude")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", { name: "显示 Claude" }),
+    ).not.toBeChecked();
+    unmount();
+
+    render(<AuthCenterPanel />);
+    expect(screen.queryByTestId("claude")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    await user.click(screen.getByRole("switch", { name: "显示 Claude" }));
+    expect(screen.getByTestId("claude")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Claude 下移一位" }));
+    await user.click(screen.getByRole("switch", { name: "显示 ChatGPT" }));
+    await user.click(screen.getByRole("button", { name: "恢复默认" }));
+    expect(sectionOrder().slice(0, 3)).toEqual(["claude", "copilot", "codex"]);
+    expect(screen.getByRole("switch", { name: "显示 ChatGPT" })).toBeChecked();
+  });
+
+  it("allows hiding every app and still offers a way to enable them", async () => {
+    act(() =>
+      updateAuthCenterPreferences((current) => ({
+        ...current,
+        hidden: AUTH_CENTER_APPS.map(({ id }) => id),
+      })),
+    );
+    const user = userEvent.setup();
+    render(<AuthCenterPanel />);
+    expect(
+      screen.getByText("所有应用已隐藏，点击「管理应用」重新开启。"),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    await user.click(screen.getByRole("switch", { name: "显示 ChatGPT" }));
+    expect(screen.getByTestId("codex")).toBeInTheDocument();
+  });
+
+  it("temporarily reveals a hidden navigation target without changing saved preferences", async () => {
+    updateAuthCenterPreferences((current) => ({
+      ...current,
+      hidden: ["codex_oauth"],
+    }));
+    const { rerender } = render(<AuthCenterPanel />);
+    expect(screen.queryByTestId("codex")).not.toBeInTheDocument();
+    rerender(<AuthCenterPanel authScrollTarget="codex_oauth" />);
+    expect(screen.getByTestId("codex")).toBeInTheDocument();
+    expect(
+      screen.getByText("已临时显示 ChatGPT，可在「管理应用」中重新开启。"),
+    ).toBeInTheDocument();
+    expect(readAuthCenterPreferences().hidden).toContain("codex_oauth");
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "保持显示" }));
+    expect(readAuthCenterPreferences().hidden).not.toContain("codex_oauth");
+  });
+
+  it("can close a temporarily revealed target and hides it again when leaving the target", async () => {
+    updateAuthCenterPreferences((current) => ({
+      ...current,
+      hidden: ["codex_oauth"],
+    }));
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <AuthCenterPanel authScrollTarget="codex_oauth" />,
+    );
+    expect(screen.getByTestId("codex")).toBeInTheDocument();
+    rerender(<AuthCenterPanel authScrollTarget={null} />);
+    expect(screen.queryByTestId("codex")).not.toBeInTheDocument();
+    rerender(<AuthCenterPanel authScrollTarget="codex_oauth" />);
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    expect(screen.getByRole("switch", { name: "显示 ChatGPT" })).toBeChecked();
+    await user.click(screen.getByRole("switch", { name: "显示 ChatGPT" }));
+    expect(screen.queryByTestId("codex")).not.toBeInTheDocument();
+  });
+
+  it("only lists Antigravity on supported platforms and preserves its saved position", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<AuthCenterPanel />);
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    expect(
+      screen.queryByRole("switch", { name: "显示 Antigravity" }),
+    ).not.toBeInTheDocument();
+    unmount();
+    mocks.canSwitchAgy = true;
+    render(<AuthCenterPanel />);
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    expect(screen.getByTestId("agy")).toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", { name: "显示 Antigravity" }),
+    ).toBeChecked();
+    expect(sectionOrder().slice(-2)).toEqual(["agy", "workbuddy"]);
+  });
+
+  it("can show an app independently of its sidebar visibility", async () => {
+    mocks.settings = {
+      visibleApps: { kimi: false } as Settings["visibleApps"],
+    };
+    const user = userEvent.setup();
+    render(<AuthCenterPanel />);
+    expect(screen.queryByTestId("kimi")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    const toggle = screen.getByRole("switch", { name: "显示 Kimi Code" });
+    expect(toggle).not.toBeChecked();
+    await user.click(toggle);
+    expect(screen.getByTestId("kimi")).toBeInTheDocument();
+    expect(mocks.settings.visibleApps?.kimi).toBe(false);
+    await user.click(screen.getByRole("button", { name: "恢复默认" }));
+    expect(screen.queryByTestId("kimi")).not.toBeInTheDocument();
+  });
+
+  it("includes the newly added CodeBuddy app in visibility controls", async () => {
+    const user = userEvent.setup();
+    render(<AuthCenterPanel />);
+    expect(screen.getByTestId("codebuddy")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "管理应用" }));
+    await user.click(screen.getByRole("switch", { name: "显示 CodeBuddy" }));
+    expect(screen.queryByTestId("codebuddy")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: "显示 CodeBuddy" }));
+    expect(screen.getByTestId("codebuddy")).toBeInTheDocument();
   });
 });

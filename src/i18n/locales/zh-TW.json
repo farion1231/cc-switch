@@ -5214,6 +5214,19 @@
     "confirm": "知道了"
   },
   "authCenter": {
+    "apps": {
+      "manage": "管理應用程式",
+      "summary": "已顯示 {{visible}} / {{total}} 個應用程式",
+      "description": "拖曳以調整順序，關閉開關可隱藏應用程式。現有帳號與授權不受影響，可隨時重新開啟。",
+      "reset": "還原預設值",
+      "drag": "拖曳以調整 {{name}} 的順序",
+      "moveUp": "{{name}} 上移一位",
+      "moveDown": "{{name}} 下移一位",
+      "show": "顯示 {{name}}",
+      "temporary": "已暫時顯示 {{name}}，可在「管理應用程式」中重新開啟。",
+      "keepVisible": "保持顯示",
+      "empty": "所有應用程式已隱藏，點擊「管理應用程式」重新開啟。"
+    },
     "helpTitle": "授權中心是什麼",
     "group": {
       "helpTitle": "{{service}} 帳號怎麼用",

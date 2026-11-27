@@ -5214,6 +5214,19 @@
     "confirm": "知道了"
   },
   "authCenter": {
+    "apps": {
+      "manage": "管理应用",
+      "summary": "已显示 {{visible}} / {{total}} 个应用",
+      "description": "拖动调整顺序，关闭开关可隐藏应用。已有账号和授权不受影响，可随时重新开启。",
+      "reset": "恢复默认",
+      "drag": "拖动调整 {{name}} 的顺序",
+      "moveUp": "{{name}} 上移一位",
+      "moveDown": "{{name}} 下移一位",
+      "show": "显示 {{name}}",
+      "temporary": "已临时显示 {{name}}，可在「管理应用」中重新开启。",
+      "keepVisible": "保持显示",
+      "empty": "所有应用已隐藏，点击「管理应用」重新开启。"
+    },
     "helpTitle": "授权中心是什么",
     "group": {
       "helpTitle": "{{service}} 账号怎么用",

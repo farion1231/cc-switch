@@ -5143,6 +5143,19 @@
     "confirm": "Anladım"
   },
   "authCenter": {
+    "apps": {
+      "manage": "Uygulamaları yönet",
+      "summary": "{{visible}} / {{total}} uygulama gösteriliyor",
+      "description": "Sıralamak için sürükleyin veya bir uygulamayı gizlemek için anahtarını kapatın. Mevcut hesaplar ve yetkilendirmeler korunur. Uygulamaları istediğiniz zaman yeniden gösterebilirsiniz.",
+      "reset": "Varsayılanları geri yükle",
+      "drag": "{{name}} sırasını değiştirmek için sürükleyin",
+      "moveUp": "{{name}} yukarı taşı",
+      "moveDown": "{{name}} aşağı taşı",
+      "show": "{{name}} göster",
+      "temporary": "{{name}} geçici olarak gösteriliyor. Uygulamaları yönet bölümünden yeniden etkinleştirebilirsiniz.",
+      "keepVisible": "Görünür tut",
+      "empty": "Tüm uygulamalar gizli. Yeniden göstermek için Uygulamaları yönet bölümünü açın."
+    },
     "helpTitle": "Hesaplar Nedir?",
     "group": {
       "helpTitle": "{{service}} hesapları nasıl kullanılır?",
