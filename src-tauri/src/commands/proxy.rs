@@ -52,6 +52,11 @@ pub async fn stop_proxy_server(state: tauri::State<'_, AppState>) -> Result<(), 
         );
     }
 
+    let _qoder_lock = state
+        .proxy_service
+        .lock_switch_for_app(crate::app_config::AppType::QoderCnDesktop.as_str())
+        .await;
+    super::disable_qoder_cn_desktop_gateway(&state.db).map_err(|error| error.to_string())?;
     state.proxy_service.stop().await
 }
 

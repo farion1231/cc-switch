@@ -277,7 +277,10 @@ impl PromptService {
     pub fn sync_to_live(state: &AppState, app: AppType) -> Result<(), AppError> {
         // Pi derives activation from its native AGENTS.md; its persisted prompt
         // rows are intentionally disabled and must not drive generic projection.
-        if matches!(app, AppType::ClaudeDesktop | AppType::Pi) {
+        if matches!(
+            app,
+            AppType::ClaudeDesktop | AppType::QoderCnDesktop | AppType::Pi
+        ) {
             return Ok(());
         }
 

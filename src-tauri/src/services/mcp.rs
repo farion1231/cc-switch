@@ -422,6 +422,7 @@ impl McpService {
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
             AppType::Codebuddy => mcp::codebuddy::sync(&server.id, Some(&server.server))?,
+            AppType::QoderCnDesktop => {}
         }
         Ok(())
     }
@@ -471,6 +472,7 @@ impl McpService {
             AppType::Omp => mcp::remove_server_from_omp(id)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(id, None)?,
             AppType::Codebuddy => mcp::codebuddy::sync(id, None)?,
+            AppType::QoderCnDesktop => {}
         }
         Ok(())
     }
@@ -510,10 +512,15 @@ impl McpService {
         Self::project_servers_to_app(&servers, app)
     }
 
-    /// 由 CC Switch 管理 MCP 的应用（Claude Desktop、OpenClaw 不支持）
+    /// 由 CC Switch 管理 MCP 的应用
     pub fn live_sync_apps() -> Vec<AppType> {
         AppType::all()
-            .filter(|app| !matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop))
+            .filter(|app| {
+                !matches!(
+                    app,
+                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::QoderCnDesktop
+                )
+            })
             .collect()
     }
 
@@ -564,7 +571,10 @@ impl McpService {
         servers: &IndexMap<String, McpServer>,
         app: &AppType,
     ) -> Result<(), AppError> {
-        if matches!(app, AppType::OpenClaw | AppType::ClaudeDesktop) {
+        if matches!(
+            app,
+            AppType::OpenClaw | AppType::ClaudeDesktop | AppType::QoderCnDesktop
+        ) {
             return Ok(());
         }
 
@@ -626,7 +636,7 @@ impl McpService {
             AppType::Omp => return mcp::omp::import(state),
             AppType::Copilot => return mcp::copilot::import(state),
             AppType::Codebuddy => return mcp::codebuddy::import(state),
-            AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(0),
+            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::QoderCnDesktop => return Ok(0),
         };
 
         let mut temp_config = MultiAppConfig::default();

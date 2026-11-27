@@ -1,4 +1,33 @@
 {
+  "qoderCnDesktop": {
+    "title": "Qoder CN Desktop",
+    "gateway": "Lokales Gateway",
+    "running": "Aktiv",
+    "stopped": "Gestoppt",
+    "stop": "Gateway deaktivieren",
+    "start": "Gateway starten",
+    "setup": "Füge in Qoder CN ein OpenAI-kompatibles Modell hinzu, wähle die Responses API und trage diese drei Werte ein.",
+    "copy": "{{label}} kopieren",
+    "copied": "Kopiert",
+    "format": "Upstream-Protokoll",
+    "upstreamModel": "Upstream-Modell-ID",
+    "replaceKey": "Neuer API-Schlüssel (optional)",
+    "xApiKey": "x-api-key für Anthropic verwenden",
+    "source": "Claude-Code-Anbieter auswählen",
+    "import": "Anbieter kopieren",
+    "errors": {
+      "selectProvider": "Wähle zuerst einen Qoder-CN-Anbieter aus.",
+      "invalidUrl": "Gib eine gültige Basis-URL für den Anbieter ein.",
+      "unsupportedUrl": "Verwende eine HTTPS-URL oder einen lokalen HTTP-Testendpunkt.",
+      "keyRequired": "Gib den API-Schlüssel des Anbieters ein.",
+      "nameAndModelRequired": "Anbietername und Modell sind erforderlich.",
+      "invalidKey": "Der API-Schlüssel enthält ungültige Zeichen.",
+      "providerMissing": "Der Qoder-CN-Anbieter ist nicht mehr vorhanden.",
+      "sourceMissing": "Der Quellanbieter ist nicht mehr vorhanden.",
+      "sourceUnsupported": "Dieser Quellanbieter hat keine wiederverwendbaren API-Schlüssel-Einstellungen.",
+      "providerIncomplete": "Der Qoder-CN-Anbieter ist unvollständig."
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "Der All-in-One-Assistent für Claude Code, Codex & Gemini CLI"

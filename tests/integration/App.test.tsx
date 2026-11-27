@@ -56,6 +56,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/components/providers/ProviderList", () => ({
   ProviderList: ({
+    appId,
     providers,
     currentProviderId,
     onSwitch,
@@ -73,6 +74,12 @@ vi.mock("@/components/providers/ProviderList", () => ({
       <button onClick={() => onSwitch(providers[currentProviderId])}>
         switch
       </button>
+      {appId === "qoder-cn-desktop" &&
+        Object.keys(providers).map((id) => (
+          <button key={id} onClick={() => onSwitch(providers[id])}>
+            {id}
+          </button>
+        ))}
       <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
       <button onClick={() => onDuplicate(providers[currentProviderId])}>
         duplicate
@@ -310,6 +317,43 @@ describe("App integration with MSW", () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
   }, 10_000);
+
+  it("uses the shared provider workflow for Qoder CN Desktop", async () => {
+    const app = "qoder-cn-desktop";
+    setSettings({
+      firstRunNoticeConfirmed: true,
+      newLayoutNoticeConfirmed: true,
+    });
+    setProviders(app, {
+      "qoder-deepseek": {
+        id: "qoder-deepseek",
+        name: "DeepSeek",
+        settingsConfig: {},
+      },
+      "qoder-bailian": {
+        id: "qoder-bailian",
+        name: "Bailian",
+        settingsConfig: {},
+      },
+    });
+    setCurrentProviderId(app, "qoder-deepseek");
+    const { default: App } = await import("@/App");
+    renderApp(App);
+
+    fireEvent.click(sidebarApp("Qoder CN Desktop"));
+    await waitFor(() =>
+      expect(screen.getByTestId("current-provider")).toHaveTextContent(
+        "qoder-deepseek",
+      ),
+    );
+    expect(screen.getByText("qoderCnDesktop.gateway")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "qoder-bailian" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("current-provider")).toHaveTextContent(
+        "qoder-bailian",
+      ),
+    );
+  });
 
   it("refreshes the route pointer when the proxy fails over to another provider", async () => {
     let routeProviderId = "claude-1";

@@ -368,6 +368,10 @@ impl ProxyServer {
                 "/grokbuild/v1/responses",
                 post(handlers::handle_grokbuild_responses),
             )
+            .route(
+                "/qoder-cn/v1/responses",
+                post(handlers::handle_qoder_cn_desktop_responses),
+            )
             // OpenAI Responses Compact API (Codex CLI 远程压缩，透传)
             .route(
                 "/responses/compact",

@@ -85,6 +85,7 @@ const createDefaultProviders = (): ProvidersByApp => ({
   copilot: {},
   workbuddy: {},
   codebuddy: {},
+  "qoder-cn-desktop": {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
@@ -105,6 +106,7 @@ const createDefaultCurrent = (): CurrentProviderState => ({
   copilot: "",
   workbuddy: "",
   codebuddy: "",
+  "qoder-cn-desktop": "",
 });
 
 let providers = createDefaultProviders();

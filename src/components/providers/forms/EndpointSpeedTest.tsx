@@ -27,6 +27,7 @@ const ENDPOINT_TIMEOUT_SECS: Record<AppId, number> = {
   copilot: 8,
   workbuddy: 8,
   codebuddy: 8,
+  "qoder-cn-desktop": 8,
 };
 
 interface TestResult {

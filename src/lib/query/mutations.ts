@@ -10,6 +10,7 @@ import {
   extractErrorMessage,
   translateKimiProviderMutationError,
   translatePiProviderMutationError,
+  translateQoderProviderMutationError,
 } from "@/utils/errorUtils";
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
@@ -157,7 +158,9 @@ export const useAddProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "qoder-cn-desktop"
+              ? translateQoderProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -229,7 +232,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "qoder-cn-desktop"
+              ? translateQoderProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -318,7 +323,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
           ? translatePiProviderMutationError(rawDetail, t)
           : appId === "kimi"
             ? translateKimiProviderMutationError(rawDetail, t)
-            : "") ||
+            : appId === "qoder-cn-desktop"
+              ? translateQoderProviderMutationError(rawDetail, t)
+              : "") ||
         rawDetail ||
         t("common.unknown");
       toast.error(
@@ -403,7 +410,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       }
     },
     onError: (error: Error) => {
-      const detail = extractErrorMessage(error) || t("common.unknown");
+      const message = extractErrorMessage(error);
+      const detail =
+        translateQoderProviderMutationError(message, t) ||
+        message ||
+        t("common.unknown");
 
       toast.error(
         t("notifications.switchFailedTitle", { defaultValue: "切换失败" }),

@@ -1210,6 +1210,30 @@ pub async fn handle_grokbuild_responses(
     .await
 }
 
+pub async fn handle_qoder_cn_desktop_responses(
+    State(state): State<ProxyState>,
+    request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    const TAG: &str = "Qoder CN Desktop";
+    let reject = || ProxyError::AuthError(format!("{TAG} gateway authentication failed"));
+    let supplied = extract_gateway_token(request.headers()).ok_or_else(reject)?;
+    let expected = crate::commands::qoder_cn_desktop_gateway_token(&state.db)
+        .map_err(|error| ProxyError::DatabaseError(error.to_string()))?
+        .ok_or_else(reject)?;
+    if supplied.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1 {
+        return Err(reject());
+    }
+    handle_responses_for_app(
+        state,
+        request,
+        AppType::QoderCnDesktop,
+        TAG,
+        "qoder-cn-desktop",
+        ResponsesEndpoint::Responses,
+    )
+    .await
+}
+
 /// Responses 的两个入口：普通回合 `/responses`，和远程压缩接口 `/responses/compact`。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ResponsesEndpoint {

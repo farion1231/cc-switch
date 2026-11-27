@@ -720,11 +720,16 @@ pub(crate) async fn lock_settled(
     Ok(guard)
 }
 
-/// 同步代码里用的 [`lock_settled`]。没有路由模式的应用没有模式可以被并发改掉，不拿锁。
+/// 同步代码里用的 [`lock_settled`]。Qoder CN 桌面版只跟网关启停串行，不写客户端配置。
 pub(crate) fn lock_settled_blocking(
     state: &AppState,
     app: &AppType,
 ) -> Result<Option<OwnedMutexGuard<()>>, AppError> {
+    if *app == AppType::QoderCnDesktop {
+        return Ok(Some(futures::executor::block_on(
+            state.proxy_service.lock_switch_for_app(app.as_str()),
+        )));
+    }
     if !app.spec().route_mode {
         return Ok(None);
     }
@@ -1019,9 +1024,12 @@ fn write_direct_for_exit(
     )
 }
 
-/// 没有应用在代理模式（含 Claude Desktop 的路由模式）时，停掉代理服务。
+/// 没有应用在使用本地网关时，停掉代理服务。
 async fn stop_server_if_unused(state: &AppState) {
-    if current::any_proxy() {
+    if current::any_proxy()
+        || crate::commands::qoder_cn_desktop_gateway_token(&state.db)
+            .is_ok_and(|token| token.is_some())
+    {
         return;
     }
     if state.proxy_service.is_running().await {
@@ -1042,6 +1050,13 @@ pub async fn exit_all(state: &AppState) -> Result<(), String> {
         if let Err(error) = result {
             errors.push(format!("{}: {error}", app.as_str()));
         }
+    }
+    let _qoder_lock = state
+        .proxy_service
+        .lock_switch_for_app(AppType::QoderCnDesktop.as_str())
+        .await;
+    if let Err(error) = crate::commands::disable_qoder_cn_desktop_gateway(&state.db) {
+        errors.push(format!("Qoder CN Desktop: {error}"));
     }
     if state.proxy_service.is_running().await {
         if let Err(error) = state.proxy_service.stop().await {

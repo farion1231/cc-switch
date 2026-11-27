@@ -82,7 +82,7 @@ macro_rules! app_flags {
                     AppType::Copilot => Some(&mut self.copilot),
                     AppType::WorkBuddy => Some(&mut self.workbuddy),
                     AppType::Codebuddy => Some(&mut self.codebuddy),
-                    AppType::OpenClaw | AppType::ClaudeDesktop => None,
+                    AppType::OpenClaw | AppType::ClaudeDesktop | AppType::QoderCnDesktop => None,
                 }
             }
 
@@ -319,6 +319,7 @@ pub enum AppType {
     Codex,
     Gemini,
     GrokBuild,
+    QoderCnDesktop,
     OpenCode,
     OpenClaw,
     Hermes,
@@ -392,6 +393,13 @@ impl AppType {
                 additive: false,
                 local_proxy: true,
                 route_mode: true,
+                stack: false,
+            },
+            AppType::QoderCnDesktop => AppSpec {
+                id: "qoder-cn-desktop",
+                additive: false,
+                local_proxy: false,
+                route_mode: false,
                 stack: false,
             },
             AppType::OpenCode => AppSpec {
@@ -486,7 +494,7 @@ impl AppType {
     }
 
     /// 所有应用，按默认顺序
-    pub const ALL: [AppType; 17] = [
+    pub const ALL: [AppType; 18] = [
         AppType::Claude,
         AppType::ClaudeDesktop,
         AppType::Codex,
@@ -502,6 +510,7 @@ impl AppType {
         AppType::Agy,
         AppType::Omp,
         AppType::Copilot,
+        AppType::QoderCnDesktop,
         AppType::WorkBuddy,
         AppType::Codebuddy,
     ];
@@ -528,6 +537,7 @@ impl FromStr for AppType {
             "codex" => Ok(AppType::Codex),
             "gemini" => Ok(AppType::Gemini),
             "grokbuild" | "grok-build" | "grok_build" | "grok" => Ok(AppType::GrokBuild),
+            "qoder-cn-desktop" => Ok(AppType::QoderCnDesktop),
             "opencode" => Ok(AppType::OpenCode),
             "openclaw" => Ok(AppType::OpenClaw),
             "hermes" => Ok(AppType::Hermes),
@@ -904,7 +914,8 @@ impl MultiAppConfig {
             | AppType::Omp
             | AppType::Copilot
             | AppType::WorkBuddy
-            | AppType::Codebuddy => return Ok(false),
+            | AppType::Codebuddy
+            | AppType::QoderCnDesktop => return Ok(false),
         };
 
         prompts.insert(id, prompt);
@@ -956,7 +967,8 @@ impl MultiAppConfig {
                 | AppType::Omp
                 | AppType::Copilot
                 | AppType::WorkBuddy
-                | AppType::Codebuddy => continue, // Pi didn't exist in v3.6.x, skip
+                | AppType::Codebuddy
+                | AppType::QoderCnDesktop => continue,
             };
 
             for (id, entry) in old_servers {

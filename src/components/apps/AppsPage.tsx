@@ -44,6 +44,10 @@ import {
   Trash2,
 } from "lucide-react";
 import { settingsApi, type AppId } from "@/lib/api";
+import {
+  qoderCnDesktopApi,
+  qoderCnGatewayQueryKey,
+} from "@/lib/api/qoderCnDesktop";
 import { providersApi } from "@/lib/api/providers";
 import type { ToolInstallationOverview } from "@/lib/api/settings";
 import type { VisibleApps } from "@/types";
@@ -114,11 +118,13 @@ const SOURCE_LABEL: Record<string, string> = {
 type Row =
   | { kind: "tool"; tool: ToolName }
   | { kind: "desktop" }
-  | { kind: "workbuddy" };
+  | { kind: "workbuddy" }
+  | { kind: "qoder-cn-desktop" };
 
 const ROW_BY_APP = Object.fromEntries([
   ["claude-desktop", { kind: "desktop" }],
   ["workbuddy", { kind: "workbuddy" }],
+  ["qoder-cn-desktop", { kind: "qoder-cn-desktop" }],
   ...TOOL_NAMES.map((tool) => [TOOL_APP_IDS[tool], { kind: "tool", tool }]),
 ]) as Record<AppId, Row>;
 
@@ -127,9 +133,9 @@ type RowSection = { key: string; title: string; rows: Row[] };
 const rowKey = (row: Row): AppId =>
   row.kind === "desktop"
     ? "claude-desktop"
-    : row.kind === "workbuddy"
-      ? "workbuddy"
-      : TOOL_APP_IDS[row.tool];
+    : row.kind === "tool"
+      ? TOOL_APP_IDS[row.tool]
+      : row.kind;
 
 // 只上下拖，且停在本组的列表框里：列表框裁掉超出的部分，拖出去整行会看不见
 const verticalDragModifiers: Modifier[] = [
@@ -203,6 +209,12 @@ export function AppsPage() {
       staleTime: 30_000,
     });
 
+  const { data: qoderGateway } = useQuery({
+    queryKey: qoderCnGatewayQueryKey,
+    queryFn: qoderCnDesktopApi.status,
+    staleTime: 30_000,
+  });
+
   // 按「已安装 / 未安装」分两组。Claude Desktop 没有命令可探，用后端按数据目录 / 应用包推断的结果。
   // 首次探测还没出结果时不分组，免得各行探完一个跳一个；之后重新检查时沿用上次结果，位置不动。
   const rowInstalled = (row: Row): boolean | null => {
@@ -212,6 +224,9 @@ export function AppsPage() {
     // WorkBuddy 同样没有命令可探，按配置目录（~/.workbuddy）在不在判断
     if (row.kind === "workbuddy") {
       return isWorkbuddyStatusPending ? null : Boolean(workbuddyStatus?.exists);
+    }
+    if (row.kind === "qoder-cn-desktop") {
+      return Boolean(qoderGateway?.gatewayToken);
     }
     const info = tools.toolVersionByName.get(row.tool);
     const report = tools.installReports?.[row.tool];
@@ -385,6 +400,22 @@ export function AppsPage() {
           </span>
         }
         visibility={visibilitySwitch("workbuddy")}
+      />
+    ) : row.kind === "qoder-cn-desktop" ? (
+      <AppRow
+        key="qoder-cn-desktop"
+        app="qoder-cn-desktop"
+        name={<span className="truncate">{t("qoderCnDesktop.title")}</span>}
+        version={
+          <span className="text-caption text-fg-2">
+            {t(
+              qoderGateway?.running
+                ? "appsPage.desktopConnected"
+                : "appsPage.desktopNotConnected",
+            )}
+          </span>
+        }
+        visibility={visibilitySwitch("qoder-cn-desktop")}
       />
     ) : row.kind === "desktop" ? (
       <AppRow

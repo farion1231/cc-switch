@@ -1,4 +1,33 @@
 {
+  "qoderCnDesktop": {
+    "title": "Qoder CN デスクトップ",
+    "gateway": "ローカルゲートウェイ",
+    "running": "実行中",
+    "stopped": "停止中",
+    "stop": "ゲートウェイを無効化",
+    "start": "ゲートウェイを起動",
+    "setup": "Qoder CN で OpenAI Compatible のモデルを追加し、Responses API を選んでこの 3 項目を入力します。",
+    "copy": "{{label}}をコピー",
+    "copied": "コピーしました",
+    "format": "上流プロトコル",
+    "upstreamModel": "上流モデル ID",
+    "replaceKey": "新しい API キー（任意）",
+    "xApiKey": "Anthropic で x-api-key を使用",
+    "source": "Claude Code のプロバイダーを選択",
+    "import": "プロバイダーをコピー",
+    "errors": {
+      "selectProvider": "先に Qoder CN のプロバイダーを選択してください。",
+      "invalidUrl": "有効なプロバイダーの Base URL を入力してください。",
+      "unsupportedUrl": "HTTPS の URL またはローカルの HTTP テストエンドポイントを使用してください。",
+      "keyRequired": "プロバイダーの API キーを入力してください。",
+      "nameAndModelRequired": "プロバイダー名とモデルは必須です。",
+      "invalidKey": "API キーに無効な文字が含まれています。",
+      "providerMissing": "Qoder CN のプロバイダーが見つかりません。",
+      "sourceMissing": "コピー元のプロバイダーが見つかりません。",
+      "sourceUnsupported": "コピー元には再利用できる API キー設定がありません。",
+      "providerIncomplete": "Qoder CN のプロバイダー設定が不完全です。"
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "Claude Code・Codex・Gemini CLI のためのオールインワンアシスタント"

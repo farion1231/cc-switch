@@ -135,6 +135,13 @@ pub async fn get_config_status(
                 path: dir.to_string_lossy().into_owned(),
             })
         }
+        AppType::QoderCnDesktop => {
+            let dir = config::get_app_config_dir();
+            Ok(ConfigStatus {
+                exists: dir.is_dir(),
+                path: dir.to_string_lossy().into_owned(),
+            })
+        }
         AppType::WorkBuddy => Ok(ConfigStatus {
             exists: crate::workbuddy_config::config_path().exists(),
             path: crate::workbuddy_config::data_dir()
@@ -179,6 +186,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
         AppType::Codebuddy => crate::codebuddy_config::data_dir(),
+        AppType::QoderCnDesktop => config::get_app_config_dir(),
     };
 
     Ok(dir)

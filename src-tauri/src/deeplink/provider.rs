@@ -427,6 +427,11 @@ pub(crate) fn build_provider_from_request(
         AppType::Codex => build_codex_settings(request)?,
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request)?,
+        AppType::QoderCnDesktop => {
+            return Err(AppError::InvalidInput(
+                "Add Qoder CN Desktop providers from the Qoder CN Desktop page".into(),
+            ))
+        }
         AppType::OpenCode => build_opencode_settings(request, api_format),
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),

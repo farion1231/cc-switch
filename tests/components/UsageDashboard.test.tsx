@@ -399,6 +399,7 @@ describe("UsageDashboard", () => {
         copilot: false,
         workbuddy: false,
         codebuddy: false,
+        "qoder-cn-desktop": false,
       },
     });
     renderDashboard({ initialAppType: "gemini" });

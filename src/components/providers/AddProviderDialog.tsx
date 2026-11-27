@@ -77,6 +77,7 @@ export function AddProviderDialog({
     appId !== "workbuddy" &&
     appId !== "codebuddy" &&
     appId !== "grokbuild" &&
+    appId !== "qoder-cn-desktop" &&
     appId !== "claude-desktop";
   // 两步：先选预设，再填写（每次打开都从第 1 步开始）
   const [step, setStep] = useState<"pick" | "form">("pick");

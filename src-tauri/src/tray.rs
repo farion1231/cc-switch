@@ -60,6 +60,7 @@ fn app_display_name(app: &AppType) -> &'static str {
         AppType::Kimi => "Kimi Code",
         AppType::Dsh => "DeepSeek Harness",
         AppType::WorkBuddy => "WorkBuddy",
+        AppType::QoderCnDesktop => "Qoder CN Desktop",
         AppType::Agy => "Antigravity",
         AppType::Omp => "Oh My Pi",
         AppType::Copilot => "Copilot CLI",

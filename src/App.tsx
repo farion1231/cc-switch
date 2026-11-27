@@ -89,6 +89,7 @@ import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
+import { QoderCnDesktopGateway } from "@/components/providers/QoderCnDesktopGateway";
 import {
   hasOpencodeDefinition,
   isNativeOpencodeConfig,
@@ -1711,6 +1712,9 @@ function App() {
         className="min-h-0 flex-1 overflow-y-auto scroll-stable overflow-x-hidden px-6 pb-12 pt-4"
       >
         <div className="space-y-4">
+          {activeApp === "qoder-cn-desktop" && (
+            <QoderCnDesktopGateway hasProvider={Boolean(currentProviderId)} />
+          )}
           <ProviderList
             {...listCallbacks}
             providers={providers}

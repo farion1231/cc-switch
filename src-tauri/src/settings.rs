@@ -67,6 +67,8 @@ pub struct VisibleApps {
     pub workbuddy: bool,
     #[serde(default = "default_true")]
     pub codebuddy: bool,
+    #[serde(rename = "qoder-cn-desktop", default = "default_true")]
+    pub qoder_cn_desktop: bool,
 }
 
 impl Default for VisibleApps {
@@ -89,6 +91,7 @@ impl Default for VisibleApps {
             copilot: true,
             workbuddy: true,
             codebuddy: true,
+            qoder_cn_desktop: true,
         }
     }
 }
@@ -114,6 +117,7 @@ impl VisibleApps {
             AppType::Copilot => self.copilot,
             AppType::WorkBuddy => self.workbuddy,
             AppType::Codebuddy => self.codebuddy,
+            AppType::QoderCnDesktop => self.qoder_cn_desktop,
         }
     }
 }
@@ -1339,7 +1343,8 @@ pub fn get_override_dir(app: &AppType) -> Option<PathBuf> {
         | AppType::Agy
         | AppType::Copilot
         | AppType::Codebuddy
-        | AppType::WorkBuddy => return None,
+        | AppType::WorkBuddy
+        | AppType::QoderCnDesktop => return None,
     };
     dir.as_deref().map(resolve_override_path)
 }
@@ -1411,7 +1416,8 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy
-        | AppType::Codebuddy => None,
+        | AppType::Codebuddy
+        | AppType::QoderCnDesktop => None,
     }
 }
 
@@ -1438,7 +1444,8 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy
-        | AppType::Codebuddy => {}
+        | AppType::Codebuddy
+        | AppType::QoderCnDesktop => {}
     })
 }
 

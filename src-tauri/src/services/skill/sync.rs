@@ -483,7 +483,11 @@ impl SkillService {
     pub(super) fn is_sync_managed_app(app: &AppType) -> bool {
         !matches!(
             app,
-            AppType::ClaudeDesktop | AppType::OpenClaw | AppType::Pi | AppType::Omp
+            AppType::ClaudeDesktop
+                | AppType::QoderCnDesktop
+                | AppType::OpenClaw
+                | AppType::Pi
+                | AppType::Omp
         )
     }
 

@@ -219,7 +219,8 @@ export function EditProviderDialog({
         appId === "omp" ||
         appId === "copilot" ||
         appId === "workbuddy" ||
-        appId === "codebuddy"
+        appId === "codebuddy" ||
+        appId === "qoder-cn-desktop"
       ) {
         if (!cancelled) {
           setLiveSettings(null);

@@ -22,9 +22,10 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   copilot: "Copilot CLI",
   workbuddy: "WorkBuddy",
   codebuddy: "CodeBuddy",
+  "qoder-cn-desktop": "Qoder CN Desktop",
 };
 
-const APP_ICON_NAME: Record<AppId, string> = {
+const APP_ICON_NAME: Record<Exclude<AppId, "qoder-cn-desktop">, string> = {
   claude: "claude",
   "claude-desktop": "claude",
   codex: "openai",
@@ -76,12 +77,16 @@ export function AppGlyph({
       )}
       style={{ width: size + 2, height: size + 2 }}
     >
-      <ProviderIcon
-        icon={APP_ICON_NAME[app]}
-        name=""
-        size={size}
-        showFallback={false}
-      />
+      {app === "qoder-cn-desktop" ? (
+        <Monitor size={size} strokeWidth={1.5} />
+      ) : (
+        <ProviderIcon
+          icon={APP_ICON_NAME[app]}
+          name=""
+          size={size}
+          showFallback={false}
+        />
+      )}
       {BadgeIcon && (
         <span
           className={cn(

@@ -233,8 +233,10 @@ impl Database {
         match result {
             Ok(config) => Ok(config),
             Err(rusqlite::Error::QueryReturnedNoRows) => {
-                // 如果不存在，创建默认配置
-                self.init_proxy_config_rows()?;
+                // The Qoder desktop gateway uses the same defaults without a per-app row.
+                if *app_type != AppType::QoderCnDesktop {
+                    self.init_proxy_config_rows()?;
+                }
                 Ok(AppProxyConfig {
                     app_type: app_type.to_string(),
                     enabled: false,

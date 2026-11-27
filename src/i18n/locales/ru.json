@@ -1,4 +1,33 @@
 {
+  "qoderCnDesktop": {
+    "title": "Qoder CN для ПК",
+    "gateway": "Локальный шлюз",
+    "running": "Запущен",
+    "stopped": "Остановлен",
+    "stop": "Отключить шлюз",
+    "start": "Запустить шлюз",
+    "setup": "Добавьте в Qoder CN модель OpenAI Compatible, выберите Responses API и укажите эти три значения.",
+    "copy": "Скопировать {{label}}",
+    "copied": "Скопировано",
+    "format": "Протокол провайдера",
+    "upstreamModel": "ID модели провайдера",
+    "replaceKey": "Новый ключ API (необязательно)",
+    "xApiKey": "Использовать x-api-key для Anthropic",
+    "source": "Выберите провайдера Claude Code",
+    "import": "Скопировать провайдера",
+    "errors": {
+      "selectProvider": "Сначала выберите провайдера Qoder CN.",
+      "invalidUrl": "Укажите допустимый базовый URL провайдера.",
+      "unsupportedUrl": "Используйте HTTPS или локальный тестовый адрес HTTP.",
+      "keyRequired": "Укажите ключ API провайдера.",
+      "nameAndModelRequired": "Укажите имя провайдера и модель.",
+      "invalidKey": "Ключ API содержит недопустимые символы.",
+      "providerMissing": "Провайдер Qoder CN больше не существует.",
+      "sourceMissing": "Исходный провайдер больше не существует.",
+      "sourceUnsupported": "Настройки ключа API исходного провайдера нельзя использовать повторно.",
+      "providerIncomplete": "Настройки провайдера Qoder CN заполнены не полностью."
+    }
+  },
   "app": {
     "title": "CC Switch",
     "description": "Универсальный помощник для Claude Code, Codex и Gemini CLI"

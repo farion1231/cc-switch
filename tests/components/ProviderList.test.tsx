@@ -366,6 +366,37 @@ describe("ProviderList Component", () => {
     );
   });
 
+  it("switches Qoder CN desktop providers without additive actions", () => {
+    const deepSeek = createProvider({ id: "deepseek", name: "DeepSeek" });
+    const bailian = createProvider({ id: "bailian", name: "Bailian" });
+    const onSwitch = vi.fn();
+    useDragSortMock.mockReturnValue({
+      sortedProviders: [deepSeek, bailian],
+      sensors: [],
+      handleDragEnd: vi.fn(),
+    });
+
+    renderWithQueryClient(
+      <ProviderList
+        {...baseProps}
+        appId="qoder-cn-desktop"
+        providers={{ deepseek: deepSeek, bailian }}
+        currentProviderId={deepSeek.id}
+        onSwitch={onSwitch}
+      />,
+    );
+
+    expect(screen.getByTestId("status-deepseek")).toHaveTextContent(
+      "providerCard.status.inUse",
+    );
+    expect(lastProps("deepseek")?.presentation.deleteDisabledReason).toBe(
+      "providerCard.reason.inUseCannotDelete",
+    );
+    expect(screen.queryByTestId("remove-bailian")).toBeNull();
+    fireEvent.click(screen.getByTestId("switch-bailian"));
+    expect(onSwitch).toHaveBeenCalledWith(bailian);
+  });
+
   it("shows queue sections while failover is on", () => {
     const providerA = createProvider({ id: "a", name: "A" });
     const providerB = createProvider({ id: "b", name: "B" });
