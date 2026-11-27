@@ -110,10 +110,16 @@ pub fn import_provider_from_deeplink(
         copilot_link_provider_id(state, &name)?
     } else if matches!(
         app_type,
-        AppType::OpenCode | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
+        AppType::OpenCode
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Omp
+            | AppType::ZCode
     ) {
         // Display names may be Unicode, but these apps' native keys must pass their slug rules
-        // (DeepSeek Harness only takes lowercase hyphenated ids, MCode ASCII letters and digits).
+        // (DeepSeek Harness only takes lowercase hyphenated ids, MCode ASCII letters and digits,
+        // ZCode `[A-Za-z0-9:_-]`).
         let slug = name
             .split(|c: char| !c.is_ascii_alphanumeric())
             .filter(|part| !part.is_empty())
@@ -433,7 +439,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request)?,
         AppType::OpenCode => build_opencode_settings(request, api_format),
-        AppType::ZCode => build_zcode_settings(request, api_format),
+        AppType::ZCode => build_zcode_settings(request, api_format)?,
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
@@ -1049,7 +1055,7 @@ fn build_opencode_settings(
 fn build_zcode_settings(
     request: &DeepLinkImportRequest,
     api_format: Option<ApiFormat>,
-) -> serde_json::Value {
+) -> Result<serde_json::Value, AppError> {
     let endpoint = get_primary_endpoint(request);
 
     let mut options = serde_json::Map::new();
@@ -1061,9 +1067,10 @@ fn build_zcode_settings(
     }
 
     let mut models = serde_json::Map::new();
-    if let Some(model) = &request.model {
-        models.insert(model.clone(), json!({}));
-    }
+    models.insert(
+        required_link_model(&AppType::ZCode, request)?.to_string(),
+        json!({}),
+    );
 
     let mut config = serde_json::Map::new();
     config.insert(
@@ -1076,7 +1083,7 @@ fn build_zcode_settings(
     );
     config.insert("options".to_string(), json!(options));
     config.insert("models".to_string(), json!(models));
-    config.into()
+    Ok(config.into())
 }
 
 /// Build settings for OpenClaw (camelCase live config).
