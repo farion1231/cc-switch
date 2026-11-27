@@ -142,7 +142,7 @@ async fn probe_agy_version() -> Option<String> {
     let bin = tokio::task::spawn_blocking(crate::agy_config::real_agy_bin)
         .await
         .ok()??;
-    let mut command = tokio::process::Command::new(bin);
+    let mut command = crate::agy_config::background_command(&bin);
     command
         .arg("--version")
         .stdin(std::process::Stdio::null())
