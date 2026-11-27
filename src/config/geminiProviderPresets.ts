@@ -868,6 +868,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
   },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    // 需 Gemini 分组的 Key，Gemini 原生格式走站点根的 /v1beta（docs.fastaitoken.com/docs/api-manual）；
+    // 模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.fastaitoken.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://www.fastaitoken.com",
+    model: "gemini-3.8-flash",
+    description: "FastAIToken",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
+  },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
     name: "Tu-zi",

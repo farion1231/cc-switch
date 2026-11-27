@@ -23,6 +23,7 @@ import _dmxapi from "./dmxapi.png";
 import _eflowcode from "./eflowcode.png";
 import _etok from "./etok.png";
 import _everyapi from "./everyapi.svg?url";
+import _fastaitoken from "./fastaitoken.png";
 import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
 import _genesis from "./genesis.svg?url";
@@ -215,6 +216,7 @@ export const iconUrls: Record<string, string> = {
   subrouter: _subrouter,
   sudocode: _sudocode,
   "sudocode-us": _sudocodeUs,
+  fastaitoken: _fastaitoken,
   teamorouter: _teamorouter,
   teleai: _teleai,
   tuzi: _tuzi,

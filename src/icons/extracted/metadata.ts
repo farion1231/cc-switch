@@ -974,6 +974,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["streamlake", "vanchin", "wanqing", "万擎", "快手", "kwai"],
   },
+  fastaitoken: {
+    name: "fastaitoken",
+    displayName: "FastAIToken",
+    category: "ai-provider",
+    keywords: ["fastaitoken", "fastai", "fast ai token", "aggregator"],
+  },
   teleai: {
     name: "teleai",
     displayName: "TeleAI",
