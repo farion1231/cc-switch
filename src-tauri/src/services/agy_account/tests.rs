@@ -647,3 +647,26 @@ async fn quota_token_is_refused_for_unknown_or_expired_accounts() {
         Err(AccountQuotaError::NeedsReauth)
     ));
 }
+
+/// Same rule as WorkBuddy: listing accounts adopts the live login and saves, and
+/// that save must not destroy an account file it could not read.
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+#[tokio::test]
+async fn an_unreadable_account_file_is_kept_instead_of_overwritten() {
+    let (dir, login, manager) = manager();
+    add(&manager, "alice").await;
+    add(&manager, "bob").await;
+    let store_path = dir.path().join(STORE_FILENAME);
+    let mut unreadable = std::fs::read(&store_path).unwrap();
+    unreadable.extend_from_slice(b"\n}");
+    std::fs::write(&store_path, &unreadable).unwrap();
+    set_live(&login, &credential("carol", "c1"));
+
+    let reopened = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login.clone());
+    reopened.status().await.unwrap();
+
+    assert!(
+        crate::test_support::dir_holds_file_with(dir.path(), &unreadable),
+        "the unreadable account file was overwritten"
+    );
+}

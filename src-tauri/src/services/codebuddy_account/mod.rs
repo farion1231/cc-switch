@@ -274,6 +274,13 @@ pub struct CodebuddyAccountManager {
     quota_cache: Mutex<HashMap<(String, String), (Instant, CodebuddyQuota)>>,
 }
 
+/// 认不出的登录内容存档（`STASH_FILENAME`）
+#[derive(Default, Deserialize)]
+struct StashFile {
+    #[serde(default)]
+    entries: Vec<Value>,
+}
+
 impl CodebuddyAccountManager {
     pub fn new(data_dir: PathBuf) -> Self {
         Self::with_auth_dir(data_dir, default_auth_dir())
@@ -281,17 +288,7 @@ impl CodebuddyAccountManager {
 
     pub fn with_auth_dir(data_dir: PathBuf, auth_dir: PathBuf) -> Self {
         let path = data_dir.join(STORE_FILENAME);
-        let store = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                log::warn!("[CodebuddyAccount] 账号文件解析失败，按空表处理: {error}");
-                StoreFile::default()
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreFile::default(),
-            Err(error) => {
-                log::warn!("[CodebuddyAccount] 账号文件读取失败，按空表处理: {error}");
-                StoreFile::default()
-            }
-        };
+        let store = crate::config::load_json_or_set_aside(&path, "CodebuddyAccount");
         Self {
             data_dir,
             auth_dir,
@@ -738,11 +735,8 @@ impl CodebuddyAccountManager {
             ),
         };
         let path = self.data_dir.join(STASH_FILENAME);
-        let mut entries: Vec<Value> = std::fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-            .and_then(|value| value.get("entries").and_then(Value::as_array).cloned())
-            .unwrap_or_default();
+        let StashFile { mut entries } =
+            crate::config::load_json_or_set_aside(&path, "CodebuddyAccount");
         if entries
             .iter()
             .any(|entry| entry.get(field).and_then(Value::as_str) == Some(raw.as_str()))

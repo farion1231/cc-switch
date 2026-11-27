@@ -189,17 +189,7 @@ impl AgyAccountManager {
 
     pub fn with_login_store(data_dir: PathBuf, login: Arc<dyn AgyLoginStore>) -> Self {
         let path = data_dir.join(STORE_FILENAME);
-        let store = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                log::warn!("[AgyAccount] 账号文件解析失败，按空表处理: {error}");
-                StoreFile::default()
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreFile::default(),
-            Err(error) => {
-                log::warn!("[AgyAccount] 账号文件读取失败，按空表处理: {error}");
-                StoreFile::default()
-            }
-        };
+        let store = crate::config::load_json_or_set_aside(&path, "AgyAccount");
         remember(&store, None);
         Self {
             data_dir,
