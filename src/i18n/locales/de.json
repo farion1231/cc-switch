@@ -226,7 +226,14 @@
     "form": {
       "agy": {
         "endpointHelp": "Leer lassen für die Standard-API von Google. Endpunkte von Drittanbietern müssen die Gemini-API und die integrierten Gemini-Modelle von agy unterstützen.",
-        "modelHelp": "Verwenden Sie den Anzeigenamen aus der Modellliste (Modelle abrufen). Gilt nur für diese Sitzung.",
+        "modelHelp": "Verwenden Sie den Anzeigenamen aus dem Modellkatalog von agy. Gilt nur für diese Sitzung.",
+        "readModelCatalog": "agy-Modellkatalog lesen",
+        "modelCatalogSuccess": "{{count}} Modelle aus agy gelesen",
+        "modelCatalogEmpty": "agy hat keine Modelle zurückgegeben.",
+        "modelCatalogError": "Der Modellkatalog von agy konnte nicht gelesen werden. Prüfen Sie, ob agy normal läuft; bei nativer Anmeldung auch den Anmeldestatus.",
+        "modelCatalogKeyHint": "Die Liste stammt von Ihrem lokalen agy und zeigt nur die von agy erkannten Modelle. Die Unterstützung durch diesen Anbieter oder API-Schlüssel wurde nicht geprüft. Es wurde keine Generierungsanfrage getestet.",
+        "modelCatalogEmptyKeyHint": "Ohne API-Schlüssel wird der Katalog für die native Anmeldung von Ihrem lokalen agy gelesen. Sobald ein API-Schlüssel eingegeben ist, wird im API-Schlüssel-Modus gelesen, ohne die Anbieterunterstützung zu prüfen.",
+        "modelCatalogLoginHint": "Native Anmeldung: Diese Liste wird von Ihrem lokalen agy zurückgegeben. Es wurde keine Generierungsanfrage getestet.",
         "keyFieldsHint": "Modell, Schlüssel und Endpunkt werden nur von „Terminal öffnen“ verwendet und nie in die eigenen Einstellungen von Antigravity geschrieben.",
         "envFile": "Umgebungsvariablen des Starters",
         "envFileHint": "Wenn agy über „Terminal öffnen“ der Karte gestartet wird, übergibt CC Switch API-Schlüssel und Endpunkt nur an diesen einen agy-Prozess und schreibt sie nie in eine Datei. Andere Umgebungsvariablen werden nicht angewendet.",

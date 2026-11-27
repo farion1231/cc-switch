@@ -16,8 +16,9 @@ pub struct OpenCodeModelRef {
 /// Read the current runtime's model list. No shell and no credential values in errors.
 ///
 /// Without a key this asks the signed-in agy. With a key it runs agy in API-key mode from a
-/// throwaway `--gemini_dir`: that mode only accepts agy's built-in Gemini models (by display
-/// name), which the Gemini API's own model list does not match.
+/// throwaway `--gemini_dir` with no `customModelsConfig`, so it reads agy's default catalog
+/// (by display name), not custom model entries. Neither mode queries the custom provider's
+/// model list, so success does not validate the key, endpoint, or generation availability.
 #[tauri::command]
 #[allow(non_snake_case)]
 pub async fn get_agy_models(
@@ -66,7 +67,7 @@ pub async fn get_agy_models(
         .map_err(|_| "Antigravity model discovery timed out".to_string())?
         .map_err(|_| "Antigravity CLI not found; install agy first".to_string())?;
     if !output.status.success() {
-        return Err("Antigravity could not list models. Check the API key and endpoint, or sign in with agy for official models.".into());
+        return Err("Antigravity could not read its model catalog. Check that agy runs normally and, for native sign-in, that you are signed in.".into());
     }
     Ok(parse_agy_models(&String::from_utf8_lossy(&output.stdout)))
 }

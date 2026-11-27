@@ -98,8 +98,10 @@ export async function fetchModelsForConfig(
 }
 
 /**
- * Models reported by the locally installed Antigravity runtime. With an API key it asks agy's
- * API-key mode, which only accepts its built-in Gemini models (by display name).
+ * Models reported by the locally installed Antigravity runtime. With an API key, CC Switch
+ * uses an isolated Gemini-mode profile without customModelsConfig and reads agy's default
+ * catalog (by display name). This is not the custom provider's model list: success does not
+ * validate the API key, endpoint, or generation availability.
  */
 export async function getAgyModels(options?: {
   apiKey?: string;

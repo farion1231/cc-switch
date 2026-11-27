@@ -117,7 +117,7 @@ pnpm build:renderer
 
 无界面 `--print` 模式不会弹出权限确认。Skill 若需要 `read_file`，必须有对应读取许可，否则 CLI 可能退出为成功、JSON 的 response 却为空并带有 `denied_actions`。测试仅为临时 Skill 的实际路径及 SSOT 路径授予精确读取许可，保留正常运行时的用户权限决策。
 
-模型 ID 必须精确匹配所用接口。实测 Gemini API 接受 `gemini-3.8-flash`，而 `gemini-3-8-flash` 返回 404；不应通过全局替换连字符“修复”任意供应商模型名。原生 `agy models` 的档位别名与 Google API 模型列表也并不完全相同，表单按登录模式选择对应来源。
+模型 ID 必须精确匹配所用接口。实测 Gemini API 接受 `gemini-3.8-flash`，而 `gemini-3-8-flash` 返回 404；不应通过全局替换连字符“修复”任意供应商模型名。原生 `agy models` 的档位别名与 Google API 模型列表也并不完全相同。Antigravity 表单在原生登录和 API Key 模式下均读取本机 agy 的模型目录，不查询供应商的模型列表。
 
 ## 深链接导入
 
@@ -144,4 +144,16 @@ Key 和自定义地址均留空时保留 agy 自身登录；仅修改模型不�
 
 ### 原生登录模型名称
 
-原生登录模式应使用 `agy models` 输出第二列的显示名（例如 `Gemini 3.8 Flash (Low)`），模型列表会填入该值。第一列 CLI 别名适用于命令行 `--model`；直接把别名保存到原生 `settings.json.model` 会静默回退默认模型。API Key 模式同样写显示名，而且只能选 agy 内置清单里的 Gemini 模型（如 `gemini-2.5-flash` 会被拒绝）；agy 每次还会附带一个 `gemini-3.1-flash-lite-preview` 的辅助请求，第三方地址需要支持这些模型。
+原生登录模式应使用 `agy models` 输出第二列的显示名（例如 `Gemini 3.8 Flash (Low)`），模型列表会填入该值。第一列 CLI 别名适用于命令行 `--model`；直接把别名保存到原生 `settings.json.model` 会静默回退默认模型。API Key 模式同样写显示名。当前 CC Switch 读取目录时使用仅含 `modelProvider: "gemini"` 的临时配置，不加载 `customModelsConfig`，因而展示的是该配置下的默认目录，而不是供应商的全部模型；不能仅填写任意 API 模型 ID 就建立自定义模型路由。隔离实测 agy 1.5.9 的默认模型调用还会附带一个 `gemini-3.1-flash-lite-preview` 辅助请求，第三方地址也需要支持该请求。
+
+这不代表 agy 本身只支持 Gemini 系列模型。官方 `customModelsConfig.customModels` 可在 API Key 模式下注册自定义模型，其 `modelName` 使用 `gemini-api://<base_url>/models/<model>` 格式，仍要求目标接口兼容 Gemini 协议。供应商“不提供 Gemini 系列模型”与“不提供 Gemini 兼容接口”是不同的限制；仅提供 OpenAI / Anthropic 协议的地址不能直接用于当前 Gemini 协议接入。CC Switch 当前没有自定义模型注册表单，本次修改也不实现该能力。
+
+### 模型目录来源与供应商可用性
+
+Antigravity 页面使用「读取 agy 模型目录」，两种认证模式都执行本机的 `agy models`。结果只表示 agy 能识别的模型，不是当前供应商通过模型接口声明支持的列表，也没有通过生成请求验证：
+
+- **API Key 模式**：无论使用 Google 默认地址还是第三方地址，都会持续提示尚未验证当前供应商或 Key 的支持情况。即使列表中包含 Hydrogen，供应商仍可能返回模型不支持的 404。
+- **原生登录模式**：目录由本机 agy 返回，同样不表示已执行生成请求验证。
+- 两种模式仍保存 agy 目录中的显示名，不改存 API 模型 ID，也不因读取目录而自动替换现有选项。Gemini CLI 的模型获取行为不变。
+
+不能简单把供应商的模型 ID 替换进 agy 配置，也不能只去掉 CLI 别名的推理档位后缀就认为找到了真实 API 模型。例如，隔离实测 agy 1.5.9 中的 `gemini-3.1-pro-high` 实际请求 `gemini-3.1-pro-preview`。供应商列表与 agy 目录求交集需要可靠的模型映射，本次来源说明修复不实现该交集，也不会让供应商新增对某个模型的支持。

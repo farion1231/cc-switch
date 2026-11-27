@@ -226,7 +226,14 @@
     "form": {
       "agy": {
         "endpointHelp": "空欄なら Google の標準 API を使います。外部接続先は Gemini API と agy 内蔵の Gemini モデルに対応している必要があります。",
-        "modelHelp": "モデル一覧の表示名を入力してください（「モデル一覧を取得」から選べます）。そのセッションにのみ適用されます。",
+        "modelHelp": "agy のモデルカタログにある表示名を入力してください。そのセッションにのみ適用されます。",
+        "readModelCatalog": "agy のモデルカタログを読み込む",
+        "modelCatalogSuccess": "agy から {{count}} 個のモデルを読み込みました",
+        "modelCatalogEmpty": "agy からモデルが返されませんでした。",
+        "modelCatalogError": "agy のモデルカタログを読み込めませんでした。agy が正常に動作するか確認してください。ネイティブログインの場合はログイン状態も確認してください。",
+        "modelCatalogKeyHint": "一覧はローカルの agy が認識するモデルを示すものです。このプロバイダーや API キーでの対応状況は確認していません。生成リクエストによる検証も行っていません。",
+        "modelCatalogEmptyKeyHint": "API キー未入力時はローカルの agy のネイティブログイン用カタログを読み込みます。入力後は API キーモードで読み込み、プロバイダーの対応状況は確認しません。",
+        "modelCatalogLoginHint": "ネイティブログインモードです。一覧はローカルの agy が返したもので、生成リクエストによる検証は行っていません。",
         "keyFieldsHint": "モデル、キー、エンドポイントは「ターミナルを開く」でのみ使われ、Antigravity 自身の設定には書き込みません。",
         "envFile": "起動時の環境変数",
         "envFileHint": "カードの「ターミナルを開く」から agy を起動すると、CC Switch は API キーとエンドポイントをその agy プロセスだけに渡し、ファイルには書き込みません。他の環境変数は適用されません。",
