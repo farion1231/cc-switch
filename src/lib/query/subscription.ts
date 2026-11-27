@@ -33,6 +33,13 @@ export const subscriptionKeys = {
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
 };
 
+export const codexOauthQuotaKey = (accountId: string | null, useDsh = false) =>
+  [
+    useDsh ? "dsh_codex_oauth" : "codex_oauth",
+    "quota",
+    accountId ?? "default",
+  ] as const;
+
 export const agyAuthStatusQuery = managedAuthStatusQuery("agy_oauth");
 
 /** Refresh the actual agy login and the quota shown on cards that follow it. */
@@ -166,6 +173,7 @@ export function useSubscriptionQuota(
 
 export interface UseCodexOauthQuotaOptions {
   enabled?: boolean;
+  useDsh?: boolean;
   /** 是否启用自动轮询与窗口 focus 重取 */
   autoQuery?: boolean;
   autoQueryIntervalMinutes?: number;
@@ -185,15 +193,20 @@ export function useCodexOauthQuotaByAccountId(
 ) {
   const {
     enabled = true,
+    useDsh = false,
     autoQuery = false,
     autoQueryIntervalMinutes = 5,
   } = options;
   const policy = useQuotaPolicy();
   const autoAllowed = policy.autoAllowed;
+  const queryKey = codexOauthQuotaKey(accountId, useDsh);
   const query = useQuery({
-    queryKey: ["codex_oauth", "quota", accountId ?? "default"],
-    queryFn: () => subscriptionApi.getCodexOauthQuota(accountId),
-    enabled: autoAllowed && enabled,
+    queryKey,
+    queryFn: () =>
+      useDsh
+        ? subscriptionApi.getDshCodexQuota(accountId ?? "")
+        : subscriptionApi.getCodexOauthQuota(accountId),
+    enabled: autoAllowed && enabled && (!useDsh || Boolean(accountId)),
     ...autoRefetch(autoAllowed && autoQuery, autoQueryIntervalMinutes),
     staleTime:
       autoQueryIntervalMinutes > 0
@@ -202,7 +215,7 @@ export function useCodexOauthQuotaByAccountId(
     retry: 1,
   });
 
-  return useQuotaKeepLastGood(query, accountId ?? "default", policy);
+  return useQuotaKeepLastGood(query, JSON.stringify(queryKey), policy);
 }
 
 /**

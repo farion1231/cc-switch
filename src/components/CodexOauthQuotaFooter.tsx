@@ -7,6 +7,7 @@ import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
 interface CodexOauthQuotaFooterProps {
   meta?: ProviderMeta;
   inline?: boolean;
+  useDsh?: boolean;
   /** 是否为当前激活的供应商 */
   isCurrent?: boolean;
   autoQueryInterval?: number;
@@ -21,6 +22,7 @@ interface CodexOauthQuotaFooterProps {
 const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
   meta,
   inline = false,
+  useDsh = false,
   isCurrent = false,
   autoQueryInterval = 5,
 }) => {
@@ -32,6 +34,7 @@ const CodexOauthQuotaFooter: React.FC<CodexOauthQuotaFooterProps> = ({
     manualIdle,
   } = useCodexOauthQuota(meta, {
     enabled: true,
+    useDsh,
     autoQuery: isCurrent && autoQueryInterval > 0,
     autoQueryIntervalMinutes: autoQueryInterval,
   });

@@ -19,6 +19,7 @@ const QUOTA_SERVICES = new Set([
   "claude_official",
   "copilot",
   "codex_oauth",
+  "dsh_codex_oauth",
   "xai_oauth",
   "kimi_oauth",
   "agy_oauth",

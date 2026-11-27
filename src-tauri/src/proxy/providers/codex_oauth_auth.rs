@@ -95,6 +95,11 @@ pub enum CodexOAuthError {
     #[error("Refresh Token 失效或已过期")]
     RefreshTokenInvalid,
 
+    #[error(
+        "DSH token generation is ambiguous; sign in again in Accounts, then select the account"
+    )]
+    DshGenerationAmbiguous,
+
     #[error("网络错误: {0}")]
     NetworkError(String),
 
@@ -159,6 +164,8 @@ struct IdTokenClaims {
     chatgpt_account_id: Option<String>,
     #[serde(default)]
     email: Option<String>,
+    #[serde(default)]
+    iat: Option<i64>,
     #[serde(default, rename = "https://api.openai.com/auth")]
     openai_auth: Option<OpenAiAuthClaim>,
 }
@@ -184,7 +191,7 @@ struct CachedAccessToken {
 impl CachedAccessToken {
     fn is_expiring_soon(&self) -> bool {
         let now = chrono::Utc::now().timestamp_millis();
-        self.expires_at_ms - now < TOKEN_REFRESH_BUFFER_MS
+        self.expires_at_ms.saturating_sub(now) < TOKEN_REFRESH_BUFFER_MS
     }
 }
 
@@ -286,6 +293,9 @@ struct CodexAccountData {
     /// cc-switch 都可能轮换 refresh_token 时拒绝从 live 采纳更旧的一代。
     #[serde(default)]
     pub token_updated_at_ms: i64,
+    /// JWT issuance time for this refresh-token generation, separate from local receipt time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    access_token_issued_at: Option<i64>,
 }
 
 /// 公开的账号信息（返回给前端，复用 GitHubAccount 结构）
@@ -318,6 +328,17 @@ impl From<&CodexAccountData> for GitHubAccount {
 }
 
 impl CodexAccountData {
+    fn dsh_grant_owner(&self) -> Option<crate::dsh_config::CodexGrantOwner> {
+        Some(crate::dsh_config::CodexGrantOwner {
+            identity: crate::codex_config::extract_codex_id_token_user_identity(
+                self.id_token.as_deref()?,
+            )?,
+            workspace: self.chatgpt_account_id.clone()?,
+            refresh_token: self.refresh_token.clone(),
+            allow_legacy_match: self.access_token_issued_at.is_none(),
+        })
+    }
+
     fn apply_refreshed_tokens(&mut self, tokens: &OAuthTokenResponse) -> bool {
         let refreshed_account_id = extract_account_metadata_from_tokens(tokens).0;
         let mut changed = false;
@@ -370,12 +391,22 @@ pub(crate) struct ManagedTokenBundle {
     pub last_refresh: String,
 }
 
+#[derive(Clone)]
+struct DshPendingSync {
+    expected_cli_refresh: String,
+    retry_native: bool,
+}
+
 /// Codex OAuth 认证管理器（多账号）
 pub struct CodexOAuthManager {
     accounts: Arc<RwLock<HashMap<String, CodexAccountData>>>,
     default_account_id: Arc<RwLock<Option<String>>>,
     /// 内存缓存的 access_token（不持久化）
     access_tokens: Arc<RwLock<HashMap<String, CachedAccessToken>>>,
+    /// Incomplete writes retain the expected CLI generation and native retry state.
+    dsh_pending_sync: RwLock<HashMap<String, DshPendingSync>>,
+    #[cfg(test)]
+    test_refresh_reply: Mutex<Option<(String, Result<OAuthTokenResponse, CodexOAuthError>)>>,
     /// 每个账号的刷新锁
     refresh_locks: Arc<RwLock<HashMap<String, Arc<Mutex<()>>>>>,
     /// 普通 token 解析/采纳持读锁，账号删除/清空持写锁。删除因此会等待
@@ -406,6 +437,9 @@ impl CodexOAuthManager {
             accounts: Arc::new(RwLock::new(HashMap::new())),
             default_account_id: Arc::new(RwLock::new(None)),
             access_tokens: Arc::new(RwLock::new(HashMap::new())),
+            dsh_pending_sync: RwLock::new(HashMap::new()),
+            #[cfg(test)]
+            test_refresh_reply: Mutex::new(None),
             refresh_locks: Arc::new(RwLock::new(HashMap::new())),
             lifecycle_lock: Arc::new(RwLock::new(())),
             pending_device_codes: Arc::new(RwLock::new(HashMap::new())),
@@ -749,6 +783,12 @@ impl CodexOAuthManager {
         &self,
         refresh_token: &str,
     ) -> Result<OAuthTokenResponse, CodexOAuthError> {
+        #[cfg(test)]
+        if let Some((expected, result)) = self.test_refresh_reply.lock().await.take() {
+            assert_eq!(refresh_token, expected);
+            return result;
+        }
+
         let response = crate::proxy::http_client::get()
             .post(OAUTH_TOKEN_URL)
             .timeout(OAUTH_HTTP_TIMEOUT)
@@ -797,6 +837,20 @@ impl CodexOAuthManager {
         Ok(self.resolve_valid_cached_token(account_id).await?.token)
     }
 
+    pub(crate) async fn get_valid_dsh_token_for_account(
+        &self,
+        account_id: &str,
+    ) -> Result<String, CodexOAuthError> {
+        let _lifecycle = self.lifecycle_lock.read().await;
+        self.ensure_account_ready_for_use(account_id).await?;
+        let lock = self.get_refresh_lock(account_id).await;
+        let _guard = lock.lock().await;
+        self.resolve_dsh_token_under_lock(account_id, true, false)
+            .await?
+            .map(|cached| cached.token)
+            .ok_or_else(|| CodexOAuthError::ParseError("Select a DSH Codex account first".into()))
+    }
+
     async fn ensure_account_ready_for_use(&self, account_id: &str) -> Result<(), CodexOAuthError> {
         let accounts = self.accounts.read().await;
         let account = accounts
@@ -819,7 +873,7 @@ impl CodexOAuthManager {
     async fn read_managed_live_auth_refresh_for_account(
         &self,
         account_id: &str,
-    ) -> Result<Option<(String, Option<String>, Option<i64>)>, CodexOAuthError> {
+    ) -> Result<Option<crate::codex_config::CodexManagedLiveRefresh>, CodexOAuthError> {
         let (managed_id_token, managed_workspace) = {
             let accounts = self.accounts.read().await;
             let account = accounts
@@ -847,11 +901,7 @@ impl CodexOAuthManager {
                 "Codex OAuth 账号 {account_id} 的 workspace 与磁盘凭据不一致，本次操作已取消"
             )));
         }
-        Ok(Some((
-            live_refresh.refresh_token,
-            live_refresh.id_token,
-            live_refresh.last_refresh_ms,
-        )))
+        Ok(Some(live_refresh))
     }
 
     /// 解析账号的有效缓存 token（含真实获取时间），必要时刷新。
@@ -867,6 +917,14 @@ impl CodexOAuthManager {
         &self,
         account_id: &str,
     ) -> Result<CachedAccessToken, CodexOAuthError> {
+        if !matches!(
+            crate::dsh_config::codex_binding_matches_for_refresh(account_id),
+            Ok(false)
+        ) {
+            let lock = self.get_refresh_lock(account_id).await;
+            let _guard = lock.lock().await;
+            return self.resolve_valid_cached_token_under_lock(account_id).await;
+        }
         // 快路径：确认账号存在后读缓存
         {
             let accounts = self.accounts.read().await;
@@ -895,18 +953,54 @@ impl CodexOAuthManager {
         &self,
         account_id: &str,
     ) -> Result<CachedAccessToken, CodexOAuthError> {
+        let dsh = match crate::dsh_config::codex_binding_matches_for_refresh(account_id) {
+            Ok(true) => {
+                self.resolve_dsh_token_under_lock(account_id, true, true)
+                    .await
+            }
+            Ok(false) => Ok(None),
+            Err(_) => Err(CodexOAuthError::IoError(
+                "Cannot read DSH Codex binding".into(),
+            )),
+        };
+        match dsh {
+            Ok(Some(token)) => return Ok(token),
+            // An invalid or foreign grant does not invalidate a managed login.
+            Ok(None) | Err(CodexOAuthError::ParseError(_)) => {}
+            Err(error) => {
+                // Reuse a valid access token during a DSH outage. Refreshing
+                // against an unknown generation could invalidate the native grant.
+                let now = chrono::Utc::now().timestamp_millis();
+                return self
+                    .access_tokens
+                    .read()
+                    .await
+                    .get(account_id)
+                    .filter(|cached| cached.expires_at_ms > now)
+                    .cloned()
+                    .ok_or(error);
+            }
+        }
+        self.resolve_managed_token_under_lock(account_id).await
+    }
+
+    async fn resolve_managed_token_under_lock(
+        &self,
+        account_id: &str,
+    ) -> Result<CachedAccessToken, CodexOAuthError> {
         // Codex CLI may have advanced the shared refresh-token generation since
         // this manager last used the account. Reload it under the same per-account
         // lock before deciding whether a network refresh is necessary.
-        if let Some((live_refresh, live_id_token, live_last_refresh_ms)) = self
+        if let Some(live) = self
             .read_managed_live_auth_refresh_for_account(account_id)
             .await?
         {
             self.adopt_account_refresh_token_under_lock(
                 account_id,
-                live_refresh,
-                live_id_token,
-                live_last_refresh_ms,
+                live.refresh_token,
+                live.id_token,
+                live.last_refresh_ms,
+                live.access_token.as_deref().and_then(token_issued_at),
                 RefreshTokenAdoptionMode::TimestampChecked,
             )
             .await?;
@@ -939,26 +1033,27 @@ impl CodexOAuthManager {
                 // If Codex CLI refreshed between our pre-read and request, reload
                 // its newer generation and retry exactly once. Error-code handling
                 // includes OpenAI's `refresh_token_reused` response.
-                let Some((live_refresh, live_id_token, live_last_refresh_ms)) = self
+                let Some(live) = self
                     .read_managed_live_auth_refresh_for_account(account_id)
                     .await?
-                    .filter(|(token, _, _)| token.trim() != refresh_token.as_str())
+                    .filter(|live| live.refresh_token.trim() != refresh_token.as_str())
                 else {
                     return Err(CodexOAuthError::RefreshTokenInvalid);
                 };
                 let adoption = self
                     .adopt_account_refresh_token_under_lock(
                         account_id,
-                        live_refresh.clone(),
-                        live_id_token,
-                        live_last_refresh_ms,
+                        live.refresh_token.clone(),
+                        live.id_token,
+                        live.last_refresh_ms,
+                        live.access_token.as_deref().and_then(token_issued_at),
                         RefreshTokenAdoptionMode::RejectedManagerToken,
                     )
                     .await?;
                 if !matches!(adoption, RefreshTokenAdoptionOutcome::Adopted) {
                     return Err(CodexOAuthError::RefreshTokenInvalid);
                 }
-                refresh_token = live_refresh;
+                refresh_token = live.refresh_token;
                 self.refresh_with_token(&refresh_token).await?
             }
             result => result?,
@@ -995,6 +1090,11 @@ impl CodexOAuthManager {
                     account.id_token = Some(new_id_token);
                     needs_save = true;
                 }
+            }
+            let issued_at = token_issued_at(&new_tokens.access_token);
+            if account.access_token_issued_at != issued_at {
+                account.access_token_issued_at = issued_at;
+                needs_save = true;
             }
             if account.token_updated_at_ms != obtained_at_ms {
                 account.token_updated_at_ms = obtained_at_ms;
@@ -1072,12 +1172,23 @@ impl CodexOAuthManager {
         let refresh_lock = self.get_refresh_lock(account_id).await;
         let _refresh_guard = refresh_lock.lock().await;
 
+        self.token_bundle_under_lock(account_id, true).await
+    }
+
+    async fn token_bundle_under_lock(
+        &self,
+        account_id: &str,
+        use_dsh: bool,
+    ) -> Result<ManagedTokenBundle, CodexOAuthError> {
         // Resolve and read every persistent token field while holding the same
         // account generation lock. Otherwise an adoption between these reads
         // can create an invalid A0 + R1/ID1 mixed bundle.
-        let cached = self
-            .resolve_valid_cached_token_under_lock(account_id)
-            .await?;
+        let cached = if use_dsh {
+            self.resolve_valid_cached_token_under_lock(account_id)
+                .await?
+        } else {
+            self.resolve_managed_token_under_lock(account_id).await?
+        };
 
         // A managed bundle is about to overwrite auth.json. Re-read under the
         // same manager generation lock after token resolution so an ambiguous
@@ -1085,16 +1196,17 @@ impl CodexOAuthManager {
         // access token. Keeping this check after resolution also preserves the
         // RefreshTokenInvalid recovery path: the server may disprove manager R0,
         // force-adopt disk R1, and only then produce a safe bundle.
-        if let Some((live_refresh, live_id_token, live_last_refresh_ms)) = self
+        if let Some(live) = self
             .read_managed_live_auth_refresh_for_account(account_id)
             .await?
         {
             let outcome = self
                 .adopt_account_refresh_token_under_lock(
                     account_id,
-                    live_refresh,
-                    live_id_token,
-                    live_last_refresh_ms,
+                    live.refresh_token,
+                    live.id_token,
+                    live.last_refresh_ms,
+                    live.access_token.as_deref().and_then(token_issued_at),
                     RefreshTokenAdoptionMode::TimestampChecked,
                 )
                 .await?;
@@ -1106,8 +1218,8 @@ impl CodexOAuthManager {
                 }
                 RefreshTokenAdoptionOutcome::Adopted => {
                     return Err(CodexOAuthError::TokenFetchFailed(format!(
-                        "Codex CLI 账号 {account_id} 的磁盘凭据在准备写入期间已刷新；为避免写入混合 token bundle，本次操作已取消，请重试"
-                    )));
+                    "Codex CLI 账号 {account_id} 的磁盘凭据在准备写入期间已刷新；为避免写入混合 token bundle，本次操作已取消，请重试"
+                )));
                 }
                 RefreshTokenAdoptionOutcome::NotManaged => {
                     return Err(CodexOAuthError::AccountNotFound(account_id.to_string()));
@@ -1142,6 +1254,547 @@ impl CodexOAuthManager {
         })
     }
 
+    pub(crate) async fn prepare_dsh_grant_removal(
+        &self,
+        account_id: &str,
+    ) -> Result<
+        (
+            Option<crate::dsh_config::CodexGrantOwner>,
+            serde_yaml::Value,
+        ),
+        crate::error::AppError,
+    > {
+        let _lifecycle = self.lifecycle_lock.read().await;
+        let lock = self.get_refresh_lock(account_id).await;
+        let _refresh_guard = lock.lock().await;
+        // Detaching is a local operation. Snapshot the grant and only delete
+        // generations with known provenance in the subsequent transaction.
+        let owner = self
+            .accounts
+            .read()
+            .await
+            .get(account_id)
+            .and_then(CodexAccountData::dsh_grant_owner);
+        let snapshot =
+            crate::dsh_config::CodexGrantGuard::acquire_for_binding(Some(account_id))?.snapshot();
+        Ok((owner, snapshot))
+    }
+
+    /// Explicit replacement/removal can recover an invalid or foreign native login.
+    /// An I/O or synchronization failure must leave the grant available for retry.
+    async fn reconcile_outgoing_dsh_grant(
+        &self,
+        account_id: &str,
+        refresh_if_expiring: bool,
+        allow_ambiguous_replacement: bool,
+    ) -> Result<serde_yaml::Value, CodexOAuthError> {
+        let mut guard = crate::dsh_config::CodexGrantGuard::acquire_for_binding(Some(account_id))
+            .map_err(|_| {
+            CodexOAuthError::IoError("Cannot read the current DSH Codex binding; retry".into())
+        })?;
+        if guard.is_bound_to(account_id) {
+            match self
+                .resolve_dsh_token_with_grant(
+                    account_id,
+                    refresh_if_expiring,
+                    refresh_if_expiring,
+                    &mut guard,
+                )
+                .await
+            {
+                Ok(_)
+                | Err(CodexOAuthError::ParseError(_))
+                | Err(CodexOAuthError::AccountNotFound(_))
+                | Err(CodexOAuthError::RefreshTokenInvalid) => {}
+                // An explicit switch to a different login can replace this
+                // snapshot without importing the disputed previous generation.
+                Err(CodexOAuthError::DshGenerationAmbiguous) if allow_ambiguous_replacement => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(guard.snapshot())
+    }
+
+    /// Native DSH credentials are authoritative for the explicitly bound account.
+    /// The DSH document lock spans read / refresh / write, matching pi-ai's modify().
+    async fn resolve_dsh_token_under_lock(
+        &self,
+        account_id: &str,
+        refresh_if_expiring: bool,
+        managed_access: bool,
+    ) -> Result<Option<CachedAccessToken>, CodexOAuthError> {
+        let Some(mut guard) =
+            crate::dsh_config::CodexGrantGuard::acquire(account_id).map_err(|_| {
+                CodexOAuthError::TokenFetchFailed(
+                    "DSH credentials are busy or unavailable; retry".into(),
+                )
+            })?
+        else {
+            return Ok(None);
+        };
+        self.resolve_dsh_token_with_grant(
+            account_id,
+            refresh_if_expiring,
+            managed_access,
+            &mut guard,
+        )
+        .await
+    }
+
+    async fn resolve_dsh_token_with_grant(
+        &self,
+        account_id: &str,
+        refresh_if_expiring: bool,
+        managed_access: bool,
+        guard: &mut crate::dsh_config::CodexGrantGuard,
+    ) -> Result<Option<CachedAccessToken>, CodexOAuthError> {
+        let mut payload = guard.payload().map_err(|_| {
+            CodexOAuthError::ParseError(
+                "DSH Codex login is missing or invalid; select an account again".into(),
+            )
+        })?;
+        let string = |key: &str| {
+            payload[key]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        };
+        let access = string("access")
+            .ok_or_else(|| CodexOAuthError::ParseError("Missing DSH access token".into()))?;
+        let mut refresh = string("refresh")
+            .ok_or_else(|| CodexOAuthError::ParseError("Missing DSH refresh token".into()))?;
+        let workspace = string("accountId")
+            .ok_or_else(|| CodexOAuthError::ParseError("Missing DSH account identity".into()))?;
+        let expires = payload["expires"]
+            .as_i64()
+            .ok_or_else(|| CodexOAuthError::ParseError("Invalid DSH expiry".into()))?;
+        let cli_error = match self
+            .read_managed_live_auth_refresh_for_account(account_id)
+            .await
+        {
+            Ok(Some(live)) => {
+                let observed_refresh = live.refresh_token.clone();
+                let outcome = self
+                    .adopt_account_refresh_token_under_lock(
+                        account_id,
+                        live.refresh_token,
+                        live.id_token,
+                        live.last_refresh_ms,
+                        live.access_token.as_deref().and_then(token_issued_at),
+                        RefreshTokenAdoptionMode::TimestampChecked,
+                    )
+                    .await?;
+                if matches!(outcome, RefreshTokenAdoptionOutcome::ProvablyOlder) {
+                    // Reconstruct a failed CLI write after restart from an owned,
+                    // provably older live generation; never guess for ambiguous tokens.
+                    self.dsh_pending_sync
+                        .write()
+                        .await
+                        .entry(account_id.into())
+                        .and_modify(|pending| {
+                            pending.expected_cli_refresh.clone_from(&observed_refresh)
+                        })
+                        .or_insert(DshPendingSync {
+                            expected_cli_refresh: observed_refresh,
+                            retry_native: false,
+                        });
+                }
+                None
+            }
+            Ok(None) => None,
+            Err(error) => Some(error),
+        };
+        let (expected_workspace, identity, old_refresh, updated_at_ms, managed_issued_at) = {
+            let accounts = self.accounts.read().await;
+            let a = accounts
+                .get(account_id)
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.into()))?;
+            (
+                a.chatgpt_account_id.clone(),
+                a.id_token
+                    .as_deref()
+                    .and_then(crate::codex_config::extract_codex_id_token_user_identity),
+                a.refresh_token.clone(),
+                a.token_updated_at_ms,
+                a.access_token_issued_at,
+            )
+        };
+        if payload["type"].as_str() != Some("oauth")
+            || expected_workspace.as_deref() != Some(&workspace)
+            || identity.is_none()
+            || crate::codex_config::extract_codex_id_token_user_identity(&access) != identity
+        {
+            return Err(CodexOAuthError::ParseError(
+                "DSH account identity changed; select the account again".into(),
+            ));
+        }
+        let claims = parse_jwt_claims(&access)
+            .ok_or_else(|| CodexOAuthError::ParseError("Invalid DSH access token".into()))?;
+        let token_workspace = claims
+            .openai_auth
+            .as_ref()
+            .and_then(|c| c.chatgpt_account_id.as_deref())
+            .or(claims.chatgpt_account_id.as_deref());
+        if token_workspace != Some(workspace.as_str()) {
+            return Err(CodexOAuthError::ParseError(
+                "DSH workspace does not match its token".into(),
+            ));
+        }
+        let issued = claims
+            .iat
+            .filter(|issued| *issued > 0)
+            .ok_or_else(|| CodexOAuthError::ParseError("DSH token has no issue time".into()))?;
+        let issued_ms = issued
+            .checked_mul(1000)
+            .ok_or_else(|| CodexOAuthError::ParseError("Invalid DSH token issue time".into()))?;
+        let authenticated_cache = self
+            .access_tokens
+            .read()
+            .await
+            .get(account_id)
+            .filter(|cached| !cached.is_expiring_soon())
+            .cloned();
+        if let Some(error) = cli_error {
+            if !refresh_if_expiring {
+                // Unchanged native credentials need only an ownership snapshot.
+                // A differing grant may be the last copy of a rotated token.
+                return if refresh == old_refresh {
+                    Ok(None)
+                } else {
+                    Err(error)
+                };
+            }
+            if managed_access {
+                return authenticated_cache.map(Some).ok_or(error);
+            }
+            if expires <= chrono::Utc::now().timestamp_millis() {
+                // An expired grant cannot be refreshed while the CLI
+                // generation is unknown.
+                return Err(error);
+            }
+            return Ok(Some(CachedAccessToken {
+                token: access,
+                expires_at_ms: expires,
+                obtained_at_ms: issued_ms,
+            }));
+        }
+        // A legacy account can learn the issue time from matching CLI/DSH
+        // credentials. Otherwise only a fresh, explicit Auth Center login
+        // can establish which changed refresh token is safe to use.
+        let generation_order = managed_issued_at.map(|managed| issued.cmp(&managed));
+        if refresh != old_refresh && generation_order != Some(std::cmp::Ordering::Greater) {
+            if generation_order != Some(std::cmp::Ordering::Less) {
+                return Err(CodexOAuthError::DshGenerationAmbiguous);
+            }
+            if !refresh_if_expiring {
+                return Ok(None);
+            }
+            let cached = self.resolve_managed_token_under_lock(account_id).await?;
+            let accounts = self.accounts.read().await;
+            let account = accounts
+                .get(account_id)
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.into()))?;
+            payload["access"] = serde_json::json!(cached.token);
+            payload["refresh"] = serde_json::json!(account.refresh_token);
+            payload["expires"] = serde_json::json!(cached.expires_at_ms);
+            drop(accounts);
+            let expected = self
+                .dsh_pending_sync
+                .read()
+                .await
+                .get(account_id)
+                .map(|pending| pending.expected_cli_refresh.clone())
+                .unwrap_or_else(|| old_refresh.clone());
+            self.persist_dsh_refresh(account_id, &workspace, &cached, expected, || {
+                guard.prepare_legacy_provenance(&old_refresh);
+                guard.save(&payload, true).map_err(|_| {
+                    CodexOAuthError::IoError("Cannot synchronize newer DSH credential".into())
+                })
+            })
+            .await?;
+            return Ok(Some(cached));
+        }
+        let mut cached = CachedAccessToken {
+            token: access,
+            expires_at_ms: expires,
+            obtained_at_ms: issued_ms,
+        };
+        let pending = self.dsh_pending_sync.read().await.get(account_id).cloned();
+        let verifying_native_rotation = refresh != old_refresh;
+        if !verifying_native_rotation {
+            if let (Some(pending), Some(authenticated)) = (&pending, &authenticated_cache) {
+                let repair_native = pending.retry_native
+                    && token_issued_at(&authenticated.token)
+                        .is_some_and(|verified| issued <= verified)
+                    && (cached.token != authenticated.token
+                        || cached.expires_at_ms != authenticated.expires_at_ms);
+                self.persist_dsh_refresh(
+                    account_id,
+                    &workspace,
+                    authenticated,
+                    pending.expected_cli_refresh.clone(),
+                    || {
+                        if repair_native {
+                            payload["access"] = serde_json::json!(authenticated.token);
+                            payload["expires"] = serde_json::json!(authenticated.expires_at_ms);
+                            guard.prepare_legacy_provenance(&old_refresh);
+                            guard.save(&payload, false).map_err(|_| {
+                                CodexOAuthError::IoError(
+                                    "Cannot retry writing the DSH credential".into(),
+                                )
+                            })?;
+                        }
+                        Ok(())
+                    },
+                )
+                .await?;
+                return Ok(Some(
+                    if repair_native
+                        || managed_access
+                        || (refresh_if_expiring && cached.is_expiring_soon())
+                    {
+                        authenticated.clone()
+                    } else {
+                        cached
+                    },
+                ));
+            }
+        }
+        // A local JWT is only a hint about where to look. Never import its
+        // adjacent refresh token until the issuer verifies that token and
+        // returns the expected user and workspace.
+        let must_exchange = verifying_native_rotation
+            || (refresh_if_expiring
+                && (cached.is_expiring_soon()
+                    || managed_issued_at.is_none()
+                    || pending.is_some()
+                    || (managed_access && authenticated_cache.is_none())));
+        if !must_exchange {
+            return Ok(Some(if managed_access {
+                authenticated_cache.unwrap_or(cached)
+            } else {
+                cached
+            }));
+        }
+        let mut sync_expected_refresh = pending
+            .map(|pending| pending.expected_cli_refresh)
+            .unwrap_or_else(|| old_refresh.clone());
+        let mut rotated_by_cc_switch = true;
+
+        let tokens = match self.refresh_with_token(&refresh).await {
+            Err(CodexOAuthError::RefreshTokenInvalid) if !verifying_native_rotation => {
+                // The native Codex CLI may rotate the same grant outside DSH's lock.
+                let live = self
+                    .read_managed_live_auth_refresh_for_account(account_id)
+                    .await?
+                    .filter(|live| live.refresh_token != refresh)
+                    .ok_or(CodexOAuthError::RefreshTokenInvalid)?;
+                // The predecessor came from the CLI, so its lineage is uncertain.
+                rotated_by_cc_switch = false;
+                refresh = live.refresh_token;
+                // Only recovery consumes a newly observed CLI generation.
+                sync_expected_refresh = refresh.clone();
+                self.refresh_with_token(&refresh).await?
+            }
+            result => result?,
+        };
+        refresh = tokens
+            .refresh_token
+            .filter(|token| !token.trim().is_empty())
+            .unwrap_or(refresh);
+        let refreshed_claims = parse_jwt_claims(&tokens.access_token)
+            .ok_or_else(|| CodexOAuthError::ParseError("Invalid refreshed DSH token".into()))?;
+        let refreshed_workspace = refreshed_claims
+            .openai_auth
+            .as_ref()
+            .and_then(|c| c.chatgpt_account_id.as_deref())
+            .or(refreshed_claims.chatgpt_account_id.as_deref());
+        if refreshed_workspace != Some(workspace.as_str())
+            || crate::codex_config::extract_codex_id_token_user_identity(&tokens.access_token)
+                != identity
+        {
+            return Err(CodexOAuthError::ParseError(
+                "Refreshed DSH account identity changed; sign in again".into(),
+            ));
+        }
+        let access_token_issued_at = token_issued_at(&tokens.access_token);
+        if verifying_native_rotation && access_token_issued_at.is_none() {
+            return Err(CodexOAuthError::ParseError(
+                "The issuer did not date the refreshed DSH token".into(),
+            ));
+        }
+        cached.token = tokens.access_token;
+        cached.obtained_at_ms = chrono::Utc::now().timestamp_millis();
+        cached.expires_at_ms = compute_expires_at_ms(tokens.expires_in);
+        let refreshed_id = tokens.id_token;
+        payload["access"] = serde_json::json!(cached.token);
+        payload["refresh"] = serde_json::json!(refresh);
+        payload["expires"] = serde_json::json!(cached.expires_at_ms);
+        {
+            let mut accounts = self.accounts.write().await;
+            let a = accounts
+                .get_mut(account_id)
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.into()))?;
+            a.refresh_token = refresh;
+            a.access_token_issued_at = access_token_issued_at;
+            if let Some(id) = refreshed_id {
+                a.id_token = Some(id);
+            }
+            a.token_updated_at_ms = cached.obtained_at_ms.max(updated_at_ms);
+        }
+        self.access_tokens
+            .write()
+            .await
+            .insert(account_id.into(), cached.clone());
+        self.persist_dsh_refresh(
+            account_id,
+            &workspace,
+            &cached,
+            sync_expected_refresh,
+            || {
+                guard.prepare_legacy_provenance(&old_refresh);
+                guard.save(&payload, rotated_by_cc_switch).map_err(|_| {
+                    CodexOAuthError::IoError("Cannot save refreshed DSH credential".into())
+                })
+            },
+        )
+        .await?;
+        Ok(Some(cached))
+    }
+
+    async fn persist_dsh_refresh(
+        &self,
+        account_id: &str,
+        workspace: &str,
+        cached: &CachedAccessToken,
+        sync_expected_refresh: String,
+        save_native: impl FnOnce() -> Result<(), CodexOAuthError>,
+    ) -> Result<(), CodexOAuthError> {
+        self.dsh_pending_sync.write().await.insert(
+            account_id.into(),
+            DshPendingSync {
+                expected_cli_refresh: sync_expected_refresh.clone(),
+                retry_native: false,
+            },
+        );
+        // Retain the manager bundle before fallible native writes, and retry
+        // every destination even when one write fails.
+        let manager_save = self.save_to_disk().await;
+        let native_save = save_native();
+        if let Some(pending) = self.dsh_pending_sync.write().await.get_mut(account_id) {
+            pending.retry_native = native_save.is_err();
+        }
+        let accounts = self.accounts.read().await;
+        let account = accounts
+            .get(account_id)
+            .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.into()))?;
+        let last_refresh =
+            chrono::DateTime::<chrono::Utc>::from_timestamp_millis(cached.obtained_at_ms)
+                .ok_or_else(|| CodexOAuthError::ParseError("Invalid token issue time".into()))?
+                .to_rfc3339();
+        let auth = crate::codex_config::codex_managed_oauth_auth_value(
+            workspace,
+            &cached.token,
+            account.id_token.as_deref(),
+            &account.refresh_token,
+            &last_refresh,
+        );
+        let current_refresh = account.refresh_token.clone();
+        drop(accounts);
+        let cli_save = crate::codex_config::sync_codex_managed_oauth_live_auth_after_refresh(
+            account_id,
+            &sync_expected_refresh,
+            &auth,
+        )
+        .map_err(|_| CodexOAuthError::IoError("Cannot synchronize the managed Codex login".into()));
+        let cli_synced = match cli_save {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                // A CAS miss is complete only if the CLI is current or no longer bound.
+                let live = self
+                    .read_managed_live_auth_refresh_for_account(account_id)
+                    .await?;
+                if live.is_some_and(|live| live.refresh_token != current_refresh) {
+                    Err(CodexOAuthError::TokenFetchFailed(
+                        "Codex CLI credential generation changed during DSH synchronization; retry"
+                            .into(),
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Err(error) => Err(error),
+        };
+        if cli_synced.is_ok() {
+            // Other writes may still fail. Retry from the generation the CLI reached.
+            self.dsh_pending_sync.write().await.insert(
+                account_id.into(),
+                DshPendingSync {
+                    expected_cli_refresh: current_refresh,
+                    retry_native: native_save.is_err(),
+                },
+            );
+        }
+        manager_save?;
+        native_save?;
+        cli_synced?;
+        self.dsh_pending_sync.write().await.remove(account_id);
+        Ok(())
+    }
+
+    pub(crate) async fn bind_dsh_account(
+        &self,
+        account_id: &str,
+        config: Option<&serde_json::Value>,
+        commit: impl FnOnce() -> Result<(), crate::error::AppError>,
+    ) -> Result<(), CodexOAuthError> {
+        let _lifecycle = self.lifecycle_lock.read().await;
+        let old = crate::dsh_config::codex_binding()
+            .map_err(|_| CodexOAuthError::ParseError("Cannot read DSH binding".into()))?;
+        self.ensure_account_ready_for_use(account_id).await?;
+        // Capture the compared generation before releasing the lock that reconciles it.
+        // A native refresh after that point must force bind_codex to retry.
+        let snapshot = if let Some(old) = old.as_deref() {
+            let lock = self.get_refresh_lock(old).await;
+            let _guard = lock.lock().await;
+            self.reconcile_outgoing_dsh_grant(old, old == account_id, old != account_id)
+                .await?
+        } else {
+            crate::dsh_config::CodexGrantGuard::acquire_for_binding(None)
+                .map_err(|_| {
+                    CodexOAuthError::IoError(
+                        "Cannot read the current DSH Codex binding; retry".into(),
+                    )
+                })?
+                .snapshot()
+        };
+        let lock = self.get_refresh_lock(account_id).await;
+        let _guard = lock.lock().await;
+        // Resolve from the manager/CLI after adoption. This does not mutate DSH,
+        // so the snapshot detects only external changes while the bundle is prepared.
+        let bundle = self.token_bundle_under_lock(account_id, false).await?;
+        let cache = self.access_tokens.read().await;
+        let expires = cache
+            .get(account_id)
+            .ok_or_else(|| CodexOAuthError::TokenFetchFailed("Access token unavailable".into()))?
+            .expires_at_ms;
+        let payload = serde_json::json!({"type":"oauth","access":bundle.access_token,"refresh":bundle.refresh_token,"expires":expires,"accountId":bundle.chatgpt_account_id});
+        drop(cache);
+        crate::dsh_config::bind_codex(
+            account_id,
+            payload,
+            old.as_deref(),
+            &snapshot,
+            config,
+            commit,
+        )
+        .map_err(|_| {
+            CodexOAuthError::IoError(
+                "DSH configuration changed or could not be written; retry".into(),
+            )
+        })
+    }
+
     /// 采纳（读回）Codex CLI 轮换后的 refresh_token / id_token。
     ///
     /// 托管账号以「完整 bundle」写入 auth.json 后，Codex CLI 会自行刷新并把新的
@@ -1170,6 +1823,7 @@ impl CodexOAuthManager {
             refresh_token,
             id_token,
             last_refresh_ms,
+            None,
             RefreshTokenAdoptionMode::TimestampChecked,
         )
         .await
@@ -1200,7 +1854,7 @@ impl CodexOAuthManager {
             self.ensure_account_absent_from_store(account_id).await?;
             return Ok(CodexLiveAuthSwitchGuard::MissingAccount);
         }
-        let Some((live_refresh, live_id_token, live_last_refresh_ms)) = self
+        let Some(live) = self
             .read_managed_live_auth_refresh_for_account(account_id)
             .await?
         else {
@@ -1210,9 +1864,10 @@ impl CodexOAuthManager {
         let outcome = self
             .adopt_account_refresh_token_under_lock(
                 account_id,
-                live_refresh.clone(),
-                live_id_token,
-                live_last_refresh_ms,
+                live.refresh_token.clone(),
+                live.id_token,
+                live.last_refresh_ms,
+                live.access_token.as_deref().and_then(token_issued_at),
                 RefreshTokenAdoptionMode::TimestampChecked,
             )
             .await?;
@@ -1221,7 +1876,7 @@ impl CodexOAuthManager {
             RefreshTokenAdoptionOutcome::Synchronized { .. }
             | RefreshTokenAdoptionOutcome::Adopted
             | RefreshTokenAdoptionOutcome::ProvablyOlder => Ok(
-                CodexLiveAuthSwitchGuard::ExistingAccount(Some(live_refresh)),
+                CodexLiveAuthSwitchGuard::ExistingAccount(Some(live.refresh_token)),
             ),
             RefreshTokenAdoptionOutcome::Ambiguous => {
                 Err(Self::ambiguous_live_refresh_error(account_id))
@@ -1240,6 +1895,7 @@ impl CodexOAuthManager {
         refresh_token: String,
         id_token: Option<String>,
         last_refresh_ms: Option<i64>,
+        access_token_issued_at: Option<i64>,
         mode: RefreshTokenAdoptionMode,
     ) -> Result<RefreshTokenAdoptionOutcome, CodexOAuthError> {
         let incoming_id_token = id_token.filter(|token| !token.trim().is_empty());
@@ -1284,6 +1940,7 @@ impl CodexOAuthManager {
             } else if should_adopt {
                 if refresh_changed {
                     account.refresh_token = refresh_token;
+                    account.access_token_issued_at = access_token_issued_at;
                     changed = true;
                     material_replaced = true;
                 }
@@ -1338,6 +1995,13 @@ impl CodexOAuthManager {
                         account.token_updated_at_ms = observed;
                         changed = true;
                     }
+                }
+            }
+            if !refresh_changed {
+                let issued_at = account.access_token_issued_at.max(access_token_issued_at);
+                if account.access_token_issued_at != issued_at {
+                    account.access_token_issued_at = issued_at;
+                    changed = true;
                 }
             }
             // 采纳了 CLI 轮换后的 refresh_token：与之配套的旧 access_token 可能已被
@@ -1403,15 +2067,13 @@ impl CodexOAuthManager {
         // have been removed as one lifecycle transition.
         let _lifecycle = self.lifecycle_lock.write().await;
 
-        let managed_id_token = {
+        let (managed_id_token, dsh_owner) = {
             let accounts = self.accounts.read().await;
-            accounts
+            let account = accounts
                 .get(account_id)
-                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?
-                .id_token
-                .clone()
+                .ok_or_else(|| CodexOAuthError::AccountNotFound(account_id.to_string()))?;
+            (account.id_token.clone(), account.dsh_grant_owner())
         };
-
         // Explicit Auth Center removal means credentials for this managed
         // account must leave the machine. Content matching intentionally also
         // claims a native `codex login` of the same account; that is the same
@@ -1421,14 +2083,17 @@ impl CodexOAuthManager {
             managed_id_token.as_deref(),
         )
         .map_err(|error| CodexOAuthError::TokenFetchFailed(error.to_string()))?;
-        crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
-            .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
+        crate::dsh_config::unlink_codex_and_commit(account_id, dsh_owner.as_ref(), || {
+            crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
+        })
+        .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
 
         {
             // 在 accounts 写锁内原子清除该账号的 token 缓存（accounts -> access_tokens
             // 顺序），确保不存在「账号已删但缓存仍在」的窗口。
             let mut accounts = self.accounts.write().await;
             accounts.remove(account_id);
+            self.dsh_pending_sync.write().await.remove(account_id);
             self.access_tokens.write().await.remove(account_id);
         }
         {
@@ -1478,6 +2143,17 @@ impl CodexOAuthManager {
         // write guard guarantees no refresh can recreate live/disk state after
         // the clear has committed.
         let _lifecycle = self.lifecycle_lock.write().await;
+        let binding = crate::dsh_config::codex_binding()
+            .map_err(|_| CodexOAuthError::ParseError("Cannot read DSH binding".into()))?;
+        let owner = if let Some(id) = binding.as_deref() {
+            self.accounts
+                .read()
+                .await
+                .get(id)
+                .and_then(CodexAccountData::dsh_grant_owner)
+        } else {
+            None
+        };
 
         let accounts_to_clear = self
             .accounts
@@ -1493,10 +2169,18 @@ impl CodexOAuthManager {
             )
             .map_err(|error| CodexOAuthError::TokenFetchFailed(error.to_string()))?;
         }
-        for (account_id, _) in &accounts_to_clear {
-            crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)
-                .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
+        let clear_cli = || {
+            for (account_id, _) in &accounts_to_clear {
+                crate::codex_config::clear_codex_live_auth_for_managed_account(account_id)?;
+            }
+            Ok(())
+        };
+        if let Some(id) = binding.as_deref() {
+            crate::dsh_config::unlink_codex_and_commit(id, owner.as_ref(), clear_cli)
+        } else {
+            clear_cli()
         }
+        .map_err(|error| CodexOAuthError::IoError(error.to_string()))?;
 
         // 与 save_to_disk 共用持久化锁：确保「清内存 + 删文件」相对于并发保存原子，
         // 不会被一个持有旧快照的 save 复活已清除的账号。
@@ -1507,6 +2191,7 @@ impl CodexOAuthManager {
             // access_tokens 顺序），杜绝「账号已清但缓存仍在」及并发 refresh 回填。
             let mut accounts = self.accounts.write().await;
             accounts.clear();
+            self.dsh_pending_sync.write().await.clear();
             self.access_tokens.write().await.clear();
         }
         {
@@ -1607,6 +2292,7 @@ impl CodexOAuthManager {
             authenticated_at: chrono::Utc::now().timestamp(),
             id_token: id_token.map(|token| token.to_string()),
             token_updated_at_ms: obtained_at_ms,
+            access_token_issued_at: token_issued_at(access_token),
         };
         {
             let mut accounts = self.accounts.write().await;
@@ -1762,6 +2448,9 @@ impl CodexOAuthManager {
             authenticated_at: now,
             id_token,
             token_updated_at_ms: now_ms,
+            access_token_issued_at: initial_access_token
+                .as_ref()
+                .and_then(|cached| token_issued_at(&cached.token)),
         };
 
         let account = GitHubAccount::from(&data);
@@ -2169,6 +2858,10 @@ fn extract_refresh_error_code(body: &str) -> Option<String> {
 }
 
 /// 解析 JWT 中的 claims
+fn token_issued_at(token: &str) -> Option<i64> {
+    parse_jwt_claims(token)?.iat.filter(|issued| *issued > 0)
+}
+
 fn parse_jwt_claims(token: &str) -> Option<IdTokenClaims> {
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
@@ -3215,6 +3908,226 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial_test::serial]
+    async fn dsh_generation_is_ordered_by_access_token_issuance() {
+        let home = crate::test_support::TestHome::new();
+        let dsh = home.path().join("dsh");
+        let _env = crate::test_support::EnvVars::new().set("DSH_HOME", &dsh);
+        std::fs::create_dir_all(&dsh).unwrap();
+        let manager = CodexOAuthManager::new(home.path().join("manager"));
+
+        let now = chrono::Utc::now().timestamp();
+        let token = |issued_at| {
+            format!(
+                "{}.{}.signature",
+                URL_SAFE_NO_PAD.encode(br#"{"alg":"RS256"}"#),
+                URL_SAFE_NO_PAD.encode(
+                    serde_json::json!({
+                        "sub": "fixture-user", "iat": issued_at,
+                        "chatgpt_account_id": "fixture-workspace",
+                    })
+                    .to_string()
+                )
+            )
+        };
+        manager
+            .add_test_account_with_workspace_and_access_token(
+                "fixture-account",
+                "fixture-workspace",
+                &token(now - 2),
+                Some(&crate::codex_config::test_codex_id_token("fixture-user")),
+            )
+            .await
+            .unwrap();
+        // The manager received its older token after DSH's newer token was issued.
+        manager
+            .test_set_token_updated_at_ms("fixture-account", now * 1000)
+            .await;
+        std::fs::write(dsh.join(".cc-switch-codex-account"), "fixture-account").unwrap();
+        let credentials = dsh.join(".credentials.yaml");
+        std::fs::write(
+            &credentials,
+            serde_json::json!({"version":1,"records":{
+                "cc-switch/dsh-codex": {"kind":"grant","payload":{"accountId":"fixture-account"}},
+                "llm-pi-ai/openai-codex": {"kind":"grant","payload":{
+                    "type":"oauth", "access":token(now - 1), "refresh":"native-generation",
+                    "accountId":"fixture-workspace","expires":(now + 3600) * 1000
+                }}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+
+        let native_before = std::fs::read(&credentials).unwrap();
+        let manager_before = std::fs::read(&manager.storage_path).ok();
+        *manager.test_refresh_reply.lock().await = Some((
+            "native-generation".into(),
+            Err(CodexOAuthError::RefreshTokenInvalid),
+        ));
+        assert!(matches!(
+            manager
+                .get_valid_dsh_token_for_account("fixture-account")
+                .await,
+            Err(CodexOAuthError::RefreshTokenInvalid)
+        ));
+        assert_eq!(
+            manager.accounts.read().await["fixture-account"].refresh_token,
+            "test-refresh-token"
+        );
+
+        assert_eq!(std::fs::read(&credentials).unwrap(), native_before);
+        assert_eq!(std::fs::read(&manager.storage_path).ok(), manager_before);
+        *manager.test_refresh_reply.lock().await = Some((
+            "native-generation".into(),
+            Ok(OAuthTokenResponse {
+                access_token: token(now - 1),
+                refresh_token: Some("native-generation".into()),
+                id_token: None,
+                expires_in: Some(3600),
+            }),
+        ));
+        manager
+            .get_valid_dsh_token_for_account("fixture-account")
+            .await
+            .unwrap();
+        let (owner, _) = manager
+            .prepare_dsh_grant_removal("fixture-account")
+            .await
+            .unwrap();
+        assert_eq!(owner.unwrap().workspace, "fixture-workspace");
+        assert_eq!(
+            manager.accounts.read().await["fixture-account"].refresh_token,
+            "native-generation"
+        );
+        assert_eq!(
+            manager.accounts.read().await["fixture-account"].access_token_issued_at,
+            Some(now - 1)
+        );
+
+        let cached = manager
+            .get_valid_dsh_token_for_account("fixture-account")
+            .await
+            .unwrap();
+        assert_eq!(cached, token(now - 1));
+        let mut document: serde_json::Value =
+            serde_yaml::from_slice(&std::fs::read(&credentials).unwrap()).unwrap();
+        // Simulate a refresh saved by the manager but not written back to either client.
+        let auth = crate::codex_config::codex_managed_oauth_auth_value(
+            "fixture-workspace",
+            &token(now - 2),
+            Some(&crate::codex_config::test_codex_id_token("fixture-user")),
+            "test-refresh-token",
+            &chrono::DateTime::<chrono::Utc>::from_timestamp(now - 2, 0)
+                .unwrap()
+                .to_rfc3339(),
+        );
+        let cli = crate::codex_config::get_codex_auth_path();
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, auth.to_string()).unwrap();
+        crate::codex_config::record_codex_managed_oauth_live_auth(&auth, "fixture-account")
+            .unwrap();
+        let payload = &mut document["records"]["llm-pi-ai/openai-codex"]["payload"];
+        payload["access"] = serde_json::json!(token(now - 2));
+        payload["refresh"] = serde_json::json!("test-refresh-token");
+        std::fs::write(&credentials, document.to_string()).unwrap();
+        manager
+            .get_valid_dsh_token_for_account("fixture-account")
+            .await
+            .unwrap();
+        let repaired: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&cli).unwrap()).unwrap();
+        assert_eq!(repaired["tokens"]["refresh_token"], "native-generation");
+        assert!(!manager
+            .dsh_pending_sync
+            .read()
+            .await
+            .contains_key("fixture-account"));
+
+        // Also cover an access-token-only rotation whose refresh token stayed the same.
+        let mut native: serde_json::Value =
+            serde_yaml::from_slice(&std::fs::read(&credentials).unwrap()).unwrap();
+        native["records"]["llm-pi-ai/openai-codex"]["payload"]["access"] =
+            serde_json::json!(token(now - 2));
+        std::fs::write(&credentials, native.to_string()).unwrap();
+        manager.dsh_pending_sync.write().await.insert(
+            "fixture-account".into(),
+            DshPendingSync {
+                expected_cli_refresh: "native-generation".into(),
+                retry_native: true,
+            },
+        );
+        manager
+            .get_valid_dsh_token_for_account("fixture-account")
+            .await
+            .unwrap();
+        let repaired_native: serde_json::Value =
+            serde_yaml::from_slice(&std::fs::read(&credentials).unwrap()).unwrap();
+        assert_eq!(
+            repaired_native["records"]["llm-pi-ai/openai-codex"]["payload"]["access"],
+            cached
+        );
+        assert!(!manager
+            .dsh_pending_sync
+            .read()
+            .await
+            .contains_key("fixture-account"));
+
+        native["records"]["llm-pi-ai/openai-codex"]["payload"]["access"] =
+            serde_json::json!(token(now));
+        std::fs::write(&credentials, native.to_string()).unwrap();
+        manager.dsh_pending_sync.write().await.insert(
+            "fixture-account".into(),
+            DshPendingSync {
+                expected_cli_refresh: "native-generation".into(),
+                retry_native: true,
+            },
+        );
+        assert_eq!(
+            manager
+                .get_valid_dsh_token_for_account("fixture-account")
+                .await
+                .unwrap(),
+            token(now)
+        );
+        assert_eq!(
+            std::fs::read_to_string(&credentials).unwrap(),
+            native.to_string()
+        );
+        std::fs::write(&credentials, repaired_native.to_string()).unwrap();
+
+        std::fs::write(&cli, "invalid JSON").unwrap();
+        assert_eq!(
+            manager
+                .get_valid_dsh_token_for_account("fixture-account")
+                .await
+                .unwrap(),
+            cached
+        );
+        assert!(manager
+            .prepare_dsh_grant_removal("fixture-account")
+            .await
+            .is_ok());
+        std::fs::write(&cli, repaired.to_string()).unwrap();
+
+        document["records"]["llm-pi-ai/openai-codex"]["payload"]["accountId"] =
+            serde_json::json!("different-workspace");
+        std::fs::write(&credentials, document.to_string()).unwrap();
+        assert!(matches!(
+            manager
+                .get_valid_dsh_token_for_account("fixture-account")
+                .await,
+            Err(CodexOAuthError::ParseError(_))
+        ));
+        assert_eq!(
+            manager
+                .get_valid_token_for_account("fixture-account")
+                .await
+                .unwrap(),
+            cached
+        );
+    }
+
+    #[tokio::test]
     async fn rejected_manager_token_adopts_different_disk_token_without_timestamp() {
         let temp = tempfile::tempdir().unwrap();
         let manager = CodexOAuthManager::new(temp.path().to_path_buf());
@@ -3228,6 +4141,7 @@ mod tests {
                 "acc-1",
                 "recovered-live-refresh".to_string(),
                 Some("id-live".to_string()),
+                None,
                 None,
                 RefreshTokenAdoptionMode::RejectedManagerToken,
             )

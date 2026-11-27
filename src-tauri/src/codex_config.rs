@@ -188,6 +188,7 @@ pub(crate) struct CodexManagedLiveRefresh {
     pub(crate) id_token: Option<String>,
     pub(crate) last_refresh_ms: Option<i64>,
     pub(crate) chatgpt_account_id: String,
+    pub(crate) access_token: Option<String>,
 }
 
 /// 测试用：Codex live 的四个文件（auth、config、模型目录、托管账号标记）的字节，用来断言
@@ -723,7 +724,8 @@ pub fn codex_live_auth_is_managed_chatgpt_login(auth: &Value, account_id: &str) 
 ///
 /// 用于切换回托管 provider 前，采纳 CLI 自行刷新时轮换出的最新 refresh_token，避免
 /// 用陈腐 token 覆盖 CLI 的有效登录（“裸跑 codex” 反复切换场景）。
-pub fn read_codex_live_auth_refresh_for_account(
+#[cfg(test)]
+fn read_codex_live_auth_refresh_for_account(
     account_id: &str,
 ) -> Option<(String, Option<String>, Option<i64>)> {
     let account_id = account_id.trim();
@@ -740,6 +742,10 @@ pub fn read_codex_live_auth_refresh_for_account(
     if !codex_live_auth_is_managed_chatgpt_login(&auth, account_id) {
         return None;
     }
+    codex_live_refresh_fields(&auth)
+}
+
+fn codex_live_refresh_fields(auth: &Value) -> Option<(String, Option<String>, Option<i64>)> {
     let tokens = auth.get("tokens")?.as_object()?;
     let refresh_token = tokens.get("refresh_token")?.as_str()?.trim().to_string();
     if refresh_token.is_empty() {
@@ -778,9 +784,7 @@ pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
     if !codex_auth_matches_recorded_managed_oauth(&auth, account_id)? {
         return Ok(None);
     }
-    let Some((refresh_token, id_token, last_refresh_ms)) =
-        read_codex_live_auth_refresh_for_account(account_id)
-    else {
+    let Some((refresh_token, id_token, last_refresh_ms)) = codex_live_refresh_fields(&auth) else {
         return Ok(None);
     };
     let chatgpt_account_id = extract_codex_managed_oauth_account_id(&auth)
@@ -790,6 +794,10 @@ pub(crate) fn read_codex_live_auth_refresh_for_managed_account(
         id_token,
         last_refresh_ms,
         chatgpt_account_id,
+        access_token: auth
+            .pointer("/tokens/access_token")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     }))
 }
 

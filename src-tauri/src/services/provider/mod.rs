@@ -5950,6 +5950,25 @@ impl ProviderService {
                     }
                     provider.settings_config = config.clone();
                 }
+                if app_type == AppType::Dsh && id == "openai-codex" {
+                    match crate::dsh_config::codex_binding() {
+                        Ok(account_id) => {
+                            let meta = provider.meta.get_or_insert_with(Default::default);
+                            if account_id.is_some()
+                                || meta.has_managed_account_binding("codex_oauth")
+                            {
+                                meta.auth_binding = Some(crate::provider::AuthBinding {
+                                    source: crate::provider::AuthBindingSource::ManagedAccount,
+                                    auth_provider: Some("codex_oauth".into()),
+                                    account_id,
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            log::warn!("Cannot read the DSH Codex account binding: {error}")
+                        }
+                    }
+                }
                 Self::set_provider_live_config_managed(provider, native.contains_key(id));
                 if app_type == AppType::Kimi {
                     crate::kimi_config::normalize_provider_identity(
@@ -7132,6 +7151,28 @@ impl ProviderService {
     ///
     /// 直连指针或代理路由指着的供应商不能删（见 `mode::current::is_referenced`）。
     /// 对于累加模式应用（OpenCode, OpenClaw），可以随时删除任意供应商，同时从 live 配置中移除。
+    fn remove_dsh_provider<T>(
+        state: &AppState,
+        id: &str,
+        commit: impl FnOnce() -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        if id != "openai-codex" {
+            return crate::dsh_config::save_and_commit(id, None, false, commit);
+        }
+        let account = crate::dsh_config::codex_binding()?;
+        let prepared = account
+            .as_deref()
+            .map(|id| {
+                futures::executor::block_on(state.codex_oauth_manager.prepare_dsh_grant_removal(id))
+            })
+            .transpose()?;
+        let (owner, snapshot) = match prepared.as_ref() {
+            Some((owner, snapshot)) => (owner.as_ref(), Some(snapshot)),
+            None => (None, None),
+        };
+        crate::dsh_config::remove_codex_provider(account.as_deref(), owner, snapshot, commit)
+    }
+
     pub fn delete(state: &AppState, app_type: AppType, id: &str) -> Result<(), AppError> {
         let _native_guard = lock_native_provider_operations(state, &app_type);
         if state.db.get_unreadable_provider(&app_type, id)?.is_some() {
@@ -7141,7 +7182,7 @@ impl ProviderService {
             return pi::delete(state, id);
         }
         if matches!(app_type, AppType::Dsh) {
-            return crate::dsh_config::save_and_commit(id, None, false, || {
+            return Self::remove_dsh_provider(state, id, || {
                 state.db.delete_provider(&app_type, id)
             });
         }
@@ -7337,9 +7378,18 @@ impl ProviderService {
         {
             return Err(Self::codebuddy_official_not_a_model());
         }
-        if app_type == AppType::Dsh {
-            return crate::dsh_config::save_and_commit(id, None, false, || {
+        if matches!(app_type, AppType::Dsh) {
+            return Self::remove_dsh_provider(state, id, || {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, &app_type)? {
+                    if id == "openai-codex" {
+                        if let Some(binding) = provider
+                            .meta
+                            .as_mut()
+                            .and_then(|meta| meta.auth_binding.as_mut())
+                        {
+                            binding.account_id = None;
+                        }
+                    }
                     Self::set_provider_live_config_managed(&mut provider, false);
                     state.db.save_provider(&app_type, &provider)?;
                 }
@@ -7542,6 +7592,16 @@ impl ProviderService {
 
         if app_type == AppType::Dsh {
             let mut provider = _provider.clone();
+            if id == "openai-codex"
+                && provider
+                    .meta
+                    .as_ref()
+                    .is_some_and(|meta| meta.has_managed_account_binding("codex_oauth"))
+            {
+                return Err(AppError::InvalidInput(
+                    "Select a Codex account before adding this DSH provider".into(),
+                ));
+            }
             Self::set_provider_live_config_managed(&mut provider, true);
             crate::dsh_config::save_and_commit(
                 id,

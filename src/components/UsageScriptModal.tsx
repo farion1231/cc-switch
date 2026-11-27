@@ -12,7 +12,11 @@ import {
 } from "@/lib/api/copilot";
 import { isCopilotByok } from "@/config/copilotConfig";
 import { useSettingsQuery } from "@/lib/query";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import { codexOauthQuotaKey } from "@/lib/query/subscription";
+import {
+  resolveManagedAccountId,
+  resolveDshCodexAccountId,
+} from "@/lib/authBinding";
 import { resolveCodexOfficialIdentity } from "@/utils/providerCapabilities";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { useDarkMode } from "@/hooks/useDarkMode";
@@ -188,6 +192,7 @@ const TEMPLATE_NAME_KEYS: Record<string, string> = {
 };
 
 function isOfficialSubscriptionProvider(provider: Provider, appId: AppId) {
+  if (resolveDshCodexAccountId(appId, provider)) return true;
   if (!appHas(appId, "officialSubscription")) return false;
   if (provider.category === "official") return true;
 
@@ -387,8 +392,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
 
   const providerCredentials = getProviderCredentials();
   const balanceProvider = detectBalanceProvider(providerCredentials.baseUrl);
-  const isBoundCodexOfficial =
-    resolveCodexOfficialIdentity(appId, provider) === "managed_account";
+  const dshCodexAccountId = resolveDshCodexAccountId(appId, provider);
+  const usesManagedCodexQuota =
+    resolveCodexOfficialIdentity(appId, provider) === "managed_account" ||
+    Boolean(dshCodexAccountId);
   const isOfficialSubscription = isOfficialSubscriptionProvider(
     provider,
     appId,
@@ -417,7 +424,7 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       : null;
   // 绑了账号的官方卡没保存过开关时默认开（卡片和托盘同一规则）
   const defaultsToEnabled =
-    isBoundCodexOfficial ||
+    usesManagedCodexQuota ||
     Boolean(claudeBoundAccountId) ||
     Boolean(grokBoundAccountId);
 
@@ -625,19 +632,29 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
       // 官方订阅额度模板使用 CLI/OAuth 凭据和官方 API
       if (selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION) {
         const { subscriptionApi } = await import("@/lib/api/subscription");
-        const accountId = isBoundCodexOfficial
+        const accountId = usesManagedCodexQuota
           ? (resolveManagedAccountId(
               provider.meta,
               PROVIDER_TYPES.CODEX_OAUTH,
             ) ?? null)
           : null;
-        const quota = isBoundCodexOfficial
-          ? await subscriptionApi.getCodexOauthQuota(accountId)
-          : claudeBoundAccountId
-            ? await subscriptionApi.getClaudeAccountQuota(claudeBoundAccountId)
-            : grokBoundAccountId
-              ? await subscriptionApi.getXaiOauthQuota(grokBoundAccountId)
-              : await subscriptionApi.getQuota(appId);
+        const quota = dshCodexAccountId
+          ? await subscriptionApi.getDshCodexQuota(dshCodexAccountId)
+          : usesManagedCodexQuota
+            ? await subscriptionApi.getCodexOauthQuota(accountId)
+            : claudeBoundAccountId
+              ? await subscriptionApi.getClaudeAccountQuota(
+                  claudeBoundAccountId,
+                )
+              : grokBoundAccountId
+                ? await subscriptionApi.getXaiOauthQuota(grokBoundAccountId)
+                : await subscriptionApi.getQuota(appId);
+        if (dshCodexAccountId) {
+          queryClient.setQueryData(
+            codexOauthQuotaKey(dshCodexAccountId, true),
+            quota,
+          );
+        }
         if (quota.success && quota.tiers.length > 0) {
           const summary = quota.tiers
             .map((tier) => `${tier.name}: ${Math.round(tier.utilization)}%`)
@@ -646,16 +663,18 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             duration: 3000,
             closeButton: true,
           });
-          queryClient.setQueryData(
-            isBoundCodexOfficial
-              ? ["codex_oauth", "quota", accountId ?? "default"]
-              : claudeBoundAccountId
-                ? ["claude_official", "quota", claudeBoundAccountId]
-                : grokBoundAccountId
-                  ? ["xai_oauth", "quota", grokBoundAccountId]
-                  : ["subscription", "quota", appId],
-            quota,
-          );
+          if (!dshCodexAccountId) {
+            queryClient.setQueryData(
+              usesManagedCodexQuota
+                ? codexOauthQuotaKey(accountId)
+                : claudeBoundAccountId
+                  ? ["claude_official", "quota", claudeBoundAccountId]
+                  : grokBoundAccountId
+                    ? ["xai_oauth", "quota", grokBoundAccountId]
+                    : ["subscription", "quota", appId],
+              quota,
+            );
+          }
         } else {
           toast.error(
             `${t("usageScript.testFailed")}: ${quota.error || t("endpointTest.noResult")}`,
@@ -1170,9 +1189,11 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
             {selectedTemplate === TEMPLATE_TYPES.OFFICIAL_SUBSCRIPTION && (
               <div className="space-y-2 border-t border-white/10 pt-3">
                 <p className="text-sm text-fg-2">
-                  {appId === "agy"
-                    ? t("usageScript.officialSubscriptionHintAgy")
-                    : t("usageScript.officialSubscriptionHint")}
+                  {usesManagedCodexQuota
+                    ? t("usageScript.managedCodexSubscriptionHint")
+                    : appId === "agy"
+                      ? t("usageScript.officialSubscriptionHintAgy")
+                      : t("usageScript.officialSubscriptionHint")}
                 </p>
               </div>
             )}

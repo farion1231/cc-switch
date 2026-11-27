@@ -13,6 +13,7 @@ import { I18nextProvider, initReactI18next } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   useClaudeAccountQuota,
+  useCodexOauthQuotaByAccountId,
   useCodebuddyAccountQuota,
 } from "@/lib/query/subscription";
 import { useWorkBuddyAccountQuota } from "@/components/providers/workbuddyQuota";
@@ -23,13 +24,17 @@ import zh from "@/i18n/locales/zh.json";
 
 const mocks = vi.hoisted(() => ({
   getClaudeAccountQuota: vi.fn(),
+  getDshCodexQuota: vi.fn(),
   workbuddyAccountQuota: vi.fn(),
   codebuddyAccountQuota: vi.fn(),
   getSettings: vi.fn(),
   saveSettings: vi.fn(),
 }));
 vi.mock("@/lib/api/subscription", () => ({
-  subscriptionApi: { getClaudeAccountQuota: mocks.getClaudeAccountQuota },
+  subscriptionApi: {
+    getClaudeAccountQuota: mocks.getClaudeAccountQuota,
+    getDshCodexQuota: mocks.getDshCodexQuota,
+  },
 }));
 vi.mock("@/lib/api/settings", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/api/settings")>()),
@@ -77,6 +82,7 @@ const newClient = () =>
 
 describe("manual-only official quota (#8990)", () => {
   beforeEach(() => {
+    mocks.getDshCodexQuota.mockReset().mockResolvedValue(quota);
     mocks.getClaudeAccountQuota.mockReset().mockResolvedValue(quota);
     mocks.workbuddyAccountQuota.mockReset().mockResolvedValue({
       snapshot: null,
@@ -160,6 +166,28 @@ describe("manual-only official quota (#8990)", () => {
     );
     await screen.findByText("loaded");
     expect(mocks.getClaudeAccountQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it("refreshes the bound DSH Codex account on demand with its own quota cache", async () => {
+    mocks.getSettings.mockResolvedValue({ officialQuotaManualOnly: true });
+    const client = newClient();
+    const { result } = renderHook(
+      () =>
+        useCodexOauthQuotaByAccountId("acc", { useDsh: true, autoQuery: true }),
+      { wrapper: wrapperFor(client) },
+    );
+    await waitFor(() => expect(result.current.manualIdle).toBe(true));
+    expect(mocks.getDshCodexQuota).not.toHaveBeenCalled();
+    render(<RefreshAllQuotaButton />, { wrapper: wrapperFor(client) });
+    fireEvent.click(
+      screen.getByRole("button", { name: zh.authCenter.quota.refreshAll }),
+    );
+    await waitFor(() => expect(result.current.data?.success).toBe(true));
+    expect(mocks.getDshCodexQuota).toHaveBeenCalledTimes(1);
+    expect(mocks.getDshCodexQuota).toHaveBeenCalledWith("acc");
+    expect(
+      client.getQueryData(["codex_oauth", "quota", "acc"]),
+    ).toBeUndefined();
   });
 
   it("shows a refresh hint instead of nothing while idle", () => {

@@ -10,6 +10,8 @@ export const subscriptionApi = {
     invoke("get_subscription_quota", { tool }),
   getCodexOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
     invoke("get_codex_oauth_quota", { accountId }),
+  getDshCodexQuota: (accountId: string): Promise<SubscriptionQuota> =>
+    invoke("get_dsh_codex_quota", { accountId }),
   getXaiOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
     invoke("get_xai_oauth_quota", { accountId }),
   /** 绑了账号的 Claude 官方卡：按那个账号自己的登录查，带上它的套餐 */

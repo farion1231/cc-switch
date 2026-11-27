@@ -41,7 +41,7 @@ function followsDefaultAccount(
   authProvider: ManagedAuthProvider,
 ): boolean {
   // Copilot CLI 官方卡没绑账号时用的是 Copilot CLI 自己的登录
-  if (appId === "copilot") return false;
+  if (appId === "copilot" || appId === "dsh") return false;
   // Codex 官方卡没绑托管账号时用的是 Codex 自己的登录，不碰授权中心的默认账号
   if (
     appId === "codex" &&

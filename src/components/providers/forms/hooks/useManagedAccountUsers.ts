@@ -19,6 +19,7 @@ export function useManagedAccountUsers(
   const { data: agy } = useProvidersQuery("agy");
   const { data: grokbuild } = useProvidersQuery("grokbuild");
   const { data: copilot } = useProvidersQuery("copilot");
+  const { data: dsh } = useProvidersQuery("dsh");
   const { data: workbuddy } = useProvidersQuery("workbuddy");
   const { data: codebuddy } = useProvidersQuery("codebuddy");
 
@@ -31,6 +32,7 @@ export function useManagedAccountUsers(
         agy: agy?.providers,
         grokbuild: grokbuild?.providers,
         copilot: copilot?.providers,
+        dsh: dsh?.providers,
         workbuddy: workbuddy?.providers,
         codebuddy: codebuddy?.providers,
       }),
@@ -43,6 +45,7 @@ export function useManagedAccountUsers(
       agy,
       grokbuild,
       copilot,
+      dsh,
       workbuddy,
       codebuddy,
     ],

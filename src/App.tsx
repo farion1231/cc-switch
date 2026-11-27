@@ -131,6 +131,7 @@ import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { EditProviderHost } from "@/components/providers/EditProviderHost";
 import { preloadOnIdle } from "@/lib/preloadOnIdle";
+import { isDshCodexOAuthRoute } from "@/lib/authBinding";
 import { useCreateEditProviderStore } from "@/components/providers/editProviderStore";
 import {
   APP_IDS,
@@ -1693,13 +1694,23 @@ function App() {
             currentProviderId={currentProviderId}
             appId={activeApp}
             isLoading={isLoading}
-            onSwitch={(provider) =>
+            onSwitch={(provider) => {
+              if (
+                isDshCodexOAuthRoute(
+                  activeApp,
+                  provider.id,
+                  provider.settingsConfig,
+                )
+              ) {
+                listCallbacks.onEdit(provider);
+                return;
+              }
               void (appHas(activeApp, "piFamily")
                 ? handleEnablePiProvider(provider, activeApp)
                 : activeApp === "kimi" || activeApp === "copilot"
                   ? handleAddNativeProvider(provider, activeApp)
-                  : switchProvider(provider))
-            }
+                  : switchProvider(provider));
+            }}
             onRemoveFromConfig={
               appHas(activeApp, "additive")
                 ? (provider) => setConfirmAction({ provider, action: "remove" })

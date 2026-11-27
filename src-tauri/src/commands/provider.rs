@@ -856,7 +856,17 @@ async fn query_provider_usage_inner(
             }
             _ => None,
         };
-        let quota = if let Some(account_id) = xai_account {
+        let quota = if app_type == AppType::Dsh && provider_id == "openai-codex" {
+            let account_id = crate::dsh_config::codex_binding()
+                .map_err(|_| "Cannot read DSH Codex binding")?
+                .ok_or("Select a DSH Codex account first")?;
+            crate::commands::codex_oauth::query_codex_oauth_quota_for(
+                &state.codex_oauth_manager,
+                &account_id,
+                true,
+            )
+            .await?
+        } else if let Some(account_id) = xai_account {
             crate::commands::xai_oauth::query_xai_oauth_quota_for(xai_state, account_id, false)
                 .await?
         } else if matches!(app_type, AppType::GrokBuild) {

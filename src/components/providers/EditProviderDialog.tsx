@@ -91,6 +91,20 @@ export function EditProviderDialog({
   );
   const currentFormSessionToken = useRef(formSessionToken);
   currentFormSessionToken.current = formSessionToken;
+  const [accountLoginState, setAccountLoginState] = useState({
+    token: formSessionToken,
+    active: false,
+  });
+  const accountLogin =
+    accountLoginState.token === formSessionToken && accountLoginState.active;
+  const handleAccountLoginChange = useCallback(
+    (active: boolean) => {
+      if (currentFormSessionToken.current === formSessionToken) {
+        setAccountLoginState({ token: formSessionToken, active });
+      }
+    },
+    [formSessionToken],
+  );
   // The host stays mounted between edits. A pending save from a closed form
   // must neither disable the next editor nor clear its own pending submission.
   const [formSubmittingState, setFormSubmittingState] = useState({
@@ -391,7 +405,7 @@ export function EditProviderDialog({
       // Keep the list visible until the initial projection is ready.
       // Showing a loading page first causes a flash for fast local reads.
       isOpen={open && !waitingForEditorView}
-      trackUnsavedChanges
+      trackUnsavedChanges={!accountLogin}
       title={t("provider.editProviderNamed", { name: provider.name })}
       subtitle={
         stackLayout
@@ -405,26 +419,28 @@ export function EditProviderDialog({
       onClose={handlePanelClose}
       contentClassName={appId === "pi" ? "pb-0 pt-4" : "pt-4"}
       footer={
-        <>
-          <Button
-            type="button"
-            variant="neutral"
-            size="regular"
-            onClick={closeDialog}
-          >
-            {t("common.cancel")}
-          </Button>
-          <Button
-            type="submit"
-            form="provider-form"
-            variant="solid"
-            size="regular"
-            disabled={isFormSubmitting || !isFormReady}
-          >
-            {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            {t("common.save")}
-          </Button>
-        </>
+        accountLogin ? undefined : (
+          <>
+            <Button
+              type="button"
+              variant="neutral"
+              size="regular"
+              onClick={closeDialog}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button
+              type="submit"
+              form="provider-form"
+              variant="solid"
+              size="regular"
+              disabled={isFormSubmitting || !isFormReady}
+            >
+              {isFormSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+              {t("common.save")}
+            </Button>
+          </>
+        )
       }
     >
       {currentNotice}
@@ -441,6 +457,7 @@ export function EditProviderDialog({
           onSubmit={handleSubmit}
           onCancel={closeDialog}
           onManageAuthAccounts={setAuthSettingsTarget}
+          onAccountLoginChange={handleAccountLoginChange}
           onSubmittingChange={handleSubmittingChange}
           onSubmitReadyChange={handleSubmitReadyChange}
           initialData={initialData}
