@@ -1779,6 +1779,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#29E154",
   },
   {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    category: "cn_official",
+    icon: "teleai",
+    baseUrl: "https://api-maas.teleai.com.cn",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "Xing4.1-Preview",
+      "Xing4.1-Preview",
+      "Xing4.1-Preview",
+      true,
+    ),
+  },
+  {
     name: "MiniMax",
     family: "minimax",
     regionKey: "cn",

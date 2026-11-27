@@ -1960,6 +1960,25 @@ export const providerPresets: ProviderPreset[] = [
     iconColor: "#29E154",
   },
   {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api-maas.teleai.com.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "Xing4.1-Preview[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Xing4.1-Preview[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Xing4.1-Preview[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Xing4.1-Preview[1m]",
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000",
+      },
+    },
+    category: "cn_official",
+    icon: "teleai",
+  },
+  {
     name: "MiniMax",
     family: "minimax",
     regionKey: "cn",

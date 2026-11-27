@@ -1718,6 +1718,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     iconColor: "#29E154",
   },
   {
+    name: "TeleAI",
+    providerKey: "cc-switch-teleai",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      name: "TeleAI",
+      baseUrl: "https://api-maas.teleai.com.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("teleai/xing4.1-preview", {
+          id: "Xing4.1-Preview",
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
+  },
+  {
     name: "MiniMax",
     family: "minimax",
     regionKey: "cn",

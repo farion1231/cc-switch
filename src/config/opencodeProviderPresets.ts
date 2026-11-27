@@ -3276,6 +3276,42 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TeleAI",
+      options: {
+        baseURL: "https://api-maas.teleai.com.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "Xing4.1-Preview": {
+          name: "Xing4.1-Preview",
+          limit: { context: 1024000, output: 128000 },
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "teleai",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api-maas.teleai.com.cn/v1",
+        defaultValue: "https://api-maas.teleai.com.cn/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "MiniMax",
     family: "minimax",
     regionKey: "cn",

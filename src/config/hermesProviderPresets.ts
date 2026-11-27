@@ -2335,6 +2335,30 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      name: "teleai",
+      base_url: "https://api-maas.teleai.com.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "Xing4.1-Preview",
+          name: "Xing4.1-Preview",
+          context_length: 1024000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
+    suggestedDefaults: {
+      model: { default: "Xing4.1-Preview", provider: "teleai" },
+    },
+  },
+  {
     name: "MiniMax",
     family: "minimax",
     regionKey: "cn",

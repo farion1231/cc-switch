@@ -4251,6 +4251,47 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      baseUrl: "https://api-maas.teleai.com.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      authHeader: true,
+      models: [
+        {
+          id: "Xing4.1-Preview",
+          name: "Xing4.1-Preview",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1024000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api-maas.teleai.com.cn/v1",
+        defaultValue: "https://api-maas.teleai.com.cn/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "teleai/Xing4.1-Preview" },
+      modelCatalog: { "teleai/Xing4.1-Preview": { alias: "Xing" } },
+    },
+  },
+  {
     name: "BaiLing",
     websiteUrl: "https://developer.ant-ling.com/zh-CN/docs/",
     apiKeyUrl: "https://chat.ant-ling.com/open",

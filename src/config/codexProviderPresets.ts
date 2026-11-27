@@ -3127,6 +3127,34 @@ requires_openai_auth = true`,
     iconColor: "#29E154",
   },
   {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "teleai",
+      "https://api-maas.teleai.com.cn/v1",
+      "Xing4.1-Preview",
+    ),
+    endpointCandidates: ["https://api-maas.teleai.com.cn/v1"],
+    // 天翼 AI 官方 Codex 文档用 wire_api=responses 对自家 /v1，原生 Responses，无需路由转换
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "Xing4.1-Preview",
+        displayName: "Xing4.1-Preview",
+        contextWindow: 1024000,
+        inputModalities: ["text"],
+        // Responses 文档：reasoning.effort 只认 none / low / high
+        reasoningLevels: ["none", "low", "high"],
+        defaultReasoningLevel: "high",
+      },
+    ]),
+    category: "cn_official",
+    icon: "teleai",
+  },
+  {
     name: "MiniMax",
     family: "minimax",
     regionKey: "cn",

@@ -43,6 +43,7 @@ export const PRESET_SEARCH_ALIASES: Record<string, string> = {
   "StepFun en": "阶跃星辰",
   StreamLake: "快手 万擎 vanchin kat-coder kwaikat",
   "StreamLake en": "快手 万擎 vanchin kat-coder kwaikat",
+  TeleAI: "天翼 中国电信 星辰 xing telechat",
   "Tencent Token Plan": "腾讯 混元 hunyuan",
   "Tencent Token Plan (Intl)": "腾讯 混元 hunyuan",
   "Tencent Token Plan Enterprise Lite": "腾讯 混元 hunyuan",
