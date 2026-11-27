@@ -572,8 +572,9 @@ describe("UsageDashboard", () => {
   });
 
   it("renders only the All chip when no usage apps are visible", async () => {
+    // OpenClaw still has no usage statistics importer, so it gets no chip.
     setSettings({
-      visibleApps: onlyVisibleApps("openclaw", "hermes"),
+      visibleApps: onlyVisibleApps("openclaw"),
     });
     renderDashboard();
 
@@ -584,6 +585,15 @@ describe("UsageDashboard", () => {
         pressed: true,
       }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a Hermes chip now that Hermes usage rows can be imported", async () => {
+    setSettings({
+      visibleApps: onlyVisibleApps("hermes"),
+    });
+    renderDashboard();
+
+    await waitFor(() => expect(appFilterNames()).toEqual(["Hermes"]));
   });
 
   it("re-measures the sliding indicator when appOrder moves the active chip", async () => {
