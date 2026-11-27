@@ -4794,6 +4794,7 @@
     "importHelpTitle": "가져오기에서 읽는 내용",
     "importHelp": "사용자 수준 설정만 읽습니다. claude mcp add가 기본으로 프로젝트에 추가한 MCP 서버와 플러그인에 포함된 서버는 가져오지 않습니다.",
     "columnName": "이름",
+    "bulkActionsHint": "표 머리글의 앱 아이콘을 클릭하면 현재 목록의 MCP 서버를 한꺼번에 활성화하거나 끄는 옵션이 표시됩니다.",
     "noMatch": "이름, 명령 또는 URL이 검색어와 일치하는 MCP 서버가 없습니다: \"{{query}}\"",
     "clearSearch": "검색 지우기",
     "listLabel": "MCP 서버 목록",

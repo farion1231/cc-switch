@@ -4794,6 +4794,7 @@
     "importHelpTitle": "Was der Import liest",
     "importHelp": "Es werden nur Konfigurationen auf Benutzerebene gelesen. MCP-Server, die claude mcp add standardmäßig in einem Projekt ablegt, sowie solche, die mit Plugins gebündelt sind, werden nicht importiert.",
     "columnName": "Name",
+    "bulkActionsHint": "Klicken Sie auf ein App-Symbol im Tabellenkopf, um die Optionen zum gesammelten Aktivieren oder Deaktivieren der MCP-Server in der aktuellen Liste anzuzeigen.",
     "noMatch": "Kein MCP-Server mit passendem Namen, Befehl oder passender URL für „{{query}}“",
     "clearSearch": "Suche löschen",
     "listLabel": "MCP-Server",
