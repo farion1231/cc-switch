@@ -230,21 +230,30 @@ export function useProviderActions(
         // message for an auth-cleanup warning would point the user at the
         // wrong problem entirely.
         if (result?.warnings?.length) {
-          const authCleanupFailed = result.warnings.some((warning) =>
-            warning.startsWith("codex_auth_cleanup_failed"),
-          );
-          const hasOtherWarnings = result.warnings.some(
-            (warning) => !warning.startsWith("codex_auth_cleanup_failed"),
-          );
-          if (authCleanupFailed) {
-            toast.warning(
-              t("notifications.codexAuthCleanupFailed", {
+          const coded = [
+            {
+              code: "codex_auth_cleanup_failed",
+              message: t("notifications.codexAuthCleanupFailed", {
                 defaultValue:
                   "切换成功，但未能删除 auth.json，官方登录凭据仍留在磁盘上；如需彻底移除请手动删除 Codex 配置目录中的 auth.json",
               }),
-              { duration: 6000 },
-            );
+            },
+            {
+              code: "omo_variant_cleanup_failed",
+              message: t("notifications.omoVariantCleanupFailed", {
+                defaultValue:
+                  "切换成功，但未能删除另一个 OMO 变体（OMO / OMO Slim）的配置文件，OpenCode 可能同时加载两者；请在 OpenCode 配置目录中手动删除它",
+              }),
+            },
+          ];
+          for (const { code, message } of coded) {
+            if (result.warnings.some((warning) => warning.startsWith(code))) {
+              toast.warning(message, { duration: 6000 });
+            }
           }
+          const hasOtherWarnings = result.warnings.some(
+            (warning) => !coded.some(({ code }) => warning.startsWith(code)),
+          );
           if (hasOtherWarnings) {
             toast.warning(
               t("notifications.backfillWarning", {
@@ -279,10 +288,10 @@ export function useProviderActions(
             messageKey = "notifications.claudeDesktopRestartRequired";
             defaultMessage = "切换成功，重启 Claude Desktop 后生效";
           } else if (
-            activeApp === "opencode" ||
-            activeApp === "openclaw" ||
-            activeApp === "mcode" ||
-            activeApp === "workbuddy"
+            // 共存式应用走到这里是「添加」；Hermes、Kimi 用同一个动作设默认，仍算「切换」
+            appHas(activeApp, "additive") &&
+            activeApp !== "hermes" &&
+            activeApp !== "kimi"
           ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
@@ -486,10 +495,5 @@ export function useProviderActions(
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
-    isLoading:
-      addProviderMutation.isPending ||
-      updateProviderMutation.isPending ||
-      deleteProviderMutation.isPending ||
-      switchProviderMutation.isPending,
   };
 }

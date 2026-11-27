@@ -12,6 +12,7 @@ import type {
   SkillRepoFailure,
   SkillUpdateInfo,
 } from "@/lib/api/skills";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const m = vi.hoisted(() => ({
   scanUnmanaged: vi.fn(),
@@ -119,6 +120,11 @@ vi.mock("@/hooks/useSkills", () => ({
   useRefreshDiscoverableSkills: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
   useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepoTokens: () => ({ data: { hosts: [], secureStorage: true } }),
+  useSkillRepoTokenActions: () => ({
+    setToken: vi.fn(),
+    deleteToken: vi.fn(),
+  }),
   useAddSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useRemoveSkillRepo: () => ({ mutateAsync: vi.fn() }),
   useSearchSkillsSh: () => ({ data: undefined, isLoading: false }),
@@ -164,6 +170,7 @@ const columns = () =>
   screen.getAllByRole("button", { name: /appMatrix.columnAria/ });
 
 async function openMenu(trigger: string, item: string) {
+  await waitForOverlayTransition();
   await userEvent.click(screen.getByRole("button", { name: trigger }));
   await userEvent.click(await screen.findByRole("menuitem", { name: item }));
 }
@@ -944,7 +951,8 @@ describe("UnifiedSkillsPanel", () => {
 
   it("imports with apps chosen from where each Skill was found", async () => {
     m.installed = [makeSkill()];
-    m.visibleApps = ["claude", "codex", "grokbuild", "pi"];
+    m.visibleApps = ["claude", "codex", "grokbuild", "zcode", "pi"];
+
     m.importSkills.mockResolvedValueOnce([makeSkill({ id: "shared" })]);
     renderPanel();
     await userEvent.click(
@@ -956,6 +964,10 @@ describe("UnifiedSkillsPanel", () => {
     // Pi 按目录判断，导入时不提供勾选
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByText("Pi")).not.toBeInTheDocument();
+    // 手动加勾的应用也要带进去（ZCode 曾被漏写，勾了不生效）
+    await userEvent.click(
+      within(dialog).getByRole("checkbox", { name: "ZCode" }),
+    );
     await userEvent.click(
       within(dialog).getByRole("button", { name: "skillsPage.import.submit" }),
     );
@@ -974,10 +986,12 @@ describe("UnifiedSkillsPanel", () => {
           pi: false,
           mcode: false,
           kimi: false,
+          codebuddy: false,
           dsh: false,
           workbuddy: false,
           agy: false,
           copilot: false,
+          zcode: true,
         },
       },
     ]);

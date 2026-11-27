@@ -422,6 +422,22 @@ struct UsageRecordPayload<'a> {
     turn_token_usage: Option<TokenUsage>,
 }
 
+/// `thread_goal_updated`：Codex 把 `/goal` 的完整目标记在这里；注入上下文里超过
+/// 700 字节的目标会被写成 `[objective omitted; exceeds the evidence limit]`
+#[derive(Deserialize)]
+struct GoalUpdatedPayload<'a> {
+    #[serde(borrow)]
+    goal: GoalPayload<'a>,
+}
+
+#[derive(Deserialize)]
+struct GoalPayload<'a> {
+    #[serde(default, borrow)]
+    objective: Option<Str<'a>>,
+    #[serde(default, borrow)]
+    status: Option<Str<'a>>,
+}
+
 #[derive(Deserialize)]
 struct CompactedPayload<'a> {
     #[serde(default, borrow)]
@@ -623,6 +639,8 @@ struct RolloutParser {
     last_web_search_id: Option<String>,
     /// 刚输出的 compaction 事件（compacted / compaction / ContextCompaction 去重）
     last_compaction: Option<usize>,
+    /// 上一次输出的目标（目标, 状态）：每轮结算用量都会再记一次，没变就不重复显示
+    last_goal: Option<(String, String)>,
 }
 
 impl RolloutParser {
@@ -743,6 +761,12 @@ impl RolloutParser {
             }
             return;
         }
+        if sub == "thread_goal_updated" {
+            if let Some((ts, p)) = parse_line::<GoalUpdatedPayload>(line) {
+                self.on_goal(p.goal, ts);
+            }
+            return;
+        }
         if !matches!(
             sub,
             "task_started"
@@ -787,6 +811,31 @@ impl RolloutParser {
             }
             _ => {}
         }
+    }
+
+    /// 目标或状态变了才输出一个 Goal 事件，完整目标作为事件的正文
+    fn on_goal(&mut self, goal: GoalPayload<'_>, ts: Option<i64>) {
+        let Some(objective) = owned(&goal.objective).filter(|o| !o.trim().is_empty()) else {
+            return;
+        };
+        let status = owned(&goal.status).unwrap_or_default();
+        let key = (objective, status);
+        if self.last_goal.as_ref() == Some(&key) {
+            return;
+        }
+        let (objective, status) = key.clone();
+        self.last_goal = Some(key);
+        let status = (!status.is_empty()).then_some(status);
+        self.push(
+            "system",
+            ts,
+            None,
+            vec![
+                SessionBlock::event(EventKind::Goal, status, None),
+                SessionBlock::text(objective),
+            ],
+            false,
+        );
     }
 
     // ─── 轮次 ────────────────────────────────────────────────────────
@@ -2383,21 +2432,74 @@ mod tests {
     }
 
     #[test]
-    fn parse_session_uses_first_user_message_as_title() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
+    fn parse_session_title_selection() {
+        for (case, lines, title) in [
+            ("parse_session_uses_first_user_message_as_title", concat!(
                 "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
                 "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"How do I deploy?\"}}\n",
                 "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"Here is how...\"}}\n"
-            ),
-        )
-        .expect("write");
+            ), "How do I deploy?"),
+            // Should skip AGENTS.md injection and use the real user message
+            ("parse_session_skips_agents_md_injection", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"developer\",\"content\":\"<permissions>\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# AGENTS.md instructions for /tmp/project\\n<INSTRUCTIONS>Do stuff</INSTRUCTIONS>\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
+            ), "Fix the login bug"),
+            // Should skip environment_context injection and use the real user message
+            ("parse_session_skips_environment_context_injection", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"<environment_context>\\n  <cwd>/tmp/project</cwd>\\n</environment_context>\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
+            ), "Fix the login bug"),
+            ("parse_session_extracts_vscode_ide_request_as_title", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: src/main.ts\\n\\n## My request for Codex:\\nFix the session title preview\"}}\n"
+            ), "Fix the session title preview"),
+            ("parse_session_extracts_inline_vscode_ide_request_as_title", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## My request for Codex: Fix the TOC preview\"}}\n"
+            ), "Fix the TOC preview"),
+            ("parse_session_ignores_marker_mentions_before_request_heading", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active selection:\\nMy request for Codex: not the prompt\\n\\n## My request for Codex:\\nUse the real request heading\"}}\n"
+            ), "Use the real request heading"),
+            ("parse_session_uses_last_request_heading_when_selection_has_one", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active selection: docs/codex-format.md\\n## My request for Codex:\\nselected document content, not the real request\\n\\n## My request for Codex:\\nUse the last request heading\"}}\n"
+            ), "Use the last request heading"),
+            // Known limitation: the IDE marker is matched purely by text, so a
+            // "## My request for Codex:" line inside the real request body is treated as
+            // a new boundary and only the trailing part is kept. This pins the
+            // best-effort behavior; fully fixing it needs structured IDE section data
+            // that the Codex VS Code context does not provide.
+            ("parse_session_keeps_trailing_part_when_request_body_repeats_heading", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: foo.ts\\n\\n## My request for Codex:\\nDocument the format, for example:\\n## My request for Codex:\\nand the rest follows.\"}}\n"
+            ), "and the rest follows."),
+            ("parse_session_skips_vscode_ide_context_without_request", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: src/main.ts\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
+            ), "Fix the login bug"),
+            // No user message → falls back to dir basename
+            ("parse_session_falls_back_to_dir_basename", concat!(
+                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/my-project\"}}\n",
+                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"Hello\"}}\n"
+            ), "my-project"),
+        ] {
+            let temp = tempdir().expect("tempdir");
+            let path = temp.path().join("session.jsonl");
+            std::fs::write(
+                &path,
+                lines,
+            )
+            .expect("write");
 
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("How do I deploy?"));
+            let meta = parse_session(&path).unwrap();
+            assert_eq!(meta.title.as_deref(), Some(title), "{case}");
+
+        }
     }
 
     #[test]
@@ -2570,26 +2672,6 @@ mod tests {
     }
 
     #[test]
-    fn parse_session_skips_agents_md_injection() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"developer\",\"content\":\"<permissions>\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# AGENTS.md instructions for /tmp/project\\n<INSTRUCTIONS>Do stuff</INSTRUCTIONS>\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        // Should skip AGENTS.md injection and use the real user message
-        assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
-    }
-
-    #[test]
     fn parse_session_skips_subagent_sessions() {
         let temp = tempdir().expect("tempdir");
         let path = temp.path().join("session.jsonl");
@@ -2603,151 +2685,6 @@ mod tests {
         .expect("write");
 
         assert!(parse_session(&path).is_none());
-    }
-
-    #[test]
-    fn parse_session_skips_environment_context_injection() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"<environment_context>\\n  <cwd>/tmp/project</cwd>\\n</environment_context>\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        // Should skip environment_context injection and use the real user message
-        assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
-    }
-
-    #[test]
-    fn parse_session_extracts_vscode_ide_request_as_title() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: src/main.ts\\n\\n## My request for Codex:\\nFix the session title preview\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("Fix the session title preview"));
-    }
-
-    #[test]
-    fn parse_session_extracts_inline_vscode_ide_request_as_title() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## My request for Codex: Fix the TOC preview\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("Fix the TOC preview"));
-    }
-
-    #[test]
-    fn parse_session_ignores_marker_mentions_before_request_heading() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active selection:\\nMy request for Codex: not the prompt\\n\\n## My request for Codex:\\nUse the real request heading\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("Use the real request heading"));
-    }
-
-    #[test]
-    fn parse_session_uses_last_request_heading_when_selection_has_one() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active selection: docs/codex-format.md\\n## My request for Codex:\\nselected document content, not the real request\\n\\n## My request for Codex:\\nUse the last request heading\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("Use the last request heading"));
-    }
-
-    // Known limitation: the IDE marker is matched purely by text, so a
-    // "## My request for Codex:" line inside the real request body is treated as
-    // a new boundary and only the trailing part is kept. This pins the
-    // best-effort behavior; fully fixing it needs structured IDE section data
-    // that the Codex VS Code context does not provide.
-    #[test]
-    fn parse_session_keeps_trailing_part_when_request_body_repeats_heading() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: foo.ts\\n\\n## My request for Codex:\\nDocument the format, for example:\\n## My request for Codex:\\nand the rest follows.\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("and the rest follows."));
-    }
-
-    #[test]
-    fn parse_session_skips_vscode_ide_context_without_request() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"# Context from my IDE setup:\\n\\n## Active file: src/main.ts\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:14Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":\"Fix the login bug\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        assert_eq!(meta.title.as_deref(), Some("Fix the login bug"));
-    }
-
-    #[test]
-    fn parse_session_falls_back_to_dir_basename() {
-        let temp = tempdir().expect("tempdir");
-        let path = temp.path().join("session.jsonl");
-        std::fs::write(
-            &path,
-            concat!(
-                "{\"timestamp\":\"2026-03-06T21:50:12Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"test-id\",\"cwd\":\"/tmp/my-project\"}}\n",
-                "{\"timestamp\":\"2026-03-06T21:50:13Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":\"Hello\"}}\n"
-            ),
-        )
-        .expect("write");
-
-        let meta = parse_session(&path).unwrap();
-        // No user message → falls back to dir basename
-        assert_eq!(meta.title.as_deref(), Some("my-project"));
     }
 
     #[test]
@@ -3189,6 +3126,74 @@ mod tests {
             }
             other => panic!("unexpected block {other:?}"),
         }
+    }
+
+    /// #9647：注入上下文里超过 700 字节的 `/goal` 目标被 Codex 省略，完整目标在
+    /// `thread_goal_updated` 里；每轮结算用量的重复记录不再显示，状态变了才再显示
+    #[test]
+    fn goal_updates_show_the_full_objective_once_per_status() {
+        use serde_json::json;
+        let objective = format!(
+            "Migrate the docs site. {}",
+            "Keep every link working. ".repeat(40)
+        );
+        let goal = |status: &str, tokens: i64| {
+            json!({ "type": "thread_goal_updated", "threadId": "t1", "turnId": T1,
+            "goal": { "threadId": "t1", "objective": objective, "status": status,
+            "tokensUsed": tokens, "timeUsedSeconds": 3, "createdAt": 1, "updatedAt": 2 } })
+        };
+        let lines = vec![
+            line(0, "session_meta", json!({ "id": "t1", "cwd": "/p" })),
+            line(1, "event_msg", goal("active", 0)),
+            line(
+                2,
+                "event_msg",
+                json!({ "type": "task_started", "turn_id": T1 }),
+            ),
+            line(
+                2,
+                "response_item",
+                json!({ "type": "message", "role": "user", "content": [{ "type": "input_text",
+                "text": "<codex_internal_context source=\"user_goal\">\nUser set the goal: [objective omitted; exceeds the evidence limit].\nUser set goal status: \"active\".\n</codex_internal_context>" }] }),
+            ),
+            line(5, "event_msg", goal("active", 1200)),
+            line(6, "event_msg", goal("complete", 2400)),
+            line(
+                7,
+                "event_msg",
+                json!({ "type": "thread_goal_updated", "goal": { "objective": "  " } }),
+            ),
+        ];
+        let (_tmp, _path, msgs) = load_fixture(&lines);
+
+        let goals: Vec<_> = msgs
+            .iter()
+            .filter(|m| {
+                matches!(
+                    m.blocks.first(),
+                    Some(SessionBlock::Event {
+                        kind: EventKind::Goal,
+                        ..
+                    })
+                )
+            })
+            .collect();
+        assert_eq!(goals.len(), 2);
+        for (msg, status) in goals.iter().zip(["active", "complete"]) {
+            assert_eq!(msg.role, "system");
+            assert!(!msg.injected);
+            let [SessionBlock::Event { text, .. }, SessionBlock::Text { text: body, .. }] =
+                msg.blocks.as_slice()
+            else {
+                panic!("unexpected goal blocks: {:?}", msg.blocks);
+            };
+            assert_eq!(text.as_deref(), Some(status));
+            assert_eq!(body, &objective);
+        }
+        // 省略了目标的注入上下文照旧默认隐藏
+        assert!(msgs
+            .iter()
+            .any(|m| m.injected && m.content.contains("objective omitted")));
     }
 
     fn load_fixture(lines: &[String]) -> (tempfile::TempDir, PathBuf, Vec<SessionMessage>) {

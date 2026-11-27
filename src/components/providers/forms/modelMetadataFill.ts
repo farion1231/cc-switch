@@ -2,12 +2,18 @@
 // 统一规则：只补空着的字段，用户填过的值一律不动；布尔和模态只往「支持」方向补。
 
 import type { KnownModelMetadata } from "@/lib/modelMetadata";
-import type { CodexCatalogModel, OpenClawModel, OpenCodeModel } from "@/types";
+import type {
+  CodexCatalogModel,
+  OpenClawModel,
+  OpenCodeModel,
+  ZCodeModel,
+} from "@/types";
 import type { HermesModel } from "@/config/hermesProviderPresets";
 import {
   workbuddyThinkingFields,
   type WorkBuddyModel,
 } from "@/config/workbuddyProviderPresets";
+import type { CodebuddyModelConfig } from "@/config/codebuddyProviderPresets";
 import type { KimiProviderConfig } from "@/config/kimiProviderPresets";
 import {
   PI_THINKING_LEVELS,
@@ -169,6 +175,36 @@ export function fillOpenCodeModel(
   return next;
 }
 
+/**
+ * ZCode 的模型结构与 OpenCode 同形（limit/modalities），reasoning 是带
+ * `enabled` 的对象。规则同全局：只补空字段；reasoning 只往「支持」方向补，
+ * 用户明确写的 false 不动。
+ */
+export function fillZCodeModel(
+  model: ZCodeModel,
+  metadata: KnownModelMetadata,
+): ZCodeModel {
+  const next = { ...model };
+  const limit = { ...(model.limit ?? {}) };
+  if (isBlank(limit.context) && metadata.contextWindow) {
+    limit.context = metadata.contextWindow;
+  }
+  if (isBlank(limit.output) && metadata.maxOutputTokens) {
+    limit.output = metadata.maxOutputTokens;
+  }
+  if (Object.keys(limit).length > 0) next.limit = limit;
+  if (model.modalities === undefined && metadata.inputModalities) {
+    next.modalities = {
+      input: metadata.inputModalities,
+      output: metadata.outputModalities ?? ["text"],
+    };
+  }
+  if (model.reasoning === undefined && metadata.reasoning === true) {
+    next.reasoning = { enabled: true };
+  }
+  return next;
+}
+
 type KimiModel = KimiProviderConfig["models"][string];
 
 /**
@@ -192,6 +228,26 @@ export function fillKimiModel(
   if (capabilities.size > (model.capabilities?.length ?? 0)) {
     next.capabilities = [...capabilities];
   }
+  return next;
+}
+
+/**
+ * CodeBuddy models.json 的一条模型：上下文窗口当作最大输入，空着的 token 上限才补；
+ * 图片输入和推理只往「支持」方向补。
+ */
+export function fillCodebuddyModel(
+  model: CodebuddyModelConfig,
+  metadata: KnownModelMetadata,
+): CodebuddyModelConfig {
+  const next = { ...model };
+  if (isBlank(model.maxInputTokens) && metadata.contextWindow) {
+    next.maxInputTokens = metadata.contextWindow;
+  }
+  if (isBlank(model.maxOutputTokens) && metadata.maxOutputTokens) {
+    next.maxOutputTokens = metadata.maxOutputTokens;
+  }
+  if (metadata.inputModalities?.includes("image")) next.supportsImages = true;
+  if (metadata.reasoning === true) next.supportsReasoning = true;
   return next;
 }
 
@@ -279,12 +335,14 @@ function piCompletionsThinking({
 
 /**
  * Pi 会不会把档位原样作为 `reasoning_effort` 发给上游。Pi 官方只在这种协议下用
- * effort 档位生成映射（`supportsDirectReasoningEffort`）：Responses 总是；Chat
- * Completions 看 `piCompletionsThinking`。Anthropic 等协议还需要额外的 compat，
+ * effort 档位生成映射（`supportsDirectReasoningEffort`）：Responses 和 Mistral
+ * 总是；Chat Completions 看 `piCompletionsThinking`。Anthropic 等协议还需要额外的 compat，
  * 不生成。
  */
 export function piSendsReasoningEffort(protocol: PiProviderProtocol): boolean {
   if (protocol.api === "openai-responses") return true;
+  // Pi 的 Mistral 协议把映射值原样作为 reasoning_effort 发出
+  if (protocol.api === "mistral-conversations") return true;
   if (protocol.api !== "openai-completions") return false;
   const { format, effort } = piCompletionsThinking(protocol);
   return format === "openai" && effort;

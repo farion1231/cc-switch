@@ -9,6 +9,14 @@ export type ProviderCategory =
   | "omo" // Oh My OpenCode
   | "omo-slim"; // Oh My OpenCode Slim
 
+/** 库里有、但存的数据读不出来的一条记录：只能删除，原始数据保持不动。 */
+export interface UnreadableEntry {
+  id: string;
+  name: string;
+  /** 后端的解析错误，点名是哪一列 */
+  error: string;
+}
+
 export interface Provider {
   id: string;
   name: string;
@@ -29,11 +37,6 @@ export interface Provider {
   iconColor?: string; // 图标颜色（Hex 格式，如 "#00A67E"）
   // 是否加入故障转移队列
   inFailoverQueue?: boolean;
-}
-
-export interface AppConfig {
-  providers: Record<string, Provider>;
-  current: string;
 }
 
 // 自定义端点配置
@@ -176,6 +179,8 @@ export interface LocalProxyRequestOverrides {
 
 // 供应商元数据（字段名与后端一致，保持 snake_case）
 export interface ProviderMeta {
+  /** Explicit multiplier for future local-proxy reference costs; absent means 1. */
+  billingMultiplier?: string;
   // 自定义端点：以 URL 为键，值为端点信息
   custom_endpoints?: Record<string, CustomEndpoint>;
   // 是否在切换/同步到 live 时应用通用配置片段
@@ -409,6 +414,7 @@ export interface Settings {
   useAppWindowControls?: boolean;
   // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）
   enableClaudePluginIntegration?: boolean;
+  copilotVscode?: { enabled: boolean; targets: string[] };
   // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）
   skipClaudeOnboarding?: boolean;
   // 是否开机自启
@@ -482,6 +488,8 @@ export interface Settings {
   language?: Language;
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
+  // 官方账号额度只在手动刷新时查询（授权中心开关，#8990；默认自动查询）
+  officialQuotaManualOnly?: boolean;
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
@@ -507,6 +515,8 @@ export interface Settings {
   piConfigDir?: string;
   // 覆盖 Oh My Pi agent 配置目录（可选）
   ompConfigDir?: string;
+  // 覆盖 ZCode 配置目录（可选）
+  zcodeConfigDir?: string;
   // 覆盖 DeepSeek Harness 主目录（相当于 DSH_HOME，可选）
   dshConfigDir?: string;
 
@@ -537,6 +547,8 @@ export interface Settings {
   backupIntervalHours?: number;
   // Maximum backup files to retain (default 10)
   backupRetainCount?: number;
+  // Total size limit for the backups folder in MB (unset or 0 = unlimited, default)
+  backupMaxTotalMb?: number;
 
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）
@@ -639,6 +651,7 @@ export type EventKind =
   | "info"
   | "error"
   | "sub_agent"
+  | "goal"
   | "other";
 
 /** 大内容的「按需取」引用：前端不解析，原样回传给后端 */
@@ -832,6 +845,7 @@ export interface McpServerSpec {
 export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
+  codebuddy?: boolean;
   dsh?: boolean;
   workbuddy?: boolean;
   agy?: boolean;
@@ -846,6 +860,7 @@ export interface McpApps {
   hermes: boolean;
   pi?: boolean;
   omp?: boolean;
+  zcode?: boolean;
 }
 
 // MCP 服务器条目（v3.7.0 统一结构）
@@ -1063,4 +1078,49 @@ export interface HermesMemoryLimits {
   user: number;
   memoryEnabled: boolean;
   userEnabled: boolean;
+}
+
+// ============================================================================
+// ZCode Agent 专属配置
+// 对应 ~/.zcode/v2/provider_config.json 的个人规则（providerConfigRules.providerRules[]）
+// ============================================================================
+
+// ZCode 模型配置
+export interface ZCodeModel {
+  name?: string;
+  limit?: {
+    context?: number;
+    output?: number;
+  };
+  modalities?: {
+    input: string[];
+    output: string[];
+  };
+  reasoning?: {
+    enabled?: boolean;
+    variants?: string[];
+    defaultVariant?: string;
+  };
+  // 支持任意额外字段（cost 等）
+  [key: string]: unknown;
+}
+
+// ZCode 供应商选项
+export interface ZCodeProviderOptions {
+  baseURL?: string;
+  apiKey?: string;
+  // 支持额外选项（headers 等）
+  [key: string]: unknown;
+}
+
+// ZCode 供应商配置（settings_config 结构）
+export interface ZCodeProviderConfig {
+  name?: string;
+  kind?: string; // "anthropic" | "openai-compatible" | "openai"
+  options?: ZCodeProviderOptions;
+  enabled?: boolean | null;
+  source?: string;
+  models?: Record<string, ZCodeModel>;
+  // 支持任意额外字段
+  [key: string]: unknown;
 }

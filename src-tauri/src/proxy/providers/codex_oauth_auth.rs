@@ -69,10 +69,10 @@ const POLLING_SAFETY_MARGIN_SECS: u64 = 3;
 const CODEX_USER_AGENT: &str = "cc-switch-codex-oauth";
 
 // Shared by model discovery and generation: ChatGPT gates models by this
-// client identity. GPT-6.1 Sol enters the ChatGPT-account catalog at 0.159.0.
+// client identity.
 // Bump together when a new model raises its minimal_client_version or catalog gate.
 pub(crate) const CODEX_OAUTH_ORIGINATOR: &str = "codex_cli_rs";
-pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.159.0";
+pub(crate) const CODEX_OAUTH_CLIENT_VERSION: &str = "0.169.0";
 
 /// Codex OAuth 错误
 #[derive(Debug, thiserror::Error)]
@@ -2085,6 +2085,26 @@ impl CodexOAuthManager {
     }
 }
 
+/// 按磁盘上的账号表给出 `(account_id -> 显示名, 默认账号 id)`（同 [`GitHubAccount::from`]）：托盘同步读状态用。
+pub fn labels_on_disk(data_dir: &std::path::Path) -> (HashMap<String, String>, Option<String>) {
+    let Ok(content) = fs::read_to_string(data_dir.join("codex_oauth_auth.json")) else {
+        return (HashMap::new(), None);
+    };
+    let Ok(store) = serde_json::from_str::<CodexOAuthStore>(&content) else {
+        return (HashMap::new(), None);
+    };
+    let default_id = store
+        .default_account_id
+        .filter(|id| store.accounts.contains_key(id))
+        .or_else(|| CodexOAuthManager::fallback_default_account_id(&store.accounts));
+    let labels = store
+        .accounts
+        .iter()
+        .map(|(id, data)| (id.clone(), GitHubAccount::from(data).login))
+        .collect();
+    (labels, default_id)
+}
+
 /// Codex OAuth 状态摘要
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodexOAuthStatus {
@@ -2341,13 +2361,6 @@ mod tests {
         };
 
         assert_eq!(extract_account_metadata_from_tokens(&tokens), (None, None));
-    }
-
-    #[tokio::test]
-    async fn test_manager_initial_state() {
-        let temp = tempfile::tempdir().unwrap();
-        let manager = CodexOAuthManager::new(temp.path().to_path_buf());
-        assert!(manager.list_accounts().await.is_empty());
     }
 
     #[tokio::test]

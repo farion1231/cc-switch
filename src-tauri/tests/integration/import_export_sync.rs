@@ -309,6 +309,8 @@ command = "echo"
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -390,6 +392,8 @@ fn import_from_claude_merges_into_config() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -678,7 +682,7 @@ fn import_sql_accepts_cc_switch_exported_backup() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("load providers");
     assert!(
         providers.contains_key("test-provider"),

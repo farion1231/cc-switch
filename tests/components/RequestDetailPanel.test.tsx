@@ -1,10 +1,11 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { renderWithQueryClient as render } from "../utils/testQueryClient";
 import { describe, expect, it, vi } from "vitest";
 import { RequestDetailPanel } from "@/components/usage/RequestDetailPanel";
 import type { RequestLog } from "@/types/usage";
 
 const useRequestDetailMock = vi.hoisted(() => vi.fn());
+const copyTextMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({
   useTranslation: () => ({
@@ -12,6 +13,10 @@ vi.mock("react-i18next", () => ({
       options && "value" in options ? `${key}:${options.value}` : key,
     i18n: { resolvedLanguage: "en", language: "en" },
   }),
+}));
+
+vi.mock("@/lib/clipboard", () => ({
+  copyText: (text: string) => copyTextMock(text),
 }));
 
 vi.mock("@/lib/query/usage", () => ({
@@ -26,6 +31,7 @@ const log = (overrides: Partial<RequestLog>): RequestLog => ({
   model: "claude-opus-5-5",
   costMultiplier: "1",
   inputTokens: 3_066,
+  freshInputTokens: 3_066,
   outputTokens: 1_512,
   cacheReadTokens: 71_300,
   cacheCreationTokens: 2_048,
@@ -50,6 +56,19 @@ const renderWith = (request: RequestLog) => {
 };
 
 describe("RequestDetailPanel", () => {
+  it("copies the full request ID even when the row truncates it", async () => {
+    const longId =
+      "resp_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    copyTextMock.mockResolvedValue(undefined);
+    renderWith(log({ requestId: longId }));
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "usage.detail.copyRequestId" }),
+    );
+
+    await waitFor(() => expect(copyTextMock).toHaveBeenCalledWith(longId));
+  });
+
   it("shows speed, first token and duration for routed requests", () => {
     renderWith(log({}));
 
@@ -67,6 +86,12 @@ describe("RequestDetailPanel", () => {
     );
 
     expect(screen.getByText("usage.detail.speedTooFew")).toBeInTheDocument();
+  });
+
+  it("explains why buffered burst outputs have no speed", () => {
+    renderWith(log({ outputTokens: 2_000, latencyMs: 350, firstTokenMs: 200 }));
+
+    expect(screen.getByText("usage.detail.speedBurst")).toBeInTheDocument();
   });
 
   it("shows an estimated speed and duration for session logs", () => {
@@ -171,6 +196,23 @@ describe("RequestDetailPanel", () => {
     expect(
       screen.queryByText("usage.detail.providerId"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows fresh input net of both cache reads and cache writes", () => {
+    renderWith(
+      log({
+        appType: "codex",
+        model: "gpt-6-sol",
+        inputTokens: 1_000,
+        freshInputTokens: 100,
+        cacheReadTokens: 300,
+        cacheCreationTokens: 600,
+      }),
+    );
+
+    expect(
+      screen.getByText("100 (usage.rawInputLabel: 1,000)"),
+    ).toBeInTheDocument();
   });
 
   it("shows the error and a retry button when loading fails", () => {

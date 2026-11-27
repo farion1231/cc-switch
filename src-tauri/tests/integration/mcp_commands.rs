@@ -467,11 +467,11 @@ fn import_default_config_claude_persists_provider() {
     // 验证内存状态
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
     let current_id = state
         .db
-        .get_current_provider(AppType::Claude.as_str())
+        .get_current_provider(&AppType::Claude)
         .expect("get current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
     let default_provider = providers.get("default").expect("default provider");
@@ -523,7 +523,7 @@ context_window = 500000
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.get("default").is_some(),
@@ -540,7 +540,7 @@ context_window = 500000
     // 激活的仍是导入的原配置，官方入口只是备选
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_eq!(current_id.as_deref(), Some("default"));
 }
@@ -570,7 +570,7 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     let official = providers
         .get("grokbuild-official")
@@ -583,7 +583,7 @@ fn import_default_config_grokbuild_official_live_imports_official_as_current() {
 
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_eq!(
         current_id.as_deref(),
@@ -617,7 +617,7 @@ fn startup_import_grokbuild_official_live_does_not_resurrect_official() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.is_empty(),
@@ -649,7 +649,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
 
     let providers = state
         .db
-        .get_all_providers(AppType::GrokBuild.as_str())
+        .get_all_providers(&AppType::GrokBuild)
         .expect("get all providers");
     assert!(
         providers.get("grokbuild-official").is_some(),
@@ -658,7 +658,7 @@ fn import_default_config_grokbuild_broken_custom_live_still_errors() {
     assert!(providers.get("default").is_none(), "nothing was imported");
     let current_id = state
         .db
-        .get_current_provider(AppType::GrokBuild.as_str())
+        .get_current_provider(&AppType::GrokBuild)
         .expect("get current provider");
     assert_ne!(
         current_id.as_deref(),
@@ -695,7 +695,7 @@ fn import_default_config_without_live_file_returns_error() {
     // 失败的导入不应该向数据库写入任何供应商
     let providers = state
         .db
-        .get_all_providers(AppType::Claude.as_str())
+        .get_all_providers(&AppType::Claude)
         .expect("get all providers");
     assert!(
         providers.is_empty(),
@@ -877,6 +877,8 @@ command = "echo"
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1031,6 +1033,8 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1105,6 +1109,8 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1159,6 +1165,8 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1202,6 +1210,8 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1392,6 +1402,8 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1456,6 +1468,8 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1520,6 +1534,8 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1585,6 +1601,8 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1673,6 +1691,8 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1766,6 +1786,8 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1797,6 +1819,8 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 mcode: false,
                 kimi: false,
                 copilot: false,
+                codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1851,7 +1875,9 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "agy",
             "omp",
             "copilot",
-            "workbuddy"
+            "workbuddy",
+            "codebuddy",
+            "zcode"
         ]
     );
     assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);
@@ -2063,4 +2089,53 @@ fn concurrent_toggles_keep_every_server_in_live_config() {
     let written = live["mcpServers"].as_object().expect("mcpServers object");
     let missing: Vec<&String> = ids.iter().filter(|id| !written.contains_key(*id)).collect();
     assert!(missing.is_empty(), "lost concurrent toggles: {missing:?}");
+}
+
+/// ZCode 和 Kimi Code 等应用一样先写 `cli/config.json`、成功才入库：文件坏了时
+/// 开关和删除都报错，库里保持原样，界面才能按原值重试。
+#[test]
+fn zcode_mcp_writes_file_before_db_and_write_failure_keeps_db() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let path = ensure_test_home().join(".zcode/cli/config.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, json!({"hooks": {"keep": true}}).to_string()).unwrap();
+    let state = create_test_state().unwrap();
+
+    let server: McpServer = serde_json::from_value(
+        json!({"id":"demo","name":"Demo","server":{"type":"stdio","command":"node"},"apps":{"zcode":true}}),
+    )
+    .unwrap();
+    McpService::upsert_server(&state, server.clone()).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written["mcp"]["servers"]["demo"]["command"], "node");
+    assert_eq!(written["mcp"]["servers"]["demo"]["enabled"], true);
+    assert_eq!(written["hooks"]["keep"], true);
+
+    fs::write(&path, "invalid json").unwrap();
+    assert!(McpService::toggle_app(&state, &server.id, AppType::ZCode, false).is_err());
+    assert!(
+        state.db.get_all_mcp_servers().unwrap()[&server.id]
+            .apps
+            .zcode
+    );
+    assert!(McpService::delete_server(&state, &server.id).is_err());
+    assert!(state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key(&server.id));
+
+    fs::write(
+        &path,
+        json!({"hooks": {"keep": true}, "mcp": {"servers": {"demo": {"type": "stdio", "command": "node", "enabled": true}}}})
+            .to_string(),
+    )
+    .unwrap();
+    assert!(McpService::delete_server(&state, &server.id).unwrap());
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(written["mcp"]["servers"].get("demo").is_none());
+    assert_eq!(written["hooks"]["keep"], true);
 }

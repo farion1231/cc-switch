@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { AlertTriangle } from "lucide-react";
 import { authApi } from "@/lib/api";
 import type { Provider } from "@/types";
-import { WORKBUDDY_ACCOUNT_AUTH_PROVIDER } from "@/config/workbuddyProviderPresets";
+import { WORKBUDDY_ACCOUNT_AUTH_PROVIDER } from "@/config/workbuddyOfficialMeta";
 import { workbuddyPlanLabel } from "@/components/settings/auth/workbuddyPlan";
 import {
   WORKBUDDY_STATUS_KEY,

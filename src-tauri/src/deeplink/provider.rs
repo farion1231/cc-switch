@@ -110,10 +110,16 @@ pub fn import_provider_from_deeplink(
         copilot_link_provider_id(state, &name)?
     } else if matches!(
         app_type,
-        AppType::OpenCode | AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Omp
+        AppType::OpenCode
+            | AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Omp
+            | AppType::ZCode
     ) {
         // Display names may be Unicode, but these apps' native keys must pass their slug rules
-        // (DeepSeek Harness only takes lowercase hyphenated ids, MCode ASCII letters and digits).
+        // (DeepSeek Harness only takes lowercase hyphenated ids, MCode ASCII letters and digits,
+        // ZCode `[A-Za-z0-9:_-]`).
         let slug = name
             .split(|c: char| !c.is_ascii_alphanumeric())
             .filter(|part| !part.is_empty())
@@ -200,7 +206,7 @@ fn copilot_link_provider_id(state: &AppState, name: &str) -> Result<String, AppE
     slug.truncate(56);
     let slug = slug.trim_end_matches('-').to_string();
     let taken = |id: &str| -> Result<bool, AppError> {
-        Ok(state.db.get_provider_by_id(id, "copilot")?.is_some()
+        Ok(state.db.provider_exists(id, &AppType::Copilot)?
             || crate::copilot_config::provider_key_exists(id)?)
     };
     if !taken(&slug)? {
@@ -244,7 +250,8 @@ impl ApiFormat {
     ///
     /// Claude Code、Codex、Grok Build 写进 `meta.apiFormat`（非原生格式由本地路由转换）；
     /// 其余应用写进各自配置里选择协议的字段：OpenCode 的 `npm`、OpenClaw / Pi 的 `api`、
-    /// Hermes 的 `api_mode`。Gemini CLI 只有原生接口。
+    /// Hermes 的 `api_mode`。Gemini CLI 只有原生接口。WorkBuddy 的自定义模型只走
+    /// Chat Completions，卡片不写协议字段，这里只用来放行这一种格式。
     fn native_value(self, app_type: &AppType) -> Option<&'static str> {
         use ApiFormat::*;
         match (app_type, self) {
@@ -289,6 +296,12 @@ impl ApiFormat {
             (AppType::Copilot, Anthropic) => Some("anthropic"),
             (AppType::Copilot, OpenAiChat) => Some("completions"),
             (AppType::Copilot, OpenAiResponses) => Some("responses"),
+            (AppType::WorkBuddy, OpenAiChat) => Some("openai-completions"),
+            // ZCode 卡片的 `kind` 是 CC Switch 自己的取值（anthropic / openai-compatible /
+            // openai），写盘时再由 zcode_config 换成 ZCode 原生的 api.type。
+            (AppType::ZCode, Anthropic) => Some("anthropic"),
+            (AppType::ZCode, OpenAiChat) => Some("openai-compatible"),
+            (AppType::ZCode, OpenAiResponses) => Some("openai"),
             _ => None,
         }
     }
@@ -426,6 +439,7 @@ pub(crate) fn build_provider_from_request(
         AppType::Gemini => build_gemini_settings(request),
         AppType::GrokBuild => build_grokbuild_settings(request)?,
         AppType::OpenCode => build_opencode_settings(request, api_format),
+        AppType::ZCode => build_zcode_settings(request, api_format)?,
         AppType::OpenClaw => build_additive_app_settings(request, api_format),
         AppType::Hermes => build_hermes_settings(request, api_format),
         AppType::Pi => build_pi_settings(request, api_format)?,
@@ -434,9 +448,10 @@ pub(crate) fn build_provider_from_request(
         }
         AppType::Kimi => build_kimi_settings(request, api_format)?,
         AppType::Copilot => build_copilot_settings(request, api_format)?,
-        AppType::WorkBuddy => {
+        AppType::WorkBuddy => build_workbuddy_settings(request)?,
+        AppType::Codebuddy => {
             return Err(AppError::InvalidInput(
-                "Add WorkBuddy providers from the WorkBuddy page".into(),
+                "Add CodeBuddy models from the CodeBuddy page".into(),
             ))
         }
         AppType::Agy => {
@@ -1035,6 +1050,42 @@ fn build_opencode_settings(
     })
 }
 
+/// Build settings for ZCode (`~/.zcode/v2/provider_config.json` 的个人规则)。
+/// 结构与 OpenCode 同类：`kind` 指定协议，凭据放在 `options.baseURL` / `options.apiKey`。
+fn build_zcode_settings(
+    request: &DeepLinkImportRequest,
+    api_format: Option<ApiFormat>,
+) -> Result<serde_json::Value, AppError> {
+    let endpoint = get_primary_endpoint(request);
+
+    let mut options = serde_json::Map::new();
+    if !endpoint.is_empty() {
+        options.insert("baseURL".to_string(), json!(endpoint));
+    }
+    if let Some(api_key) = &request.api_key {
+        options.insert("apiKey".to_string(), json!(api_key));
+    }
+
+    let mut models = serde_json::Map::new();
+    models.insert(
+        required_link_model(&AppType::ZCode, request)?.to_string(),
+        json!({}),
+    );
+
+    let mut config = serde_json::Map::new();
+    config.insert(
+        "name".to_string(),
+        json!(request.name.clone().unwrap_or_default()),
+    );
+    config.insert(
+        "kind".to_string(),
+        json!(native_protocol(&AppType::ZCode, api_format)),
+    );
+    config.insert("options".to_string(), json!(options));
+    config.insert("models".to_string(), json!(models));
+    Ok(config.into())
+}
+
 /// Build settings for OpenClaw (camelCase live config).
 /// Format: { baseUrl, apiKey, api, models }
 fn build_additive_app_settings(
@@ -1187,6 +1238,21 @@ fn build_custom_provider_settings(
     }))
 }
 
+/// WorkBuddy 的自定义模型卡，形状同 WorkBuddy 页面的编辑器。`url` 是完整的 Chat Completions
+/// 地址，和其他应用一样照链接原样写；模型声明 `supportsToolCall`（同编辑器「获取模型」），
+/// 否则 WorkBuddy 不让这个模型用工具。
+fn build_workbuddy_settings(
+    request: &DeepLinkImportRequest,
+) -> Result<serde_json::Value, AppError> {
+    let model = required_link_model(&AppType::WorkBuddy, request)?;
+    Ok(json!({
+        "vendor": request.name.clone().unwrap_or_default(),
+        "url": get_primary_endpoint(request),
+        "apiKey": normalize_deeplink_api_key(request.api_key.as_deref().unwrap_or_default()),
+        "models": [{ "id": model, "supportsToolCall": true }],
+    }))
+}
+
 /// 链接导入的 Kimi Code 模型的上下文窗口。Kimi 自己要求每个模型都带正数
 /// `max_context_size`（缺了拒绝运行），链接里没有这个字段。取偏小的 128K：Kimi 按它决定何时压缩，
 /// 报大了长会话会被上游拒绝，报小了只是早一点压缩。用户可在编辑器里改。
@@ -1307,7 +1373,8 @@ pub fn parse_and_merge_config(
         "copilot" => merge_copilot_config(&mut merged, &config_value)?,
         "grokbuild" => merge_grokbuild_config(&mut merged, &config_value)?,
         // Additive mode apps use JSON config directly; pass through as-is
-        "openclaw" | "opencode" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp" => {
+        "openclaw" | "opencode" | "hermes" | "pi" | "mcode" | "kimi" | "dsh" | "omp"
+        | "workbuddy" => {
             merge_additive_config(&mut merged, &config_value)?;
             // 从 config 里补来的地址和 Key 同样要查，让确认框当场报错
             if let Ok(app_type) = AppType::from_str(request.app.as_deref().unwrap_or("")) {
@@ -1696,13 +1763,14 @@ fn merge_additive_config(
         }
     }
 
-    // Extract endpoint from config if not provided in URL
+    // Extract endpoint from config if not provided in URL. WorkBuddy cards keep it as `url`.
     if request.endpoint.as_ref().is_none_or(|s| s.is_empty()) {
         if let Some(base_url) = config
             .get("baseUrl")
             .or_else(|| config.get("base_url"))
             .or_else(|| config.get("options").and_then(|o| o.get("baseURL")))
             .or_else(|| config.pointer("/provider/base_url"))
+            .or_else(|| config.get("url"))
             .and_then(|v| v.as_str())
         {
             request.endpoint = Some(base_url.to_string());
@@ -1722,6 +1790,23 @@ fn merge_additive_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zcode_kind_uses_the_values_the_zcode_card_understands() {
+        assert_eq!(
+            native_protocol(&AppType::ZCode, Some(ApiFormat::Anthropic)),
+            "anthropic"
+        );
+        assert_eq!(
+            native_protocol(&AppType::ZCode, Some(ApiFormat::OpenAiChat)),
+            "openai-compatible"
+        );
+        assert_eq!(
+            native_protocol(&AppType::ZCode, Some(ApiFormat::OpenAiResponses)),
+            "openai"
+        );
+        assert_eq!(native_protocol(&AppType::ZCode, None), "openai-compatible");
+    }
 
     fn hermes_request() -> DeepLinkImportRequest {
         DeepLinkImportRequest {

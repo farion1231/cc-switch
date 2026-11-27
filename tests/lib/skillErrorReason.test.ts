@@ -17,6 +17,22 @@ describe("skillErrorReason", () => {
     expect(skillErrorReason(error, t)).toBe("skills.error.http403");
   });
 
+  it("explains token problems instead of a bare HTTP status (#9666)", () => {
+    for (const suggestion of [
+      "http401Token",
+      "http403Token",
+      "http404Token",
+      "httpAuthRequired",
+    ]) {
+      const error = JSON.stringify({
+        code: "DOWNLOAD_FAILED",
+        context: { status: "401" },
+        suggestion,
+      });
+      expect(skillErrorReason(error, t)).toBe(`skills.error.${suggestion}`);
+    }
+  });
+
   it("uses the error code text with its context otherwise", () => {
     const error = JSON.stringify({
       code: "DOWNLOAD_TIMEOUT",

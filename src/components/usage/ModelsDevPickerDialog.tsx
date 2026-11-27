@@ -30,8 +30,6 @@ import {
 } from "@/lib/modelsDevPricing";
 import { isTextEditableTarget } from "@/utils/domUtils";
 
-export { flattenModels, formatPrice } from "@/lib/modelsDevPricing";
-
 // 全量约 5000 条：默认只展示最新发布的一批，搜索时才做全量匹配
 const DEFAULT_VISIBLE_ROWS = 50;
 const MAX_VISIBLE_ROWS = 200;

@@ -31,10 +31,8 @@ import {
   TRANSCRIPT_DONE_GRACE_MS,
   useBlockContent,
   useSessionImage,
-  useSessionMessagesQuery,
   useSessionTranscript,
 } from "@/lib/query/sessions";
-import { useSessionMessagesQuery as legacyExport } from "@/lib/query";
 
 const message = (content: string, turnId = "t1"): SessionMessage => ({
   role: "user",
@@ -243,19 +241,6 @@ describe("useSessionTranscript", () => {
     });
     expect(api.streamMessages).not.toHaveBeenCalled();
     expect(result.current.isLoading).toBe(false);
-  });
-});
-
-describe("useSessionMessagesQuery", () => {
-  it("一次性读取；旧入口 @/lib/query 仍可用", async () => {
-    expect(legacyExport).toBe(useSessionMessagesQuery);
-    api.getMessages.mockResolvedValue([message("a")]);
-    const { result } = renderHook(
-      () => useSessionMessagesQuery("claude", "/a"),
-      { wrapper: wrapperWith(newClient()) },
-    );
-    await waitFor(() => expect(result.current.data).toHaveLength(1));
-    expect(api.getMessages).toHaveBeenCalledWith("claude", "/a");
   });
 });
 
@@ -483,5 +468,36 @@ describe("useSessionImage", () => {
     });
     expect(ok.result.current).toMatchObject({ url: null, isLoading: true });
     expect(bad.result.current.error).toBeNull();
+  });
+
+  it("clearSessionImageCache 后在途请求返回不会创建孤儿 Blob URL", async () => {
+    let resolveStale: (value: ArrayBuffer) => void = () => {};
+    api.getImage.mockImplementationOnce(
+      () => new Promise<ArrayBuffer>((ok) => (resolveStale = ok)),
+    );
+    const first = renderHook(() =>
+      useSessionImage("codex", "/a", image("/stale.png")),
+    );
+    first.unmount();
+    clearSessionImageCache();
+
+    // 清空后同一张图重新发起加载
+    const second = renderHook(() =>
+      useSessionImage("codex", "/a", image("/stale.png")),
+    );
+    await waitFor(() => expect(second.result.current.url).toBeTruthy());
+    const activeUrl = second.result.current.url;
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    // 旧请求迟到返回：不应创建新 Blob URL 或覆盖现有缓存项
+    await act(async () => {
+      resolveStale(new ArrayBuffer(4));
+    });
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+
+    second.unmount();
+    clearSessionImageCache();
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith(activeUrl);
   });
 });

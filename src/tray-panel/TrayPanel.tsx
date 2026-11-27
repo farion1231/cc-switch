@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -9,7 +11,6 @@ import {
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { useQueryClient } from "@tanstack/react-query";
-import i18n from "i18next";
 import {
   AlertTriangle,
   Check,
@@ -30,6 +31,7 @@ import { cn } from "@/lib/utils";
 import type { AppMode } from "@/types/proxy";
 import {
   CHANGED_EVENT,
+  HIDE_EVENT,
   SHOW_EVENT,
   trayPanelApi,
   type CardRect,
@@ -42,15 +44,33 @@ import {
 } from "./api";
 import { aimingAt, type Point } from "./menuAim";
 import { usePanelTheme } from "./usePanelTheme";
-import { UsageTab } from "./UsageTab";
+
+const LANGUAGE_KEY = "language";
+
+const LazyUsageTab = lazy(async () => {
+  const [{ i18nReady, syncLanguageFromSettings }, { UsageTab }] =
+    await Promise.all([import("@/i18n"), import("./UsageTab")]);
+  await i18nReady;
+  try {
+    const stored = window.localStorage.getItem(LANGUAGE_KEY);
+    if (stored) {
+      await syncLanguageFromSettings(stored);
+    }
+  } catch {
+    // 读不到沿用当前语言
+  }
+  return { default: UsageTab };
+});
 
 type Tab = "config" | "usage";
 const TAB_KEY = "cc-switch-tray-tab";
-/** 主界面保存语言用的键 */
-const LANGUAGE_KEY = "language";
-const MAIN_MAX_HEIGHT = 620;
 /** 使用固定画布时，窗口在一次弹出里的最大高度 */
 const CANVAS_MAX_HEIGHT = 760;
+/**
+ * 主面板最高可以撑满画布：应用行带着额度条，几个应用就能超过 620，
+ * 屏幕放得下时不该让最后一行藏在滚动区里（#10034）。屏幕更矮时仍按可用高度收。
+ */
+const MAIN_MAX_HEIGHT = CANVAS_MAX_HEIGHT;
 /** 分开摆时窗口四周留的透明边距，给卡片的阴影（系统窗口阴影已关掉） */
 const SHADOW_MARGIN = 16;
 const SUB_MAX_HEIGHT = 540;
@@ -77,17 +97,6 @@ function readTab(): Tab {
       : "config";
   } catch {
     return "config";
-  }
-}
-
-function syncLanguage() {
-  try {
-    const language = window.localStorage.getItem(LANGUAGE_KEY);
-    if (language && language !== i18n.language) {
-      void i18n.changeLanguage(language);
-    }
-  } catch {
-    // 读不到沿用当前语言
   }
 }
 
@@ -551,6 +560,7 @@ export function TrayPanel() {
   const [swapped, setSwapped] = useState(false);
   const [query, setQuery] = useState("");
   const [shownCount, setShownCount] = useState(0);
+  const [panelVisible, setPanelVisible] = useState(true);
   const theme = usePanelTheme(shownCount);
   const queryClient = useQueryClient();
 
@@ -610,7 +620,19 @@ export function TrayPanel() {
       // 否则按旧 seq 回报的尺寸会被后端丢掉，Windows 上面板就不显示了。
       if (next.seq <= shownSeq.current) return;
       shownSeq.current = next.seq;
-      syncLanguage();
+      setPanelVisible(true);
+      if (readTab() === "usage") {
+        try {
+          const stored = window.localStorage.getItem(LANGUAGE_KEY);
+          if (stored) {
+            void import("@/i18n").then(({ syncLanguageFromSettings }) =>
+              syncLanguageFromSettings(stored),
+            );
+          }
+        } catch {
+          // 读不到沿用当前语言
+        }
+      }
       setOpenApp(null);
       setQuery("");
       const cold = !lastState.current;
@@ -651,13 +673,17 @@ export function TrayPanel() {
       const offShow = await listen<PanelPlacement>(SHOW_EVENT, (event) => {
         void begin(event.payload);
       });
+      const offHide = await listen(HIDE_EVENT, () => {
+        setPanelVisible(false);
+      });
       const offChanged = await listen(CHANGED_EVENT, () => void load());
       if (disposed) {
         offShow();
+        offHide();
         offChanged();
         return;
       }
-      offs.push(offShow, offChanged);
+      offs.push(offShow, offHide, offChanged);
       // 第一次弹出时窗口是新建的，事件可能早于这里开始监听
       const pending = await trayPanelApi.placement();
       if (pending && !disposed) void begin(pending);
@@ -1134,7 +1160,18 @@ export function TrayPanel() {
               ))}
             </div>
           ) : (
-            <UsageTab refreshKey={shownCount} visible={tab === "usage"} />
+            <Suspense
+              fallback={
+                <div className="flex h-40 items-center justify-center text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                </div>
+              }
+            >
+              <LazyUsageTab
+                refreshKey={shownCount}
+                visible={panelVisible && tab === "usage"}
+              />
+            </Suspense>
           )}
         </div>
 

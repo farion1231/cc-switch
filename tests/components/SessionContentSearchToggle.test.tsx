@@ -12,6 +12,7 @@ import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
 import { providersApi, sessionsApi, settingsApi } from "@/lib/api";
 import type { Settings } from "@/types";
 import { setSessionFixtures, setSettings } from "../msw/state";
+import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const toastError = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/toast", () => ({
@@ -29,6 +30,7 @@ const deferred = <T,>() => {
 };
 
 const openToggle = async () => {
+  await waitForOverlayTransition();
   await userEvent.click(screen.getByRole("button", { name: "会话的更多操作" }));
   return screen.findByRole("menuitemcheckbox", { name: "搜索消息正文" });
 };

@@ -171,7 +171,11 @@ mod tests {
 
         let mut violations = Vec::new();
         for path in files {
-            if path.file_name().is_some_and(|name| name == OWNER) {
+            // `tests.rs` files are `#[cfg(test)]` child modules: all test code.
+            if path
+                .file_name()
+                .is_some_and(|name| name == OWNER || name == "tests.rs")
+            {
                 continue;
             }
             let source = std::fs::read_to_string(&path).expect("read source");

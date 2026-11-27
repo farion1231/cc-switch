@@ -22,7 +22,22 @@ pub async fn get_subscription_quota(
     tool: String,
 ) -> Result<SubscriptionQuota, String> {
     let inner = match app.try_state::<crate::commands::AgyAccountState>() {
-        Some(agy) if tool == "agy" => crate::commands::agy_account::agy_quota(&agy.0, None).await,
+        Some(agy) if tool == "agy" => {
+            crate::commands::agy_account::agy_quota(
+                &agy.0,
+                None,
+                crate::commands::agy_account::QUOTA_REUSE_INTERACTIVE,
+            )
+            .await
+        }
+        _ if tool == "grokbuild" => {
+            let xai = app.try_state::<crate::commands::XaiOAuthState>();
+            crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(
+                xai.as_deref(),
+                true,
+            )
+            .await
+        }
         _ => crate::services::subscription::get_subscription_quota(&tool).await,
     };
     if let Ok(snapshot) = &inner {

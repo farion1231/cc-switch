@@ -1,6 +1,6 @@
 import React from "react";
 import { RefreshCw, TriangleAlert } from "lucide-react";
-import i18n from "@/i18n";
+import i18n from "i18next";
 import { reportFrontendError } from "@/lib/frontendLogger";
 import { Button } from "@/components/ui/button";
 

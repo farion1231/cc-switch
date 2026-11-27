@@ -26,6 +26,10 @@ import {
 } from "@/components/mcp/formBits";
 import { repoFailureKey } from "./repoFailures";
 import {
+  RepoTokenSection,
+  type RepoTokenSectionProps,
+} from "./RepoTokenSection";
+import {
   GITHUB_HOST,
   isInsecureRepoUrl,
   parseRepoUrl,
@@ -41,6 +45,8 @@ interface RepoManagerPanelProps {
   onRemove: (owner: string, name: string) => Promise<void>;
   /** 勾掉 = 停用（不参与发现），不删除 */
   onToggle?: (repo: SkillRepo, enabled: boolean) => Promise<void>;
+  /** 访问令牌区（读私有仓库用）；不传就不显示 */
+  tokens?: Omit<RepoTokenSectionProps, "knownHosts">;
   onClose: () => void;
 }
 
@@ -80,9 +86,13 @@ export function RepoManagerPanel({
   onAdd,
   onRemove,
   onToggle,
+  tokens,
   onClose,
 }: RepoManagerPanelProps) {
   const { t } = useTranslation();
+  const knownHosts = [
+    ...new Set(repos.map((repo) => repo.host || GITHUB_HOST)),
+  ];
   const failureByRepo = new Map(
     failures.map((failure) => [repoFailureKey(failure), failure]),
   );
@@ -301,6 +311,8 @@ export function RepoManagerPanel({
               </ul>
             )}
           </section>
+
+          {tokens && <RepoTokenSection {...tokens} knownHosts={knownHosts} />}
         </SheetBody>
       </SheetContent>
     </Sheet>

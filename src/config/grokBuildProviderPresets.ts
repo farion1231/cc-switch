@@ -144,6 +144,24 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    auth: grokAuth(),
+    // 官方 Grok Build 文档（docs.modelflare.dev/guides/clients/grok-build，
+    // 2026-10-15 核对）：Responses + /v1、grok-4.5
+    config: grokPresetConfig("Modelflare", "https://modelflare.dev/v1"),
+    endpointCandidates: [
+      "https://modelflare.dev/v1",
+      "https://origin.modelflare.dev/v1",
+    ],
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
     name: "hao.ai",
     websiteUrl: "https://hao.ai",
     apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
@@ -262,6 +280,37 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
+  },
+  {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    auth: grokAuth(),
+    config: grokPresetConfig("SudoCode.chat", "https://api.sudocode.chat/v1"),
+    endpointCandidates: [
+      "https://api.sudocode.chat/v1",
+      "https://api.sudorelay.com/v1",
+    ],
+    apiFormat: "openai_responses",
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    auth: grokAuth(),
+    config: grokPresetConfig("SudoCode.us", "https://sudocode.us/v1"),
+    endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
+    apiFormat: "openai_responses",
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
   },
   {
     name: "AIGoCode",
@@ -547,55 +596,6 @@ export const grokBuildProviderPresets: GrokBuildProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "dmxapi",
     icon: "dmxapi",
-  },
-  {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    auth: grokAuth(),
-    config: grokPresetConfig("SudoCode.chat", "https://api.sudocode.chat/v1"),
-    endpointCandidates: [
-      "https://api.sudocode.chat/v1",
-      "https://api.sudorelay.com/v1",
-    ],
-    apiFormat: "openai_responses",
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    auth: grokAuth(),
-    config: grokPresetConfig("SudoCode.us", "https://sudocode.us/v1"),
-    endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
-    apiFormat: "openai_responses",
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-  },
-  {
-    name: "Modelflare",
-    websiteUrl: "https://modelflare.dev",
-    apiKeyUrl:
-      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
-    auth: grokAuth(),
-    // 官方 Grok Build 文档（docs.modelflare.dev/guides/clients/grok-build，
-    // 2026-10-15 核对）：Responses + /v1、grok-4.5
-    config: grokPresetConfig("Modelflare", "https://modelflare.dev/v1"),
-    endpointCandidates: [
-      "https://modelflare.dev/v1",
-      "https://origin.modelflare.dev/v1",
-    ],
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "modelflare",
-    icon: "modelflare",
   },
   {
     name: "AllTokens",
