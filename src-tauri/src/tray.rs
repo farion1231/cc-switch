@@ -3791,8 +3791,9 @@ pub fn schedule_tray_refresh(app: &tauri::AppHandle) {
 ///
 /// 刷新面与 `usage_view` 的展示面严格对齐 —— 每次悬停最多发
 /// `TRAY_APPS.len()` 个用量查询；按供应商用量开关查询，Codex 托管账号
-/// 未保存开关时与卡片一致默认启用。Antigravity 账号区另算：在用的号按
-/// `AGY_TRAY_QUOTA_REUSE` 问 agy，其余的号只读最后一次查到的（`refresh_agy_accounts`）。
+/// 未保存开关时与卡片一致默认启用。Antigravity 账号区另算：在用的号在允许
+/// 自动查询时按 `AGY_TRAY_QUOTA_REUSE` 问 agy，其余的号（以及关掉「自动查询
+/// 额度」时的在用号）只读最后一次查到的（`refresh_agy_accounts`）。
 pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     use crate::commands::CopilotAuthState;
     use futures::future::join_all;
@@ -3916,7 +3917,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 
     let agy = async {
         if visible_apps.is_visible(&AppType::Agy) {
-            refresh_agy_accounts(app).await;
+            refresh_agy_accounts(app, official_manual_only).await;
         }
     };
     futures::join!(join_all(usage_futures), agy);
@@ -3925,12 +3926,110 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
 /// 托盘替 agy 当前登录的号查额度时，这么久内查过就不再起 agy（`/usage` 要启动 agy，七八秒）。
 const AGY_TRAY_QUOTA_REUSE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
-/// 托盘的 Antigravity 账号区：先读一次钥匙串（agy 现在登着哪个号、有没有收进新号），
-/// 再取每个号的额度：在用的号问 agy 的 `/usage`，别的号用切走前最后一次查到的（不发请求）。
-/// 没收录过账号时什么都不做，不碰钥匙串。
-async fn refresh_agy_accounts(app: &tauri::AppHandle) {
+/// 托盘刷新单个 Antigravity 账号额度时要走哪一路。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgyTrayQuotaAction {
+    /// 只读本地保存的最后一次额度（不拉起 agy，不发请求）。
+    CachedOnly,
+    /// 当前登着的号且允许自动查询：问 agy 的 `/usage`（按 `AGY_TRAY_QUOTA_REUSE` 复用）。
+    Live,
+}
+
+/// 决定托盘刷新某个 Antigravity 账号时的动作：
+/// `requires_reauth` 的账号返回 `None` 跳过；「自动查询额度」关着或不是当前登录的号一律只读已保存快照。
+fn agy_tray_quota_action(
+    account: &crate::services::agy_account::AgyAccount,
+    current_account_id: Option<&str>,
+    official_manual_only: bool,
+) -> Option<AgyTrayQuotaAction> {
+    if account.requires_reauth {
+        return None;
+    }
+    let is_current = current_account_id == Some(account.id.as_str());
+    Some(if !official_manual_only && is_current {
+        AgyTrayQuotaAction::Live
+    } else {
+        AgyTrayQuotaAction::CachedOnly
+    })
+}
+
+/// 本地保存的 `last_quota` 要不要补进进程内的托盘缓存：
+/// 只回填成功快照；缓存为空、只有无时间戳的占位失败（如 `NotFound`），或保存的快照更新时
+/// 才写入，避免覆盖刚手动刷出的结果 / 失败状态，也避免每次悬停都触发无意义的托盘刷新。
+fn should_hydrate_agy_cached_quota(
+    usage_cache: &UsageCache,
+    account_id: &str,
+    saved: &crate::services::subscription::SubscriptionQuota,
+) -> bool {
+    if !saved.success {
+        return false;
+    }
+    usage_cache
+        .with_agy_account(account_id, |existing| {
+            saved.queried_at > existing.queried_at
+                || (existing.queried_at.is_none() && !existing.success)
+        })
+        .unwrap_or(true)
+}
+
+/// 按账号表刷新托盘的 Antigravity 额度缓存：
+/// `requires_reauth` 的账号跳过；非当前登录或关掉「自动查询额度」时只读 `read_saved` 补进
+/// `usage_cache`；允许自动查询的当前登录账号调 `query_live`。每条写入后立刻调 `on_updated`，
+/// 避免慢速 `/usage` 拖慢其他账号本地快照的展示。
+async fn refresh_agy_account_quotas<RS, RSFut, QL, QLFut>(
+    usage_cache: &UsageCache,
+    status: crate::services::agy_account::AgyAccountStatus,
+    official_manual_only: bool,
+    read_saved: RS,
+    query_live: QL,
+    on_updated: impl Fn(),
+) where
+    RS: Fn(String) -> RSFut,
+    RSFut: std::future::Future<Output = Option<crate::services::subscription::SubscriptionQuota>>,
+    QL: Fn(String) -> QLFut,
+    QLFut: std::future::Future<
+        Output = Result<crate::services::subscription::SubscriptionQuota, String>,
+    >,
+{
     use futures::future::join_all;
 
+    let current_account_id = status.current_account_id.as_deref();
+    let read_saved = &read_saved;
+    let query_live = &query_live;
+    let on_updated = &on_updated;
+    let queries = status.accounts.into_iter().filter_map(|account| {
+        let action = agy_tray_quota_action(&account, current_account_id, official_manual_only)?;
+        let account_id = account.id;
+        Some(async move {
+            match action {
+                AgyTrayQuotaAction::CachedOnly => {
+                    if let Some(quota) = read_saved(account_id.clone()).await {
+                        if should_hydrate_agy_cached_quota(usage_cache, &account_id, &quota) {
+                            usage_cache.put_agy_account(account_id, quota);
+                            on_updated();
+                        }
+                    }
+                }
+                AgyTrayQuotaAction::Live => match query_live(account_id.clone()).await {
+                    Ok(quota) => {
+                        usage_cache.put_agy_account(account_id, quota);
+                        on_updated();
+                    }
+                    Err(e) => {
+                        log::debug!("[Tray] 刷新 Antigravity 账号 {account_id} 额度失败: {e}")
+                    }
+                },
+            }
+        })
+    });
+    join_all(queries).await;
+}
+
+/// 托盘的 Antigravity 账号区：先读一次钥匙串（agy 现在登着哪个号、有没有收进新号），
+/// 再取每个号的额度：在用的号在允许自动查询时问 agy 的 `/usage`，别的号以及关掉
+/// 「自动查询额度」时只读本地保存的最后一次结果（不起 agy、不发请求），需要重新登录的号跳过。
+/// 没收录过账号时什么都不做，不碰钥匙串。
+async fn refresh_agy_accounts(app: &tauri::AppHandle, official_manual_only: bool) {
     if !crate::services::agy_account::keychain::supported()
         || crate::services::agy_account::last_known_status()
             .is_none_or(|status| status.accounts.is_empty())
@@ -3954,21 +4053,23 @@ async fn refresh_agy_accounts(app: &tauri::AppHandle) {
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
     };
-    let queries = status.accounts.into_iter().map(|account| {
-        let manager = std::sync::Arc::clone(&manager);
-        let app_state = app_state.inner();
-        async move {
-            match crate::commands::agy_quota(&manager, Some(&account.id), AGY_TRAY_QUOTA_REUSE)
-                .await
-            {
-                Ok(quota) => {
-                    crate::commands::remember_account_quota(app, app_state, account.id, &quota)
-                }
-                Err(e) => log::debug!("[Tray] 刷新 Antigravity 账号 {} 额度失败: {e}", account.id),
+    refresh_agy_account_quotas(
+        &app_state.usage_cache,
+        status,
+        official_manual_only,
+        |account_id| {
+            let manager = std::sync::Arc::clone(&manager);
+            async move { manager.last_quota(&account_id).await }
+        },
+        |account_id| {
+            let manager = std::sync::Arc::clone(&manager);
+            async move {
+                crate::commands::agy_quota(&manager, Some(&account_id), AGY_TRAY_QUOTA_REUSE).await
             }
-        }
-    });
-    join_all(queries).await;
+        },
+        || schedule_tray_refresh(app),
+    )
+    .await;
 }
 
 /// 这一路额度查询打的是不是官方账号的接口。托管 Codex、Claude 账号、客户端订阅都是；
