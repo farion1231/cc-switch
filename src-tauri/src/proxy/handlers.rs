@@ -1514,8 +1514,17 @@ async fn handle_codex_standalone_passthrough(
     let extensions = parts.extensions;
     let body_bytes = read_request_body_limited(req_body, MAX_REQUEST_BODY_BYTES).await?;
     let body_bytes = decode_codex_request_body(&mut headers, body_bytes)?;
-    let body: Value = serde_json::from_slice(&body_bytes)
+    let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::InvalidRequest(format!("Failed to parse request body: {e}")))?;
+
+    let stack = if canonical_endpoint == "/alpha/search" {
+        match resolve_stack_target(&state, &AppType::Codex, &mut body) {
+            Ok(stack) => stack,
+            Err(rejected) => return Ok(*rejected),
+        }
+    } else {
+        None
+    };
 
     let mut ctx = RequestContext::new(
         &state,
@@ -1524,7 +1533,7 @@ async fn handle_codex_standalone_passthrough(
         AppType::Codex,
         "Codex",
         "codex",
-        None,
+        stack,
     )
     .await?;
     let endpoint = endpoint_with_query(&uri, canonical_endpoint);
