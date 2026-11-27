@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef } from "react";
-import { Bookmark } from "lucide-react";
+import { Bookmark, Pin } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
@@ -128,25 +128,31 @@ export const SessionOutline = memo(function SessionOutline({
                 />
               )}
 
-              {entry.turn.chapters.map((chapter) => (
-                <button
-                  key={chapter.id}
-                  type="button"
-                  onClick={() => onJumpChapter(entry.turn, chapter)}
-                  title={chapter.summary}
-                  className="group/outline flex min-w-0 items-center gap-1.5 rounded-control py-0.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <Bookmark
-                    aria-hidden
-                    className="h-3 w-3 shrink-0 text-[var(--reader-accent)]"
-                    strokeWidth={2}
-                  />
-                  <span className="sr-only">{rt("chapter")}：</span>
-                  <span className="min-w-0 truncate text-caption font-semibold text-fg-1 group-hover/outline:underline">
-                    {chapter.title}
-                  </span>
-                </button>
-              ))}
+              {entry.turn.chapters.map((chapter) => {
+                const pinned = chapter.source === "user";
+                const Icon = pinned ? Pin : Bookmark;
+                return (
+                  <button
+                    key={chapter.id}
+                    type="button"
+                    onClick={() => onJumpChapter(entry.turn, chapter)}
+                    title={chapter.summary}
+                    className="group/outline flex min-w-0 items-center gap-1.5 rounded-control py-0.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <Icon
+                      aria-hidden
+                      className="h-3 w-3 shrink-0 text-[var(--reader-accent)]"
+                      strokeWidth={2}
+                    />
+                    <span className="sr-only">
+                      {rt(pinned ? "pinnedChapter" : "chapter")}：
+                    </span>
+                    <span className="min-w-0 truncate text-caption font-semibold text-fg-1 group-hover/outline:underline">
+                      {chapter.title}
+                    </span>
+                  </button>
+                );
+              })}
 
               {entry.question !== undefined && (
                 <button

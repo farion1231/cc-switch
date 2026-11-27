@@ -127,6 +127,8 @@ windows-sys = { version = "0.61", features = [
 rquickjs = { version = "0.8", features = ["bindgen"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# 只读读取 Claude desktop 的 Local Storage（章节标记），纯 Rust 实现；目前只有 macOS 用到
+rusty-leveldb = "4.0"
 # 托盘面板的原生玻璃：NSGlassEffectView（macOS 26）/ NSVisualEffectView
 objc2 = "0.6"
 block2 = "0.6"
@@ -166,6 +168,8 @@ panic = "unwind"
 strip = "symbols"
 
 [dev-dependencies]
+# desktop_chapters 的测试在所有平台上都要建真实的 LevelDB
+rusty-leveldb = "4.0"
 serial_test = "3"
 tauri = { version = "2.8.2", features = ["test"] }
 tokio = { version = "1", features = ["test-util"] }

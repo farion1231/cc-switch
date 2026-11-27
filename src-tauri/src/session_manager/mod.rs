@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod content;
+pub mod desktop_chapters;
 #[cfg(windows)]
 pub(crate) mod hermes_wsl;
 pub mod model;

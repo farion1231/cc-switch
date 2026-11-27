@@ -1,4 +1,5 @@
 import type {
+  DesktopChapter,
   EventBlock,
   ImageRef,
   SessionBlock,
@@ -122,7 +123,8 @@ export interface TurnFinal {
 }
 
 /**
- * 章节：Claude Code desktop 里模型用 `mark_chapter` 打的导航点。
+ * 章节：Claude Code desktop 里的导航点。两种来源：模型用 `mark_chapter` 打的，
+ * 和用户自己 pin 的（桌面端存在本地，由后端按需读出来）。
  * 不算执行步骤，单独成行，目录里也列出来。
  */
 export interface TurnChapter {
@@ -131,6 +133,8 @@ export interface TurnChapter {
   messageIndex: number;
   title: string;
   summary?: string;
+  /** user = 用户在桌面端手动 pin 的；缺省是模型打的 */
+  source?: "user";
   /** 章节后面紧跟的顶层步骤（合并后）的 id；缺省表示排在本轮所有步骤之后 */
   beforeStepId?: string;
 }
@@ -164,7 +168,40 @@ export interface SessionTurn {
 export interface BuildTurnsOptions {
   /** 决定合并规则；缺省用 generic（不合并） */
   style?: AgentReaderStyle;
+  /** 用户在 Claude Code desktop 手动 pin 的章节（后端按会话解析好锚点） */
+  pinnedChapters?: DesktopChapter[];
 }
+
+/** 手动 pin 的章节按锚点建的索引；placed 记下已经放进某一轮的，重复的行不再放 */
+interface PinnedIndex {
+  byCall: Map<string, DesktopChapter[]>;
+  byMessage: Map<string, { chapter: DesktopChapter; textIndex: number }[]>;
+  placed: Set<string>;
+}
+
+const indexPinnedChapters = (chapters: DesktopChapter[]): PinnedIndex => {
+  const index: PinnedIndex = {
+    byCall: new Map(),
+    byMessage: new Map(),
+    placed: new Set(),
+  };
+  const push = <T>(map: Map<string, T[]>, key: string, value: T) => {
+    const list = map.get(key);
+    if (list) list.push(value);
+    else map.set(key, [value]);
+  };
+  chapters.forEach((chapter) => {
+    const { anchor } = chapter;
+    if (anchor.kind === "tool") {
+      push(index.byCall, anchor.callId, chapter);
+    } else {
+      anchor.messageIds.forEach((id) =>
+        push(index.byMessage, id, { chapter, textIndex: anchor.textIndex }),
+      );
+    }
+  });
+  return index;
+};
 
 /** 旧后端从 content 兜底出来的调用 id 前缀：这类调用没有结果配对，状态记为 unknown */
 export const LEGACY_CALL_PREFIX = "legacy:";
@@ -333,6 +370,7 @@ const buildTurn = (
   group: { key: string; start: number; end: number },
   turnIndex: number,
   style: AgentReaderStyle,
+  pinned?: PinnedIndex,
 ): SessionTurn => {
   const { key, start, end } = group;
   const blockCache = new Map<number, SessionBlock[]>();
@@ -371,7 +409,34 @@ const buildTurn = (
   const steps: TimelineStep[] = [];
   // 章节及其在原始步骤序列里的位置（合并步骤后再换算成 beforeStepId）
   const chapters: { chapter: TurnChapter; at: number }[] = [];
+  /** 排在本轮所有步骤之后（最终回复正前面） */
+  const AFTER_STEPS = Number.POSITIVE_INFINITY;
   const chapterCalls = new Set<string>();
+  // 手动 pin 的章节：放在锚点（那次调用 / 那段文字）正前面，点目录就落在 pin 的位置
+  const placePinned = (
+    chapter: DesktopChapter,
+    messageIndex: number,
+    at = steps.length,
+  ) => {
+    if (!pinned || pinned.placed.has(chapter.id)) return;
+    pinned.placed.add(chapter.id);
+    chapters.push({
+      chapter: {
+        id: `${key}:pin:${chapter.id}`,
+        messageIndex,
+        title: chapter.title,
+        source: "user",
+      },
+      at,
+    });
+  };
+  // 文本锚点：同一条 API 消息可能拆成几条，文本块跨消息连着数
+  const textSeen = new Map<string, number>();
+  // 文本块没数到时的退路：这条 API 消息第一次出现的位置
+  const textFallback = new Map<
+    string,
+    { chapter: DesktopChapter; messageIndex: number; at: number }
+  >();
   const callSteps = new Map<string, ToolStep>();
   // 本轮所有调用 id：Claude Code 偶尔先写结果、后写调用记录（异步子代理启动时），
   // 这种「早到」的结果先挂起，等调用出现再配上，而不是当成孤儿输出
@@ -402,12 +467,30 @@ const buildTurn = (
       continue;
     }
     let lastEventInMessage: EventStep | TurnEvent | undefined;
+    const textPins =
+      (pinned && message.id && pinned.byMessage.get(message.id)) || [];
+    textPins.forEach(({ chapter }) => {
+      if (!textFallback.has(chapter.id)) {
+        textFallback.set(chapter.id, {
+          chapter,
+          messageIndex: i,
+          at: steps.length,
+        });
+      }
+    });
     blocksOf(i).forEach((block, j) => {
       const id = `${key}:${i}:${j}`;
       const inFinal =
         finalAt !== undefined && i === finalAt[0] && j >= finalAt[1];
       switch (block.type) {
         case "text": {
+          textPins.forEach(({ chapter, textIndex }) => {
+            const seen = textSeen.get(chapter.id) ?? 0;
+            textSeen.set(chapter.id, seen + 1);
+            if (seen !== textIndex) return;
+            // 锚在最终回复里：排到所有步骤之后，也就是回复正前面
+            placePinned(chapter, i, inFinal ? AFTER_STEPS : steps.length);
+          });
           if (inFinal) {
             finalTexts.push(block);
             return;
@@ -441,6 +524,11 @@ const buildTurn = (
           return;
         }
         case "tool_call": {
+          if (block.id) {
+            pinned?.byCall
+              .get(block.id)
+              ?.forEach((chapter) => placePinned(chapter, i));
+          }
           if (isChapterCall(block)) {
             if (block.id) chapterCalls.add(block.id);
             chapters.push({
@@ -542,6 +630,10 @@ const buildTurn = (
       }
     });
   }
+  // 文本块没数到（解析出的块和原始记录对不上）：退到那条消息开头，章节不丢
+  textFallback.forEach(({ chapter, messageIndex, at }) =>
+    placePinned(chapter, messageIndex, at),
+  );
 
   // 事件之后再没有别的步骤 → 不算过程中的事件，移到最终回复之后
   let lastWorkStep = -1;
@@ -605,8 +697,11 @@ export const buildTurns = (
   options: BuildTurnsOptions = {},
 ): SessionTurn[] => {
   const style = options.style ?? AGENT_READER_STYLES.generic;
+  const pinned = options.pinnedChapters?.length
+    ? indexPinnedChapters(options.pinnedChapters)
+    : undefined;
   return groupMessages(messages).map((group, index) =>
-    buildTurn(messages, group, index, style),
+    buildTurn(messages, group, index, style, pinned),
   );
 };
 
