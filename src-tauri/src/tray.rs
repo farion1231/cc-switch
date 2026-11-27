@@ -795,6 +795,24 @@ fn tier_label(texts: &TrayTexts, group: TierGroup, tier_name: &str) -> &'static 
     }
 }
 
+/// 托盘面板专用的紧凑短档名：去重中文宽字符、让各应用与子账号的进度条垂直对齐。
+fn tier_short_label(texts: &TrayTexts, group: TierGroup) -> &'static str {
+    match group {
+        TierGroup::FiveHour => "5h",
+        TierGroup::Weekly => "7d",
+        TierGroup::Fable => "Fable",
+        TierGroup::Monthly => "30d",
+        TierGroup::Credits => texts.tier_credits,
+        TierGroup::GeminiPro => "Pro",
+        TierGroup::GeminiFlash => "Flash",
+        TierGroup::GeminiFlashLite => "Lite",
+        TierGroup::Premium => "Credits",
+        TierGroup::AgyGemini => "Gemini",
+        TierGroup::AgyThirdParty => "Claude",
+        TierGroup::AgyArgon => "Argon",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct QuotaLine {
     text: String,
@@ -802,6 +820,8 @@ struct QuotaLine {
     left: f64,
     /// 档名（重置说明用；余额等没有档名）。
     label: Option<&'static str>,
+    /// 托盘面板用的紧凑短档名（`5h`、`7d`、`30d`、`Gemini`、`Claude` 等）。
+    short_label: Option<&'static str>,
     resets_at: Option<String>,
     /// 要上色的那段数值（还有余额时的金额，照卡片 `balanceLine` 的 `emphasis`）；其余为空。
     emphasis: Option<String>,
@@ -831,6 +851,7 @@ struct TierEntry<'a> {
 fn tier_line(
     texts: &TrayTexts,
     label: &'static str,
+    short_label: &'static str,
     utilization: f64,
     resets_at: Option<String>,
 ) -> QuotaLine {
@@ -848,6 +869,7 @@ fn tier_line(
         text,
         left,
         label: Some(label),
+        short_label: Some(short_label),
         resets_at,
         emphasis: None,
     }
@@ -869,6 +891,7 @@ fn grouped_tier_lines(texts: &TrayTexts, entries: &[TierEntry<'_>]) -> Vec<Quota
             lines.push(tier_line(
                 texts,
                 tier_label(texts, group, entry.name),
+                tier_short_label(texts, group),
                 entry.utilization,
                 entry.resets_at.clone(),
             ));
@@ -949,6 +972,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
             text: texts.plan_expired.to_string(),
             left: -1.0,
             label: None,
+            short_label: None,
             resets_at: None,
             emphasis: None,
         });
@@ -964,7 +988,13 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
             return None;
         }
         let utilization = (total - remaining) / total * 100.0;
-        return Some(tier_line(texts, texts.tier_premium, utilization, None));
+        return Some(tier_line(
+            texts,
+            texts.tier_premium,
+            tier_short_label(texts, TierGroup::Premium),
+            utilization,
+            None,
+        ));
     }
     if let Some(remaining) = data.remaining {
         // 余额不提示「快用完」，只有用完才算（和卡片 `quotaRules.balanceLine` 一致）；
@@ -977,6 +1007,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
             text,
             left,
             label: None,
+            short_label: None,
             resets_at: None,
             emphasis,
         });
@@ -985,6 +1016,7 @@ fn plan_line(texts: &TrayTexts, data: &crate::provider::UsageData) -> Option<Quo
         text: fill(texts.used_amount, &[("value", &amount(used, unit))]),
         left: f64::INFINITY,
         label: None,
+        short_label: None,
         resets_at: None,
         emphasis: None,
     })
@@ -2583,12 +2615,18 @@ pub struct PanelQuota {
     pub note: Option<String>,
     /// ChatGPT 订阅（Codex）可用的额度重置次数；没有这项数据时为空。
     pub reset_credits: Option<usize>,
+    /// 百分比是否按「已用」展示（同设置 `quota_shows_used`）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub shows_used: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PanelQuotaLine {
     pub text: String,
+    /// 托盘面板专用的紧凑短档名（如 `5h`、`7d`、`30d`、`Gemini`、`Claude`）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub short_label: Option<String>,
     /// 剩余百分比（0–100）；余额这种没有总额的为空，不画进度条。
     pub left: Option<f64>,
     pub warn: bool,
@@ -2632,6 +2670,7 @@ fn panel_quota(
                 .iter()
                 .map(|line| PanelQuotaLine {
                     text: line.text.clone(),
+                    short_label: line.short_label.map(str::to_string),
                     left: line.left.is_finite().then(|| line.left.clamp(0.0, 100.0)),
                     warn: line.left < WARN_BELOW_PERCENT,
                     resets_at: line.resets_at.clone(),
@@ -2640,11 +2679,13 @@ fn panel_quota(
                 .collect(),
             note: None,
             reset_credits,
+            shows_used: texts.quota_used,
         },
         QuotaView::Failed(_) => PanelQuota {
             lines: Vec::new(),
             note: quota_note(texts, view, now),
             reset_credits: None,
+            shows_used: texts.quota_used,
         },
     }
 }

@@ -8,7 +8,11 @@ import {
 import type { ReactNode } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TrayPanel, formatResetIn } from "@/tray-panel/TrayPanel";
+import {
+  TrayPanel,
+  formatResetCompact,
+  formatResetIn,
+} from "@/tray-panel/TrayPanel";
 import {
   CHANGED_EVENT,
   SHOW_EVENT,
@@ -975,5 +979,92 @@ describe("formatResetIn", () => {
     expect(formatResetIn(at(20_000), now, texts)).toBe("Resets in 1m");
     expect(formatResetIn(at(-MIN), now, texts)).toBeNull();
     expect(formatResetIn("not a date", now, texts)).toBeNull();
+  });
+
+  it("formats compact reset countdowns without spaces", () => {
+    expect(formatResetCompact(at((47 * 60 + 30) * MIN), now)).toBe("1d23h");
+    expect(formatResetCompact(at(2 * 1440 * MIN), now)).toBe("2d");
+    expect(formatResetCompact(at((4 * 60 + 5) * MIN), now)).toBe("4h5m");
+    expect(formatResetCompact(at(3 * 60 * MIN), now)).toBe("3h");
+    expect(formatResetCompact(at(12 * MIN), now)).toBe("12m");
+    expect(formatResetCompact(at(20_000), now)).toBe("1m");
+    expect(formatResetCompact(at(-MIN), now)).toBeNull();
+    expect(formatResetCompact("not a date", now)).toBeNull();
+  });
+});
+
+describe("TrayPanel compact quota presentation", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    window.localStorage.removeItem("cc-switch-tray-tab");
+  });
+
+  it("renders compact short labels, percentages, inline balance, and inline reset credits", async () => {
+    vi.mocked(trayPanelApi.layout).mockResolvedValue(undefined);
+    vi.mocked(trayPanelApi.placement).mockResolvedValue(windows);
+    vi.mocked(trayPanelApi.state).mockResolvedValue({
+      ...state,
+      apps: [
+        {
+          ...state.apps[0],
+          quota: {
+            lines: [
+              {
+                text: "余额 4.20 CNY",
+                left: null,
+                warn: false,
+                resetsAt: null,
+                emphasis: "4.20 CNY",
+              },
+            ],
+            note: null,
+            resetCredits: null,
+          },
+        },
+        {
+          ...state.apps[0],
+          app: "codex",
+          name: "Codex",
+          current: "OpenAI Official",
+          quota: {
+            lines: [
+              {
+                text: "5 小时剩余 100%",
+                shortLabel: "5h",
+                left: 100,
+                warn: false,
+                resetsAt: null,
+                emphasis: null,
+              },
+              {
+                text: "每周剩余 82%",
+                shortLabel: "7d",
+                left: 82,
+                warn: false,
+                resetsAt: new Date(Date.now() + 31 * 3600_000).toISOString(),
+                emphasis: null,
+              },
+            ],
+            note: null,
+            resetCredits: 2,
+          },
+        },
+      ],
+    });
+
+    renderPanel();
+
+    // 单行余额纵向居中内联展示，完整文案保留在 title
+    const balance = await screen.findByText("4.20 CNY");
+    expect(balance).toHaveAttribute("title", "余额 4.20 CNY");
+    expect(balance).toHaveClass("text-green-600");
+
+    // 紧凑四列短标签 + 百分比 + ↻×2 内联徽章
+    expect(screen.getByText("5h")).toHaveAttribute("title", "5 小时剩余 100%");
+    expect(screen.getByText("100%")).toBeVisible();
+    expect(screen.getByText("7d")).toBeVisible();
+    expect(screen.getByText("82%")).toBeVisible();
+    expect(screen.getByText("↻×2")).toHaveAttribute("title", "2 resets");
+    expect(screen.getByText(/^↻1d/)).toBeVisible();
   });
 });

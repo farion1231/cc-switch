@@ -1918,6 +1918,7 @@ fn service_down_shows_the_problem_row_and_needs_attention_instead_of_quota() {
     desktop.quota = Some(QuotaView::Lines(vec![tier_line(
         &zh(),
         zh().tier_weekly,
+        "7d",
         20.0,
         None,
     )]));

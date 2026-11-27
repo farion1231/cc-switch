@@ -33,6 +33,8 @@ export interface PanelLink {
 
 export interface PanelQuotaLine {
   text: string;
+  /** 托盘面板专用的紧凑短档名（如 `5h`、`7d`、`30d`、`Gemini`、`Claude`） */
+  shortLabel?: string | null;
   /** 剩余百分比；余额这种没有总额的为空 */
   left: number | null;
   warn: boolean;
@@ -47,6 +49,8 @@ export interface PanelQuota {
   note: string | null;
   /** ChatGPT 订阅（Codex）可用的额度重置次数 */
   resetCredits: number | null;
+  /** 百分比是否按「已用」展示 */
+  showsUsed?: boolean;
 }
 
 export interface PanelProvider {
