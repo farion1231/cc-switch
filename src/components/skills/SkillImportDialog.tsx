@@ -93,23 +93,14 @@ export function SkillImportDialog({
           }
           return {
             directory: skill.directory,
+            // 按导入清单逐个取，免得新应用漏写（ZCode 曾在这里被漏掉，勾了也不生效）
             apps: {
-              claude: chosen.has("claude"),
-              codex: chosen.has("codex"),
-              gemini: chosen.has("gemini"),
-              grokbuild: chosen.has("grokbuild"),
-              opencode: chosen.has("opencode"),
               openclaw: false,
-              hermes: chosen.has("hermes"),
               pi: false,
-              mcode: chosen.has("mcode"),
-              kimi: chosen.has("kimi"),
-              codebuddy: chosen.has("codebuddy"),
-              dsh: chosen.has("dsh"),
-              workbuddy: chosen.has("workbuddy"),
-              agy: chosen.has("agy"),
-              copilot: chosen.has("copilot"),
-            },
+              ...Object.fromEntries(
+                IMPORT_APP_IDS.map((app) => [app, chosen.has(app)]),
+              ),
+            } as ImportSkillSelection["apps"],
           };
         }),
     );
