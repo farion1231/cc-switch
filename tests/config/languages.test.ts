@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { LANGUAGES, languageFromLocale } from "@/i18n/languages";
 import backend from "./languages.json";
@@ -16,4 +18,43 @@ describe("LANGUAGES matches the backend", () => {
       expect(languageFromLocale(locale)).toBe(language);
     },
   );
+});
+
+// macOS 通过 Info.plist 的本地化声明决定 WKWebView 等系统组件提供的右键菜单
+// 用哪种语言；不声明（或漏声明）时一律显示英文。新增界面语言时若漏改这里，
+// 该语言的菜单就会一直是英文，所以和 LANGUAGES 一起校验。
+const INFO_PLIST = readFileSync(
+  path.resolve(__dirname, "../../src-tauri/Info.plist"),
+  "utf8",
+);
+
+// 应用内的语言码不是 Apple 的语言/脚本设计符，需要映射后再比较。
+const APPLE_LANGUAGE_ID: Record<string, string> = {
+  zh: "zh-Hans",
+  "zh-TW": "zh-Hant",
+};
+
+const appleLanguageId = (id: string) => APPLE_LANGUAGE_ID[id] ?? id;
+
+const declaredLocalizations = () => {
+  const block = INFO_PLIST.match(
+    /<key>CFBundleLocalizations<\/key>\s*<array>([\s\S]*?)<\/array>/,
+  )?.[1];
+  return [...(block ?? "").matchAll(/<string>([^<]+)<\/string>/g)].map(
+    (match) => match[1],
+  );
+};
+
+describe("macOS bundle localizations", () => {
+  it("declares every UI language", () => {
+    expect(declaredLocalizations()).toEqual(
+      expect.arrayContaining(LANGUAGES.map(({ id }) => appleLanguageId(id))),
+    );
+  });
+
+  it("falls back to English for undeclared languages", () => {
+    expect(INFO_PLIST).toMatch(
+      /<key>CFBundleDevelopmentRegion<\/key>\s*<string>en<\/string>/,
+    );
+  });
 });

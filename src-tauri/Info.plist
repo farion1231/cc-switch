@@ -2,6 +2,24 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- 声明 bundle 支持的本地化语言。macOS 据此决定 WKWebView 等系统组件提供的
+       右键菜单（拷贝/粘贴/查询等）使用哪种语言；不声明时一律回退到英文。
+       语言码用 Apple 规范的语言/脚本设计符：简体中文 zh-Hans、繁体中文 zh-Hant
+       （对应应用内的 zh / zh-TW），顺序与 src/i18n/languages.ts 保持一致。 -->
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>zh-Hans</string>
+    <string>zh-Hant</string>
+    <string>en</string>
+    <string>de</string>
+    <string>ja</string>
+    <string>ko</string>
+    <string>ru</string>
+    <string>tr</string>
+  </array>
+
   <!-- 注册 ccswitch:// 自定义 URL 协议，用于深链接导入 -->
   <key>CFBundleURLTypes</key>
   <array>
