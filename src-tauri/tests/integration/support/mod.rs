@@ -69,6 +69,7 @@ pub fn reset_test_fs() {
         ".cc-switch",
         ".gemini",
         ".grok",
+        ".hermes",
         ".config",
         ".minimax",
         ".omp",

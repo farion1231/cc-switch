@@ -75,7 +75,7 @@ pub(crate) fn sqlite_unsupported_in_temp_dir() -> bool {
 ///
 /// 用 `var_os` 而非 `var`：非 Unicode 的取值只应让路径变 lossy，而不该让
 /// “覆盖是否存在”的判断失效、进而退回真实用户目录。
-fn test_home_override() -> Option<PathBuf> {
+pub(crate) fn test_home_override() -> Option<PathBuf> {
     let raw = std::env::var_os("CC_SWITCH_TEST_HOME")?;
     // to_string_lossy 的结果必须先绑住，否则 trim 借的是一个已释放的临时值。
     let lossy = raw.to_string_lossy();
