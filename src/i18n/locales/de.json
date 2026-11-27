@@ -468,6 +468,8 @@
       "trayStylePanel": "Panel",
       "trayStyleMenu": "Menü",
       "trayStyleHelp": "Was sich beim Klick auf das Tray-Symbol öffnet (unter Windows öffnet ein Linksklick immer das Hauptfenster und ein Rechtsklick den gewählten Stil). Panel: der aktive Anbieter, das Kontingent und die Nutzung jeder App, mit Suche und Wechsel. Menü: das native Systemmenü. Wirkt sofort.",
+      "macosWidget": "Desktop-Widget",
+      "macosWidgetHelp": "Liefert die Daten für die macOS-Desktop-Widgets: aktiver Anbieter und Kontingent jeder App, das Kontingent aller Konten sowie die Nutzungsstatistik. Ist die Option aktiv, wird das Kontingent auch bei geschlossenem Hauptfenster im Hintergrund abgefragt: aktive Konten alle 10 Minuten, die übrigen alle 30 Minuten. Erfordert macOS 14 oder neuer; klicken Sie mit der rechten Maustaste auf den Schreibtisch, wählen Sie „Widgets bearbeiten“ und suchen Sie nach CC Switch.",
       "minimizeToTrayHelp": "Wenn aktiviert, blendet die Schließen-Schaltfläche das Fenster nur aus und CC Switch läuft weiter im System-Tray (der Lightweight-Modus befindet sich im Tray-Menü). Wenn deaktiviert, beendet die Schließen-Schaltfläche die App.",
       "terminalHelp": "Das Terminal, das „Terminal öffnen“ auf Anbieterkarten verwendet. Ist es nicht verfügbar, wird das Standardterminal des Systems verwendet."
     },

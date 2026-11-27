@@ -14,6 +14,30 @@ fn zh() -> TrayTexts {
     TrayTexts::from_language("zh")
 }
 
+#[test]
+fn agy_argon_weekly_gets_its_own_line() {
+    use crate::services::subscription_agy::{TIER_AGY_GEMINI_ARGON_WEEKLY, TIER_AGY_GEMINI_WEEKLY};
+    let entries = [
+        TierEntry {
+            name: TIER_AGY_GEMINI_WEEKLY,
+            utilization: 10.0,
+            resets_at: None,
+        },
+        TierEntry {
+            name: TIER_AGY_GEMINI_ARGON_WEEKLY,
+            utilization: 20.0,
+            resets_at: None,
+        },
+    ];
+    let texts = en();
+    let labels: Vec<_> = grouped_tier_lines(&texts, &entries)
+        .into_iter()
+        .map(|line| line.label)
+        .collect();
+    assert_eq!(labels, [Some("Gemini weekly"), Some("Argon weekly")]);
+    assert!(is_known_tier(TIER_AGY_GEMINI_ARGON_WEEKLY));
+}
+
 fn now() -> chrono::DateTime<chrono::Local> {
     chrono::Local::now()
 }
