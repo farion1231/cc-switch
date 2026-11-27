@@ -3989,6 +3989,7 @@
         "authTitle": "Codex hat möglicherweise noch das vorherige Konto im Cache; starten Sie dessen Hintergrundserver neu, um die neue Anmeldung zu laden",
         "title": "Codex verwendet noch eine alte Modellliste, daher werden die aktuellen Modelle nicht angezeigt",
         "unverifiedTitle": "Codex-Apps, die vor dem Wechsel geöffnet waren, verwenden möglicherweise noch das vorherige Konto oder die vorherige Modellliste",
+        "dontShowAgain": "Diese Art von Hinweis nicht mehr anzeigen",
         "unverifiedHint": "CC Switch kann nicht feststellen, ob die Desktop-App oder Editor-Erweiterungen laufen. Wenn sie nicht geöffnet sind, schließen Sie diesen Hinweis einfach.",
         "daemon": "CLI: Codex erneut zu öffnen genügt nicht; der Hintergrund-Daemon muss neu gestartet werden.",
         "others": "Desktop-App: Beenden Sie sie vollständig und öffnen Sie sie erneut (⌘Q unter macOS; das Fenster zu schließen genügt nicht). Editor-Erweiterungen: Öffnen Sie das Editor-Fenster erneut.",
