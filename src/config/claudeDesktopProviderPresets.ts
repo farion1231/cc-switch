@@ -2497,6 +2497,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     iconColor: "#3A3B40",
   },
   {
+    name: "Command Code",
+    websiteUrl: "https://commandcode.ai",
+    apiKeyUrl: "https://commandcode.ai/settings/keys",
+    category: "third_party",
+    // 同 Claude Code 预设：非 Claude 模型只在 /chat/completions（/messages
+    // 还拒消息数组中途的 system 角色），走 openai_chat 路由；
+    // deepseek-v4.1-flash 窗口 1M（公开 /provider/v1/models，2026-11-27）
+    baseUrl: "https://api.commandcode.ai/provider",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.commandcode.ai/provider"],
+    icon: "commandcode",
+  },
+  {
     name: "SoruxGPT",
     websiteUrl: "https://ai.soruxgpt.com",
     apiKeyUrl: "https://ai.soruxgpt.com/console/token",
