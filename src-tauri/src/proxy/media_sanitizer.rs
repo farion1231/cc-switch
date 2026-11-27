@@ -13,6 +13,228 @@ use serde_json::{json, Value};
 pub const UNSUPPORTED_IMAGE_MARKER: &str = "[Unsupported Image]";
 const UNSUPPORTED_MEDIA_MARKER: &str = "[Unsupported Media]";
 
+/// Placeholder for an image removed because the request carried more than the
+/// configured cap.
+///
+/// Distinct from [`UNSUPPORTED_IMAGE_MARKER`]: that one means the upstream does
+/// not accept images at all, while this one means the proxy dropped the oldest
+/// images to keep the request within the upstream's per-request limit.
+pub const IMAGE_DROPPED_MARKER: &str = "[Image dropped: request exceeded the image limit]";
+
+/// Drop image blocks from the oldest message onward until the request fits
+/// within `max_images`. Returns the number of blocks replaced (0 = under cap).
+///
+/// Runs after the protocol conversion has settled, so the body may already be in
+/// any of the four supported shapes:
+/// - Anthropic Messages: `messages[].content[]` with `type: "image"`, including
+///   images nested in `tool_result.content[]`;
+/// - OpenAI Chat Completions: `messages[].content[]` with `type: "image_url"`;
+/// - OpenAI Responses: `input[]` with `type: "input_image"`;
+/// - Gemini Native: `contents[].parts[]` with `inlineData` / `fileData`.
+///
+/// `discard_step` sets how many images to remove per pass: exceeding the cap by
+/// `k` images removes `ceil(k / discard_step) * discard_step`, so a run of new
+/// images does not rewrite the request body on every turn.
+pub fn prune_excess_images(body: &mut Value, max_images: usize, discard_step: usize) -> usize {
+    let discard_step = discard_step.max(1);
+    let total = count_all_images(body);
+    if total <= max_images {
+        return 0;
+    }
+
+    let excess = total - max_images;
+    let mut budget = (excess.div_ceil(discard_step) * discard_step).min(total);
+    let mut removed = 0usize;
+
+    // Traversal order is oldest-first in each shape: messages for Anthropic and
+    // Chat, input for Responses, contents for Gemini.
+    prune_images_in_standard_messages(body, &mut budget, &mut removed);
+    prune_images_in_responses_input(body, &mut budget, &mut removed);
+    prune_images_in_gemini_contents(body, &mut budget, &mut removed);
+
+    removed
+}
+
+/// Count image blocks across every supported request shape.
+fn count_all_images(body: &Value) -> usize {
+    let messages_total = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .map(|messages| count_images_in_messages(messages))
+        .unwrap_or(0);
+    messages_total
+        + body
+            .get("input")
+            .map(|input| match input {
+                Value::Array(items) => items.iter().map(count_responses_item_images).sum(),
+                other => count_responses_item_images(other),
+            })
+            .unwrap_or(0)
+        + body
+            .get("contents")
+            .and_then(Value::as_array)
+            .map(|contents| {
+                contents
+                    .iter()
+                    .filter_map(|c| c.get("parts").and_then(Value::as_array))
+                    .map(|parts| parts.iter().filter(|p| gemini_part_has_image(p)).count())
+                    .sum()
+            })
+            .unwrap_or(0)
+}
+
+fn count_responses_item_images(item: &Value) -> usize {
+    let own = usize::from(item.get("type").and_then(Value::as_str) == Some("input_image"));
+    let nested = item
+        .get("content")
+        .map(count_images_in_content)
+        .unwrap_or(0);
+    own + nested
+}
+
+fn prune_images_in_standard_messages(
+    body: &mut Value,
+    budget: &mut usize,
+    removed: &mut usize,
+) {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for message in messages.iter_mut() {
+        if *budget == 0 {
+            return;
+        }
+        let Some(content) = message.get_mut("content") else {
+            continue;
+        };
+        *removed += prune_images_in_content(content, budget, "text");
+    }
+}
+
+fn prune_images_in_responses_input(
+    body: &mut Value,
+    budget: &mut usize,
+    removed: &mut usize,
+) {
+    let Some(input) = body.get_mut("input") else {
+        return;
+    };
+    let items: Vec<&mut Value> = match input {
+        Value::Array(items) => items.iter_mut().collect(),
+        other => vec![other],
+    };
+    for item in items {
+        if *budget == 0 {
+            return;
+        }
+        if item.get("type").and_then(Value::as_str) == Some("input_image") {
+            *removed += 1;
+            *budget -= 1;
+            *item = json!({ "type": "input_text", "text": IMAGE_DROPPED_MARKER });
+            continue;
+        }
+        if let Some(content) = item.get_mut("content") {
+            // Responses message content uses input_text, alongside input_image.
+            *removed += prune_images_in_content(content, budget, "input_text");
+        }
+    }
+}
+
+fn prune_images_in_gemini_contents(
+    body: &mut Value,
+    budget: &mut usize,
+    removed: &mut usize,
+) {
+    let Some(contents) = body.get_mut("contents").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for content in contents.iter_mut() {
+        if *budget == 0 {
+            return;
+        }
+        let Some(parts) = content.get_mut("parts").and_then(Value::as_array_mut) else {
+            continue;
+        };
+        for part in parts.iter_mut() {
+            if *budget == 0 {
+                return;
+            }
+            if gemini_part_has_image(part) {
+                *removed += 1;
+                *budget -= 1;
+                *part = json!({ "text": IMAGE_DROPPED_MARKER });
+            }
+        }
+    }
+}
+
+fn count_images_in_messages(messages: &[Value]) -> usize {
+    messages
+        .iter()
+        .filter_map(|message| message.get("content"))
+        .map(count_images_in_content)
+        .sum()
+}
+
+fn count_images_in_content(content: &Value) -> usize {
+    let Some(blocks) = content.as_array() else {
+        return 0;
+    };
+    blocks
+        .iter()
+        .map(|block| {
+            if is_image_block_type(block.get("type").and_then(Value::as_str)) {
+                return 1;
+            }
+            // tool_result nests its images in a content array per the Anthropic spec.
+            if block.get("type").and_then(Value::as_str) == Some("tool_result") {
+                return block
+                    .get("content")
+                    .map(count_images_in_content)
+                    .unwrap_or(0);
+            }
+            0
+        })
+        .sum()
+}
+
+/// Replace up to `remaining` image blocks in a content array with a placeholder,
+/// decrementing `remaining` as it goes.
+///
+/// `text_type` is the block type used for the placeholder: Anthropic and Chat use
+/// `"text"`, Responses message content uses `"input_text"`. Using the wrong one
+/// leaves a block the upstream does not recognise.
+fn prune_images_in_content(
+    content: &mut Value,
+    remaining: &mut usize,
+    text_type: &str,
+) -> usize {
+    let Some(blocks) = content.as_array_mut() else {
+        return 0;
+    };
+
+    let mut removed = 0usize;
+    for block in blocks.iter_mut() {
+        if *remaining == 0 {
+            break;
+        }
+        let block_type = block.get("type").and_then(Value::as_str);
+        if is_image_block_type(block_type) {
+            *block = json!({ "type": text_type, "text": IMAGE_DROPPED_MARKER });
+            *remaining -= 1;
+            removed += 1;
+            continue;
+        }
+        // tool_result content holds ordinary text blocks per the Anthropic spec.
+        if block_type == Some("tool_result") {
+            if let Some(nested) = block.get_mut("content") {
+                removed += prune_images_in_content(nested, remaining, "text");
+            }
+        }
+    }
+    removed
+}
+
 /// Replace image blocks before sending when the routed model is text-only.
 ///
 /// Two paths, both reached only when the caller's media-fallback switch is on:
@@ -1779,5 +2001,310 @@ mod tests {
             body["messages"][0]["content"][0]["text"],
             UNSUPPORTED_IMAGE_MARKER
         );
+    }
+
+    fn image_message(count: usize) -> Value {
+        json!({
+            "role": "user",
+            "content": (0..count)
+                .map(|_| json!({
+                    "type": "image",
+                    "source": { "type": "base64", "media_type": "image/png", "data": "abc" }
+                }))
+                .collect::<Vec<_>>()
+        })
+    }
+
+    fn count_images(body: &Value) -> usize {
+        body.get("messages")
+            .and_then(Value::as_array)
+            .map(|m| count_images_in_messages(m))
+            .unwrap_or(0)
+    }
+
+    #[test]
+    fn image_cap_leaves_under_limit_untouched() {
+        for count in [0usize, 1, 19, 20] {
+            let mut body = json!({ "messages": [image_message(count)] });
+            assert_eq!(prune_excess_images(&mut body, 20, 5), 0, "count={count}");
+            assert_eq!(count_images(&body), count);
+        }
+    }
+
+    #[test]
+    fn image_cap_offloads_in_quantum() {
+        // 21 images exceed the cap by 1; one pass of 5 still removes 5.
+        let mut body = json!({ "messages": [image_message(21)] });
+        assert_eq!(prune_excess_images(&mut body, 20, 5), 5);
+        assert_eq!(count_images(&body), 16);
+
+        // 25 images exceed the cap by 5, which is exactly one pass.
+        let mut body = json!({ "messages": [image_message(25)] });
+        assert_eq!(prune_excess_images(&mut body, 20, 5), 5);
+        assert_eq!(count_images(&body), 20);
+
+        // 26 images exceed the cap by 6, so two passes remove 10.
+        let mut body = json!({ "messages": [image_message(26)] });
+        assert_eq!(prune_excess_images(&mut body, 20, 5), 10);
+        assert_eq!(count_images(&body), 16);
+    }
+
+    #[test]
+    fn image_cap_discard_step_one_removes_exactly_the_excess() {
+        let mut body = json!({ "messages": [image_message(23)] });
+        assert_eq!(prune_excess_images(&mut body, 20, 1), 3);
+        assert_eq!(count_images(&body), 20);
+    }
+
+    #[test]
+    fn image_cap_removes_oldest_first() {
+        // Two turns: 20 images, then 1. Dropping must start from the first turn.
+        let mut body = json!({
+            "messages": [
+                image_message(20),
+                json!({ "role": "assistant", "content": [{ "type": "text", "text": "ok" }] }),
+                image_message(1),
+            ]
+        });
+
+        assert_eq!(prune_excess_images(&mut body, 20, 5), 5);
+
+        let first = body["messages"][0]["content"].as_array().unwrap();
+        assert_eq!(first[0]["type"], "text");
+        assert!(
+            first[0]["text"].as_str().unwrap() == IMAGE_DROPPED_MARKER,
+            "最旧的图片应被替换成占位文本"
+        );
+        // The most recent image must survive.
+        assert_eq!(body["messages"][2]["content"][0]["type"], "image");
+    }
+
+    #[test]
+    fn image_cap_keeps_non_image_blocks_intact() {
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "before" },
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "abc" } },
+                    { "type": "text", "text": "after" }
+                ]
+            }]
+        });
+
+        assert_eq!(prune_excess_images(&mut body, 1, 5), 0);
+        assert_eq!(count_images(&body), 1);
+        assert_eq!(body["messages"][0]["content"][0]["text"], "before");
+        assert_eq!(body["messages"][0]["content"][2]["text"], "after");
+    }
+
+    #[test]
+    fn image_cap_counts_images_nested_in_tool_result() {
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "t1",
+                    "content": [
+                        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "a" } },
+                        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "b" } }
+                    ]
+                }]
+            }]
+        });
+
+        assert_eq!(count_images(&body), 2);
+        assert_eq!(prune_excess_images(&mut body, 1, 1), 1);
+        assert_eq!(count_images(&body), 1);
+    }
+
+    /// OpenAI Chat shape: after conversion images are `image_url`, not
+    /// Anthropic's `image`. The pruning runs after conversion, so it must
+    /// recognise this shape too.
+    #[test]
+    fn image_cap_handles_openai_chat_image_url_parts() {
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "text", "text": "look" },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,a" } },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,b" } },
+                    { "type": "image_url", "image_url": { "url": "data:image/png;base64,c" } }
+                ]
+            }]
+        });
+
+        assert_eq!(count_all_images(&body), 3);
+        assert_eq!(prune_excess_images(&mut body, 1, 1), 2);
+        assert_eq!(count_all_images(&body), 1);
+        assert_eq!(body["messages"][0]["content"][1]["type"], "text");
+        assert_eq!(body["messages"][0]["content"][3]["type"], "image_url");
+    }
+
+    /// Gemini Native shape: `inlineData` inside `contents[].parts[]`.
+    #[test]
+    fn image_cap_handles_gemini_inline_data_parts() {
+        let mut body = json!({
+            "contents": [{
+                "role": "user",
+                "parts": [
+                    { "text": "look" },
+                    { "inlineData": { "mimeType": "image/png", "data": "a" } },
+                    { "inlineData": { "mimeType": "image/png", "data": "b" } }
+                ]
+            }]
+        });
+
+        assert_eq!(count_all_images(&body), 2);
+        // Step 5: exceeding by 1 asks for min(ceil(1/5)*5, 2) = 2 — everything goes.
+        assert_eq!(prune_excess_images(&mut body, 1, 5), 2);
+        assert_eq!(count_all_images(&body), 0);
+    }
+
+    /// Responses shape: `input_image` items inside `input[]`.
+    #[test]
+    fn image_cap_handles_responses_input_image_items() {
+        let mut body = json!({
+            "input": [
+                { "type": "input_image", "image_url": "data:image/png;base64,a" },
+                { "type": "input_image", "image_url": "data:image/png;base64,b" }
+            ]
+        });
+
+        assert_eq!(count_all_images(&body), 2);
+        // Step 5: exceeding by 1 still drops in multiples of 5, so both go.
+        assert_eq!(prune_excess_images(&mut body, 1, 5), 2);
+        assert_eq!(count_all_images(&body), 0);
+        // The replacement must use a type Responses understands, not Anthropic's text.
+        assert_eq!(body["input"][0]["type"], "input_text");
+    }
+
+    /// Images nested in a Responses message content array also become input_text.
+    #[test]
+    fn image_cap_uses_input_text_inside_responses_message_content() {
+        let mut body = json!({
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [
+                    { "type": "input_text", "text": "look" },
+                    { "type": "input_image", "image_url": "data:image/png;base64,a" }
+                ]
+            }]
+        });
+
+        assert_eq!(prune_excess_images(&mut body, 0, 1), 1);
+        assert_eq!(body["input"][0]["content"][1]["type"], "input_text");
+        assert_eq!(
+            body["input"][0]["content"][1]["text"],
+            IMAGE_DROPPED_MARKER
+        );
+    }
+
+    /// Shapes share one budget: if each shape fits on its own but their total
+    /// exceeds the cap, the upstream still rejects the request.
+    #[test]
+    fn image_cap_budget_spans_all_media_shapes() {
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [
+                    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "a" } }
+                ]
+            }],
+            "contents": [{
+                "parts": [{ "inlineData": { "mimeType": "image/png", "data": "b" } }]
+            }]
+        });
+
+        assert_eq!(count_all_images(&body), 2);
+        assert_eq!(prune_excess_images(&mut body, 1, 1), 1);
+        assert_eq!(count_all_images(&body), 1);
+    }
+
+    /// Callers are expected to skip a zero cap, but if they don't, everything is
+    /// dropped rather than leaving an over-cap request to be rejected.
+    #[test]
+    fn image_cap_with_zero_limit_removes_everything() {
+        let mut body = json!({ "messages": [image_message(3)] });
+        assert_eq!(prune_excess_images(&mut body, 0, 5), 3);
+        assert_eq!(count_images(&body), 0);
+    }
+
+    /// A step larger than the cap rounds up to far more than needed. This test
+    /// pins the current behaviour; keeping step <= cap is the caller's job.
+    #[test]
+    fn image_cap_discard_step_larger_than_cap_drops_in_multiples() {
+        // Cap 5, step 10, 21 images: over by 16, rounded up to 20.
+        let mut body = json!({ "messages": [image_message(21)] });
+        assert_eq!(prune_excess_images(&mut body, 5, 10), 20);
+        assert_eq!(count_images(&body), 1);
+
+        // Cap 20, step 100, 21 images: over by 1, rounded up to 100, then
+        // clamped to the total, so everything goes.
+        let mut body = json!({ "messages": [image_message(21)] });
+        assert_eq!(prune_excess_images(&mut body, 20, 100), 21);
+        assert_eq!(count_images(&body), 0);
+    }
+
+    /// A zero step is treated as 1, so there is no division by zero or loop.
+    #[test]
+    fn image_cap_zero_discard_step_falls_back_to_one() {
+        let mut body = json!({ "messages": [image_message(23)] });
+        assert_eq!(prune_excess_images(&mut body, 20, 0), 3);
+        assert_eq!(count_images(&body), 20);
+    }
+
+    /// A missing or non-array messages key returns 0 instead of panicking.
+    #[test]
+    fn image_cap_tolerates_absent_or_malformed_containers() {
+        for body in [
+            json!({}),
+            json!({ "messages": "not an array" }),
+            json!({ "messages": [] }),
+            json!({ "messages": [{ "role": "user", "content": "plain string" }] }),
+            json!({ "messages": [{ "role": "user", "content": [] }] }),
+        ] {
+            let mut b = body.clone();
+            assert_eq!(prune_excess_images(&mut b, 1, 1), 0, "body={body}");
+        }
+    }
+
+    /// When every image in a tool result is dropped, its content becomes a list
+    /// of placeholders rather than an empty array, which some upstreams reject.
+    #[test]
+    fn image_cap_keeps_tool_result_content_non_empty() {
+        let mut body = json!({
+            "messages": [{
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "t1",
+                    "content": [
+                        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "a" } },
+                        { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "b" } }
+                    ]
+                }]
+            }]
+        });
+
+        assert_eq!(prune_excess_images(&mut body, 0, 1), 2);
+        let nested = body["messages"][0]["content"][0]["content"]
+            .as_array()
+            .expect("tool_result.content 应仍是数组");
+        assert_eq!(nested.len(), 2, "两张图各留一个占位块");
+        assert!(nested.iter().all(|b| b["type"] == "text"));
+    }
+
+    /// A dropped image becomes visible placeholder text so the model knows the
+    /// content is gone.
+    #[test]
+    fn image_cap_replaces_with_dropped_marker() {
+        let mut body = json!({ "messages": [image_message(2)] });
+        assert_eq!(prune_excess_images(&mut body, 1, 1), 1);
+        let text = body["messages"][0]["content"][0]["text"].as_str().unwrap();
+        assert_eq!(text, IMAGE_DROPPED_MARKER);
     }
 }

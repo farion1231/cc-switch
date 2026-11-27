@@ -184,6 +184,40 @@ pub struct RectifierConfig {
     /// 仍保留「显式声明」与「上游兜底」，且不改变 Codex 模型目录声明。
     #[serde(default = "default_true")]
     pub request_media_heuristic: bool,
+    /// 请求整流：单请求图片数量上限（默认关闭）
+    ///
+    /// 部分上游限制单个请求能携带的图片张数，超出时直接拒绝请求。历史里的
+    /// 图片每轮都会重发，压缩请求也带着全量图片，所以一旦超限，会话无法自行
+    /// 恢复，只能弃用。
+    ///
+    /// 打开后，代理在把请求交给上游之前统计图片块，超出上限时从最旧的消息
+    /// 开始替换成占位文本，直到落在上限内。客户端本地的历史不受影响。
+    #[serde(default)]
+    pub image_cap_enabled: bool,
+    /// 单请求允许的最大图片张数（1–1000）
+    #[serde(default = "default_image_cap_max")]
+    pub image_cap_max: usize,
+    /// 单次丢弃张数（1–100，默认 5）
+    ///
+    /// 超出上限时一次丢弃这么多张（含其倍数），而不是来一张丢一张，
+    /// 免得每次新增图片都重写一遍请求体。
+    #[serde(
+        default = "default_image_cap_discard",
+        alias = "imageCapQuantum"
+    )]
+    pub image_cap_discard: usize,
+}
+
+/// 单次丢弃张数的默认值。
+fn default_image_cap_discard() -> usize {
+    5
+}
+
+/// 图片上限的默认值。
+pub const DEFAULT_IMAGE_CAP_MAX: usize = 20;
+
+fn default_image_cap_max() -> usize {
+    DEFAULT_IMAGE_CAP_MAX
 }
 
 fn default_true() -> bool {
@@ -202,6 +236,9 @@ impl Default for RectifierConfig {
             request_thinking_budget: true,
             request_media_fallback: true,
             request_media_heuristic: true,
+            image_cap_enabled: false,
+            image_cap_max: default_image_cap_max(),
+            image_cap_discard: default_image_cap_discard(),
         }
     }
 }
@@ -392,6 +429,34 @@ mod tests {
             config.request_media_heuristic,
             "缺 requestMediaHeuristic 时应回退默认值 true"
         );
+        assert!(
+            !config.image_cap_enabled,
+            "缺 imageCapEnabled 时应默认关闭"
+        );
+        assert_eq!(
+            config.image_cap_max, DEFAULT_IMAGE_CAP_MAX,
+            "缺 imageCapMax 时应回退默认上限"
+        );
+        assert_eq!(config.image_cap_discard, 5, "缺 imageCapDiscard 时应回退 5");
+    }
+
+    #[test]
+    fn rectifier_config_default_matches_serde_defaults() {
+        // Default 与 serde 缺省必须一致：get_rectifier_config 在表里没有配置
+        // 时用 Default，有配置时走 serde，两条路径不能给出不同的张数。
+        let from_default = RectifierConfig::default();
+        let from_empty: RectifierConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_default.image_cap_enabled, from_empty.image_cap_enabled);
+        assert_eq!(from_default.image_cap_max, from_empty.image_cap_max);
+        assert_eq!(from_default.image_cap_discard, from_empty.image_cap_discard);
+    }
+
+    #[test]
+    fn rectifier_config_accepts_legacy_quantum_alias() {
+        // 早期版本把该字段写作 imageCapQuantum，已写入的配置要能继续读到。
+        let config: RectifierConfig =
+            serde_json::from_str(r#"{"imageCapQuantum": 7}"#).unwrap();
+        assert_eq!(config.image_cap_discard, 7);
     }
 
     #[test]

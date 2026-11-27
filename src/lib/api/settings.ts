@@ -438,6 +438,12 @@ export interface RectifierConfig {
   requestThinkingBudget: boolean;
   requestMediaFallback: boolean;
   requestMediaHeuristic: boolean;
+  /** 请求整流：单请求图片数量上限（总开关） */
+  imageCapEnabled: boolean;
+  /** 单请求允许的最大图片张数（1–1000，0 = 不处理） */
+  imageCapMax: number;
+  /** 单次丢弃张数（1–100）；超限时一次丢弃这么多张（含其倍数） */
+  imageCapDiscard: number;
 }
 
 export interface OptimizerConfig {

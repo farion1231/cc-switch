@@ -528,7 +528,11 @@
         "mediaFallback": "Unsupported Image Fallback",
         "mediaFallbackDescription": "When a provider does not support image input (it declares text-only capability, or the upstream returns an unsupported-image error), automatically replaces image blocks with an [Unsupported Image] marker so the conversation is not interrupted",
         "mediaHeuristic": "Text-Only Model Preflight",
-        "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged"
+        "mediaHeuristicDescription": "Before sending, strips images for models in the built-in confirmed text-only registry. Turning this off only disables the proxy's registry-based preflight; declared text-only handling and upstream-error fallback remain, and Codex model-catalog capability declarations are unchanged",
+        "imageCap": "Image count cap",
+        "imageCapDescription": "Some providers limit how many images a single request may carry; when enabled, the oldest images in the conversation are dropped in multiples of the configured discard size so the conversation keeps going",
+        "imageCapMax": "Max images",
+        "imageCapDiscard": "Discard per step"
       },
       "privacyFilter": {
         "title": "Privacy Filter",
