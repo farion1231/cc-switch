@@ -6,6 +6,7 @@ import {
   type QuotaDetail,
 } from "@/lib/api/copilot";
 import type { QuotaTier } from "@/types/subscription";
+import { isManualIdle, useQuotaPolicy } from "./quotaPolicy";
 
 const REFETCH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
@@ -68,8 +69,11 @@ export function useCopilotQuota(
   accountId: string | null,
   options: UseCopilotQuotaOptions = {},
 ) {
-  const { enabled = true, autoQuery = false } = options;
-  return useQuery<CopilotQuota>({
+  const { enabled = true } = options;
+  const policy = useQuotaPolicy();
+  const autoAllowed = policy.autoAllowed;
+  const autoQuery = autoAllowed && (options.autoQuery ?? false);
+  const query = useQuery<CopilotQuota>({
     queryKey: ["copilot", "quota", accountId ?? "default"],
     queryFn: async (): Promise<CopilotQuota> => {
       const usage = accountId
@@ -116,13 +120,14 @@ export function useCopilotQuota(
         queriedAt: Date.now(),
       };
     },
-    enabled,
+    enabled: autoAllowed && enabled,
     refetchInterval: autoQuery ? REFETCH_INTERVAL : false,
     refetchIntervalInBackground: autoQuery,
     refetchOnWindowFocus: autoQuery,
     staleTime: REFETCH_INTERVAL,
     retry: 1,
   });
+  return { ...query, manualIdle: isManualIdle(policy, query) };
 }
 
 /** Copilot CLI 当前登录的账号（官方卡没绑授权中心账号时，额度跟着它查）。 */

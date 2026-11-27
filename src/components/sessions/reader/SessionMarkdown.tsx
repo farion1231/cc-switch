@@ -40,8 +40,6 @@ export interface SessionMarkdownProps {
   variant?: "body" | "note";
   /** 打开外链（http/https/mailto）；不传时调用 `open_external` 命令 */
   onOpenLink?: (url: string) => void;
-  /** 「在 Finder 中显示」；不传时调用 `reveal_session_path` 命令 */
-  onRevealPath?: (path: string) => void;
   /** 远程图片是否直接加载；默认 false，需用户点击后才发请求 */
   autoLoadRemoteImages?: boolean;
   /** 本地图片（`![](/abs/path.png)`）的渲染；不传时显示为路径 chip */
@@ -587,7 +585,6 @@ export const openSessionLink = async (url: string) => {
 
 interface MarkdownActions {
   openLink: (url: string) => void;
-  revealPath?: (path: string) => void;
   autoLoadRemoteImages: boolean;
   renderLocalImage?: (path: string, alt: string) => ReactNode;
 }
@@ -651,10 +648,7 @@ const MarkdownPathChip = (props: {
   projectDir?: string;
   label?: ReactNode;
   searchQuery?: string;
-}) => {
-  const { revealPath } = useContext(MarkdownActionsContext);
-  return <PathChip {...props} onReveal={revealPath} />;
-};
+}) => <PathChip {...props} />;
 
 /** 本地图片：调用方提供渲染器（阅读页用 SessionImage）时显示图片，否则退回路径 chip */
 const MarkdownLocalImage = (props: {
@@ -1104,7 +1098,6 @@ export const SessionMarkdown = memo(function SessionMarkdown({
   projectDir,
   variant = "body",
   onOpenLink,
-  onRevealPath,
   autoLoadRemoteImages = false,
   renderLocalImage,
   className,
@@ -1112,11 +1105,10 @@ export const SessionMarkdown = memo(function SessionMarkdown({
   const actions = useMemo<MarkdownActions>(
     () => ({
       openLink: onOpenLink ?? defaultOpenLink,
-      revealPath: onRevealPath,
       autoLoadRemoteImages,
       renderLocalImage,
     }),
-    [autoLoadRemoteImages, onOpenLink, onRevealPath, renderLocalImage],
+    [autoLoadRemoteImages, onOpenLink, renderLocalImage],
   );
 
   if (content.length > MARKDOWN_PARSE_LIMIT) {

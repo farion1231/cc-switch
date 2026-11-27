@@ -1,5 +1,5 @@
 use super::codex_chat_common::{is_empty_value, response_item_call_id};
-use crate::proxy::sse::{strip_sse_field, SseBuffer};
+use crate::proxy::sse::{strip_sse_field, SseBuffer, MAX_SSE_EVENT_BYTES};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use serde_json::Value;
@@ -439,7 +439,7 @@ pub fn record_responses_sse_stream(
     scope: Option<String>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut sse = SseBuffer::new();
+        let mut sse = SseBuffer::with_max_pending_bytes(MAX_SSE_EVENT_BYTES);
         let mut current_response_id: Option<String> = None;
 
         tokio::pin!(stream);

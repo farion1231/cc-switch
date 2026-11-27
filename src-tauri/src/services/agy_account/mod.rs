@@ -24,9 +24,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex, Semaphore};
 
 use crate::error::AppError;
+use crate::sync_utils::MutexExt;
 use keychain::AgyLoginStore;
 use oauth::{AgyOAuthError, TokenResponse};
 
@@ -36,6 +37,35 @@ const STASH_FILENAME: &str = "agy-login-stash.json";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 /// access token 剩不到这么久就先续期再查额度。
 const TOKEN_MARGIN: Duration = Duration::from_secs(120);
+/// 同时向上游查额度的并发上限，避免多账号冷启动或批量刷新时一拥而上。
+const MAX_CONCURRENT_QUOTA_QUERIES: usize = 3;
+
+/// 最近一次读到的账号表和 agy 当前登录，见 [`last_known_status`]。
+static LAST_KNOWN: std::sync::Mutex<Option<AgyAccountStatus>> = std::sync::Mutex::new(None);
+
+/// 最近一次读到的账号表和 agy 当前登录。托盘建菜单是同步的，也不该每次都起子进程读钥匙串，
+/// 就读这份：账号表每次存盘后更新，当前登录在查看状态、切号、查额度读过钥匙串后更新。
+/// 还没读过钥匙串时 `current_account_id` 为 `None`。
+pub fn last_known_status() -> Option<AgyAccountStatus> {
+    LAST_KNOWN.lock_recover().clone()
+}
+
+/// 记下账号表；`current` 为 `Some` 时连同刚从钥匙串读到的当前登录一起记，`None` 沿用上次的。
+fn remember(store: &StoreFile, current: Option<Option<String>>) {
+    let mut last = LAST_KNOWN.lock_recover();
+    let current = match current {
+        Some(current) => current,
+        None => last
+            .as_ref()
+            .and_then(|status| status.current_account_id.clone()),
+    }
+    .filter(|id| store.accounts.contains_key(id));
+    *last = Some(AgyAccountStatus {
+        accounts: sorted_accounts(store),
+        current_account_id: current,
+        supported: keychain::supported(),
+    });
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AccountData {
@@ -111,7 +141,7 @@ pub struct AgyAccountStatus {
     pub accounts: Vec<AgyAccount>,
     /// agy 当前登录的是哪个已收录的号；没登录、或读不到钥匙串时为 `None`
     pub current_account_id: Option<String>,
-    /// 这个平台能不能切号（目前是 macOS 和 Windows）
+    /// 这个平台能不能切号（macOS、Windows 和 Linux）。
     pub supported: bool,
 }
 
@@ -152,6 +182,8 @@ pub struct AgyAccountManager {
     /// 账号表；同时充当所有改动（含写钥匙串）的互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
+    /// 限制同时查额度的并发数
+    quota_permits: Semaphore,
 }
 
 impl AgyAccountManager {
@@ -161,22 +193,14 @@ impl AgyAccountManager {
 
     pub fn with_login_store(data_dir: PathBuf, login: Arc<dyn AgyLoginStore>) -> Self {
         let path = data_dir.join(STORE_FILENAME);
-        let store = match std::fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|error| {
-                log::warn!("[AgyAccount] 账号文件解析失败，按空表处理: {error}");
-                StoreFile::default()
-            }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => StoreFile::default(),
-            Err(error) => {
-                log::warn!("[AgyAccount] 账号文件读取失败，按空表处理: {error}");
-                StoreFile::default()
-            }
-        };
+        let store = crate::config::load_json_or_set_aside(&path, "AgyAccount");
+        remember(&store, None);
         Self {
             data_dir,
             login,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
+            quota_permits: Semaphore::new(MAX_CONCURRENT_QUOTA_QUERIES),
         }
     }
 
@@ -286,7 +310,7 @@ impl AgyAccountManager {
         let mut store = self.store.lock().await;
         let mut current = None;
         if keychain::supported() {
-            match self.read_live(&store).await {
+            match self.read_live(&store, false).await {
                 Ok(live) => {
                     let (id, changed) = absorb(&mut store, live, false);
                     current = id;
@@ -296,6 +320,7 @@ impl AgyAccountManager {
                 }
                 Err(error) => log::warn!("[AgyAccount] 读取 agy 当前登录失败: {error}"),
             }
+            remember(&store, Some(current.clone()));
         }
         Ok(AgyAccountStatus {
             accounts: sorted_accounts(&store),
@@ -323,7 +348,7 @@ impl AgyAccountManager {
             ));
         }
 
-        let live = self.read_live(&store).await?;
+        let live = self.read_live(&store, true).await?;
         if let LiveLogin::Unrecognized(raw) = &live {
             self.stash_unrecognized(raw)?;
         }
@@ -332,6 +357,7 @@ impl AgyAccountManager {
             self.persist(&store)?;
         }
         if current.as_deref() == Some(account_id) {
+            remember(&store, Some(current));
             return Ok(());
         }
 
@@ -341,22 +367,22 @@ impl AgyAccountManager {
         let login = Arc::clone(&self.login);
         run_blocking(move || login.write(&encoded)).await?;
 
-        // 写完读回来核对，钥匙串偶尔会静默失败
-        let written = match self.read_live(&store).await? {
-            LiveLogin::Known { credential, .. } => {
-                refresh_token_of(&credential).map(str::to_string)
+        // 核验失败时只重读，避免再次覆盖 agy 可能已经更新过的登录。
+        for _ in 0..2 {
+            if let Ok(LiveLogin::Known { credential, .. }) = self.read_live(&store, false).await {
+                let written = refresh_token_of(&credential);
+                if written.is_some() && written == expected.as_deref() {
+                    log::info!("[AgyAccount] 已切换 agy 登录");
+                    remember(&store, Some(Some(account_id.to_string())));
+                    return Ok(());
+                }
             }
-            _ => None,
-        };
-        if written.is_none() || written != expected {
-            return Err(AppError::localized(
-                "agy.account.write_verify_failed",
-                "写入后核对不一致，agy 的登录可能没有切换成功",
-                "The written sign-in did not verify; agy may not have switched accounts.",
-            ));
         }
-        log::info!("[AgyAccount] 已切换 agy 登录");
-        Ok(())
+        Err(AppError::localized(
+            "agy.account.write_verify_failed",
+            "已写入钥匙串，但无法确认 agy 当前登录的账号。请先在授权中心检查当前登录，再重试。",
+            "The keychain write completed, but agy's current account could not be verified. Check the current sign-in in Auth Center before retrying.",
+        ))
     }
 
     /// 只删 CC Switch 里的副本。删的是 agy 正登着的号时记下来，免得查看状态时又被收回来。
@@ -397,12 +423,33 @@ impl AgyAccountManager {
 
     /// 用这个账号自己的令牌查剩余额度（不用先切号）。令牌被拒时强制续期再试一次。
     pub async fn quota(&self, account_id: &str) -> Result<quota::AccountQuota, AccountQuotaError> {
+        self.quota_with(
+            account_id,
+            |token| async move { quota::fetch(&token).await },
+        )
+        .await
+    }
+
+    async fn quota_with<F, Fut>(
+        &self,
+        account_id: &str,
+        mut fetch: F,
+    ) -> Result<quota::AccountQuota, AccountQuotaError>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = Result<quota::AccountQuota, quota::QuotaError>>,
+    {
+        let _permit = self
+            .quota_permits
+            .acquire()
+            .await
+            .map_err(|_| AccountQuotaError::Failed("quota semaphore closed".into()))?;
         let token = self.access_token(account_id).await?;
-        match quota::fetch(&token).await {
+        match fetch(token).await {
             Ok(result) => Ok(result),
             Err(quota::QuotaError::Unauthorized) => {
                 let token = self.refresh_account(account_id).await?;
-                quota::fetch(&token)
+                fetch(token)
                     .await
                     .map_err(|error| AccountQuotaError::Failed(error.to_string()))
             }
@@ -424,7 +471,7 @@ impl AgyAccountManager {
             return None;
         }
         let mut store = self.store.lock().await;
-        let live = match self.read_live(&store).await {
+        let live = match self.read_live(&store, false).await {
             Ok(live) => live,
             Err(error) => {
                 log::warn!("[AgyAccount] 读取 agy 当前登录失败: {error}");
@@ -437,15 +484,26 @@ impl AgyAccountManager {
                 log::warn!("[AgyAccount] 保存账号文件失败: {error}");
             }
         }
+        remember(&store, Some(id.clone()));
         id
     }
 
-    /// 这个账号还能用的 access token。agy 在用的号先从钥匙串收回 agy 续过的那份。
+    /// 这个账号还能用的 access token。副本里的令牌还有效且未失效时直接用；需要续期或账号已标为
+    /// 失效时再去读钥匙串，把 agy 续过的令牌或重新登录的结果收回来。
     async fn access_token(&self, account_id: &str) -> Result<String, AccountQuotaError> {
         {
             let mut store = self.store.lock().await;
+            if let Some(account) = store.accounts.get(account_id) {
+                if !account.requires_reauth {
+                    if let Some(token) =
+                        oauth::usable_access_token(&account.credential, TOKEN_MARGIN)
+                    {
+                        return Ok(token.to_string());
+                    }
+                }
+            }
             if keychain::supported() {
-                if let Ok(live) = self.read_live(&store).await {
+                if let Ok(live) = self.read_live(&store, false).await {
                     if absorb(&mut store, live, false).1 {
                         if let Err(error) = self.persist(&store) {
                             log::warn!("[AgyAccount] 保存账号文件失败: {error}");
@@ -511,9 +569,20 @@ impl AgyAccountManager {
     /// id_token，只有 `id_token_email`（可能带 `writer_id`），先按 refresh token、再按邮箱对已收录的号；
     /// 都对不上（agy 里新登录的号）时用 access token 问 Google（若 access token 已过期则先拿
     /// refresh token 续期）。
-    async fn read_live(&self, store: &StoreFile) -> Result<LiveLogin, AppError> {
+    async fn read_live(
+        &self,
+        store: &StoreFile,
+        allow_unlock: bool,
+    ) -> Result<LiveLogin, AppError> {
         let login = Arc::clone(&self.login);
-        let raw = run_blocking(move || login.read()).await?;
+        let raw = run_blocking(move || {
+            if allow_unlock {
+                login.read_for_switch()
+            } else {
+                login.read()
+            }
+        })
+        .await?;
         let Some(raw) = raw else {
             return Ok(LiveLogin::None);
         };
@@ -574,7 +643,9 @@ impl AgyAccountManager {
         };
         let content = serde_json::to_vec_pretty(&snapshot)
             .map_err(|source| AppError::JsonSerialize { source })?;
-        crate::config::atomic_write_private(&self.data_dir.join(STORE_FILENAME), &content)
+        crate::config::atomic_write_private(&self.data_dir.join(STORE_FILENAME), &content)?;
+        remember(store, None);
+        Ok(())
     }
 }
 

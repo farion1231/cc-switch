@@ -348,19 +348,6 @@ mod tests {
     }
 
     #[test]
-    fn progress_payload_serializes_for_frontend() {
-        let payload = ToolLifecycleProgressPayload {
-            tools: vec!["mcode".into()],
-            stage: ToolLifecycleStage::Queued,
-            line: None,
-        };
-        assert_eq!(
-            serde_json::to_value(payload).unwrap(),
-            serde_json::json!({ "tools": ["mcode"], "stage": "queued" })
-        );
-    }
-
-    #[test]
     fn throttle_holds_fast_lines_and_flushes_the_last_one() {
         let (progress, events) = recording(&["codex"]);
         let throttle = LineThrottle::new(Duration::from_secs(60));

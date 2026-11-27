@@ -159,6 +159,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    // 原生 /v1beta 回 Google 格式的 401（2026-11-23）；可用的 Gemini 型号随
+    // Key 所属分组而定，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.string.ink",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://www.string.ink",
+    model: "gemini-3.8-flash",
+    description: "StringAI",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -308,6 +329,50 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "shengsuanyun",
     icon: "shengsuanyun",
+  },
+  {
+    name: "SudoCode.chat",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    // /v1beta 用假 Key 探测为 401、乱写路径 404（2026-10-31）；模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.sudocode.chat",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.sudocode.chat",
+    model: "gemini-3.8-flash",
+    description: "SudoCode.chat",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
+    icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://sudocode.us",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://sudocode.us",
+    model: "gemini-3.8-flash",
+    description: "SudoCode.us",
+    category: "third_party",
+    isPartner: true,
+    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    icon: "sudocode-us",
   },
   {
     name: "AIGoCode",
@@ -715,50 +780,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     partnerPromotionKey: "dmxapi",
     endpointCandidates: ["https://www.dmxapi.cn", "https://api.dmxapi.cn"],
     icon: "dmxapi",
-  },
-  {
-    name: "SudoCode.chat",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    // /v1beta 用假 Key 探测为 401、乱写路径 404（2026-10-31）；模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.sudocode.chat",
-        GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.8-flash",
-      },
-    },
-    baseURL: "https://api.sudocode.chat",
-    model: "gemini-3.8-flash",
-    description: "SudoCode.chat",
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    endpointCandidates: [
-      "https://api.sudocode.chat",
-      "https://api.sudorelay.com",
-    ],
-    icon: "sudocode",
-  },
-  {
-    name: "SudoCode.us",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://sudocode.us",
-        GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.8-flash",
-      },
-    },
-    baseURL: "https://sudocode.us",
-    model: "gemini-3.8-flash",
-    description: "SudoCode.us",
-    category: "third_party",
-    isPartner: true,
-    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
-    icon: "sudocode-us",
   },
   {
     name: "XycAi",

@@ -119,10 +119,7 @@ const baseS3Config: S3SyncSettings = {
   status: {},
 };
 
-function renderSection(
-  config?: WebDavSyncSettings,
-  s3Config?: S3SyncSettings,
-) {
+function renderSection(config?: WebDavSyncSettings, s3Config?: S3SyncSettings) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },

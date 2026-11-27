@@ -34,6 +34,8 @@ pub fn uses_native_menu() -> bool {
 
 /// 弹出前发给面板：带上这次的方位，前端据此排版后回报尺寸（`tray_panel_layout`）。
 const SHOW_EVENT: &str = "tray-panel-show";
+/// 收起时发给面板：让隐藏态下的用量页暂停定时轮询。
+const HIDE_EVENT: &str = "tray-panel-hide";
 /// 托盘状态变了（切换、额度、问题区），面板重新取数据。
 const CHANGED_EVENT: &str = "tray-panel-changed";
 
@@ -470,6 +472,7 @@ fn create_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 fn hide_window(window: &WebviewWindow) {
     PENDING_REVEAL.store(false, Ordering::Release);
     let _ = window.hide();
+    let _ = window.emit_to(PANEL_LABEL, HIDE_EVENT, ());
     // 面板里已经显示过反馈行了，下次弹出不再显示。
     crate::tray::mark_feedback_seen();
     release_if_lightweight(window.app_handle());
@@ -608,10 +611,18 @@ const CHANGED_THROTTLE: Duration = Duration::from_millis(250);
 /// 上次通知的时间，以及是否已经约好了一次补发。
 static CHANGED_STATE: Mutex<(Option<Instant>, bool)> = Mutex::new((None, false));
 
+fn is_panel_active(app: &AppHandle) -> bool {
+    let Some(window) = panel_window(app) else {
+        return false;
+    };
+    PENDING_REVEAL.load(Ordering::Acquire) || window.is_visible().unwrap_or(false)
+}
+
 /// 托盘状态变了：开着的面板重新取数据。隔得够久就立即通知（点了切换要马上看到勾），
 /// 否则约在窗口结束时补发一次，一串额度结果只让面板重取一两次。
+/// 面板收起时不发事件，避免唤醒隐藏的 WebView 并反复查询数据库（下次弹出时会主动重取）。
 pub fn notify_changed(app: &AppHandle) {
-    if panel_window(app).is_none() {
+    if !is_panel_active(app) {
         return;
     }
     let wait = {
@@ -639,7 +650,9 @@ pub fn notify_changed(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(wait).await;
         *CHANGED_STATE.lock_recover() = (Some(Instant::now()), false);
-        let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
+        if is_panel_active(&app) {
+            let _ = app.emit_to(PANEL_LABEL, CHANGED_EVENT, ());
+        }
     });
 }
 
@@ -670,16 +683,16 @@ struct Frame {
 mod platform {
     use std::cell::RefCell;
 
-    use objc2_06::rc::Retained;
-    use objc2_06::runtime::{AnyClass, AnyObject, NSObjectProtocol};
-    use objc2_06::{msg_send, sel, MainThreadMarker};
-    use objc2_app_kit_03::{
+    use objc2::rc::Retained;
+    use objc2::runtime::{AnyClass, AnyObject, NSObjectProtocol};
+    use objc2::{msg_send, sel, MainThreadMarker};
+    use objc2_app_kit::{
         NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
         NSGlassEffectView, NSGlassEffectViewStyle, NSScreen, NSView, NSVisualEffectBlendingMode,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindow,
         NSWindowCollectionBehavior, NSWindowOrderingMode,
     };
-    use objc2_foundation_03::{NSPoint, NSRect, NSSize};
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
     use tauri::WebviewWindow;
 
     use super::{style, CardRect, Frame};

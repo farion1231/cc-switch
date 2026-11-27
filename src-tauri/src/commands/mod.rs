@@ -1,13 +1,13 @@
-#![allow(non_snake_case)]
-
 mod agy_account;
 mod auth;
 mod balance;
 mod claude_account;
+mod codebuddy_account;
 mod codex_oauth;
 mod coding_plan;
 mod config;
 mod copilot;
+mod copilot_vscode;
 mod custom_icon;
 mod deeplink;
 mod dsh;
@@ -44,6 +44,7 @@ mod usage;
 mod webdav_sync;
 mod workbuddy_account;
 mod workspace;
+mod zcode;
 
 #[cfg(test)]
 mod provider_concurrency_tests;
@@ -54,10 +55,12 @@ pub use agy_account::*;
 pub use auth::*;
 pub use balance::*;
 pub use claude_account::*;
+pub use codebuddy_account::*;
 pub use codex_oauth::*;
 pub use coding_plan::*;
 pub use config::*;
 pub use copilot::*;
+pub use copilot_vscode::*;
 pub use custom_icon::*;
 pub use deeplink::*;
 pub use dsh::*;
@@ -93,6 +96,7 @@ pub use usage::*;
 pub use webdav_sync::*;
 pub use workbuddy_account::*;
 pub use workspace::*;
+pub use zcode::*;
 
 /// 同步命令在 Tauri 2 里跑在主线程上：要等数据库连接锁（或等切换锁，切换时要拿库）的
 /// 命令放到阻塞线程池里跑，否则会话同步占着连接锁时整个窗口和托盘都跟着卡住。
@@ -114,11 +118,9 @@ where
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) use misc::tool_discovery::{login_shell_path, merge_path_segments};
-#[cfg(not(target_os = "windows"))]
-pub(crate) use misc::tool_process::CommandDeadline;
+pub(crate) use misc::tool_discovery::{cached_login_shell_path, merge_path_segments};
 pub(crate) use misc::tool_process::{
-    detected_tool_command, is_safe_tool_command_arg, run_detected_tool_command_with_timeout,
-    terminate_child_tree,
+    detected_tool_command, is_safe_tool_command_arg, locate_detected_tool,
+    run_detected_tool_command_with_timeout, terminate_child_tree,
 };
 pub(crate) use misc::tool_version::local_tool_version;

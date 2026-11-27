@@ -14,10 +14,15 @@ import {
 import { generateUUID } from "@/utils/uuid";
 import { openclawKeys } from "@/hooks/useOpenClaw";
 import { invalidateHermesProviderCaches } from "@/hooks/useHermes";
+import { invalidateZcodeProviderCaches } from "@/hooks/useZcode";
 import { proxyKeys } from "@/lib/query/proxy";
 import { usageKeys } from "@/lib/query/usage";
 import { sessionKeys } from "@/lib/query/sessions";
 import { invalidatePiProviderCaches } from "@/lib/query/pi";
+import {
+  invalidateAgyLoginCaches,
+  invalidateGrokCliLoginCaches,
+} from "@/lib/query/subscription";
 import { GROKBUILD_OFFICIAL_PROVIDER_ID } from "@/utils/providerCapabilities";
 import { appHas } from "@/config/appSpecs";
 
@@ -126,6 +131,9 @@ export const useAddProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
+      }
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -166,6 +174,8 @@ export const useAddProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
+      } else if (appId === "agy") {
+        await invalidateAgyLoginCaches(queryClient);
       }
     },
   });
@@ -206,6 +216,9 @@ export const useUpdateProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
+      }
       toast.success(
         t("notifications.updateSuccess", {
           defaultValue: "供应商更新成功",
@@ -236,11 +249,17 @@ export const useUpdateProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
+      } else if (appId === "agy") {
+        await invalidateAgyLoginCaches(queryClient);
       } else if (appId === "kimi") {
         // 默认模型可能在 Kimi Code 里改过：失败时也重读，页面上的「默认」才跟得上
         await queryClient.invalidateQueries({
           queryKey: ["providers", "kimi"],
         });
+      } else if (appId === "grokbuild") {
+        // 保存当前绑号的 Grok 官方卡会把原 CLI 登录收进授权中心再写入绑定的号；
+        // 写入失败前也可能已经收过：成功失败都重读
+        await invalidateGrokCliLoginCaches(queryClient);
       }
     },
   });
@@ -280,6 +299,9 @@ export const useDeleteProviderMutation = (appId: AppId) => {
 
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
+      }
+      if (appId === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
       }
       try {
         await providersApi.updateTrayMenu();
@@ -381,6 +403,9 @@ export const useSwitchProviderMutation = (appId: AppId) => {
       if (appId === "hermes") {
         await invalidateHermesProviderCaches(queryClient);
       }
+      if (appId === "zcode") {
+        await invalidateZcodeProviderCaches(queryClient);
+      }
       try {
         await providersApi.updateTrayMenu();
       } catch (trayError) {
@@ -413,6 +438,11 @@ export const useSwitchProviderMutation = (appId: AppId) => {
     onSettled: async () => {
       if (appHas(appId, "piFamily")) {
         await invalidatePiProviderCaches(queryClient, appId);
+      }
+      if (appId === "grokbuild") {
+        // 切到绑号的 Grok 官方卡时，后端可能把原 CLI 登录收成了新账号；
+        // 切换失败前也可能已经收过，所以成功失败都重读授权中心和 CLI 额度
+        await invalidateGrokCliLoginCaches(queryClient);
       }
     },
   });

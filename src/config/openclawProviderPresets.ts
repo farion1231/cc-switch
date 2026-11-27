@@ -266,6 +266,22 @@ const aiCodeMirrorModels = (): NonNullable<
   },
 ];
 
+// String AI 接入文档给的 OpenClaw 配置补丁按 128K 上下文、16K 输出写
+const stringAiModels = (): NonNullable<OpenClawProviderConfig["models"]> => [
+  {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    contextWindow: 128000,
+    maxTokens: 16384,
+  },
+  {
+    id: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    contextWindow: 128000,
+    maxTokens: 16384,
+  },
+];
+
 const fennoAiModels = (): NonNullable<OpenClawProviderConfig["models"]> => [
   {
     id: "gpt-6.1-sol",
@@ -946,6 +962,37 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      baseUrl: "https://www.string.ink/v1",
+      apiKey: "",
+      api: "openai-completions",
+      models: stringAiModels(),
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "stringai/gpt-6-astra",
+      },
+      modelCatalog: {
+        "stringai/gpt-6-astra": { alias: "GPT-6 Astra" },
+        "stringai/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
+      },
+    },
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -1310,6 +1357,99 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       modelCatalog: {
         "fluxa-tokenplan/deepseek-v4.1-flash": { alias: "DeepSeek V4.1 Flash" },
         "fluxa-tokenplan/glm-5.3": { alias: "GLM-5.3" },
+      },
+    },
+  },
+  {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://api.sudocode.chat/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        },
+        {
+          id: "gpt-6-luna",
+          name: "GPT-6 Luna",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "sudocode/gpt-6.1-sol",
+      },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      baseUrl: "https://sudocode.us/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: sudoCodeUsModels(),
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "sudocode-us/gpt-6.1-sol",
       },
     },
   },
@@ -2605,99 +2745,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
       },
     },
     icon: "dmxapi",
-  },
-  {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      baseUrl: "https://api.sudocode.chat/v1",
-      apiKey: "",
-      api: "openai-responses",
-      models: [
-        {
-          id: "gpt-6.1-sol",
-          name: "GPT-6.1 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
-        },
-        {
-          id: "gpt-6-sol",
-          name: "GPT-6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
-        },
-        {
-          id: "gpt-6-luna",
-          name: "GPT-6 Luna",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
-        },
-        {
-          id: "gpt-6-astra",
-          name: "GPT-6 Astra",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-          cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
-        },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "sudocode/gpt-6.1-sol",
-      },
-    },
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      baseUrl: "https://sudocode.us/v1",
-      apiKey: "",
-      api: "openai-responses",
-      models: sudoCodeUsModels(),
-    },
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "sudocode-us/gpt-6.1-sol",
-      },
-    },
   },
   {
     name: "XycAi",
@@ -4201,6 +4248,47 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     suggestedDefaults: {
       model: { primary: "longcat/LongCat-2.0" },
       modelCatalog: { "longcat/LongCat-2.0": { alias: "LongCat" } },
+    },
+  },
+  {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      baseUrl: "https://api-maas.teleai.com.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      authHeader: true,
+      models: [
+        {
+          id: "Xing4.1-Preview",
+          name: "Xing4.1-Preview",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1024000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api-maas.teleai.com.cn/v1",
+        defaultValue: "https://api-maas.teleai.com.cn/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "teleai/Xing4.1-Preview" },
+      modelCatalog: { "teleai/Xing4.1-Preview": { alias: "Xing" } },
     },
   },
   {

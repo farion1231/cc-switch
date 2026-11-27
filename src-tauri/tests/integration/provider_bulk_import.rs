@@ -5,8 +5,16 @@ use std::sync::{Arc, Barrier};
 use crate::support::{create_test_state, ensure_test_home, reset_test_fs, test_mutex};
 
 fn bulk_apps() -> impl Iterator<Item = AppType> {
-    AppType::all()
-        .filter(|app| !matches!(app, AppType::Dsh | AppType::Copilot | AppType::WorkBuddy))
+    AppType::all().filter(|app| {
+        !matches!(
+            app,
+            AppType::Dsh
+                | AppType::Copilot
+                | AppType::WorkBuddy
+                | AppType::Codebuddy
+                | AppType::ZCode
+        )
+    })
 }
 
 #[test]
@@ -18,7 +26,13 @@ fn unsupported_apps_preserve_database_and_native_files() {
     std::fs::create_dir_all(native.parent().unwrap()).unwrap();
     std::fs::write(native, b"untouched WorkBuddy configuration").unwrap();
     let before = native_files();
-    for app in [AppType::Dsh, AppType::Copilot, AppType::WorkBuddy] {
+    for app in [
+        AppType::Dsh,
+        AppType::Copilot,
+        AppType::WorkBuddy,
+        AppType::Codebuddy,
+        AppType::ZCode,
+    ] {
         let source = json!([agent_row(&app, "Team", "synthetic-unsupported-key")]).to_string();
         let expected = "provider.bulkImport.errors.unsupportedApp";
         assert_eq!(

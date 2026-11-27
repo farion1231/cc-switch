@@ -389,27 +389,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn codex_rebuild_notifies_when_reimport_is_empty() {
+    fn codex_rebuild_notifies_on_empty_or_failed_reimport() {
         crate::usage_events::take_test_notify_count();
-
         let result = finish_codex_rebuild(Ok(
             crate::services::session_usage::SessionSyncResult::default(),
         ))
         .expect("空重导应成功");
-
         assert_eq!(result.imported, 0);
         assert_eq!(crate::usage_events::take_test_notify_count(), 1);
-    }
 
-    #[test]
-    fn codex_rebuild_notifies_when_reimport_fails_after_reset() {
-        crate::usage_events::take_test_notify_count();
-
-        let result = finish_codex_rebuild(Err(AppError::Message(
+        let err = finish_codex_rebuild(Err(AppError::Message(
             "synthetic reimport failure".to_string(),
         )));
-
-        assert!(result.is_err());
+        assert!(err.is_err());
         assert_eq!(crate::usage_events::take_test_notify_count(), 1);
     }
 }

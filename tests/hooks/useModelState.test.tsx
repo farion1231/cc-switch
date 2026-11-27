@@ -143,7 +143,11 @@ describe("useModelState", () => {
       "deepseek-v4-pro",
     );
     expect(setClaudeOneMMarker("deepseek-v4-pro", true)).toBe(
-      "deepseek-v4-pro[1M]",
+      "deepseek-v4-pro[1m]",
+    );
+    // 写出用官方文档的小写形式，旧值里的大写标记也归一（#9757）
+    expect(setClaudeOneMMarker("deepseek-v4-pro [1M]", true)).toBe(
+      "deepseek-v4-pro[1m]",
     );
   });
 });

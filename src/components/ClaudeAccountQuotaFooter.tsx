@@ -26,6 +26,7 @@ const ClaudeAccountQuotaFooter: React.FC<ClaudeAccountQuotaFooterProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useClaudeAccountQuota(accountId, {
     autoQuery: isCurrent && autoQueryInterval > 0,
     autoQueryIntervalMinutes: autoQueryInterval,
@@ -36,6 +37,7 @@ const ClaudeAccountQuotaFooter: React.FC<ClaudeAccountQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
+      idle={manualIdle}
       appIdForExpiredHint="claude"
       inline={inline}
       display={display}

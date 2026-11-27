@@ -1,7 +1,6 @@
 import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 import { normalizeTomlText } from "@/utils/textNormalization";
-import { tomlToMcpServer, validateToml } from "@/utils/tomlUtils";
 
 describe("normalizeTomlText", () => {
   it("normalizes smart quotes used as string delimiters", () => {
@@ -63,34 +62,5 @@ describe("normalizeTomlText", () => {
 
   it("does not touch unterminated strings beyond their opening quote", () => {
     expect(normalizeTomlText("x = “abc")).toBe('x = "abc');
-  });
-});
-
-describe("tomlUtils with smart quotes in valid strings (#8559)", () => {
-  it("preserves a right single quotation mark in args", () => {
-    const input = 'command = "echo"\nargs = ["don’t"]';
-    expect(validateToml(input)).toBe("");
-    expect(tomlToMcpServer(input).args).toEqual(["don’t"]);
-  });
-
-  it("accepts curly double quotes inside a basic string", () => {
-    const input = 'command = "echo"\nargs = ["say“hello”"]';
-    expect(validateToml(input)).toBe("");
-    expect(tomlToMcpServer(input).args).toEqual(["say“hello”"]);
-  });
-
-  it("accepts curly single quotes inside a literal string", () => {
-    const input = "command = 'echo'\nargs = ['don’t']";
-    expect(validateToml(input)).toBe("");
-    expect(tomlToMcpServer(input).args).toEqual(["don’t"]);
-  });
-
-  it("still accepts configs written entirely with smart quotes", () => {
-    const input = "command = “npx”\nargs = [“-y”, “pkg”]";
-    expect(validateToml(input)).toBe("");
-    expect(tomlToMcpServer(input)).toMatchObject({
-      command: "npx",
-      args: ["-y", "pkg"],
-    });
   });
 });

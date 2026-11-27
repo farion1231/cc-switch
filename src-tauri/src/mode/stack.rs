@@ -105,7 +105,7 @@ fn slug(text: &str) -> String {
     out.trim_end_matches('-').to_string()
 }
 
-/// Stack 模型 id。Claude 的上游是 1M 窗口时末尾带 `[1M]`，Claude Code 才按 1M 计算；Claude
+/// Stack 模型 id。Claude 的上游是 1M 窗口时末尾带 `[1m]`，Claude Code 才按 1M 计算；Claude
 /// Desktop 的 1M 写在模型条目里（`supports1m` + `prefer1m`），id 不带标记。
 pub fn encode(app: &AppType, key: &str, model: &str, one_m: bool) -> String {
     match app {
@@ -207,7 +207,7 @@ pub struct StackModel {
     pub display_name: String,
     /// 选择器里的说明。
     pub description: String,
-    /// 上游是 1M 窗口（id 带 `[1M]`）。
+    /// 上游是 1M 窗口（id 带 `[1m]`）。
     pub one_m: bool,
     /// 非 1M 模型的窗口：行里的 `CLAUDE_CODE_MAX_CONTEXT_TOKENS`，没有是 200K。
     pub window: u64,
@@ -1025,7 +1025,7 @@ mod tests {
             models,
             vec![
                 StackModel {
-                    id: "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
+                    id: "ccs-claude-zhipu--glm-5.2[1m]".to_string(),
                     upstream: "glm-5.2[1M]".to_string(),
                     name: "GLM 5.2".to_string(),
                     display_name: "GLM 5.2（Zhipu）".to_string(),
@@ -1133,15 +1133,15 @@ mod tests {
             summary,
             vec![
                 (
-                    "ccs-claude-kimi--kimi-k3[1M]".to_string(),
-                    "kimi-k3[1M]".to_string(),
+                    "ccs-claude-kimi--kimi-k3[1m]".to_string(),
+                    "kimi-k3[1m]".to_string(),
                     "Kimi K3（Kimi）".to_string(),
                     true,
                     256_000,
                 ),
                 (
-                    "ccs-claude-kimi--kimi-k3-thinking[1M]".to_string(),
-                    "kimi-k3-thinking[1M]".to_string(),
+                    "ccs-claude-kimi--kimi-k3-thinking[1m]".to_string(),
+                    "kimi-k3-thinking[1m]".to_string(),
                     "kimi-k3-thinking（Kimi）".to_string(),
                     true,
                     256_000,
@@ -1241,7 +1241,7 @@ mod tests {
         let default = claude_route_default(&members(Some("zhipu"))).unwrap();
         assert_eq!(
             (default.id.as_str(), default.name.as_str()),
-            ("ccs-claude-zhipu--glm-5.2[1M]", "glm-5.2")
+            ("ccs-claude-zhipu--glm-5.2[1m]", "glm-5.2")
         );
 
         // 界面上标出路由那家，它的模型 id 照常列出。
@@ -1314,7 +1314,7 @@ mod tests {
             vec![
                 "ccs-claude-kimi--kimi-k3-mini".to_string(),
                 "ccs-claude-kimi--kimi-k3".to_string(),
-                "ccs-claude-zhipu--glm-5.2[1M]".to_string(),
+                "ccs-claude-zhipu--glm-5.2[1m]".to_string(),
             ]
         );
     }

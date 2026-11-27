@@ -1,7 +1,7 @@
 //! Exact counters exported by agy; absent models remain unknown (never use today's provider).
 //! Amounts are the matching Gemini API prices, like every other session-log import.
 use super::{
-    session_usage::{cost_columns, load_sync_cursors, metadata_modified_nanos, SessionSyncResult},
+    session_usage::{cost_columns, metadata_modified_nanos, SessionSyncResult},
     sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH,
 };
 use crate::proxy::usage::calculator::ModelPricing;
@@ -9,7 +9,7 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::{
     database::{lock_conn, Database},
     error::AppError,
-    session_manager::providers::agy,
+    session_manager::providers::agy::{self, model_from_settings_change},
 };
 use rusqlite::{params, OptionalExtension};
 use serde_json::Value;
@@ -28,19 +28,39 @@ struct AgySyncCursorUpdate<'a> {
     native_state: &'a str,
 }
 
-pub fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
-    sync_agy_usage_from_files(db, agy::transcript_files())
+#[cfg(test)]
+pub(crate) fn sync_agy_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_with_cursors(db, &crate::services::session_usage::load_sync_cursors(db)?)
 }
 
+pub(crate) fn sync_agy_usage_with_cursors(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files_with_cursors(db, agy::transcript_files(), cursors)
+}
+
+#[cfg(test)]
 fn sync_agy_usage_from_files(
     db: &Database,
     files: Vec<(String, PathBuf)>,
+) -> Result<SessionSyncResult, AppError> {
+    sync_agy_usage_from_files_with_cursors(
+        db,
+        files,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
+}
+
+fn sync_agy_usage_from_files_with_cursors(
+    db: &Database,
+    files: Vec<(String, PathBuf)>,
+    cursors: &crate::services::session_usage::SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
     let mut result = SessionSyncResult::default();
     if files.is_empty() {
         return Ok(result);
     }
-    let cursors = load_sync_cursors(db)?;
     for (session_id, path) in files {
         result.files_scanned += 1;
         let cursor_key = format!("agy:{}", path.to_string_lossy());
@@ -92,27 +112,6 @@ fn sync_agy_usage_from_files(
         }
     }
     Ok(result)
-}
-
-/// agy 把模型切换写进会话正文：`changed setting \`Model Selection\` from X to Y`。
-/// 逐条响应本身没有模型字段，按 step 顺序继承最近一次切换即可还原当时的模型。
-fn model_from_settings_change(content: &str) -> Option<String> {
-    let start = content.find("Model Selection")?;
-    let rest = &content[start..];
-    let to = rest.find(" to ")? + 4;
-    let tail = &rest[to..];
-    // 模型名里本身有点（Gemini 3.8），只把「句号 + 空格」当成句子结束。
-    let end = tail
-        .find(". ")
-        .or_else(|| tail.find('\n'))
-        .or_else(|| tail.find('`'))
-        .unwrap_or(tail.len());
-    let model = tail[..end].trim().trim_matches('.').trim();
-    if model.is_empty() || model.eq_ignore_ascii_case("none") {
-        None
-    } else {
-        Some(model.to_string())
-    }
 }
 
 /// agy 记下的是显示名（`Gemini 3.8 Flash (High)`）；换成 `agy models` 第一列那样的 ID
@@ -993,7 +992,7 @@ mod tests {
         .unwrap();
 
         let db = Database::memory().unwrap();
-        let roots = [(brain.clone(), None)];
+        let roots = [brain.clone()];
 
         // 1. Initial sync imports step 1 and records a cursor in session_log_sync.
         let r1 = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
@@ -1043,5 +1042,143 @@ mod tests {
         .unwrap();
         let r5 = sync_agy_usage_from_files(&db, agy::transcript_files_in_roots(&roots)).unwrap();
         assert_eq!((r5.files_scanned, r5.imported, r5.skipped), (1, 1, 1));
+    }
+
+    #[test]
+    fn sync_agy_usage_imports_subagent_transcripts_excluded_from_session_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("brain");
+        for (id, lines) in [
+            (
+                "main-1",
+                concat!(
+                    "{\"step_index\":0,\"type\":\"USER_INPUT\",\"content\":\"<USER_REQUEST>\\nhello\\n</USER_REQUEST>\"}\n",
+                    "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":40,\"output_tokens\":10}\n",
+                ),
+            ),
+            (
+                "subagent-1",
+                concat!(
+                    "{\"step_index\":0,\"type\":\"SYSTEM_MESSAGE\",\"content\":\"subagent task\"}\n",
+                    "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"input_tokens\":120,\"output_tokens\":30}\n",
+                ),
+            ),
+        ] {
+            let logs = root.join(id).join(".system_generated/logs");
+            std::fs::create_dir_all(&logs).unwrap();
+            std::fs::write(logs.join("transcript_full.jsonl"), lines).unwrap();
+        }
+        let db = Database::memory().unwrap();
+        let files = agy::transcript_files_in_roots(&[root]);
+        let res = sync_agy_usage_from_files(&db, files).unwrap();
+        assert_eq!(res.files_scanned, 2);
+        assert_eq!(res.imported, 2);
+        assert!(res.errors.is_empty());
+        let conn = db.conn.lock().unwrap();
+        let total_input: i64 = conn
+            .query_row(
+                "SELECT SUM(input_tokens) FROM proxy_request_logs WHERE app_type='agy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(total_input, 160);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn sync_agy_usage_imports_t3_code_acp_sessions_with_native_timing_and_dedup() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let home = crate::test_support::TestHome::new();
+        let acp_root = home
+            .path()
+            .join(".t3/userdata/providers/antigravity/inst-hash-1/antigravity-acp");
+        let logs = acp_root.join("brain/acp-sess-1/.system_generated/logs");
+        let convs = acp_root.join("conversations");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::create_dir_all(&convs).unwrap();
+
+        let transcript = logs.join("transcript_full.jsonl");
+        std::fs::write(
+            &transcript,
+            concat!(
+                "{\"step_index\":0,\"type\":\"USER_INPUT\",\"created_at\":\"2026-11-21T10:00:00Z\",\"content\":\"<USER_REQUEST>\\n<t3_code_instructions>\\nrules\\n</t3_code_instructions>\\n\\n<user_request>\\ncheck usage\\n</user_request>\\n</USER_REQUEST>\"}\n",
+                "{\"step_index\":1,\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"created_at\":\"2026-11-21T10:00:05Z\",\"model\":\"gemini-4-neon-xhigh\",\"input_tokens\":500,\"output_tokens\":80,\"cache_read_tokens\":100}\n",
+            ),
+        )
+        .unwrap();
+        let native = native_models::write_test_database(
+            &convs.join("acp-sess-1.db"),
+            &[(1, 0, "gemini-4-neon")],
+        );
+        native_models::set_test_generation(
+            &native,
+            0,
+            "gemini-4-neon",
+            &native_models::test_timing(900, 1500),
+        );
+        drop(native);
+
+        let db = Database::memory().unwrap();
+        let first = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (first.files_scanned, first.imported, first.skipped),
+            (1, 1, 0)
+        );
+        assert!(first.errors.is_empty());
+
+        // Second sync skips unchanged transcript + native DB via cursor.
+        let second = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (second.files_scanned, second.imported, second.skipped),
+            (1, 0, 0)
+        );
+
+        // Even if sync cursors are cleared, session_usage_dedup prevents duplicate billing.
+        db.conn
+            .lock()
+            .unwrap()
+            .execute("DELETE FROM session_log_sync", [])
+            .unwrap();
+        let third = sync_agy_usage(&db).unwrap();
+        assert_eq!(
+            (third.files_scanned, third.imported, third.skipped),
+            (1, 0, 1)
+        );
+
+        let conn = db.conn.lock().unwrap();
+        let row: (String, i64, i64, i64, i64, Option<i64>, i64) = conn
+            .query_row(
+                "SELECT model, input_tokens, output_tokens, cache_read_tokens, latency_ms, first_token_ms,
+                    (SELECT COUNT(*) FROM proxy_request_logs WHERE app_type='agy')
+                 FROM proxy_request_logs WHERE request_id='agy:acp-sess-1:1'",
+                [],
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "gemini-4-neon-xhigh".into(),
+                500,
+                80,
+                100,
+                2400,
+                Some(900),
+                1
+            )
+        );
     }
 }

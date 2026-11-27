@@ -235,3 +235,59 @@ describe("CodexFormFields reasoning effort", () => {
     );
   });
 });
+
+describe("CodexFormFields official Fast tier", () => {
+  function renderSpeedTierForm(
+    catalogModels: CodexFormFieldsProps["catalogModels"],
+  ) {
+    const onOfficialSpeedTiersChange = vi.fn();
+    render(
+      <FormShell>
+        <CodexFormFields
+          {...baseCodexProps()}
+          localProxyHeadersOverride={INITIAL_HEADERS_OVERRIDE}
+          catalogModels={catalogModels}
+          onCatalogModelsChange={vi.fn()}
+          officialSpeedTiers={true}
+          onOfficialSpeedTiersChange={onOfficialSpeedTiersChange}
+        />
+      </FormShell>,
+    );
+    return {
+      toggle: screen.getByRole("switch", { name: "保留官方 Fast 档" }),
+      onOfficialSpeedTiersChange,
+    };
+  }
+
+  // 没有模型列表时不生成目录、保存也不存这个设置（#10000）：开关锁住并说明原因，
+  // 不能让人打开后保存、再进来又是关的。
+  it("locks the switch and explains why when the card has no model list", () => {
+    const { toggle, onOfficialSpeedTiersChange } = renderSpeedTierForm([]);
+
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(
+      screen.getByText(
+        /这张卡没有模型列表：Fast 档只加在模型列表里的 GPT 模型上/,
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(toggle);
+    expect(onOfficialSpeedTiersChange).not.toHaveBeenCalled();
+  });
+
+  it("can be toggled once the model list has a model", () => {
+    const { toggle, onOfficialSpeedTiersChange } = renderSpeedTierForm([
+      { model: "gpt-5.5" },
+    ]);
+
+    expect(toggle).toBeEnabled();
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.queryByText(/Fast 档只加在模型列表里的 GPT 模型上/),
+    ).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(onOfficialSpeedTiersChange).toHaveBeenCalledWith(false);
+  });
+});

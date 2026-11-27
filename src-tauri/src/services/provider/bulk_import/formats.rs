@@ -26,7 +26,11 @@ pub(super) fn format(app: &AppType) -> Result<Format, AppError> {
         AppType::Gemini | AppType::Agy => ("gemini_native", &["gemini_native"] as &[_]),
         AppType::Mcode => ("anthropic", three),
         AppType::Hermes => ("openai_chat", three),
-        AppType::Dsh | AppType::Copilot | AppType::WorkBuddy => {
+        AppType::Dsh
+        | AppType::Copilot
+        | AppType::WorkBuddy
+        | AppType::Codebuddy
+        | AppType::ZCode => {
             return Err(AppError::Message(
                 "provider.bulkImport.errors.unsupportedApp".into(),
             ));

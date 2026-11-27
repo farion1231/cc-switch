@@ -584,6 +584,29 @@ requires_openai_auth = true`,
     icon: "pateway",
   },
   {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    // 官方 Codex 文档（docs.modelflare.dev/guides/clients/codex，2026-10-15
+    // 核对）：base 为 /v1、wire_api = "responses"、默认 gpt-5.6-sol；
+    // 目录（modelflare.dev/api/pricing，2026-10-24）已有 gpt-6.1-sol，默认随之上调
+    config: generateThirdPartyConfig(
+      "modelflare",
+      "https://modelflare.dev/v1",
+      "gpt-6.1-sol",
+    ),
+    endpointCandidates: [
+      "https://modelflare.dev/v1",
+      "https://origin.modelflare.dev/v1",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
     name: "hao.ai",
     websiteUrl: "https://hao.ai",
     apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
@@ -599,6 +622,21 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    category: "aggregator",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "stringai",
+      "https://www.string.ink/v1",
+      "gpt-6-astra",
+    ),
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
   },
   {
     name: "FennoAI",
@@ -859,6 +897,56 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "fluxa",
     icon: "fluxa",
+  },
+  {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "gpt-6.1-sol"
+review_model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
+
+[model_providers.custom]
+name = "SudoCode"
+base_url = "https://api.sudocode.chat/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: [
+      "https://api.sudocode.chat/v1",
+      "https://api.sudorelay.com/v1",
+    ],
+    apiFormat: "openai_responses",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    category: "third_party",
+    auth: generateThirdPartyAuth(""),
+    config: `model_provider = "custom"
+model = "gpt-6.1-sol"
+review_model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
+model_verbosity = "high"
+
+[model_providers.custom]
+name = "sudocode"
+base_url = "https://sudocode.us/v1"
+wire_api = "responses"
+requires_openai_auth = true`,
+    endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
+    apiFormat: "openai_responses",
+    isPartner: true,
+    icon: "sudocode-us",
   },
   {
     name: "AIGoCode",
@@ -1526,56 +1614,6 @@ requires_openai_auth = true`,
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    category: "third_party",
-    auth: generateThirdPartyAuth(""),
-    config: `model_provider = "custom"
-model = "gpt-6.1-sol"
-review_model = "gpt-6.1-sol"
-model_reasoning_effort = "high"
-
-[model_providers.custom]
-name = "SudoCode"
-base_url = "https://api.sudocode.chat/v1"
-wire_api = "responses"
-requires_openai_auth = true`,
-    endpointCandidates: [
-      "https://api.sudocode.chat/v1",
-      "https://api.sudorelay.com/v1",
-    ],
-    apiFormat: "openai_responses",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    category: "third_party",
-    auth: generateThirdPartyAuth(""),
-    config: `model_provider = "custom"
-model = "gpt-6.1-sol"
-review_model = "gpt-6.1-sol"
-model_reasoning_effort = "high"
-model_verbosity = "high"
-
-[model_providers.custom]
-name = "sudocode"
-base_url = "https://sudocode.us/v1"
-wire_api = "responses"
-requires_openai_auth = true`,
-    endpointCandidates: ["https://sudocode.us/v1", "https://sudocode.run/v1"],
-    apiFormat: "openai_responses",
-    isPartner: true,
-    icon: "sudocode-us",
-  },
-  {
     name: "XycAi",
     websiteUrl: "https://xycai.us",
     apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
@@ -1593,29 +1631,6 @@ requires_openai_auth = true`,
     isPartner: true,
     partnerPromotionKey: "xycai",
     icon: "xycai",
-  },
-  {
-    name: "Modelflare",
-    websiteUrl: "https://modelflare.dev",
-    apiKeyUrl:
-      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    // 官方 Codex 文档（docs.modelflare.dev/guides/clients/codex，2026-10-15
-    // 核对）：base 为 /v1、wire_api = "responses"、默认 gpt-5.6-sol；
-    // 目录（modelflare.dev/api/pricing，2026-10-24）已有 gpt-6.1-sol，默认随之上调
-    config: generateThirdPartyConfig(
-      "modelflare",
-      "https://modelflare.dev/v1",
-      "gpt-6.1-sol",
-    ),
-    endpointCandidates: [
-      "https://modelflare.dev/v1",
-      "https://origin.modelflare.dev/v1",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "modelflare",
-    icon: "modelflare",
   },
   {
     name: "AllTokens",
@@ -3110,6 +3125,34 @@ requires_openai_auth = true`,
     category: "cn_official",
     icon: "longcat",
     iconColor: "#29E154",
+  },
+  {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    auth: generateThirdPartyAuth(""),
+    config: generateThirdPartyConfig(
+      "teleai",
+      "https://api-maas.teleai.com.cn/v1",
+      "Xing4.1-Preview",
+    ),
+    endpointCandidates: ["https://api-maas.teleai.com.cn/v1"],
+    // 天翼 AI 官方 Codex 文档用 wire_api=responses 对自家 /v1，原生 Responses，无需路由转换
+    apiFormat: "openai_responses",
+    modelCatalog: modelCatalog([
+      {
+        model: "Xing4.1-Preview",
+        displayName: "Xing4.1-Preview",
+        contextWindow: 1024000,
+        inputModalities: ["text"],
+        // Responses 文档：reasoning.effort 只认 none / low / high
+        reasoningLevels: ["none", "low", "high"],
+        defaultReasoningLevel: "high",
+      },
+    ]),
+    category: "cn_official",
+    icon: "teleai",
   },
   {
     name: "MiniMax",

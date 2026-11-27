@@ -212,20 +212,29 @@ impl RequestForwarder {
         &self,
         response: ProxyResponse,
         request_is_streaming: bool,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<ProxyResponse, ProxyError> {
         if request_is_streaming {
-            return self.prime_streaming_response(response).await;
+            return self.prime_streaming_response(response, deadline).await;
         }
 
-        if self.non_streaming_timeout.is_zero() {
+        if self.non_streaming_timeout.is_zero() && deadline.is_none() {
             return Ok(response);
         }
 
         let status = response.status();
         let headers = response.headers().clone();
-        let body_timeout = self.non_streaming_timeout;
-        let body = tokio::time::timeout(
-            body_timeout,
+        let body_timeout = deadline
+            .map(|at| at.saturating_duration_since(tokio::time::Instant::now()))
+            .unwrap_or(self.non_streaming_timeout);
+        if body_timeout.is_zero() {
+            return Err(ProxyError::Timeout(
+                "Copilot Auto response body deadline elapsed".into(),
+            ));
+        }
+        let body_deadline = deadline.unwrap_or_else(|| tokio::time::Instant::now() + body_timeout);
+        let body = tokio::time::timeout_at(
+            body_deadline,
             response.bytes_with_limit(MAX_RESPONSE_BODY_BYTES),
         )
         .await
@@ -443,17 +452,35 @@ impl RequestForwarder {
     pub(super) async fn prime_streaming_response(
         &self,
         response: ProxyResponse,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<ProxyResponse, ProxyError> {
-        if self.streaming_first_byte_timeout.is_zero() {
+        if self.streaming_first_byte_timeout.is_zero() && deadline.is_none() {
             return Ok(response);
         }
 
         let status = response.status();
         let headers = response.headers().clone();
-        let timeout = self.streaming_first_byte_timeout;
+        let timeout = deadline
+            .map(|at| at.saturating_duration_since(tokio::time::Instant::now()))
+            .map(|remaining| {
+                if self.streaming_first_byte_timeout.is_zero() {
+                    remaining
+                } else {
+                    remaining.min(self.streaming_first_byte_timeout)
+                }
+            })
+            .unwrap_or(self.streaming_first_byte_timeout);
+        if timeout.is_zero() {
+            return Err(ProxyError::Timeout(
+                "Copilot Auto first chunk deadline elapsed".into(),
+            ));
+        }
         let mut stream = Box::pin(response.bytes_stream());
 
-        let first = tokio::time::timeout(timeout, stream.next())
+        let first_deadline = deadline
+            .map(|at| at.min(tokio::time::Instant::now() + timeout))
+            .unwrap_or_else(|| tokio::time::Instant::now() + timeout);
+        let first = tokio::time::timeout_at(first_deadline, stream.next())
             .await
             .map_err(|_| {
                 ProxyError::Timeout(format!(
@@ -484,9 +511,10 @@ impl RequestForwarder {
         codex_responses_to_anthropic: bool,
         resolved_claude_api_format: Option<&str>,
         opaque_state_request: Option<&Value>,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<ProxyResponse, ProxyError> {
         let mut response = self
-            .prepare_success_response_for_failover(response, request_is_streaming)
+            .prepare_success_response_for_failover(response, request_is_streaming, deadline)
             .await?;
         // Streaming requests normally return SSE. If a compatible gateway
         // explicitly returns JSON instead, buffer and validate it inside the retry
