@@ -675,10 +675,15 @@ impl SkillService {
         // 主机才是准绳：`github.com` 不管传进来什么平台都按 GitHub 拼
         Some(if host == GITHUB_HOST {
             format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
-        } else if platform == RepoPlatform::Gitea {
-            format!("https://{host}/{owner}/{repo}/src/branch/{branch}/{doc_path}")
         } else {
-            format!("https://{host}/{owner}/{repo}/-/blob/{branch}/{doc_path}")
+            // 文档链接只是交给系统浏览器打开；放行 HTTP 的主机也要跟着换 scheme，
+            // 否则链接指向一个并不存在的 https 站点。
+            let scheme = repo::RepoUrlPolicy::from_settings().scheme_for(host, false);
+            if platform == RepoPlatform::Gitea {
+                format!("{scheme}://{host}/{owner}/{repo}/src/branch/{branch}/{doc_path}")
+            } else {
+                format!("{scheme}://{host}/{owner}/{repo}/-/blob/{branch}/{doc_path}")
+            }
         })
     }
 

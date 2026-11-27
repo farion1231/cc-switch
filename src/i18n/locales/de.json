@@ -3564,6 +3564,7 @@
       "invalidTokenHost": "Ungültige Seite: {{host}}. Geben Sie nur den Hostnamen ein, z. B. gitlab.example.com",
       "invalidRepoToken": "Ungültiges Token: nur Buchstaben, Ziffern und - _ . ~ + / =, höchstens {{limit}} Zeichen",
       "repoTokenStorageFailed": "Das Zugriffstoken für {{host}} konnte nicht gelesen oder geschrieben werden. Prüfen Sie, ob der Anmeldedatenspeicher des Systems verfügbar ist",
+      "insecureHttpWithToken": "Für {{host}} kann kein Zugriffstoken über unverschlüsseltes HTTP verwendet werden",
       "getHomeDirFailed": "Benutzerverzeichnis konnte nicht ermittelt werden",
       "noSkillsInZip": "Keine Skills in der ZIP-Datei gefunden (erfordert eine SKILL.md-Datei)",
       "unknownError": "Unbekannter Fehler",
@@ -3574,7 +3575,8 @@
         "checkRepoUrl": "Bitte Repository-URL und Branch-Namen prüfen",
         "checkPermission": "Bitte Verzeichnisberechtigungen prüfen",
         "uninstallFirst": "Bitte zuerst den vorhandenen Skill mit demselben Namen deinstallieren",
-        "checkZipContent": "Bitte prüfen, ob die ZIP-Datei gültige Skill-Verzeichnisse (mit SKILL.md-Dateien) enthält"
+        "checkZipContent": "Bitte prüfen, ob die ZIP-Datei gültige Skill-Verzeichnisse (mit SKILL.md-Dateien) enthält",
+        "useHttpsOrRemoveToken": "Verwenden Sie eine HTTPS-Repository-URL oder entfernen Sie das Zugriffstoken für diesen Host"
       }
     },
     "repo": {
@@ -3590,6 +3592,8 @@
       "empty": "Keine Repositories",
       "invalidUrl": "Ungültiges Format der Repository-URL",
       "httpsOnly": "GitLab- und Gitea-Repositories müssen eine https-Adresse verwenden",
+      "allowInsecureHttp": "Unsichere HTTP-Verbindungen erlauben (nur für vertrauenswürdige LANs / Self-Hosting)",
+      "insecureHttpWarning": "HTTP überträgt unverschlüsselt: Skills und Tokens können im Netzwerk abgefangen oder ersetzt werden. Nur in einem vollständig vertrauenswürdigen lokalen Netzwerk aktivieren. Anfragen mit Zugriffstoken nutzen weiterhin HTTPS.",
       "token": {
         "title": "Zugriffstokens",
         "description": "Werden zum Lesen privater Repositories verwendet. Tokens werden pro Seite im Anmeldedatenspeicher des Systems gespeichert (macOS-Schlüsselbund, Windows-Anmeldeinformationsverwaltung) und nie synchronisiert. Lesezugriff genügt.",

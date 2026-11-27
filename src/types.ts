@@ -446,6 +446,9 @@ export interface Settings {
   checkToolUpdatesOnStartup?: boolean;
   // 自动下载 CC Switch 新版本，下好后问要不要安装（默认关；设备级，不随云同步）
   autoUpdateEnabled?: boolean;
+  // 允许技能仓库使用明文 HTTP（#9947，默认关；仅对下面列出的主机生效）
+  allowInsecureSkillHttp?: boolean;
+  insecureSkillHttpHosts?: string[];
   // 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 一律原生菜单；默认关，没写过视为关，即用托盘面板）
   nativeTrayMenu?: boolean;
   // Preserve Codex ChatGPT login in auth.json when switching third-party providers

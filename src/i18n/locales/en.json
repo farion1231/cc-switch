@@ -3564,6 +3564,7 @@
       "invalidTokenHost": "Invalid site: {{host}}. Enter just the host name, such as gitlab.example.com",
       "invalidRepoToken": "Invalid token: use only letters, digits and - _ . ~ + / =, up to {{limit}} characters",
       "repoTokenStorageFailed": "Couldn't read or write the access token for {{host}}. Check that the system credential store is available",
+      "insecureHttpWithToken": "Cannot use an access token with plain HTTP for {{host}}",
       "getHomeDirFailed": "Unable to get user home directory",
       "noSkillsInZip": "No skills found in ZIP file (requires SKILL.md file)",
       "unknownError": "Unknown error",
@@ -3574,7 +3575,8 @@
         "checkRepoUrl": "Please check repository URL and branch name",
         "checkPermission": "Please check directory permissions",
         "uninstallFirst": "Please uninstall the existing skill with the same name first",
-        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)"
+        "checkZipContent": "Please verify the ZIP file contains valid skill directories (with SKILL.md files)",
+        "useHttpsOrRemoveToken": "Use an HTTPS repository URL, or remove the access token for this host"
       }
     },
     "repo": {
@@ -3590,6 +3592,8 @@
       "empty": "No repositories",
       "invalidUrl": "Invalid repository URL format",
       "httpsOnly": "GitLab and Gitea repositories must use an https address",
+      "allowInsecureHttp": "Allow insecure HTTP connections (trusted LAN / self-hosted only)",
+      "insecureHttpWarning": "HTTP transfers are unencrypted: skills and tokens could be intercepted or replaced on the network. Enable only on a fully trusted local network. Requests with an access token still use HTTPS.",
       "token": {
         "title": "Access tokens",
         "description": "Used to read private repositories. Tokens are stored per site in the system credential store (macOS Keychain, Windows Credential Manager) and never synced. Read-only access is enough.",

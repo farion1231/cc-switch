@@ -3564,6 +3564,7 @@
       "invalidTokenHost": "잘못된 사이트: {{host}}. gitlab.example.com처럼 호스트 이름만 입력하세요.",
       "invalidRepoToken": "잘못된 토큰: 영문자, 숫자와 - _ . ~ + / =만 사용할 수 있으며 최대 {{limit}}자입니다.",
       "repoTokenStorageFailed": "{{host}}의 액세스 토큰을 읽거나 쓰지 못했습니다. 시스템 자격 증명 저장소를 사용할 수 있는지 확인하세요.",
+      "insecureHttpWithToken": "{{host}}에 평문 HTTP로 액세스 토큰을 사용할 수 없습니다",
       "getHomeDirFailed": "사용자 홈 디렉터리를 가져올 수 없습니다.",
       "noSkillsInZip": "ZIP 파일에 스킬이 없습니다 (SKILL.md 파일 필요)",
       "unknownError": "알 수 없는 오류",
@@ -3574,7 +3575,8 @@
         "checkRepoUrl": "저장소 URL과 브랜치 이름을 확인하세요",
         "checkPermission": "디렉터리 권한을 확인하세요.",
         "uninstallFirst": "먼저 동일한 이름을 가진 기존 스킬을 제거하세요.",
-        "checkZipContent": "ZIP 파일에 SKILL.md를 포함하는 유효한 스킬 디렉터리가 있는지 확인하세요"
+        "checkZipContent": "ZIP 파일에 SKILL.md를 포함하는 유효한 스킬 디렉터리가 있는지 확인하세요",
+        "useHttpsOrRemoveToken": "HTTPS 저장소 URL을 사용하거나 해당 호스트의 액세스 토큰을 삭제하세요"
       }
     },
     "repo": {
@@ -3590,6 +3592,8 @@
       "empty": "저장소 없음",
       "invalidUrl": "잘못된 저장소 URL 형식",
       "httpsOnly": "GitLab / Gitea 저장소는 https 주소만 지원합니다",
+      "allowInsecureHttp": "안전하지 않은 HTTP 연결 허용 (신뢰할 수 있는 LAN / 자체 호스팅만)",
+      "insecureHttpWarning": "HTTP는 암호화되지 않으므로 스킬과 토큰이 네트워크에서 가로채거나 변조될 수 있습니다. 완전히 신뢰할 수 있는 로컬 네트워크에서만 활성화하세요. 액세스 토큰이 있는 요청은 계속 HTTPS를 사용합니다.",
       "token": {
         "title": "액세스 토큰",
         "description": "비공개 저장소를 읽을 때 사용합니다. 토큰은 사이트별로 시스템 자격 증명 저장소(macOS 키체인, Windows 자격 증명 관리자)에 저장되며 클라우드 동기화되지 않습니다. 읽기 권한만 있으면 됩니다.",

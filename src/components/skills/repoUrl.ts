@@ -9,12 +9,15 @@ export interface ParsedRepoUrl {
 }
 
 /** 仓库首页：GitHub、GitLab、Gitea 都是 `https://<主机>/<owner>/<name>` */
-export function repoWebUrl(repo: {
-  host?: string;
-  owner: string;
-  name: string;
-}): string {
-  return `https://${repo.host || GITHUB_HOST}/${repo.owner}/${repo.name}`;
+export function repoWebUrl(
+  repo: {
+    host?: string;
+    owner: string;
+    name: string;
+  },
+  scheme: "http" | "https" = "https",
+): string {
+  return `${scheme}://${repo.host || GITHUB_HOST}/${repo.owner}/${repo.name}`;
 }
 
 const GITEA_REF_KINDS = ["branch", "tag", "commit"];
@@ -106,12 +109,19 @@ export function parseRepoUrl(url: string): ParsedRepoUrl | null {
 }
 
 /**
- * 明文 http 的 GitLab / Gitea 地址：技能内容会被 AI 工具当指令执行，下载只走 https，
- * 所以这类地址要单独提示，而不是存进去再报一个看不懂的网络错误。
+ * 明文 http 的 GitLab / Gitea 地址：技能内容会被 AI 工具当指令执行，默认一律拦下，
+ * 而不是存进去再报一个看不懂的网络错误。
+ *
+ * `allowInsecureHttp` 是用户显式打开的设备级开关（#9947）。它只放宽输入校验：
+ * 下载主机是否真的走 http，还要后端再核对设备上的放行主机清单。
  */
-export function isInsecureRepoUrl(url: string): boolean {
+export function isInsecureRepoUrl(
+  url: string,
+  allowInsecureHttp = false,
+): boolean {
   const trimmed = url.trim();
   if (!/^http:\/\//i.test(trimmed)) return false;
+  if (allowInsecureHttp) return false;
   return Boolean(parseRepoUrl(trimmed)?.host);
 }
 

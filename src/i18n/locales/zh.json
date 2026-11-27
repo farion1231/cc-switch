@@ -3564,6 +3564,7 @@
       "invalidTokenHost": "站点无效：{{host}}。只填主机名，例如 gitlab.example.com",
       "invalidRepoToken": "令牌格式不对：只能包含字母、数字和 - _ . ~ + / =，最长 {{limit}} 个字符",
       "repoTokenStorageFailed": "无法读写 {{host}} 的访问令牌，请检查系统的凭据存储是否可用",
+      "insecureHttpWithToken": "不能对 {{host}} 使用明文 HTTP 传输访问令牌",
       "getHomeDirFailed": "无法获取用户主目录",
       "noSkillsInZip": "ZIP 文件中未找到技能（需包含 SKILL.md 文件）",
       "unknownError": "未知错误",
@@ -3574,7 +3575,8 @@
         "checkRepoUrl": "请检查仓库地址和分支名称",
         "checkPermission": "请检查目录权限",
         "uninstallFirst": "请先卸载已安装的同名技能",
-        "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）"
+        "checkZipContent": "请确认 ZIP 文件包含有效的技能目录（含 SKILL.md 文件）",
+        "useHttpsOrRemoveToken": "请改用 HTTPS 仓库地址，或删除该站点的访问令牌"
       }
     },
     "repo": {
@@ -3590,6 +3592,8 @@
       "empty": "暂无仓库",
       "invalidUrl": "无效的仓库 URL 格式",
       "httpsOnly": "GitLab / Gitea 仓库只支持 https 地址",
+      "allowInsecureHttp": "允许不安全的 HTTP 连接（仅限可信内网/自建实例）",
+      "insecureHttpWarning": "HTTP 传输不加密，技能内容与凭证可能被窃听或篡改。请仅在完全可信的本地网络中启用；带访问令牌的请求仍只走 HTTPS。",
       "token": {
         "title": "访问令牌",
         "description": "读取私有仓库时使用。令牌按站点保存在系统的凭据存储里（macOS 钥匙串、Windows 凭据管理器），不随云同步，只需要只读权限。",

@@ -36,6 +36,15 @@ import {
   repoWebUrl,
 } from "./repoUrl";
 
+/** 明文 HTTP 的设备级开关与放行主机（#9947）；不传时保持原来的 https-only 行为 */
+export interface InsecureRepoHttpSettings {
+  enabled: boolean;
+  hosts: string[];
+  onChange: (enabled: boolean) => void | Promise<void>;
+  onAllowHost: (host: string) => void | Promise<void>;
+  onRemoveHost: (host: string) => void | Promise<void>;
+}
+
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
@@ -47,6 +56,7 @@ interface RepoManagerPanelProps {
   onToggle?: (repo: SkillRepo, enabled: boolean) => Promise<void>;
   /** 访问令牌区（读私有仓库用）；不传就不显示 */
   tokens?: Omit<RepoTokenSectionProps, "knownHosts">;
+  insecureHttp?: InsecureRepoHttpSettings;
   onClose: () => void;
 }
 
@@ -87,6 +97,7 @@ export function RepoManagerPanel({
   onRemove,
   onToggle,
   tokens,
+  insecureHttp,
   onClose,
 }: RepoManagerPanelProps) {
   const { t } = useTranslation();
@@ -103,7 +114,7 @@ export function RepoManagerPanel({
 
   const handleAdd = async () => {
     setError("");
-    if (isInsecureRepoUrl(repoUrl)) {
+    if (isInsecureRepoUrl(repoUrl, insecureHttp?.enabled)) {
       setError(t("skills.repo.httpsOnly"));
       return;
     }
@@ -111,6 +122,19 @@ export function RepoManagerPanel({
     if (!parsed) {
       setError(t("skills.repo.invalidUrl"));
       return;
+    }
+    // 开关打开时，用户填的 http 地址本身就是对这台主机的明确放行。先记主机，
+    // 再触发发现：addRepo 会立刻按新仓库去下载，后端此刻就要能查到放行记录。
+    if (insecureHttp?.enabled && /^http:\/\//i.test(repoUrl.trim())) {
+      if (parsed.host) {
+        try {
+          await insecureHttp.onAllowHost(parsed.host);
+        } catch (e) {
+          setError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
+          setAdding(false);
+          return;
+        }
+      }
     }
     setAdding(true);
     try {
@@ -132,7 +156,14 @@ export function RepoManagerPanel({
 
   const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(repoWebUrl(repo));
+      const allowed = insecureHttp?.enabled
+        ? insecureHttp.hosts.some(
+            (host) => host.toLowerCase() === repo.host?.toLowerCase(),
+          )
+        : false;
+      await settingsApi.openExternal(
+        repoWebUrl(repo, allowed ? "http" : "https"),
+      );
     } catch (err) {
       console.error("Failed to open URL:", err);
     }
@@ -149,6 +180,48 @@ export function RepoManagerPanel({
           <SheetTitle>{t("skills.repo.title")}</SheetTitle>
         </SheetHeader>
         <SheetBody className="flex flex-col gap-6 px-6 pb-6 pt-5">
+          {insecureHttp && (
+            <section
+              aria-labelledby="sk-insecure-http-title"
+              className="flex flex-col gap-2"
+            >
+              <label className="flex cursor-pointer items-start gap-2 text-body text-fg-1">
+                <input
+                  type="checkbox"
+                  className={CHECKBOX_CLASS}
+                  checked={insecureHttp.enabled}
+                  onChange={(event) =>
+                    insecureHttp.onChange(event.target.checked)
+                  }
+                />
+                <span id="sk-insecure-http-title">
+                  {t("skills.repo.allowInsecureHttp")}
+                </span>
+              </label>
+              {insecureHttp.enabled && (
+                <>
+                  <p className="m-0 text-xs leading-relaxed text-warning-text">
+                    {t("skills.repo.insecureHttpWarning")}
+                  </p>
+                  {insecureHttp.hosts.length > 0 && (
+                    <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
+                      {insecureHttp.hosts.map((host) => (
+                        <li key={host}>
+                          <button
+                            type="button"
+                            className="rounded-control border border-border px-2 py-1 font-mono text-xs text-fg-2 hover:text-danger-text"
+                            onClick={() => insecureHttp.onRemoveHost(host)}
+                          >
+                            {host}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </>
+              )}
+            </section>
+          )}
           <section
             aria-labelledby="sk-repo-add-title"
             className="flex flex-col gap-3"

@@ -2,6 +2,51 @@
 
 use super::*;
 
+/// 明文 HTTP 的授权策略（#9947）。
+///
+/// 三个条件缺一不可：用户打开总开关、主机在设备级放行清单里、这次请求不带令牌。
+/// 清单只存主机名（含端口），仓库坐标本身不带 scheme；`scheme_for` 是下载地址与
+/// 探测地址共用的唯一判定点，避免两处各写一遍规则后走偏。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct RepoUrlPolicy {
+    pub allow_insecure_http: bool,
+    pub insecure_http_hosts: Vec<String>,
+}
+
+impl RepoUrlPolicy {
+    pub(crate) fn from_settings() -> Self {
+        let settings = crate::settings::get_settings();
+        Self {
+            allow_insecure_http: settings.allow_insecure_skill_http,
+            insecure_http_hosts: settings.insecure_skill_http_hosts.clone(),
+        }
+    }
+
+    fn normalized_host(host: &str) -> String {
+        host.trim().to_ascii_lowercase()
+    }
+
+    pub(crate) fn is_host_allowed(&self, host: &str) -> bool {
+        let host = Self::normalized_host(host);
+        self.allow_insecure_http
+            && host != GITHUB_HOST
+            && self
+                .insecure_http_hosts
+                .iter()
+                .any(|allowed| Self::normalized_host(allowed) == host)
+    }
+
+    /// 令牌一旦参与请求就只走 https：reqwest 的 `https_only()` 客户端也拦着，
+    /// 但地址本身先别拼成 http，报出来的错才说得清。
+    pub(crate) fn scheme_for(&self, host: &str, authenticated: bool) -> &'static str {
+        if !authenticated && self.is_host_allowed(host) {
+            "http"
+        } else {
+            "https"
+        }
+    }
+}
+
 impl SkillService {
     /// 校验并规范化技能源路径（允许多级目录），拒绝路径穿越和绝对路径
     pub(super) fn sanitize_skill_source_path(raw: &str) -> Option<PathBuf> {
@@ -291,15 +336,18 @@ impl SkillService {
         if let Some(platform) = self.platform_cache.lock_recover().get(host).copied() {
             return platform;
         }
-        let gitea_prefix = format!(
-            "https://{host}/{}/{}/src/branch/",
+        // 开关切换前后发现的 readme_url 可能不同 scheme，两种都认，
+        // 否则关掉 HTTP 后旧缓存里的 Gitea 会被误判成 GitLab、拼错归档地址。
+        let gitea_suffix = format!(
+            "://{host}/{}/{}/src/branch/",
             skill.repo_owner, skill.repo_name
         );
         let looks_like_gitea = host != GITHUB_HOST
-            && skill
-                .readme_url
-                .as_deref()
-                .is_some_and(|url| url.starts_with(&gitea_prefix));
+            && skill.readme_url.as_deref().is_some_and(|url| {
+                ["https", "http"]
+                    .iter()
+                    .any(|scheme| url.starts_with(&format!("{scheme}{gitea_suffix}")))
+            });
         if looks_like_gitea {
             RepoPlatform::Gitea
         } else {
@@ -348,7 +396,8 @@ impl SkillService {
     /// 向主机要 `/api/v1/version`：Gitea / Forgejo 不登录就返回 `{"version": "…"}`，
     /// GitLab 没有这个地址（404，或跳去登录页）。`None` 表示这次没探明。
     pub(super) async fn probe_platform(host: &str, token: Option<&str>) -> Option<RepoPlatform> {
-        let url = format!("https://{host}/api/v1/version");
+        let scheme = RepoUrlPolicy::from_settings().scheme_for(host, token.is_some());
+        let url = format!("{scheme}://{host}/api/v1/version");
         let mut request = Self::http_client(token.is_some())
             .inspect_err(|e| log::warn!("探测 {host} 的平台失败，按 GitLab 处理: {e}"))
             .ok()?
@@ -423,6 +472,23 @@ impl SkillService {
         branch: &str,
         authenticated: bool,
     ) -> Result<String> {
+        Self::build_archive_url_with_policy(
+            repo,
+            platform,
+            branch,
+            authenticated,
+            &RepoUrlPolicy::from_settings(),
+        )
+    }
+
+    /// 与 [`Self::build_archive_url`] 相同，但策略由调用方给出，便于不碰设置文件地单测。
+    pub(super) fn build_archive_url_with_policy(
+        repo: &SkillRepo,
+        platform: RepoPlatform,
+        branch: &str,
+        authenticated: bool,
+        policy: &RepoUrlPolicy,
+    ) -> Result<String> {
         if repo.is_github() && authenticated {
             // 写成 refs/heads/<分支>：zipball 接受任意 ref，只写分支名时同名 tag 也能命中，
             // 分支删了却还有同名 tag 就会装上 tag 的内容，也不再 404 换分支（11-19 实测）
@@ -449,7 +515,8 @@ impl SkillService {
                 Some("checkRepoUrl"),
             ))
         };
-        let origin = format!("https://{}/", repo.host);
+        let scheme = policy.scheme_for(&repo.host, authenticated);
+        let origin = format!("{scheme}://{}/", repo.host);
         let mut url = url::Url::parse(&origin).map_err(|_| invalid())?;
 
         if platform == RepoPlatform::Gitea {
@@ -470,7 +537,7 @@ impl SkillService {
                 .path_segments()
                 .map(Iterator::collect)
                 .unwrap_or_default();
-            if url.scheme() != "https"
+            if url.scheme() != scheme
                 || !url.username().is_empty()
                 || url.password().is_some()
                 || url.query().is_some()
@@ -501,7 +568,7 @@ impl SkillService {
             "/api/v4/projects/{}/repository/archive.zip",
             project.replace('/', "%2F")
         );
-        if url.scheme() != "https"
+        if url.scheme() != scheme
             || !url.username().is_empty()
             || url.password().is_some()
             || url.fragment().is_some()
