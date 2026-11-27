@@ -11,7 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { toast } from "@/lib/toast";
 import { invoke } from "@tauri-apps/api/core";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   ExternalLink,
   KeyRound,
@@ -224,6 +224,46 @@ const getInitialApp = (): AppId => {
     return saved;
   }
   return "claude";
+};
+
+// 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后、托盘添加之后重读一遍
+const refreshAdditiveLiveState = async (
+  queryClient: QueryClient,
+  app: AppId,
+) => {
+  if (appHas(app, "piFamily")) {
+    await invalidatePiProviderCaches(queryClient, app);
+  } else if (app === "opencode") {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: ["opencodeLiveProviderIds"],
+      }),
+      queryClient.invalidateQueries({ queryKey: ["opencodeDefaultModel"] }),
+      queryClient.invalidateQueries({
+        queryKey: ["omo", "current-provider-id"],
+      }),
+      queryClient.invalidateQueries({
+        queryKey: ["omo-slim", "current-provider-id"],
+      }),
+    ]);
+  } else if (app === "openclaw") {
+    await Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: openclawKeys.liveProviderIds,
+      }),
+      queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel }),
+      queryClient.invalidateQueries({ queryKey: openclawKeys.health }),
+    ]);
+  } else if (app === "hermes") {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
+      queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
+    ]);
+  } else if (app === "zcode") {
+    await invalidateZcodeProviderCaches(queryClient);
+  } else if (appHas(app, "additive")) {
+    await queryClient.invalidateQueries({ queryKey: ["providers", app] });
+  }
 };
 
 function App() {
@@ -473,6 +513,12 @@ function App() {
     } finally {
       await queryClient.invalidateQueries({ queryKey: ["providers", app] });
     }
+    await providersApi.updateTrayMenu().catch((error) => {
+      console.error(
+        "Failed to update tray menu after adding provider to config",
+        error,
+      );
+    });
     toast.success(
       t("notifications.addToConfigSuccess", { defaultValue: "已添加到配置" }),
       { closeButton: true },
@@ -526,9 +572,8 @@ function App() {
             await queryClient.invalidateQueries({
               queryKey: ["providers", event.appType],
             });
-            if (event.appType === "pi") {
-              await invalidatePiProviderCaches(queryClient);
-            }
+            // 托盘里添加累加式应用的供应商时，主界面的「已添加」也要跟上
+            await refreshAdditiveLiveState(queryClient, event.appType);
             if (event.appType === "claude") {
               // 托盘切卡、应用项目同样可能把默认登录收成新账号
               await queryClient.invalidateQueries({
@@ -1118,44 +1163,6 @@ function App() {
     await updateProvider(provider, originalId, editorSave);
   };
 
-  // 累加式应用的「已添加」和「默认」都现读客户端文件，移除前后重读一遍
-  const refreshAdditiveLiveState = async (app: AppId) => {
-    if (appHas(app, "piFamily")) {
-      await invalidatePiProviderCaches(queryClient, app);
-    } else if (app === "opencode") {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: ["opencodeLiveProviderIds"],
-        }),
-        queryClient.invalidateQueries({ queryKey: ["opencodeDefaultModel"] }),
-      ]);
-    } else if (app === "openclaw") {
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: openclawKeys.liveProviderIds,
-        }),
-        queryClient.invalidateQueries({ queryKey: openclawKeys.defaultModel }),
-        queryClient.invalidateQueries({ queryKey: openclawKeys.health }),
-      ]);
-    } else if (app === "hermes") {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: hermesKeys.liveProviderIds }),
-        queryClient.invalidateQueries({ queryKey: hermesKeys.modelConfig }),
-      ]);
-    } else if (app === "zcode") {
-      await invalidateZcodeProviderCaches(queryClient);
-    } else if (
-      app === "mcode" ||
-      app === "dsh" ||
-      app === "kimi" ||
-      app === "copilot" ||
-      app === "workbuddy" ||
-      app === "codebuddy"
-    ) {
-      await queryClient.invalidateQueries({ queryKey: ["providers", app] });
-    }
-  };
-
   const handleConfirmAction = async () => {
     if (!confirmAction) return;
     const { provider, action } = confirmAction;
@@ -1174,14 +1181,22 @@ function App() {
               ? translateKimiProviderMutationError(detail, t)
               : "") || detail;
         // 默认模型可能在客户端里改过、页面还是旧的：失败了也重读，让「默认」和移除按钮跟上
-        void refreshAdditiveLiveState(activeApp).catch(() => undefined);
+        void refreshAdditiveLiveState(queryClient, activeApp).catch(
+          () => undefined,
+        );
         toast.error(t("notifications.removeFromConfigFailed"), {
           description: description || t("common.unknown"),
           closeButton: true,
         });
         return;
       }
-      await refreshAdditiveLiveState(activeApp);
+      await refreshAdditiveLiveState(queryClient, activeApp);
+      await providersApi.updateTrayMenu().catch((error) => {
+        console.error(
+          "Failed to update tray menu after removing provider from config",
+          error,
+        );
+      });
       toast.success(
         appHas(activeApp, "piFamily")
           ? t(`${activeApp}.provider.removed`, {
