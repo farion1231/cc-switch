@@ -172,7 +172,10 @@ export function ZCodeFormFields({
     const newModels: Record<string, ZCodeModel> = {};
     for (const [k, v] of Object.entries(models)) {
       if (k === oldKey) {
-        newModels[newKey] = v;
+        // 显示名不再可编辑也不写入 ZCode，改了 ID 就别把旧模型的名字带过去
+        const renamed = { ...v };
+        delete renamed.name;
+        newModels[newKey] = renamed;
       } else {
         newModels[k] = v;
       }
@@ -417,7 +420,6 @@ export function ZCodeFormFields({
                                 e.target.value,
                               )
                             }
-                            placeholder="1048576"
                           />
                         </div>
                         <div className="space-y-1">
@@ -442,7 +444,6 @@ export function ZCodeFormFields({
                                 e.target.value,
                               )
                             }
-                            placeholder="131072"
                           />
                         </div>
                       </div>
@@ -462,8 +463,7 @@ export function ZCodeFormFields({
 
         <p className="text-xs text-muted-foreground">
           {t("zcode.modelsHint", {
-            defaultValue:
-              "Configure available models. Model ID is the API identifier sent in requests.",
+            defaultValue: "Model ID is the model name sent in API requests.",
           })}
         </p>
       </div>
