@@ -1,4 +1,5 @@
 use crate::database::Database;
+use crate::lan_web::LanWebService;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::services::{ProxyService, UsageCache};
@@ -9,6 +10,7 @@ use std::sync::Arc;
 pub struct AppState {
     pub db: Arc<Database>,
     pub proxy_service: ProxyService,
+    pub lan_web_service: LanWebService,
     pub usage_cache: Arc<UsageCache>,
     // 内部已使用细粒度锁（accounts/access_tokens/refresh_locks），所有方法均为
     // `&self`，无需外层 RwLock；避免持有粗粒度锁跨网络刷新导致的连锁阻塞。
@@ -26,10 +28,12 @@ impl AppState {
             crate::config::get_app_config_dir(),
         )));
         let proxy_service = ProxyService::new(db.clone());
+        let lan_web_service = LanWebService::new();
 
         Self {
             db,
             proxy_service,
+            lan_web_service,
             usage_cache: Arc::new(UsageCache::new()),
             codex_oauth_manager,
             xai_oauth_manager,

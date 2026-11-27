@@ -17,10 +17,11 @@ export default defineConfig(({ command }) => ({
     outDir: "../dist",
     emptyOutDir: true,
     rollupOptions: {
-      // 托盘面板是单独的入口，不加载主界面
+      // 托盘面板与局域网移动端页面是单独入口，不加载桌面主界面
       input: {
         main: path.resolve(__dirname, "src/index.html"),
         "tray-panel": path.resolve(__dirname, "src/tray-panel.html"),
+        mobile: path.resolve(__dirname, "src/mobile.html"),
       },
     },
   },

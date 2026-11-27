@@ -662,4 +662,71 @@ export const handlers = [
       domain: null,
     }),
   ),
+  // LAN Mobile Web UI 默认关闭状态
+  http.post(`${TAURI_ENDPOINT}/get_lan_web_status`, () =>
+    success({
+      mode: "off",
+      port: 15722,
+      allowControl: false,
+      remoteControlApps: [],
+      installedRemoteApps: ["claude", "agy"],
+      running: false,
+      listenAddress: null,
+      localUrl: null,
+      lanUrls: [],
+      lanHosts: [],
+      token: "",
+      error: null,
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/update_lan_web_config`, async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      config?: {
+        mode?: string;
+        port?: number;
+        allowControl?: boolean;
+        remoteControlApps?: string[];
+      };
+    };
+    const mode = body.config?.mode ?? "off";
+    const port = body.config?.port ?? 15722;
+    const allowControl = body.config?.allowControl ?? false;
+    const remoteControlApps = body.config?.remoteControlApps ?? [];
+    return success({
+      mode,
+      port,
+      allowControl,
+      remoteControlApps,
+      installedRemoteApps: ["claude", "agy"],
+      running: mode !== "off",
+      listenAddress:
+        mode === "lan"
+          ? `0.0.0.0:${port}`
+          : mode === "local"
+            ? `127.0.0.1:${port}`
+            : null,
+      localUrl: mode !== "off" ? `http://127.0.0.1:${port}/#t=testtoken` : null,
+      lanUrls:
+        mode === "lan" ? [`http://192.168.1.10:${port}/#t=testtoken`] : [],
+      lanHosts: ["192.168.1.10"],
+      token: mode !== "off" ? "testtoken" : "",
+      error: null,
+    });
+  }),
+  http.post(`${TAURI_ENDPOINT}/regenerate_lan_web_token`, () =>
+    success({
+      mode: "local",
+      port: 15722,
+      allowControl: false,
+      remoteControlApps: [],
+      installedRemoteApps: ["claude", "agy"],
+      running: true,
+      listenAddress: "127.0.0.1:15722",
+      localUrl: "http://127.0.0.1:15722/#t=rotatedtoken",
+      lanUrls: [],
+      lanHosts: [],
+      token: "rotatedtoken",
+      error: null,
+    }),
+  ),
 ];

@@ -33,6 +33,7 @@ mod init_status;
 mod jsonc_document;
 mod kimi_config;
 mod kimi_session;
+pub mod lan_web;
 mod lightweight;
 #[cfg(target_os = "linux")]
 mod linux_fix;
@@ -792,6 +793,7 @@ pub fn run() {
 
             // 设置 AppHandle 用于代理故障转移时的 UI 更新
             app_state.proxy_service.set_app_handle(app.handle().clone());
+            app_state.lan_web_service.set_app_handle(app.handle().clone());
 
             // 补完上次崩溃时写到一半的客户端文件（写前意图在 ~/.cc-switch/live-state.json），
             // 要在任何写客户端文件的启动步骤之前。
@@ -1423,6 +1425,8 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                // 若用户已开启局域网移动端 Web UI，启动独立控制面服务。
+                state.lan_web_service.start_if_configured(state.inner().clone()).await;
                 // #8268 测试版给 agy 装过包装脚本、改过 shell 启动文件，撤掉带标记的部分。
                 if let Err(e) =
                     crate::services::provider::agy_direct::migrate_legacy_launcher(&state.db)
@@ -1968,6 +1972,10 @@ pub fn run() {
             commands::delete_daily_memory_file,
             commands::search_daily_memory_files,
             commands::open_workspace_directory,
+            // LAN Mobile Web UI
+            commands::get_lan_web_status,
+            commands::update_lan_web_config,
+            commands::regenerate_lan_web_token,
         ]);
 
     let app = builder
@@ -2075,6 +2083,7 @@ pub fn run() {
 /// 客户端不能一直指着代理：开机自启默认关闭，CC Switch 一关客户端就连不上了。
 pub async fn cleanup_before_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<store::AppState>() {
+        state.lan_web_service.shutdown().await;
         crate::mode::controller::detach_all(state.inner()).await;
         // 切换后几秒内退出：给开着的 Claude Code 会话写的空值墓碑现在删掉（刚写的最多等 3 秒），
         // 不留到下次启动
