@@ -225,6 +225,56 @@ describe("McpFormModal (drawer)", () => {
     });
   });
 
+  it.each(["form", "JSON"])(
+    "keeps empty arguments when saving from the %s tab",
+    async (tab) => {
+      const server: McpServer = {
+        id: "example",
+        name: "example",
+        server: {
+          type: "stdio",
+          command: "node",
+          args: ["server.js", "--label", "", "--mode", "read-only"],
+        },
+        apps: {} as McpServer["apps"],
+      };
+      renderForm({ editingId: "example", initialData: server });
+
+      if (tab === "JSON") {
+        await userEvent.click(screen.getByRole("button", { name: "JSON" }));
+        fireEvent.change(screen.getByLabelText("mcpPage.drawer.jsonLabel"), {
+          target: { value: JSON.stringify(server.server) },
+        });
+      }
+      await userEvent.click(
+        screen.getByRole("button", { name: "common.save" }),
+      );
+
+      await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
+      expect(mocks.upsert.mock.calls[0][0].server).toEqual(server.server);
+    },
+  );
+
+  it("removes only the selected argument row, preserving other empty arguments", async () => {
+    renderForm({
+      editingId: "example",
+      initialData: {
+        id: "example",
+        name: "example",
+        server: { type: "stdio", command: "node", args: ["", "keep", ""] },
+        apps: {} as McpServer["apps"],
+      },
+    });
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "mcpPage.drawer.removeArg" })[0],
+    );
+    await userEvent.click(screen.getByRole("button", { name: "common.save" }));
+
+    await waitFor(() => expect(mocks.upsert).toHaveBeenCalledTimes(1));
+    expect(mocks.upsert.mock.calls[0][0].server.args).toEqual(["keep", ""]);
+  });
+
   it("masks secrets in the JSON tab and keeps them on save", async () => {
     const server: McpServer = {
       id: "serena",
