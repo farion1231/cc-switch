@@ -26,6 +26,7 @@ fn parse_entry(item: &Value, installed: bool) -> Option<PluginEntry> {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         scope: None,
+        project_path: None,
         manageable: true,
         removable: true,
         installable: true,

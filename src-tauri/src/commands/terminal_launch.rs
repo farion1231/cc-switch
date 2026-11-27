@@ -1450,12 +1450,7 @@ fn launch_macos_warp(script_file: &std::path::Path) -> Result<(), String> {
 
 /// Linux: 根据用户首选终端启动
 #[cfg(target_os = "linux")]
-fn launch_linux_terminal(script_file: &std::path::Path) -> Result<(), String> {
-    use std::process::Command;
-
-    let preferred = crate::settings::get_preferred_terminal();
-
-    // Default terminal list with their arguments
+fn linux_terminal_candidates(preferred: Option<&str>) -> Vec<(String, Vec<&'static str>)> {
     let default_terminals = [
         ("gnome-terminal", vec!["--"]),
         ("konsole", vec!["-e"]),
@@ -1465,31 +1460,38 @@ fn launch_linux_terminal(script_file: &std::path::Path) -> Result<(), String> {
         ("alacritty", vec!["-e"]),
         ("kitty", vec!["-e"]),
         ("ghostty", vec!["-e"]),
+        ("x-terminal-emulator", vec!["-e"]),
+        ("xdg-terminal-exec", vec!["--"]),
     ];
 
-    // Build terminal list: preferred terminal first (if specified), then defaults
-    let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
-        // Find the preferred terminal's args from default list
+    if let Some(preferred) = preferred {
         let pref_args = default_terminals
             .iter()
-            .find(|(name, _)| *name == pref.as_str())
+            .find(|(name, _)| *name == preferred)
             .map(|(_, args)| args.to_vec())
-            .unwrap_or_else(|| vec!["-e"]); // Default args for unknown terminals
+            .unwrap_or_else(|| vec!["-e"]);
 
-        let mut list = vec![(pref.as_str(), pref_args)];
-        // Add remaining terminals as fallbacks
+        let mut list = vec![(preferred.to_string(), pref_args)];
         for (name, args) in &default_terminals {
-            if *name != pref.as_str() {
-                list.push((*name, args.to_vec()));
+            if *name != preferred {
+                list.push(((*name).to_string(), args.to_vec()));
             }
         }
         list
     } else {
         default_terminals
             .iter()
-            .map(|(name, args)| (*name, args.to_vec()))
+            .map(|(name, args)| ((*name).to_string(), args.to_vec()))
             .collect()
-    };
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn launch_linux_terminal(script_file: &std::path::Path) -> Result<(), String> {
+    use std::process::Command;
+
+    let preferred = crate::settings::get_preferred_terminal();
+    let terminals_to_try = linux_terminal_candidates(preferred.as_deref());
 
     let mut last_error = String::from("未找到可用的终端");
 
@@ -1498,10 +1500,10 @@ fn launch_linux_terminal(script_file: &std::path::Path) -> Result<(), String> {
         let terminal_exists = std::path::Path::new(&format!("/usr/bin/{}", terminal)).exists()
             || std::path::Path::new(&format!("/bin/{}", terminal)).exists()
             || std::path::Path::new(&format!("/usr/local/bin/{}", terminal)).exists()
-            || which_command(terminal);
+            || which_command(&terminal);
 
         if terminal_exists {
-            let result = Command::new(terminal)
+            let result = Command::new(&terminal)
                 .args(&args)
                 .arg("sh")
                 .arg(script_file.to_string_lossy().as_ref())
@@ -1874,47 +1876,18 @@ read -r _
             .map_err(|e| format!("设置脚本权限失败: {e}"))?;
 
         let preferred = crate::settings::get_preferred_terminal();
-        let default_terminals = [
-            ("gnome-terminal", vec!["--"]),
-            ("konsole", vec!["-e"]),
-            ("xfce4-terminal", vec!["-e"]),
-            ("mate-terminal", vec!["--"]),
-            ("lxterminal", vec!["-e"]),
-            ("alacritty", vec!["-e"]),
-            ("kitty", vec!["-e"]),
-            ("ghostty", vec!["-e"]),
-        ];
-
-        let terminals_to_try: Vec<(&str, Vec<&str>)> = if let Some(ref pref) = preferred {
-            let pref_args = default_terminals
-                .iter()
-                .find(|(name, _)| *name == pref.as_str())
-                .map(|(_, args)| args.to_vec())
-                .unwrap_or_else(|| vec!["-e"]);
-            let mut list = vec![(pref.as_str(), pref_args)];
-            for (name, args) in &default_terminals {
-                if *name != pref.as_str() {
-                    list.push((*name, args.to_vec()));
-                }
-            }
-            list
-        } else {
-            default_terminals
-                .iter()
-                .map(|(name, args)| (*name, args.to_vec()))
-                .collect()
-        };
+        let terminals_to_try = linux_terminal_candidates(preferred.as_deref());
 
         let mut last_error = String::from("未找到可用的终端");
 
         for (terminal, args) in terminals_to_try {
-            let terminal_exists = which_command(terminal)
+            let terminal_exists = which_command(&terminal)
                 || ["/usr/bin", "/bin", "/usr/local/bin"]
                     .iter()
                     .any(|dir| std::path::Path::new(&format!("{}/{}", dir, terminal)).exists());
 
             if terminal_exists {
-                let spawn_result = Command::new(terminal)
+                let spawn_result = Command::new(&terminal)
                     .args(&args)
                     .arg("sh")
                     .arg(script_file.to_string_lossy().as_ref())
@@ -2100,6 +2073,28 @@ mod tests {
             build_final_shell_cd_command("/bin/bash", Some(Path::new("/tmp/project O'Brien"))),
             "cd '/tmp/project O'\"'\"'Brien' || exit 1\n"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_terminal_candidates_include_system_launchers() {
+        let candidates = linux_terminal_candidates(None);
+
+        assert!(candidates
+            .iter()
+            .any(|(name, args)| { name == "x-terminal-emulator" && args == &["-e"] }));
+        assert!(candidates
+            .iter()
+            .any(|(name, args)| { name == "xdg-terminal-exec" && args == &["--"] }));
+
+        let preferred = linux_terminal_candidates(Some("konsole"));
+        assert_eq!(preferred[0], ("konsole".to_string(), vec!["-e"]));
+        assert!(preferred
+            .iter()
+            .any(|(name, _)| name == "x-terminal-emulator"));
+        assert!(preferred
+            .iter()
+            .any(|(name, _)| name == "xdg-terminal-exec"));
     }
 
     fn agy_key_launch() -> ProviderLaunch {

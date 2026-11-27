@@ -18,7 +18,8 @@ use super::utils::parse_timestamp_to_ms;
 /// 一个 part 在源存储里的位置，用来生成按需取全文的 [`ContentRef`]。
 #[derive(Debug, Clone)]
 pub(super) enum PartLocator {
-    /// SQLite 行：`table` 白名单内（`part` / `session_message`），`base` 是 part 在列 JSON 里的前缀
+    /// SQLite 行：`table` 白名单内（`part` / `session_message` / `session_part`），`base` 是 part 在列 JSON 里的前缀；
+    /// `session_part` 没有 id 列，`id` 写成 `<message_id>:<ordinal>`
     Sqlite {
         table: &'static str,
         id: String,

@@ -804,6 +804,29 @@ pub(super) fn mcode_receipt_install_root(entry: &str, layout: McodeLayout) -> Op
     same_dir.then(|| prefix.to_string())
 }
 
+/// Pi 官方独立安装器把入口放在 `<agentDir>/bin/`（同目录含 `pi-launcher.js`），
+/// 并在 `<agentDir>/install/managed-install.json` 写入 `"kind": "pi-managed-install"`。
+pub(super) fn is_pi_managed_install(entry: &str) -> bool {
+    let Some(bin_dir) = Path::new(entry).parent() else {
+        return false;
+    };
+    if !bin_dir.join("pi-launcher.js").is_file() {
+        return false;
+    }
+    let Some(agent_dir) = bin_dir.parent() else {
+        return false;
+    };
+    let Ok(text) = std::fs::read_to_string(agent_dir.join("install").join("managed-install.json"))
+    else {
+        return false;
+    };
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| v.get("kind")?.as_str().map(|s| s == "pi-managed-install"))
+        .unwrap_or(false)
+}
+
 /// 含空格才用 POSIX 单引号包一层,否则保持裸路径——命令展示更干净。
 /// claude / brew / volta / bun / npm 五个锚定分支共用,避免"含空格"判定漂移。
 ///
@@ -1134,7 +1157,10 @@ fn package_manager_anchored_command_from_paths(
         let brew = sibling_bin(bin_path, "brew")?;
         return Some(format!("{} upgrade {formula}", quote_path_if_spaced(&brew)));
     }
-    let pkg = tool_spec(tool).npm_package?;
+    let NpmPackage {
+        name: pkg,
+        install_args,
+    } = npm_package_for_install(tool, bin_path, real_target)?;
     let source = infer_install_source(Path::new(bin_path));
     // omp 的 npm 包只能由 bun 运行：除 bun 外的 node 管理器装不出能跑的 omp。
     if tool == "omp" && source != "bun" {
@@ -1158,10 +1184,7 @@ fn package_manager_anchored_command_from_paths(
         // self-update，上层会直接锚到 CLI 自身；否则返回 None 走静态兜底。
         _ => return None,
     }
-    anchored_npm_command(
-        bin_path,
-        &format!("i -g {pkg}@latest{}", tool_spec(tool).npm_install_args),
-    )
+    anchored_npm_command(bin_path, &format!("i -g {pkg}@latest{install_args}"))
 }
 
 /// 给定工具、原始 bin 路径（命令行命中的入口）、canonicalize 后的真身路径，
@@ -1256,7 +1279,9 @@ pub(super) fn anchored_command_from_paths(
         // Bun-installed OpenCode upgrades through bun, not npm.
         let npm_scripts_package = match tool {
             "claude" => Some("@anthropic-ai/claude-code"),
-            "opencode" if !real_lower.contains("/.bun/") => Some("opencode-ai"),
+            "opencode" if !real_lower.contains("/.bun/") => {
+                npm_package_for_install(tool, bin_path, real_target).map(|pkg| pkg.name)
+            }
             _ => None,
         };
         if let Some(pkg) = npm_scripts_package {
@@ -1278,7 +1303,10 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
     if tool == "omp" {
         return None;
     }
-    let pkg = tool_spec(tool).npm_package?;
+    let NpmPackage {
+        name: pkg,
+        install_args,
+    } = npm_package_for_install(tool, bin_path, bin_path)?;
 
     match infer_install_source(Path::new(bin_path)) {
         "volta" => {
@@ -1300,9 +1328,8 @@ fn package_manager_anchored_command_from_paths(tool: &str, bin_path: &str) -> Op
         _ => {
             let npm = sibling_bin_with_ext(bin_path, "npm", &["cmd", "exe"])?;
             Some(format!(
-                "{} i -g {pkg}@latest{}",
+                "{} i -g {pkg}@latest{install_args}",
                 win_quote_path_for_batch(&npm),
-                tool_spec(tool).npm_install_args
             ))
         }
     }
@@ -1410,6 +1437,15 @@ pub(super) fn installs_anchored_command(
         {
             return Some(mcode_installer_update_command(&root));
         }
+    }
+    // Pi 官方独立安装器（读 fs，故不放进纯函数 `anchored_command_from_paths`）：
+    // 原地走 `<bin_path> update`，绝不回退全局 npm 另装第二份。
+    if tool == "pi"
+        && [inst.path.as_str(), real.as_ref()]
+            .into_iter()
+            .any(is_pi_managed_install)
+    {
+        return anchored_official_update_command(tool, &inst.path);
     }
     // 版本号来自 `--version` 探测，所以放在这里而不是纯路径的 `anchored_command_from_paths`。
     if tool == "kimi" && kimi_upgrade_ignores_yes(inst.version.as_deref()) {
@@ -1605,6 +1641,65 @@ pub(super) fn is_conflicting(installs: &[ToolInstallation]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pi_managed_install_anchors_to_self_update() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin_dir = dir.path().join(".pi/agent/bin");
+        let install_dir = dir.path().join(".pi/agent/install");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        std::fs::create_dir_all(&install_dir).unwrap();
+
+        let entry_name = if cfg!(target_os = "windows") {
+            "pi.cmd"
+        } else {
+            "pi"
+        };
+        let entry = bin_dir.join(entry_name);
+        std::fs::write(&entry, "#!/bin/sh\n").unwrap();
+        std::fs::write(bin_dir.join("pi-launcher.js"), "// launcher\n").unwrap();
+        std::fs::write(
+            install_dir.join("managed-install.json"),
+            "\u{feff}{\"kind\":\"pi-managed-install\",\"schemaVersion\":1,\"layout\":\"releases-v1\"}",
+        )
+        .unwrap();
+
+        let entry_str = entry.to_string_lossy().to_string();
+        assert!(is_pi_managed_install(&entry_str));
+
+        let inst = ToolInstallation {
+            path: entry_str.clone(),
+            version: Some("1.5.2".to_string()),
+            runnable: true,
+            error: None,
+            exited_with_error: false,
+            source: infer_install_source(&entry).to_string(),
+            is_path_default: true,
+            real: entry.clone(),
+        };
+        let expected = anchored_official_update_command("pi", &entry_str).unwrap();
+        assert_eq!(
+            resolve_update_command("pi", &[inst]),
+            UpdateCommand::Anchored(expected.clone())
+        );
+        assert!(expected.ends_with(" update") && !expected.contains("npm"));
+
+        // Wrong kind or missing launcher/metadata must not match.
+        std::fs::write(
+            install_dir.join("managed-install.json"),
+            r#"{"kind":"other"}"#,
+        )
+        .unwrap();
+        assert!(!is_pi_managed_install(&entry_str));
+
+        std::fs::write(
+            install_dir.join("managed-install.json"),
+            r#"{"kind":"pi-managed-install"}"#,
+        )
+        .unwrap();
+        std::fs::remove_file(bin_dir.join("pi-launcher.js")).unwrap();
+        assert!(!is_pi_managed_install(&entry_str));
+    }
 
     #[test]
     fn opencode_desktop_cli_is_unmanaged_only_when_default() {
@@ -2015,6 +2110,16 @@ mod tests {
             assert_eq!(
                 anchored_command_from_paths("opencode", &bin_path, &bin_path).as_deref(),
                 Some(format!("{pnpm} add -g opencode-ai@latest").as_str())
+            );
+            // OpenCode 2 的 shim 指向 @opencode/cli；装 opencode-ai 会被 pnpm 静默顶掉入口。
+            std::fs::write(
+                &bin_path,
+                "@\"%~dp0\\global\\5\\node_modules\\@opencode\\cli\\bin\\opencode.exe\" %*",
+            )
+            .unwrap();
+            assert_eq!(
+                anchored_command_from_paths("opencode", &bin_path, &bin_path).as_deref(),
+                Some(format!("{pnpm} add -g @opencode/cli@latest").as_str())
             );
 
             let (_dir, sub, bin_path) = setup_sibling("v22.19.0", "mcode.cmd", &["npm.cmd"]);

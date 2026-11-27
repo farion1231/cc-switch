@@ -9,7 +9,7 @@ use super::{
     codex_compaction,
     inline_think::InlineThinkSplitter,
     transform_codex_chat::{
-        chat_error_to_response_error, chat_usage_to_responses_usage,
+        chat_error_to_response_error, chat_reasoning_item_id, chat_usage_to_responses_usage,
         custom_tool_input_from_chat_arguments, response_id_from_chat_id, response_message_item_id,
         response_status_from_finish_reason, response_tool_call_item_from_chat_name,
         response_tool_call_item_id_from_chat_name, CodexToolContext,
@@ -223,7 +223,7 @@ impl ChatToResponsesState {
 
         if !self.reasoning.added {
             let output_index = self.next_output_index();
-            let item_id = format!("rs_{}", self.response_id);
+            let item_id = chat_reasoning_item_id(&self.response_id, output_index);
             self.reasoning.output_index = Some(output_index);
             self.reasoning.item_id = item_id.clone();
             self.reasoning.added = true;
@@ -986,6 +986,40 @@ mod tests {
         let reasoning_pos = output.find("\"type\":\"reasoning\"").unwrap();
         let message_pos = output.find("\"type\":\"message\"").unwrap();
         assert!(reasoning_pos < message_pos);
+    }
+
+    #[tokio::test]
+    async fn reasoning_item_id_is_never_a_bare_hex_official_lookup_shape() {
+        // #9054：有的上游回复 id 是 32 位十六进制，旧格式 `rs_resp_<32hex>` 在直连切回
+        // 官方时会被按 id 回查 404。带序号后不再被回查；added、done、completed 三处要一致，
+        // Codex 靠它把思考摘要对到进行中的条目上。
+        let output = collect(vec![
+            "data: {\"id\":\"dba7d7f2a5431337cbcef8bcb6e27b76\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"delta\":{\"reasoning_content\":\"Think.\"}}]}\n\n",
+            "data: {\"id\":\"dba7d7f2a5431337cbcef8bcb6e27b76\",\"created\":1,\"model\":\"glm-5\",\"choices\":[{\"delta\":{\"content\":\"Done\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ])
+        .await;
+        let events = parse_sse_events(&output);
+        let reasoning_item_id = |event_type: &str| {
+            events
+                .iter()
+                .find(|event| event["type"] == event_type && event["item"]["type"] == "reasoning")
+                .map(|event| event["item"]["id"].clone())
+                .unwrap()
+        };
+        let expected = "rs_resp_dba7d7f2a5431337cbcef8bcb6e27b76_0";
+        assert_eq!(reasoning_item_id("response.output_item.added"), expected);
+        assert_eq!(reasoning_item_id("response.output_item.done"), expected);
+        let summary_done = events
+            .iter()
+            .find(|event| event["type"] == "response.reasoning_summary_text.done")
+            .unwrap();
+        assert_eq!(summary_done["item_id"], expected);
+        let completed = events
+            .iter()
+            .find(|event| event["type"] == "response.completed")
+            .unwrap();
+        assert_eq!(completed["response"]["output"][0]["id"], expected);
     }
 
     #[tokio::test]

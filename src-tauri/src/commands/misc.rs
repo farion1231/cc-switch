@@ -284,7 +284,7 @@ static TOOLS: [ToolSpec; 15] = [
         .official_update("upgrade"),
     ToolSpec::npm("openclaw", "OpenClaw", "openclaw").official_update("update --yes"),
     ToolSpec::not_on_npm("hermes", "Hermes").official_update("update"),
-    ToolSpec::npm("pi", "Pi", "@earendil-works/pi-coding-agent"),
+    ToolSpec::npm("pi", "Pi", "@earendil-works/pi-coding-agent").official_update("update"),
     ToolSpec::npm("mcode", "MiniMax Code", "@minimax-ai/code").npm_install_args(
         " --ignore-scripts=false --include=optional \"--allow-scripts=@minimax-ai/code,better-sqlite3\"",
     ),
@@ -309,6 +309,76 @@ fn known_tool(id: &str) -> Option<&'static ToolSpec> {
 
 fn tool_spec(id: &str) -> &'static ToolSpec {
     known_tool(id).unwrap_or(&UNKNOWN_TOOL)
+}
+
+/// 一处安装归属的 npm 包，以及 `npm i -g` 它时要追加的参数（前导空格已含）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct NpmPackage {
+    pub(super) name: &'static str,
+    pub(super) install_args: &'static str,
+}
+
+/// OpenCode 2 是与 1.x 并行发布的另一条线：npm 包 `@opencode/cli`、安装脚本
+/// `opencode.ai/v2/install`、brew `anomalyco/tap/opencode-v2`，从 1.x 升上去要用户自己跑
+/// `opencode upgrade --major`（首次启动会迁移共用的 opencode.db）。`TOOLS` 里登记的仍是 1.x
+/// 的 `opencode-ai`，安装按钮也只装 1.x；应用页只跟着本地已装的那条线查版本、升级、卸载，
+/// 从不替用户换线。两个包都提供 `opencode` 命令，pnpm 给 2.x 装 `opencode-ai` 会静默顶掉
+/// 2.x 的入口（npm 则 EEXIST 失败），所以拼包管理器命令前必须先认对是哪条线。
+pub(super) const OPENCODE_V2_NPM: NpmPackage = NpmPackage {
+    name: "@opencode/cli",
+    install_args: " --ignore-scripts=false --include=optional --allow-scripts=@opencode/cli",
+};
+
+/// 版本号是否属于 OpenCode 2 及以后（1.x 之外的线）。认不出的版本按 1.x 处理。
+pub(super) fn is_opencode_v2_version(version: &str) -> bool {
+    parse_semver(version).is_some_and(|([major, ..], _)| major >= 2)
+}
+
+/// 真身路径（或 Windows npm `.cmd` shim 的内容）是否落在 `@opencode/cli` 包里。
+/// npm / pnpm / bun 的全局安装都形如 `.../node_modules/@opencode/cli/bin/opencode.exe`。
+pub(super) fn mentions_opencode_v2_package(text: &str) -> bool {
+    text.replace('\\', "/")
+        .to_ascii_lowercase()
+        .contains("node_modules/@opencode/cli/")
+}
+
+/// 看版本号挑 npm 包：版本探测、Node 要求检查用（此时只有 `--version` 的结果）。
+pub(super) fn npm_package_for_version(tool: &str, version: Option<&str>) -> Option<NpmPackage> {
+    if tool == "opencode" && version.is_some_and(is_opencode_v2_version) {
+        return Some(OPENCODE_V2_NPM);
+    }
+    let spec = tool_spec(tool);
+    spec.npm_package.map(|name| NpmPackage {
+        name,
+        install_args: spec.npm_install_args,
+    })
+}
+
+/// 看安装位置挑 npm 包：锚定升级、卸载用。POSIX 只看真身路径（纯函数）；Windows 的
+/// npm / pnpm 入口是 `.cmd` shim、不是软链，真身就是它自己，要读 shim 内容才知道指向哪个包。
+/// Volta 的入口是它自己的 shim 程序，两边都看不出，按 1.x 处理。
+pub(super) fn npm_package_for_install(
+    tool: &str,
+    bin_path: &str,
+    real: &str,
+) -> Option<NpmPackage> {
+    if tool == "opencode"
+        && (mentions_opencode_v2_package(real) || windows_shim_mentions_opencode_v2(bin_path))
+    {
+        return Some(OPENCODE_V2_NPM);
+    }
+    npm_package_for_version(tool, None)
+}
+
+#[cfg(target_os = "windows")]
+fn windows_shim_mentions_opencode_v2(bin_path: &str) -> bool {
+    bin_path.to_ascii_lowercase().ends_with(".cmd")
+        && std::fs::read_to_string(bin_path).is_ok_and(|shim| mentions_opencode_v2_package(&shim))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn windows_shim_mentions_opencode_v2(_bin_path: &str) -> bool {
+    false
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
