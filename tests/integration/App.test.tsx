@@ -528,34 +528,35 @@ describe("App integration with MSW", () => {
     ).toBeInTheDocument();
   });
 
-  it.each(["DeepSeek Harness", "Copilot CLI", "WorkBuddy", "CodeBuddy", "ZCode"])(
-    "does not offer batch import for unsupported app %s",
-    async (appName) => {
-      setSettings({
-        firstRunNoticeConfirmed: true,
-        newLayoutNoticeConfirmed: true,
-        visibleApps: {
-          ...DEFAULT_VISIBLE_APPS,
-          dsh: true,
-          copilot: true,
-          workbuddy: true,
-          codebuddy: true,
-          zcode: true,
-        },
-      });
-      renderApp(App);
-      await screen.findByTestId("provider-list");
-      fireEvent.click(sidebarApp(appName));
-      await waitFor(() =>
-        expect(
-          screen.queryByRole("button", { name: "provider.bulkImport.title" }),
-        ).not.toBeInTheDocument(),
-      );
+  it.each([
+    "DeepSeek Harness",
+    "Copilot CLI",
+    "WorkBuddy",
+    "CodeBuddy",
+    "ZCode",
+  ])("does not offer batch import for unsupported app %s", async (appName) => {
+    setSettings({
+      firstRunNoticeConfirmed: true,
+      newLayoutNoticeConfirmed: true,
+      visibleApps: {
+        ...DEFAULT_VISIBLE_APPS,
+        dsh: true,
+        copilot: true,
+        workbuddy: true,
+        codebuddy: true,
+        zcode: true,
+      },
+    });
+    renderApp(App);
+    await screen.findByTestId("provider-list");
+    fireEvent.click(sidebarApp(appName));
+    await waitFor(() =>
       expect(
-        screen.queryByTestId("bulk-import-dialog"),
-      ).not.toBeInTheDocument();
-    },
-  );
+        screen.queryByRole("button", { name: "provider.bulkImport.title" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByTestId("bulk-import-dialog")).not.toBeInTheDocument();
+  });
 
   it.each(["add", "needsRoute"])(
     "blocks the complete tray %s intent while bulk import is busy",
