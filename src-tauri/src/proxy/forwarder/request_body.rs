@@ -117,6 +117,12 @@ pub(super) fn apply_native_responses_request_compat(
             provider.id
         );
     }
+    if !crate::proxy::providers::provider_needs_xai_responses_compat(
+        provider,
+        body.get("model").and_then(Value::as_str),
+    ) {
+        return Ok(changed);
+    }
     // Copilot already resolved against its live catalog; never replace that
     // model with the card default. Direct xAI keeps its existing fallback.
     let upstream_model = if keep_resolved_model || provider.is_github_copilot() {

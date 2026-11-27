@@ -1672,3 +1672,110 @@ fn xai_namespace_flatten_follows_the_base_url_host() {
         );
     }
 }
+
+#[test]
+fn configured_namespace_compat_is_opt_in_without_xai_rewrites() {
+    let provider = create_provider(json!({
+        "baseURL":"https://provider.example/v1",
+        "responsesCompatibility":{"flattenNamespaces":true}
+    }));
+    assert!(provider_needs_responses_namespace_flatten(&provider, None));
+    assert!(!provider_needs_xai_responses_compat(&provider, None));
+    for settings in [
+        json!({"baseURL":"https://provider.example/v1"}),
+        json!({"responsesCompatibility":{"flattenNamespaces":false}}),
+        json!({"responsesCompatibility":{"flattenNamespaces":"true"}}),
+        json!({"responsesCompatibility":null}),
+    ] {
+        assert!(!provider_needs_responses_namespace_flatten(
+            &create_provider(settings),
+            None
+        ));
+    }
+}
+
+#[test]
+fn configured_api_version_is_model_scoped_and_preserves_overrides() {
+    let provider = create_provider(json!({
+        "baseURL":"https://provider.example/v1",
+        "responsesCompatibility":{"apiVersions":{
+            "model-a":"2025-03-01-preview",
+            "model-b":"2025-04-01-preview",
+            "ccs-provider/model-a":"2025-03-01-preview",
+            "empty-model":"", "invalid-model":false
+        }}
+    }));
+    for (model, version) in [
+        ("model-a", "2025-03-01-preview"),
+        ("model-b", "2025-04-01-preview"),
+        ("ccs-provider/model-a", "2025-03-01-preview"),
+    ] {
+        let mut body = json!({"model":model,"input":"test"});
+        assert!(apply_native_responses_api_version(&provider, &mut body));
+        assert_eq!(body["api_version"], version);
+        assert!(!apply_native_responses_api_version(&provider, &mut body));
+    }
+    for model in ["unlisted-model", "empty-model", "invalid-model"] {
+        let mut body = json!({"model":model});
+        let before = body.clone();
+        assert!(!apply_native_responses_api_version(&provider, &mut body));
+        assert_eq!(body, before);
+    }
+    let unconfigured = create_provider(json!({"baseURL":"https://other.example/v1"}));
+    let mut body = json!({"model":"model-a"});
+    assert!(!apply_native_responses_api_version(
+        &unconfigured,
+        &mut body
+    ));
+    let mut body = json!({"model":"model-a","api_version":"2025-05-01-preview"});
+    assert!(!apply_native_responses_api_version(&provider, &mut body));
+    assert_eq!(body["api_version"], "2025-05-01-preview");
+}
+
+#[test]
+fn encrypted_include_normalization_is_opt_in_and_idempotent() {
+    let provider =
+        create_provider(json!({"responsesCompatibility":{"normalizeEncryptedInclude":true}}));
+    for include in [
+        json!(["web_search_call.results", "output.encrypted_content"]),
+        json!([
+            "web_search_call.results",
+            "output.encrypted_content",
+            "reasoning.encrypted_content",
+            "output.encrypted_content"
+        ]),
+    ] {
+        let mut body =
+            json!({"model":"model-a","api_version":"override","include":include,"temperature":0.7});
+        assert!(normalize_native_responses_encrypted_include(
+            &provider, &mut body
+        ));
+        assert_eq!(
+            body["include"],
+            json!(["web_search_call.results", "reasoning.encrypted_content"])
+        );
+        assert_eq!(body["api_version"], "override");
+        assert_eq!(body["temperature"], 0.7);
+        assert!(!normalize_native_responses_encrypted_include(
+            &provider, &mut body
+        ));
+    }
+    for mut body in [
+        json!({"model":"model-a","include":["reasoning.encrypted_content", "file_search_call.results"]}),
+        json!({"model":"model-a"}),
+        json!({"model":"model-a","include":null}),
+    ] {
+        let before = body.clone();
+        assert!(!normalize_native_responses_encrypted_include(
+            &provider, &mut body
+        ));
+        assert_eq!(body, before);
+    }
+    let mut body = json!({"model":"model-a","include":["output.encrypted_content"]});
+    let before = body.clone();
+    assert!(!normalize_native_responses_encrypted_include(
+        &create_provider(json!({})),
+        &mut body
+    ));
+    assert_eq!(body, before);
+}

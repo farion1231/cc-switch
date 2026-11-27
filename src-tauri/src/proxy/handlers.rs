@@ -1659,17 +1659,24 @@ async fn handle_codex_xai_native_responses_rewrite(
         .await;
     }
 
+    let is_xai = super::providers::provider_needs_xai_responses_compat(
+        &ctx.provider,
+        ctx.outbound_model.as_deref(),
+    );
     let (response, mut terminal_hook) = response.take_success_terminal_hook();
 
     if response.is_sse() {
         let builder = rewritten_sse_response_builder(status, response.headers());
 
-        // Copilot: stabilize item IDs, then repair late tool arguments, then restore
-        // Grok names. Direct xAI responses retain their original stream pipeline.
+        // Keep mainline Copilot ID stabilization and late-argument repair.
+        // Generic namespace gateways also keep late-argument repair; numeric
+        // rewriting remains limited to the resolved xAI/Grok path.
         let stream = codex_native_responses_stream(response, ctx);
         let stream: std::pin::Pin<
             Box<dyn futures::Stream<Item = Result<Bytes, std::io::Error>> + Send>,
-        > = if matches!(ctx.app_type, AppType::Codex) && ctx.provider.is_github_copilot() {
+        > = if !is_xai
+            || (matches!(ctx.app_type, AppType::Codex) && ctx.provider.is_github_copilot())
+        {
             Box::pin(
                 super::providers::responses_late_arguments::create_late_arguments_repair_stream(
                     stream,
@@ -1679,9 +1686,10 @@ async fn handle_codex_xai_native_responses_rewrite(
             stream
         };
         let restore_stream =
-            transform_codex_responses_xai_sanitize::create_xai_native_responses_sse_stream(
+            transform_codex_responses_xai_sanitize::create_namespace_responses_sse_stream(
                 stream,
                 restore_map,
+                is_xai,
             );
         let usage_collector =
             create_usage_collector(ctx, state, status.as_u16(), &CODEX_PARSER_CONFIG);
@@ -1728,9 +1736,11 @@ async fn handle_codex_xai_native_responses_rewrite(
                 &mut value,
                 &restore_map,
             );
-            transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
+            if is_xai {
+                transform_codex_responses_xai_sanitize::normalize_xai_function_call_integer_arguments(
                 &mut value,
             );
+            }
             if let Some(usage) =
                 TokenUsage::from_codex_response_auto(&value).filter(TokenUsage::has_billable_tokens)
             {
@@ -5418,6 +5428,42 @@ mod copilot_grok_responses_tests {
             }
         }
         (body, events)
+    }
+
+    #[tokio::test]
+    async fn configured_non_grok_namespace_stream_keeps_numeric_arguments() {
+        for copilot in [false, true] {
+            let (state, mut ctx) = context(copilot).await;
+            ctx.provider.settings_config["responsesCompatibility"] =
+                json!({"flattenNamespaces": true});
+            ctx.outbound_model = Some("gpt-test".to_string());
+            assert!(
+                super::super::providers::provider_needs_responses_namespace_flatten(
+                    &ctx.provider,
+                    ctx.outbound_model.as_deref()
+                )
+            );
+            let arguments = "{\"count\":2.0}";
+            let item = json!({"type":"function_call","id":"fc_1","call_id":"call_1","name":"diagnostic__ping","arguments":arguments});
+            let input = format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                json!({"type":"response.completed","response":{"id":"r1","status":"completed","output":[item]}})
+            );
+            let response = handle_codex_xai_native_responses_rewrite(
+                upstream(&input),
+                &ctx,
+                &state,
+                None,
+                grok_namespace_restore_map(),
+            )
+            .await
+            .unwrap();
+            let (_, events) = body_and_events(response).await;
+            let restored = &events.last().unwrap()["response"]["output"][0];
+            assert_eq!(restored["name"], "ping");
+            assert_eq!(restored["namespace"], "diagnostic");
+            assert_eq!(restored["arguments"], arguments);
+        }
     }
 
     #[tokio::test]

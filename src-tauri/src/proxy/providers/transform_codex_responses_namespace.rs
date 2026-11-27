@@ -336,6 +336,30 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn reserved_image_tool_roundtrips_with_history_and_choice() {
+        let mut body = json!({
+            "tools": [{"type":"namespace", "name":"image_gen", "tools":[
+                {"type":"function","name":"imagegen","parameters":{"type":"object","properties":{"prompt":{"type":"string"}}}}
+            ]}],
+            "input":[{"type":"function_call","namespace":"image_gen","name":"imagegen","call_id":"call_1","arguments":"{}"}],
+            "tool_choice":{"type":"function","namespace":"image_gen","name":"imagegen"}
+        });
+        let restore = namespace_restore_map(&body);
+        let parameters = body["tools"][0]["tools"][0]["parameters"].clone();
+        assert!(flatten_request_namespaces(&mut body).unwrap());
+        let flat = body["tools"][0]["name"].as_str().unwrap().to_string();
+        assert_ne!(flat, "image_gen.imagegen");
+        assert_eq!(body["tools"][0]["parameters"], parameters);
+        assert_eq!(body["input"][0]["name"], flat);
+        assert_eq!(body["tool_choice"]["name"], flat);
+        let mut response = json!({"output":[{"type":"function_call","name":flat,"arguments":"{}","call_id":"call_2"}]});
+        restore_response_namespaces(&mut response, &restore);
+        assert_eq!(response["output"][0]["namespace"], "image_gen");
+        assert_eq!(response["output"][0]["name"], "imagegen");
+        assert_eq!(response["output"][0]["call_id"], "call_2");
+    }
+
     fn namespace_request() -> Value {
         json!({
             "model": "grok-4.5",

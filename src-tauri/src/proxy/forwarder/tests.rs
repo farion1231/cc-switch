@@ -2348,6 +2348,33 @@ async fn codex_copilot_capability_failure_tries_healthy_later_provider() {
 }
 
 #[test]
+fn configured_namespace_repair_does_not_enable_xai_or_native_capabilities() {
+    let mut provider = test_provider_with_type(None);
+    provider.settings_config["responsesCompatibility"] = json!({"flattenNamespaces": true});
+    let mut body = json!({
+        "model":"gpt-example", "service_tier":"priority",
+        "input":[{"type":"compaction","encrypted_content":"opaque-history"}],
+        "tools":[{"type":"namespace","name":"sample","tools":[{"type":"function","name":"run","parameters":{"type":"object","properties":{"scale":{"type":"number"}}}}]}]
+    });
+    let input = body["input"].clone();
+    apply_native_responses_request_compat(&provider, &mut body, false).unwrap();
+    assert_eq!(body["tools"][0]["name"], "sample__run");
+    assert_eq!(
+        body["tools"][0]["parameters"]["properties"]["scale"]["type"],
+        "number"
+    );
+    assert_eq!(body["model"], "gpt-example");
+    assert_eq!(body["input"], input);
+    assert_eq!(body["service_tier"], "priority");
+    assert!(
+        !super::super::providers::provider_needs_xai_responses_compat(
+            &provider,
+            Some("gpt-example")
+        )
+    );
+}
+
+#[test]
 fn native_responses_rewrites_call_id_less_outputs_for_non_xai_providers() {
     let provider = test_provider_with_type(None);
     for call_id in [None, Some(json!(null)), Some(json!("")), Some(json!("  "))] {
@@ -3187,6 +3214,74 @@ mod codex_stack {
             .map_err(|error| error.error)
             .expect("forward");
         upstream.seen.lock().await.pop().expect("upstream request")
+    }
+
+    #[tokio::test]
+    async fn configured_api_version_is_limited_to_responses_endpoints() {
+        let upstream = upstream().await;
+        let mut configured = provider(&upstream, "openai_responses");
+        configured.settings_config["responsesCompatibility"] = json!({
+            "apiVersions": { "listed": "2025-03-01-preview" },
+            "normalizeEncryptedInclude": true
+        });
+        let mut request = body("listed", json!([]));
+        request["include"] = json!(["output.encrypted_content"]);
+
+        let unconfigured = send(
+            &forwarder(false),
+            &upstream,
+            provider(&upstream, "openai_responses"),
+            "/v1/responses",
+            request.clone(),
+        )
+        .await;
+        assert!(unconfigured.body.get("api_version").is_none());
+        assert!(unconfigured.body.get("include").is_none());
+        for endpoint in [
+            "/responses",
+            "/v1/responses",
+            "/responses/compact",
+            "/v1/responses/compact",
+        ] {
+            let responses = send(
+                &forwarder(false),
+                &upstream,
+                configured.clone(),
+                endpoint,
+                request.clone(),
+            )
+            .await;
+            assert_eq!(
+                responses.body["api_version"], "2025-03-01-preview",
+                "{endpoint}"
+            );
+            assert_eq!(
+                responses.body["include"],
+                json!(["reasoning.encrypted_content"]),
+                "{endpoint}"
+            );
+        }
+
+        let baseline_chat = send(
+            &forwarder(false),
+            &upstream,
+            provider(&upstream, "openai_responses"),
+            "/v1/chat/completions",
+            request.clone(),
+        )
+        .await;
+        let chat = send(
+            &forwarder(false),
+            &upstream,
+            configured,
+            "/v1/chat/completions",
+            request,
+        )
+        .await;
+        assert!(chat.body.get("api_version").is_none());
+        // Mainline strips the private selector even on a direct Codex Chat request.
+        // Opt-in Responses repairs must not change that baseline.
+        assert_eq!(chat.body, baseline_chat.body);
     }
 
     /// 隐私过滤在转发器出口执行：转换成哪种上游格式都过滤，CC Switch 自己包装的

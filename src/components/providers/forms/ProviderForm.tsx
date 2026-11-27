@@ -83,6 +83,7 @@ import {
 } from "./BillingMultiplierField";
 import {
   codexApiFormatFromWireApi,
+  mergeCodexSettingsConfigForSave,
   extractCodexWireApi,
   setCodexWireApi,
   extractCodexModelName,
@@ -1853,20 +1854,15 @@ function ProviderFormFull({
             normalizedCatalogModels[0].model,
           );
         }
-        const configObj = {
-          auth: authJson,
-          config: normalizedCodexConfig,
-        } as {
-          auth: unknown;
-          config: string;
-          modelCatalog?: {
-            models: CodexCatalogModel[];
-            autoReviewModel?: string;
-            officialSpeedTiers?: boolean;
-          };
-        };
+        let modelCatalog:
+          | {
+              models: CodexCatalogModel[];
+              autoReviewModel?: string;
+              officialSpeedTiers?: boolean;
+            }
+          | undefined;
         if (normalizedCatalogModels.length > 0) {
-          configObj.modelCatalog = { models: normalizedCatalogModels };
+          modelCatalog = { models: normalizedCatalogModels };
           // 自动审批模型只能是列表里的（列表里删掉了就不再存，后端也只认列表里的）
           const autoReviewModel = codexAutoReviewModel.trim();
           if (
@@ -1875,12 +1871,18 @@ function ProviderFormFull({
               (model) => model.model === autoReviewModel,
             )
           ) {
-            configObj.modelCatalog.autoReviewModel = autoReviewModel;
+            modelCatalog.autoReviewModel = autoReviewModel;
           }
           if (codexOfficialSpeedTiers) {
-            configObj.modelCatalog.officialSpeedTiers = true;
+            modelCatalog.officialSpeedTiers = true;
           }
         }
+        const configObj = mergeCodexSettingsConfigForSave(
+          initialData?.settingsConfig as Record<string, unknown> | undefined,
+          authJson,
+          normalizedCodexConfig,
+          modelCatalog,
+        );
         settingsConfig = JSON.stringify(configObj);
       } catch (err) {
         settingsConfig = values.settingsConfig.trim();

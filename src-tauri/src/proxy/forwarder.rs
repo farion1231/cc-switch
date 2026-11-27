@@ -2245,6 +2245,22 @@ impl RequestForwarder {
             }
         }
 
+        // Explicit wire repairs are independent from native protocol/capability declarations.
+        // Normalize include before the mainline OpenAI-private-field sanitizer.
+        if matches!(app_type, AppType::Codex)
+            && !codex_responses_to_chat
+            && !codex_responses_to_anthropic
+            && super::providers::is_codex_responses_endpoint(endpoint)
+            && (!provider.is_github_copilot() || is_copilot_codex_responses)
+        {
+            privacy_dirty |=
+                super::providers::apply_native_responses_api_version(provider, &mut request_body);
+            privacy_dirty |= super::providers::normalize_native_responses_encrypted_include(
+                provider,
+                &mut request_body,
+            );
+        }
+
         // Native Responses passthrough to xAI, directly or via Copilot/Grok.
         // One gate so rebase conflicts stay here plus the isolate file, not
         // scattered across sanitizers. Flatten namespaces first; then apply

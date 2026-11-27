@@ -7,9 +7,53 @@ import {
   extractCodexModelName,
   isCodexRemoteCompactionEnabled,
   setCodexBaseUrl,
+  mergeCodexSettingsConfigForSave,
   setCodexModelName,
   setCodexRemoteCompaction,
 } from "./codexConfigUtils";
+
+describe("Codex guided-form settings", () => {
+  it("preserves advanced settings while replacing form-owned fields", () => {
+    const saved = mergeCodexSettingsConfigForSave(
+      {
+        auth: { OPENAI_API_KEY: "old-key" },
+        config: "old-config",
+        modelCatalog: { models: [{ model: "old-model" }] },
+        responsesCompatibility: { flattenNamespaces: true },
+        customGatewayOption: "keep-me",
+      },
+      { OPENAI_API_KEY: "new-key" },
+      "new-config",
+    );
+
+    expect(saved).toEqual({
+      auth: { OPENAI_API_KEY: "new-key" },
+      config: "new-config",
+      responsesCompatibility: { flattenNamespaces: true },
+      customGatewayOption: "keep-me",
+    });
+  });
+  it("keeps advanced settings alongside the current catalog speed and review fields", () => {
+    const catalog = {
+      models: [{ model: "gpt-example" }],
+      autoReviewModel: "gpt-example",
+      officialSpeedTiers: true,
+    };
+    const saved = mergeCodexSettingsConfigForSave(
+      {
+        responsesCompatibility: { normalizeEncryptedInclude: true },
+        modelCatalog: { models: [] },
+      },
+      {},
+      "config",
+      catalog,
+    );
+    expect(saved.modelCatalog).toEqual(catalog);
+    expect(saved.responsesCompatibility).toEqual({
+      normalizeEncryptedInclude: true,
+    });
+  });
+});
 
 describe("Codex wire API helpers", () => {
   it("recognizes Anthropic Messages aliases", () => {

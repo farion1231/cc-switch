@@ -206,6 +206,21 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
     ) && codex_provider_uses_anthropic(provider)
 }
 
+/// Namespace flattening is automatic for xAI/Grok or explicitly opted in per provider.
+/// This wire repair does not declare native protocol capabilities.
+pub fn provider_needs_responses_namespace_flatten(
+    provider: &Provider,
+    outbound_model: Option<&str>,
+) -> bool {
+    provider_needs_xai_responses_compat(provider, outbound_model)
+        || provider
+            .settings_config
+            .get("responsesCompatibility")
+            .and_then(|compat| compat.get("flattenNamespaces"))
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(false)
+}
+
 /// Whether a native-Responses Codex upstream needs Codex `namespace`/plugin
 /// tool declarations flattened before forwarding, plus xAI schema sanitization.
 ///
@@ -221,7 +236,7 @@ pub fn should_convert_codex_responses_to_anthropic(provider: &Provider, endpoint
 /// Copilot. Call only on native Responses paths, with the resolved outbound
 /// model: a Copilot card can serve both Grok and non-Grok models.
 /// See farion1231/cc-switch#6815.
-pub fn provider_needs_responses_namespace_flatten(
+pub fn provider_needs_xai_responses_compat(
     provider: &Provider,
     outbound_model: Option<&str>,
 ) -> bool {
@@ -235,6 +250,76 @@ pub fn provider_needs_responses_namespace_flatten(
                     .get(..5)
                     .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"grok-"))
             }))
+}
+
+/// Apply an explicitly configured API version for the resolved upstream model.
+/// Existing body values and subsequent provider overrides retain precedence.
+pub fn apply_native_responses_api_version(provider: &Provider, body: &mut JsonValue) -> bool {
+    if body.get("api_version").is_some() {
+        return false;
+    }
+    let Some(version) = body
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .and_then(|model| {
+            provider
+                .settings_config
+                .get("responsesCompatibility")
+                .and_then(|compat| compat.get("apiVersions"))
+                .and_then(|versions| versions.get(model))
+        })
+        .and_then(JsonValue::as_str)
+        .filter(|version| !version.trim().is_empty())
+        .map(str::to_string)
+    else {
+        return false;
+    };
+    let Some(object) = body.as_object_mut() else {
+        return false;
+    };
+    object.insert("api_version".into(), JsonValue::String(version));
+    true
+}
+
+/// Normalize the encrypted-output selector for explicitly opted-in gateways.
+/// Keep unrelated selectors and unconfigured providers unchanged.
+pub fn normalize_native_responses_encrypted_include(
+    provider: &Provider,
+    body: &mut JsonValue,
+) -> bool {
+    let configured = provider
+        .settings_config
+        .get("responsesCompatibility")
+        .and_then(|compat| compat.get("normalizeEncryptedInclude"))
+        .and_then(JsonValue::as_bool)
+        .unwrap_or(false);
+    if !configured {
+        return false;
+    }
+    let Some(include) = body.get_mut("include").and_then(JsonValue::as_array_mut) else {
+        return false;
+    };
+    if !include
+        .iter()
+        .any(|value| value.as_str() == Some("output.encrypted_content"))
+    {
+        return false;
+    }
+    let mut has_reasoning = include
+        .iter()
+        .any(|value| value.as_str() == Some("reasoning.encrypted_content"));
+    include.retain_mut(|value| {
+        if value.as_str() != Some("output.encrypted_content") {
+            return true;
+        }
+        if has_reasoning {
+            return false;
+        }
+        *value = JsonValue::String("reasoning.encrypted_content".into());
+        has_reasoning = true;
+        true
+    });
+    true
 }
 
 /// True when this Codex provider talks native Responses to first-party xAI
