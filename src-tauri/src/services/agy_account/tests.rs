@@ -8,6 +8,7 @@ use super::*;
 #[derive(Default)]
 struct MemoryLogin {
     value: StdMutex<Option<String>>,
+    reads: StdMutex<usize>,
     writes: StdMutex<usize>,
     locked: StdMutex<bool>,
     post_write_read_failures: StdMutex<usize>,
@@ -15,6 +16,7 @@ struct MemoryLogin {
 
 impl AgyLoginStore for MemoryLogin {
     fn read(&self) -> Result<Option<String>, AppError> {
+        *self.reads.lock().unwrap() += 1;
         if *self.locked.lock().unwrap() {
             return Err(AppError::Config("test keychain is locked".into()));
         }
@@ -392,7 +394,108 @@ mod switching {
             manager.access_token("alice").await.unwrap(),
             "renewed-by-agy"
         );
+        assert_eq!(*login.reads.lock().unwrap(), 1);
         assert_eq!(*login.writes.lock().unwrap(), 0, "查额度不写钥匙串");
+    }
+
+    #[tokio::test]
+    async fn fresh_stored_token_skips_keychain_read() {
+        let (_dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        manager
+            .store
+            .lock()
+            .await
+            .accounts
+            .get_mut("alice")
+            .unwrap()
+            .credential["token"]["expiry"] = json!(in_an_hour());
+        let mut live = credential("alice", "renewed-by-agy");
+        live["token"]["expiry"] = json!(in_an_hour());
+        set_live(&login, &live);
+
+        assert_eq!(manager.access_token("alice").await.unwrap(), "fresh");
+        assert_eq!(*login.reads.lock().unwrap(), 0, "副本有效时不读钥匙串");
+
+        // 账号尚未收录但钥匙串里正登着它（如冷启动云同步卡片抢在 status() 前查额度）：仍读钥匙串收回
+        let mut unimported_bob = credential("bob", "live-bob");
+        unimported_bob["token"]["expiry"] = json!(in_an_hour());
+        set_live(&login, &unimported_bob);
+        assert_eq!(manager.access_token("bob").await.unwrap(), "live-bob");
+        assert_eq!(*login.reads.lock().unwrap(), 1);
+
+        // 删掉的账号即使钥匙串里还登着它，也不会被重新收回
+        manager.remove("bob").await.unwrap();
+        assert!(matches!(
+            manager.access_token("bob").await,
+            Err(AccountQuotaError::NotFound)
+        ));
+        assert_eq!(*login.reads.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn expired_or_reauth_account_reads_keychain_to_recover_live_login() {
+        let (_dir, login, manager) = manager();
+
+        // 1. 副本令牌已过期：读一次钥匙串收回 agy 续过的令牌；之后副本已新鲜，不再读钥匙串
+        add(&manager, "alice").await;
+        let mut live_alice = credential("alice", "renewed-by-agy");
+        live_alice["token"]["expiry"] = json!(in_an_hour());
+        set_live(&login, &live_alice);
+        assert_eq!(
+            manager.access_token("alice").await.unwrap(),
+            "renewed-by-agy"
+        );
+        assert_eq!(*login.reads.lock().unwrap(), 1);
+        assert_eq!(
+            manager.access_token("alice").await.unwrap(),
+            "renewed-by-agy"
+        );
+        assert_eq!(*login.reads.lock().unwrap(), 1);
+
+        // 2. 账号被标为 requires_reauth：读钥匙串收回用户在 agy 里重新登录的结果
+        add(&manager, "bob").await;
+        {
+            let mut store = manager.store.lock().await;
+            let bob = store.accounts.get_mut("bob").unwrap();
+            bob.requires_reauth = true;
+            bob.credential["token"]["expiry"] = json!(in_an_hour());
+        }
+        let mut relogged_bob = credential("bob", "reauthed-by-agy");
+        relogged_bob["token"]["refresh_token"] = json!("refresh-bob-new");
+        relogged_bob["token"]["expiry"] = json!(in_an_hour());
+        set_live(&login, &relogged_bob);
+        assert_eq!(
+            manager.access_token("bob").await.unwrap(),
+            "reauthed-by-agy"
+        );
+        assert_eq!(*login.reads.lock().unwrap(), 2);
+        assert!(!manager.store.lock().await.accounts["bob"].requires_reauth);
+
+        // 3. 账号仍处于 requires_reauth 且钥匙串里不是它的新登录：读一次后仍返回 NeedsReauth
+        add(&manager, "charlie").await;
+        manager
+            .store
+            .lock()
+            .await
+            .accounts
+            .get_mut("charlie")
+            .unwrap()
+            .requires_reauth = true;
+        assert!(matches!(
+            manager.access_token("charlie").await,
+            Err(AccountQuotaError::NeedsReauth)
+        ));
+        assert_eq!(*login.reads.lock().unwrap(), 3);
+
+        // 4. 账号处于 requires_reauth 且钥匙串里仍是同一份旧凭据：不误清 requires_reauth
+        set_live(&login, &credential("charlie", "fresh"));
+        assert!(matches!(
+            manager.access_token("charlie").await,
+            Err(AccountQuotaError::NeedsReauth)
+        ));
+        assert_eq!(*login.reads.lock().unwrap(), 4);
+        assert!(manager.store.lock().await.accounts["charlie"].requires_reauth);
     }
 
     #[tokio::test]
@@ -646,6 +749,125 @@ async fn quota_token_is_refused_for_unknown_or_expired_accounts() {
         manager.access_token("bob").await,
         Err(AccountQuotaError::NeedsReauth)
     ));
+}
+
+#[tokio::test]
+async fn quota_limits_concurrent_upstream_requests() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (_dir, login, manager) = manager();
+    let total = MAX_CONCURRENT_QUOTA_QUERIES * 2;
+    let ids: Vec<String> = (0..total).map(|index| format!("acc-{index}")).collect();
+    for id in &ids {
+        add(&manager, id).await;
+        manager
+            .store
+            .lock()
+            .await
+            .accounts
+            .get_mut(id)
+            .unwrap()
+            .credential["token"]["expiry"] = json!(in_an_hour());
+    }
+
+    let in_flight = Arc::new(AtomicUsize::new(0));
+    let max_in_flight = Arc::new(AtomicUsize::new(0));
+    let (entered_tx, mut entered_rx) = tokio::sync::watch::channel(0usize);
+    let (release_tx, release_rx) = tokio::sync::watch::channel(false);
+
+    let queries = futures::future::join_all(ids.iter().enumerate().map(|(index, id)| {
+        let manager = &manager;
+        let in_flight = Arc::clone(&in_flight);
+        let max_in_flight = Arc::clone(&max_in_flight);
+        let entered_tx = entered_tx.clone();
+        let release_rx = release_rx.clone();
+        async move {
+            manager
+                .quota_with(id, move |_token| {
+                    let in_flight = Arc::clone(&in_flight);
+                    let max_in_flight = Arc::clone(&max_in_flight);
+                    let entered_tx = entered_tx.clone();
+                    let mut release_rx = release_rx.clone();
+                    async move {
+                        let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                        max_in_flight.fetch_max(current, Ordering::SeqCst);
+                        entered_tx.send_modify(|count| *count += 1);
+                        let _ = release_rx.wait_for(|released| *released).await;
+                        in_flight.fetch_sub(1, Ordering::SeqCst);
+                        if index == 0 {
+                            Err(quota::QuotaError::Network("boom".into()))
+                        } else {
+                            Ok(quota::AccountQuota {
+                                tiers: Vec::new(),
+                                plan: Some("Free".into()),
+                            })
+                        }
+                    }
+                })
+                .await
+        }
+    }));
+
+    let driver = async {
+        entered_rx
+            .wait_for(|&count| count >= MAX_CONCURRENT_QUOTA_QUERIES)
+            .await
+            .unwrap();
+        // 给排队中的其余任务足够调度时间，确认它们都被信号量挡在外面
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            in_flight.load(Ordering::SeqCst),
+            MAX_CONCURRENT_QUOTA_QUERIES
+        );
+        assert_eq!(
+            max_in_flight.load(Ordering::SeqCst),
+            MAX_CONCURRENT_QUOTA_QUERIES
+        );
+        let _ = release_tx.send(true);
+    };
+
+    let ((), results) = tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::join!(driver, queries)
+    })
+    .await
+    .expect("quota concurrency test timed out");
+
+    assert_eq!(in_flight.load(Ordering::SeqCst), 0);
+    assert_eq!(*entered_rx.borrow(), total);
+    assert_eq!(
+        max_in_flight.load(Ordering::SeqCst),
+        MAX_CONCURRENT_QUOTA_QUERIES
+    );
+    assert!(matches!(results[0], Err(AccountQuotaError::Failed(_))));
+    assert!(results[1..].iter().all(|result| result.is_ok()));
+    assert_eq!(
+        manager.quota_permits.available_permits(),
+        MAX_CONCURRENT_QUOTA_QUERIES
+    );
+    assert_eq!(*login.reads.lock().unwrap(), 0);
+
+    // 取消进行中的查额度任务也不应泄漏信号量许可
+    let (cancel_entered_tx, cancel_entered_rx) = tokio::sync::oneshot::channel();
+    let mut cancel_entered_tx = Some(cancel_entered_tx);
+    let mut pending_query = Box::pin(manager.quota_with(&ids[0], move |_token| {
+        if let Some(tx) = cancel_entered_tx.take() {
+            let _ = tx.send(());
+        }
+        std::future::pending::<Result<quota::AccountQuota, quota::QuotaError>>()
+    }));
+    tokio::select! {
+        _ = &mut pending_query => panic!("pending query should not finish"),
+        _ = cancel_entered_rx => {}
+    }
+    assert_eq!(
+        manager.quota_permits.available_permits(),
+        MAX_CONCURRENT_QUOTA_QUERIES - 1
+    );
+    drop(pending_query);
+    assert_eq!(
+        manager.quota_permits.available_permits(),
+        MAX_CONCURRENT_QUOTA_QUERIES
+    );
 }
 
 /// Same rule as WorkBuddy: listing accounts adopts the live login and saves, and

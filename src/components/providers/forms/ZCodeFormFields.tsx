@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { FormLabel } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Plus, Trash2, ChevronRight } from "lucide-react";
+import { toast } from "@/lib/toast";
+import {
+  fetchModelsForConfig,
+  showFetchModelsError,
+  type FetchedModel,
+} from "@/lib/api/model-fetch";
+import {
+  FetchedModelPicker,
+  type FetchedModelSelection,
+} from "./FetchedModelPicker";
 import { ApiKeySection, EndpointField } from "./shared";
 import EndpointSpeedTest from "./EndpointSpeedTest";
 import { zcodeProviderKinds } from "@/config/zcodeProviderPresets";
@@ -122,22 +132,97 @@ export function ZCodeFormFields({
   const modelsRef = useRef(models);
   modelsRef.current = models;
 
-  // ZCode 没有拉取模型列表的入口，预设也不带窗口参数：只从 models.dev 补，
-  // 缓存未命中时 fill 自己拉。补全只发生在 Model ID 提交（blur）那一刻。
+  const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const modelFetchGeneration = useRef(0);
+
+  // 地址、Key、协议变了，之前拉到的列表就不作数了
+  useEffect(() => {
+    setFetchedModels((prev) => (prev.length === 0 ? prev : []));
+    setIsFetchingModels(false);
+    return () => {
+      modelFetchGeneration.current += 1;
+    };
+  }, [baseUrl, apiKey, kind]);
+
+  const handleFetchModels = useCallback(() => {
+    if (!baseUrl || !apiKey) {
+      showFetchModelsError(null, t, {
+        hasApiKey: Boolean(apiKey),
+        hasBaseUrl: Boolean(baseUrl),
+      });
+      return;
+    }
+    const generation = ++modelFetchGeneration.current;
+    setFetchedModels([]);
+    setIsFetchingModels(true);
+    // Anthropic 协议的模型列表要用 x-api-key 认证，其余按默认的 Bearer
+    fetchModelsForConfig(baseUrl, apiKey, undefined, undefined, undefined, {
+      apiFormat: kind === "anthropic" ? "anthropic-messages" : undefined,
+    })
+      .then((result) => {
+        if (generation !== modelFetchGeneration.current) return;
+        const unique = [
+          ...new Map(result.map((model) => [model.id, model])).values(),
+        ];
+        setFetchedModels(unique);
+        if (unique.length === 0) {
+          toast.info(t("providerForm.fetchModelsEmpty"));
+        }
+      })
+      .catch((err) => {
+        if (generation !== modelFetchGeneration.current) return;
+        console.warn("[ModelFetch] Failed:", err);
+        showFetchModelsError(err, t);
+      })
+      .finally(() => {
+        if (generation === modelFetchGeneration.current) {
+          setIsFetchingModels(false);
+        }
+      });
+  }, [baseUrl, apiKey, kind, t]);
+
+  // 预设不带窗口参数：只从 models.dev 补。手填的在 Model ID 提交（blur）那一刻补，
+  // 从列表选的在加入时补。
   const fillModelMetadata = useModelMetadataFill({
     baseUrl,
     presets: () => [],
-    prefetch: false,
+    prefetch: fetchedModels.length > 0,
   });
-  const fillModelMetadataFor = (key: string, id: string) =>
-    fillModelMetadata(id, (metadata) => {
-      const model = modelsRef.current[key];
-      if (model === undefined) return false;
-      const filled = fillZCodeModel(model, metadata);
-      if (!metadataFilledAnything(model, filled)) return false;
-      onModelsChange({ ...modelsRef.current, [key]: filled });
-      return true;
-    });
+  const fillModelMetadataFor = (key: string, id: string, silent?: boolean) =>
+    fillModelMetadata(
+      id,
+      (metadata) => {
+        const model = modelsRef.current[key];
+        if (model === undefined) return false;
+        const filled = fillZCodeModel(model, metadata);
+        if (!metadataFilledAnything(model, filled)) return false;
+        onModelsChange({ ...modelsRef.current, [key]: filled });
+        return true;
+      },
+      { silent },
+    );
+
+  const handleApplyFetchedModels = ({ add, remove }: FetchedModelSelection) => {
+    const next = { ...models };
+    for (const id of remove) delete next[id];
+    const additions = add.filter(
+      (id) => !Object.prototype.hasOwnProperty.call(next, id),
+    );
+    for (const id of additions) next[id] = {};
+    onModelsChange(next);
+    // fill 的「当场」一拨在父组件重渲染前运行，先把 ref 对齐到刚提交的行。
+    modelsRef.current = next;
+    if (remove.length > 0) {
+      setExpandedModels((prev) => {
+        const kept = new Set(prev);
+        for (const id of remove) kept.delete(id);
+        return kept;
+      });
+    }
+    // 弹窗里已经显示过这些参数，补完不再提示。
+    for (const id of additions) fillModelMetadataFor(id, id, true);
+  };
 
   const toggleModelExpand = (key: string) => {
     setExpandedModels((prev) => {
@@ -331,16 +416,26 @@ export function ZCodeFormFields({
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <FormLabel>{t("zcode.models", { defaultValue: "Models" })}</FormLabel>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={handleAddModel}
-            className="h-7 gap-1"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            {t("zcode.addModel", { defaultValue: "Add Model" })}
-          </Button>
+          <div className="flex gap-1">
+            <FetchedModelPicker
+              models={fetchedModels}
+              configuredModelIds={Object.keys(models)}
+              onApply={handleApplyFetchedModels}
+              onFetch={handleFetchModels}
+              isFetching={isFetchingModels}
+              metadataSource={{ baseUrl }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleAddModel}
+              className="h-7 gap-1"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("zcode.addModel", { defaultValue: "Add Model" })}
+            </Button>
+          </div>
         </div>
 
         {Object.keys(models).length === 0 ? (

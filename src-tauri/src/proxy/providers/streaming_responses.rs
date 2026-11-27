@@ -4623,7 +4623,12 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
         'stream_loop: while let Some((chunk, is_eof)) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    if let Err(error) = sse.try_push_bytes(&bytes) {
+                        if !state.terminated {
+                            yield Ok(anthropic_error_sse(&error.to_string(), "stream_error"));
+                        }
+                        return;
+                    }
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold it intact until EOF, including any pretty-
@@ -4636,6 +4641,10 @@ fn create_anthropic_sse_stream_from_responses_raw<E: std::error::Error + Send + 
                         Some(b'{') | Some(b'[')
                     );
                     if looks_like_json && !is_eof {
+                        if let Err(error) = sse.check_pending_document_size() {
+                            yield Ok(anthropic_error_sse(&error.to_string(), "stream_error"));
+                            return;
+                        }
                         continue;
                     }
                     if looks_like_json && is_eof {

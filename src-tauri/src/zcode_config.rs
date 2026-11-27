@@ -1305,45 +1305,67 @@ pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
 /// 设置（新增/更新）一个 MCP server 条目（透传，不转换格式）
 pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
     let path = get_zcode_cli_config_path();
-    with_zcode_file_lock(&path, || {
-        let mut full_config = read_zcode_cli_config()?;
-
-        let mcp = full_config
-            .as_object_mut()
-            .ok_or_else(|| AppError::Config("ZCode CLI config root is not a JSON object".into()))?
-            .entry("mcp")
-            .or_insert_with(|| json!({}));
-
-        let mcp_obj = mcp.as_object_mut().ok_or_else(|| {
-            AppError::Config("ZCode CLI config 'mcp' is not a JSON object".into())
-        })?;
-
-        let servers = mcp_obj.entry("servers").or_insert_with(|| json!({}));
-        let servers = servers.as_object_mut().ok_or_else(|| {
-            AppError::Config("ZCode CLI config 'mcp.servers' is not a JSON object".into())
-        })?;
-        servers.insert(id.to_string(), config);
-
-        write_zcode_cli_config_unlocked(&path, &full_config)
-    })
+    with_zcode_file_lock(&path, || write_mcp_server_unlocked(&path, id, Some(config)))
 }
 
 /// 移除一个 MCP server 条目
 pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
     let path = get_zcode_cli_config_path();
+    with_zcode_file_lock(&path, || write_mcp_server_unlocked(&path, id, None))
+}
+
+/// 写入（`Some`）或移除（`None`）一个 MCP 条目，再提交数据库；提交失败就把文件恢复原样。
+///
+/// 和 Kimi Code、MiniMax Code 等应用的 `sync_and_commit` 一样先写文件、成功才入库：
+/// `cli/config.json` 写不进去时开关保持原状，界面能按原值重试。整个过程拿着 ZCode 的目录锁。
+pub(crate) fn sync_mcp_server_and_commit<T>(
+    id: &str,
+    config: Option<Value>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    let path = get_zcode_cli_config_path();
     with_zcode_file_lock(&path, || {
-        let mut config = read_zcode_cli_config()?;
-
-        if let Some(servers) = config
-            .get_mut("mcp")
-            .and_then(|v| v.get_mut("servers"))
-            .and_then(|v| v.as_object_mut())
-        {
-            servers.remove(id);
-        }
-
-        write_zcode_cli_config_unlocked(&path, &config)
+        crate::mcode_config::write_and_commit(
+            &path,
+            || write_mcp_server_unlocked(&path, id, config),
+            commit,
+        )
     })
+}
+
+fn write_mcp_server_unlocked(path: &Path, id: &str, config: Option<Value>) -> Result<(), AppError> {
+    let mut full_config = read_zcode_cli_config()?;
+    match config {
+        Some(config) => {
+            let mcp = full_config
+                .as_object_mut()
+                .ok_or_else(|| {
+                    AppError::Config("ZCode CLI config root is not a JSON object".into())
+                })?
+                .entry("mcp")
+                .or_insert_with(|| json!({}));
+
+            let mcp_obj = mcp.as_object_mut().ok_or_else(|| {
+                AppError::Config("ZCode CLI config 'mcp' is not a JSON object".into())
+            })?;
+
+            let servers = mcp_obj.entry("servers").or_insert_with(|| json!({}));
+            let servers = servers.as_object_mut().ok_or_else(|| {
+                AppError::Config("ZCode CLI config 'mcp.servers' is not a JSON object".into())
+            })?;
+            servers.insert(id.to_string(), config);
+        }
+        None => {
+            if let Some(servers) = full_config
+                .get_mut("mcp")
+                .and_then(|v| v.get_mut("servers"))
+                .and_then(|v| v.as_object_mut())
+            {
+                servers.remove(id);
+            }
+        }
+    }
+    write_zcode_cli_config_unlocked(path, &full_config)
 }
 
 #[cfg(test)]

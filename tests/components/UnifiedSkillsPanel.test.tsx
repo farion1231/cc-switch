@@ -951,7 +951,8 @@ describe("UnifiedSkillsPanel", () => {
 
   it("imports with apps chosen from where each Skill was found", async () => {
     m.installed = [makeSkill()];
-    m.visibleApps = ["claude", "codex", "grokbuild", "pi"];
+    m.visibleApps = ["claude", "codex", "grokbuild", "zcode", "pi"];
+
     m.importSkills.mockResolvedValueOnce([makeSkill({ id: "shared" })]);
     renderPanel();
     await userEvent.click(
@@ -963,6 +964,10 @@ describe("UnifiedSkillsPanel", () => {
     // Pi 按目录判断，导入时不提供勾选
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).queryByText("Pi")).not.toBeInTheDocument();
+    // 手动加勾的应用也要带进去（ZCode 曾被漏写，勾了不生效）
+    await userEvent.click(
+      within(dialog).getByRole("checkbox", { name: "ZCode" }),
+    );
     await userEvent.click(
       within(dialog).getByRole("button", { name: "skillsPage.import.submit" }),
     );
@@ -986,6 +991,7 @@ describe("UnifiedSkillsPanel", () => {
           workbuddy: false,
           agy: false,
           copilot: false,
+          zcode: true,
         },
       },
     ]);

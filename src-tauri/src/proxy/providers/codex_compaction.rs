@@ -363,7 +363,10 @@ where
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    if let Err(error) = sse.try_push_bytes(&bytes) {
+                        yield Err(error);
+                        return;
+                    }
                     while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
                             continue;

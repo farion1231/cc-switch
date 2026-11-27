@@ -44,30 +44,6 @@ pub const TRAY_APPS: [AppType; 5] = [
     AppType::GrokBuild,
 ];
 
-/// 应用全称（产品名，不翻译）。用全称是为了把 Claude Code 和 Claude Desktop 分开。
-fn app_display_name(app: &AppType) -> &'static str {
-    match app {
-        AppType::Claude => "Claude Code",
-        AppType::ClaudeDesktop => "Claude Desktop",
-        AppType::Codex => "Codex",
-        AppType::Gemini => "Gemini CLI",
-        AppType::GrokBuild => "Grok Build",
-        AppType::OpenCode => "OpenCode",
-        AppType::OpenClaw => "OpenClaw",
-        AppType::Hermes => "Hermes",
-        AppType::Pi => "Pi",
-        AppType::Mcode => "MiniMax Code",
-        AppType::Kimi => "Kimi Code",
-        AppType::Dsh => "DeepSeek Harness",
-        AppType::WorkBuddy => "WorkBuddy",
-        AppType::Agy => "Antigravity",
-        AppType::Omp => "Oh My Pi",
-        AppType::Copilot => "Copilot CLI",
-        AppType::Codebuddy => "CodeBuddy",
-        AppType::ZCode => "ZCode",
-    }
-}
-
 /// 问题区最多几行，再多写「还有 N 个问题」。
 const MAX_PROBLEM_ROWS: usize = 2;
 /// 原生菜单不会自己截断，名字太长会把整个菜单撑宽。
@@ -2022,7 +1998,7 @@ fn feedback_text(texts: &TrayTexts, feedback: &TrayFeedback) -> String {
     fill(
         template,
         &[
-            ("app", app_display_name(app)),
+            ("app", app.display_name()),
             ("name", &truncate_chars(name, MAX_NAME_CHARS)),
         ],
     )
@@ -2106,7 +2082,7 @@ fn problem_text(texts: &TrayTexts, problem: &TrayProblem) -> String {
         TrayProblem::AttachFailed { app, stack } => fill(
             texts.problem_attach_failed,
             &[
-                ("app", app_display_name(app)),
+                ("app", app.display_name()),
                 (
                     "mode",
                     if *stack {
@@ -2120,7 +2096,7 @@ fn problem_text(texts: &TrayTexts, problem: &TrayProblem) -> String {
         TrayProblem::SwitchFailed { app, reason } => fill(
             texts.problem_switch_failed,
             &[
-                ("app", app_display_name(app)),
+                ("app", app.display_name()),
                 ("reason", &truncate_chars(reason, MAX_REASON_CHARS)),
             ],
         ),
@@ -2146,7 +2122,7 @@ fn problem_id(problem: &TrayProblem) -> String {
 
 /// 应用行标题：`<应用全称> · [模式词 · ]<在用供应商>[ · <额度>][ · 快用完][ · 需要处理]`。
 fn app_row_title(texts: &TrayTexts, snapshot: &AppSnapshot) -> String {
-    let mut parts: Vec<String> = vec![app_display_name(&snapshot.app).to_string()];
+    let mut parts: Vec<String> = vec![snapshot.app.display_name().to_string()];
     let current = snapshot.current();
     let mode_word = match snapshot.mode {
         TrayMode::Route | TrayMode::Failover => Some(texts.mode_route),
@@ -2359,10 +2335,7 @@ fn app_children(
     } else {
         children.push(TrayEntry::item(
             format!("nav:app:{app}"),
-            fill(
-                texts.open_app_page,
-                &[("app", app_display_name(&snapshot.app))],
-            ),
+            fill(texts.open_app_page, &[("app", snapshot.app.display_name())]),
         ));
     }
     children
@@ -2377,11 +2350,7 @@ fn app_entry(
     if snapshot.providers.is_empty() {
         return TrayEntry::item(
             format!("nav:add:{app}"),
-            format!(
-                "{} · {}",
-                app_display_name(&snapshot.app),
-                texts.add_provider
-            ),
+            format!("{} · {}", snapshot.app.display_name(), texts.add_provider),
         );
     }
     TrayEntry::Submenu {
@@ -2838,7 +2807,7 @@ pub(crate) fn collect_panel_model(app_state: &AppState) -> Result<PanelModel, Ap
             .map(|view| panel_quota(&texts, view, now, credits));
         apps.push(PanelApp {
             app: app.to_string(),
-            name: app_display_name(&snapshot.app),
+            name: snapshot.app.display_name(),
             current: snapshot.current().map(|p| p.name.clone()),
             mode: match snapshot.mode {
                 TrayMode::Direct if accounts => texts.header_accounts,
@@ -3163,7 +3132,7 @@ fn update_tray_usage_labels(app: &tauri::AppHandle) {
             if let Err(e) = submenu.set_text(app_row_title(&texts, snapshot)) {
                 log::debug!(
                     "[Tray] 更新{}子菜单标题失败: {e}",
-                    app_display_name(&snapshot.app)
+                    snapshot.app.display_name()
                 );
             }
         }
@@ -3552,7 +3521,7 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
         handle_agy_account_click(app, provider_id.to_string());
         return true;
     }
-    log::info!("托盘切换 {} 到 {provider_id}", app_display_name(&app_type));
+    log::info!("托盘切换 {} 到 {provider_id}", app_type.display_name());
     let app_handle = app.clone();
     let provider_id = provider_id.to_string();
     tauri::async_runtime::spawn_blocking(move || {
@@ -3578,7 +3547,7 @@ pub fn handle_provider_tray_event(app: &tauri::AppHandle, event_id: &str) -> boo
             }
             Ok(ClickOutcome::Unchanged) => {}
             Err(e) => {
-                log::error!("托盘切换{}失败: {e}", app_display_name(&app_type));
+                log::error!("托盘切换{}失败: {e}", app_type.display_name());
                 record_switch_failure(&app_type, e.to_string());
             }
         }
@@ -3673,7 +3642,7 @@ fn handle_provider_click(
     if mode == TrayMode::Failover {
         log::info!(
             "{} 的故障转移开着，托盘只读，不切换",
-            app_display_name(app_type)
+            app_type.display_name()
         );
         return Ok(ClickOutcome::Unchanged);
     }
@@ -3857,7 +3826,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
         }
 
         let app_type_str = app_type.as_str();
-        let log_name = app_display_name(app_type);
+        let log_name = app_type.display_name();
 
         // 解析在用的那家；未设置 / 出错都静默跳过，与 create_tray_menu 的行为保持一致。
         let current_id = match crate::mode::current::provider_for(
@@ -4074,7 +4043,7 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
         let rows = match app_state.db.get_provider_rows(app_type) {
             Ok(rows) => rows.readable,
             Err(e) => {
-                log::warn!("[Tray] 读取{}供应商失败: {e}", app_display_name(app_type));
+                log::warn!("[Tray] 读取{}供应商失败: {e}", app_type.display_name());
                 continue;
             }
         };
@@ -4130,7 +4099,7 @@ pub(crate) async fn refresh_panel_provider_usage(app: &tauri::AppHandle) {
             if let Err(e) = result {
                 log::debug!(
                     "[Tray] 刷新{}供应商 {provider_id} 用量失败: {e}",
-                    app_display_name(&app_type)
+                    app_type.display_name()
                 );
             }
         }

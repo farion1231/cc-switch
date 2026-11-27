@@ -115,6 +115,11 @@ Die Plattform unterstützt außerdem Parallelität auf Unternehmensniveau, eine 
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>Danke an SudoCode für die Unterstützung dieses Projekts! SudoCode bietet Claude Code und Codex einen gemeinsamen API-Endpunkt – ein Schlüssel funktioniert mit beiden Tools. Die Konsole schlüsselt Token-Verbrauch und Kosten jeder Anfrage nach Modell auf, sodass Sie Ihre Ausgaben stets im Blick haben. SudoCode bietet CC-Switch-Nutzern einen besonderen Vorteil: Registrieren Sie sich über <a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">diesen Link</a> und treten Sie der QQ-Gruppe 1030742788 bei, um einen Tagespass im Wert von 10 CNY ¥ zu erhalten!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>Danke an AIGoCode für die Unterstützung dieses Projekts! AIGoCode ist eine abonnementbasierte KI-Coding-Plattform – nicht nur Abrechnung pro Token. Ein Konto, ein Monatsplan für Claude Code, Codex und Gemini, mit Direktverbindung in Festlandchina und schnellen Antworten. Abonnieren Sie über <a href="https://aigocode.net/invite/CC-SWITCH">diesen Link</a> und erhalten Sie zusätzlich 10 % Guthaben!</td>
 </tr>

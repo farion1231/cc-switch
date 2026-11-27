@@ -115,6 +115,11 @@ Platform ayrıca kurumsal düzeyde eşzamanlılığı, özel bir yönetim konsol
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için SudoCode'a teşekkürler! SudoCode, Claude Code ve Codex'e ortak tek bir API uç noktası sunar; tek bir anahtar iki araçta da çalışır. Konsol, her isteğin token kullanımını ve maliyetini modele göre ayrıntılı gösterir; böylece harcamalarınızı her zaman takip edebilirsiniz. SudoCode, CC Switch kullanıcılarına özel bir avantaj sunuyor: <a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">Bu bağlantıdan</a> kaydolun ve 1030742788 numaralı QQ grubuna katılarak 10 CNY değerinde bir günlük kart alın!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>Bu projeye sponsor olduğu için AIGoCode'a teşekkürler! AIGoCode yalnızca token başına ödemeli değil, abonelik tabanlı bir yapay zeka kodlama platformudur. Claude Code, Codex ve Gemini için tek hesap, tek aylık plan; anakarada doğrudan bağlantı ve hızlı yanıtlarla. <a href="https://aigocode.net/invite/CC-SWITCH">Bu bağlantıdan</a> abone olarak %10 ek kredi kazanın!</td>
 </tr>

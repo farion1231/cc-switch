@@ -128,7 +128,7 @@ fn tray_id_is_unique_to_app() {
 
 #[test]
 fn tray_lists_switch_apps_in_sidebar_order_without_additive_apps() {
-    let names: Vec<&str> = TRAY_APPS.iter().map(app_display_name).collect();
+    let names: Vec<&str> = TRAY_APPS.iter().map(AppType::display_name).collect();
     assert_eq!(
         names,
         [

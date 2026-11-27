@@ -708,6 +708,55 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "fluxa",
   },
   {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    providerKey: "cc-switch-sudo-code-chat",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      name: "SudoCode.chat",
+      baseUrl: "https://api.sudocode.chat/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
+        }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    providerKey: "cc-switch-sudo-code-us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      name: "SudoCode.us",
+      baseUrl: "https://sudocode.us/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
+        }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+  },
+  {
     name: "AIGoCode",
     providerKey: "cc-switch-aigo-code",
     websiteUrl: "https://aigocode.net",
@@ -1241,55 +1290,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    providerKey: "cc-switch-sudo-code-chat",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      name: "SudoCode.chat",
-      baseUrl: "https://api.sudocode.chat/v1",
-      api: "openai-responses",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-6.1-sol", {
-          id: "gpt-6.1-sol",
-        }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    providerKey: "cc-switch-sudo-code-us",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      name: "SudoCode.us",
-      baseUrl: "https://sudocode.us/v1",
-      api: "openai-responses",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-6.1-sol", {
-          id: "gpt-6.1-sol",
-        }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-  },
-  {
     name: "Modelflare",
     providerKey: "cc-switch-modelflare",
     websiteUrl: "https://modelflare.dev",
@@ -1716,6 +1716,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "cn_official",
     icon: "longcat",
     iconColor: "#29E154",
+  },
+  {
+    name: "TeleAI",
+    providerKey: "cc-switch-teleai",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      name: "TeleAI",
+      baseUrl: "https://api-maas.teleai.com.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("teleai/xing4.1-preview", {
+          id: "Xing4.1-Preview",
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
   },
   {
     name: "MiniMax",

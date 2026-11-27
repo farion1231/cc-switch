@@ -729,7 +729,19 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    let result = sse.try_push_bytes(&bytes).and_then(|()| {
+                        if json_document_candidate(sse.pending()).is_some() {
+                            sse.check_pending_document_size()
+                        } else {
+                            Ok(())
+                        }
+                    });
+                    if let Err(error) = result {
+                        if let Some(event) = state.failed_event(error.to_string(), Some("stream_error".to_string())) {
+                            yield Ok(event);
+                        }
+                        return;
+                    }
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold that body intact (including pretty-printed

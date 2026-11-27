@@ -65,6 +65,7 @@ const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   copilot: "sessionManager.copilotDeleteHint",
   workbuddy: "workbuddy.deleteSessionHint",
   codebuddy: "sessionManager.codebuddyDeleteHint",
+  zcode: "sessionManager.zcodeDeleteHint",
 };
 
 /** Antigravity 只有 CLI 的会话能在这里删（后端连索引一起清）；IDE（`antigravity/brain`）
