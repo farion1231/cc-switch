@@ -33,6 +33,7 @@ const searchCache = new Map<
     isFetching: boolean;
     isPlaceholderData?: boolean;
     isError?: boolean;
+    dataUpdatedAt?: number;
     refetch?: () => void;
   }
 >();
@@ -45,6 +46,7 @@ const setSearchResult = (
     isLoading: boolean;
     isFetching: boolean;
     isError: boolean;
+    dataUpdatedAt: number;
     refetch: () => void;
   }> = {},
 ) => {
@@ -52,6 +54,7 @@ const setSearchResult = (
     data: result,
     isLoading: false,
     isFetching: false,
+    dataUpdatedAt: 1,
     ...state,
   });
 };
@@ -521,5 +524,63 @@ describe("SkillsPage (Discover)", () => {
     handle.refresh();
     await waitFor(() => expect(refetchPage0).toHaveBeenCalledTimes(2));
     expect(screen.getByText("Page 0 Skill")).toBeInTheDocument();
+  });
+
+  it("does not duplicate page 2 rows on a same-page background refetch after Load more", async () => {
+    const page0 = {
+      skills: [makeSkillsSh({ key: "p0", name: "Page 0 Skill" })],
+      totalCount: 3,
+      query: "bg",
+    };
+    const page1 = {
+      skills: [makeSkillsSh({ key: "p1", name: "Page 1 Skill" })],
+      totalCount: 3,
+      query: "bg",
+    };
+    setSearchResult("bg", 0, page0, { dataUpdatedAt: 100 });
+    setSearchResult("bg", 20, page1, { dataUpdatedAt: 100 });
+
+    const installTo = vi.fn(
+      async (install: (first: AppId) => Promise<Array<{ id: string }>>) => ({
+        installed: await install("codex"),
+        failures: [],
+      }),
+    );
+    const props: React.ComponentProps<typeof SkillsPage> = {
+      source: "skillssh",
+      visibleAppIds: ["claude", "codex", "pi"],
+      installTargets: ["codex", "claude"],
+      onInstallTargetsChange: vi.fn(),
+      installTo: installTo as never,
+      onShowInstalled: vi.fn(),
+      onOpenRepoManager: vi.fn(),
+      onEnableFailures: vi.fn(),
+    };
+    const { rerender } = render(<SkillsPage {...props} />);
+
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "skillsPage.discover.skillsShAria" }),
+      "bg{Enter}",
+    );
+    await screen.findByText("Page 0 Skill");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.skillssh.loadMore" }),
+    );
+    await screen.findByText("Page 1 Skill");
+    expect(screen.getAllByText("Page 1 Skill")).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "skills.skillssh.loadMore" }),
+    ).toBeInTheDocument();
+
+    // Simulate TanStack Query background refetch of page 1 (same data, newer dataUpdatedAt)
+    setSearchResult("bg", 20, page1, { dataUpdatedAt: 200 });
+    rerender(<SkillsPage {...props} />);
+
+    expect(screen.getAllByText("Page 1 Skill")).toHaveLength(1);
+    expect(screen.getAllByRole("listitem")).toHaveLength(2);
+    expect(
+      screen.getByRole("button", { name: "skills.skillssh.loadMore" }),
+    ).toBeInTheDocument();
   });
 });

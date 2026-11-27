@@ -223,9 +223,9 @@ export function SkillsPage({
   );
   const [skillsShQuery, setSkillsShQuery] = useState("");
   const [skillsShOffset, setSkillsShOffset] = useState(0);
-  const [accumulated, setAccumulated] = useState<SkillsShDiscoverableSkill[]>(
-    [],
-  );
+  const [skillsShPages, setSkillsShPages] = useState<
+    Map<number, SkillsShDiscoverableSkill[]>
+  >(() => new Map());
   const [installing, setInstalling] = useState<Set<string>>(new Set());
   const [failed, setFailed] = useState<Record<string, string>>({});
 
@@ -256,17 +256,31 @@ export function SkillsPage({
   const installMutation = useInstallSkill();
   const { setRepoEnabled } = useSkillRepoActions();
 
-  // 带上 skillsShUpdatedAt：刷新返回相同数据时 TanStack Query 保持 data 引用不变，
-  // 也要同步更新 accumulated，避免 retry 清空列表后一直停在空状态。
+  // 按 offset 存每一页：同一页后台重拉（窗口聚焦/重连）时原地替换，不重复追加；
+  // 带上 skillsShUpdatedAt 确保返回相同数据时也同步更新。
   useEffect(() => {
     if (skillsShResult && !placeholderSkillsSh) {
-      setAccumulated((prev) =>
-        skillsShOffset === 0
-          ? skillsShResult.skills
-          : [...prev, ...skillsShResult.skills],
-      );
+      setSkillsShPages((prev) => {
+        const next = skillsShOffset === 0 ? new Map() : new Map(prev);
+        next.set(skillsShOffset, skillsShResult.skills);
+        return next;
+      });
     }
   }, [skillsShResult, skillsShOffset, placeholderSkillsSh, skillsShUpdatedAt]);
+
+  const accumulated = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: SkillsShDiscoverableSkill[] = [];
+    const offsets = [...skillsShPages.keys()].sort((a, b) => a - b);
+    for (const offset of offsets) {
+      for (const item of skillsShPages.get(offset) ?? []) {
+        if (seen.has(item.key)) continue;
+        seen.add(item.key);
+        merged.push(item);
+      }
+    }
+    return merged;
+  }, [skillsShPages]);
 
   const isSkillsSh = source === "skillssh";
   const enabledRepos = repos.filter((repo) => repo.enabled);
@@ -284,13 +298,13 @@ export function SkillsPage({
     if (trimmed.length < 2) return;
     if (trimmed === skillsShQuery && skillsShOffset === 0) return;
     setSkillsShOffset(0);
-    setAccumulated([]);
+    setSkillsShPages(new Map());
     setSkillsShQuery(trimmed);
   };
 
   // 第一页失败时 query key 没变，光把 offset 设回 0 什么都不会发生，要显式重新请求
   const retrySkillsSh = () => {
-    setAccumulated([]);
+    setSkillsShPages(new Map());
     if (skillsShOffset === 0) {
       void refetchSkillsSh();
     } else {
