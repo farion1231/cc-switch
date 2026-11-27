@@ -18,19 +18,21 @@
 
 use crate::database::{lock_conn, Database};
 use crate::error::AppError;
-use crate::proxy::usage::calculator::CostCalculator;
+use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
 use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
-    load_sync_cursors, metadata_modified_nanos, update_sync_state, SessionSyncResult,
+    metadata_modified_nanos, update_sync_state_on_conn, SessionSyncResult, SyncCursors,
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_FRESH;
 use crate::services::usage_stats::{find_model_pricing, proxy_request_id_exists};
 use crate::zcode_config::get_zcode_usage_db_path;
 use rust_decimal::Decimal;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
+
+const ZCODE_DATA_SOURCE: &str = "zcode_session";
 
 /// 从 ZCode model_usage 表中提取的单条使用记录
 struct ZCodeUsageRow {
@@ -52,15 +54,28 @@ struct ZCodeUsageRow {
     error_message: Option<String>,
 }
 
-/// 同步 ZCode 使用数据
-pub fn sync_zcode_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
+/// 同步 ZCode 使用数据（复用 `sync_all_unlocked` 预取的游标快照）
+pub(crate) fn sync_zcode_usage_with_cursors(
+    db: &Database,
+    cursors: &SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
     let db_path = get_zcode_usage_db_path();
-    sync_zcode_usage_from_path(db, &db_path)
+    sync_zcode_usage_from_path_with_cursors(db, &db_path, cursors)
 }
 
+#[cfg(test)]
 fn sync_zcode_usage_from_path(
     db: &Database,
     db_path: &Path,
+) -> Result<SessionSyncResult, AppError> {
+    let cursors = crate::services::session_usage::load_sync_cursors(db)?;
+    sync_zcode_usage_from_path_with_cursors(db, db_path, &cursors)
+}
+
+fn sync_zcode_usage_from_path_with_cursors(
+    db: &Database,
+    db_path: &Path,
+    cursors: &SyncCursors,
 ) -> Result<SessionSyncResult, AppError> {
     if !db_path.exists() {
         return Ok(SessionSyncResult {
@@ -85,9 +100,7 @@ fn sync_zcode_usage_from_path(
         file_modified = file_modified.max(metadata_modified_nanos(&wal_meta));
     }
 
-    let last_modified = load_sync_cursors(db)?
-        .get(&db_path_str)
-        .map_or(0, |c| c.last_modified);
+    let last_modified = cursors.get(&db_path_str).map_or(0, |c| c.last_modified);
 
     // 文件未变化则跳过
     if file_modified <= last_modified {
@@ -130,13 +143,47 @@ fn sync_zcode_usage_from_path(
         result.deferred_files = 1;
     }
     let rows = query_model_usage(&zcode_conn)?;
+    drop(zcode_conn);
+
+    // 单次持锁 + 单层外围事务批量入库，内部每行用 SAVEPOINT 保证细粒度原子性：
+    // 一行失败只回滚该行，不连累同批其余记录；未推进游标前不丢后续重试机会。
+    let conn = lock_conn!(db.conn);
+    let mut tx = conn
+        .unchecked_transaction()
+        .map_err(|error| AppError::Database(format!("启动 ZCode 批量用量导入事务失败: {error}")))?;
+
+    let mut seen_ids = load_zcode_seen_request_ids(&tx)?;
+    let mut pricing_cache: HashMap<String, Option<ModelPricing>> = HashMap::new();
 
     let mut has_error = false;
-    for row in rows {
-        match insert_zcode_usage(db, &row) {
-            Ok(true) => result.imported += 1,
-            Ok(false) => result.skipped += 1,
+    for row in &rows {
+        if is_skippable_empty_row(row) {
+            result.skipped += 1;
+            continue;
+        }
+        let request_id = format!("{ZCODE_DATA_SOURCE}:{}", row.id);
+        if seen_ids.contains(&request_id) {
+            result.skipped += 1;
+            continue;
+        }
+
+        let sp = tx.savepoint().map_err(|error| {
+            AppError::Database(format!("创建 ZCode 用量保存点失败 {}: {error}", row.id))
+        })?;
+        match insert_zcode_usage_on_conn(&sp, row, &mut pricing_cache, false) {
+            Ok(inserted) => {
+                sp.commit().map_err(|error| {
+                    AppError::Database(format!("提交 ZCode 用量保存点失败 {}: {error}", row.id))
+                })?;
+                seen_ids.insert(request_id);
+                if inserted {
+                    result.imported += 1;
+                } else {
+                    result.skipped += 1;
+                }
+            }
             Err(e) => {
+                drop(sp);
                 let msg = format!("ZCode 用量插入失败 {}: {e}", row.id);
                 log::warn!("[ZCODE-SYNC] {msg}");
                 result.errors.push(msg);
@@ -149,8 +196,11 @@ fn sync_zcode_usage_from_path(
     // 仅在本轮无错误且没有处于 running 状态的请求时推进游标；
     // 否则保留下次扫描入口，避免进行中的请求在完成后因 mtime 边界被跳过。
     if !has_error && !has_running {
-        update_sync_state(db, &db_path_str, file_modified, 0)?;
+        update_sync_state_on_conn(&tx, &db_path_str, file_modified, 0)?;
     }
+
+    tx.commit()
+        .map_err(|error| AppError::Database(format!("提交 ZCode 批量用量导入事务失败: {error}")))?;
 
     if result.imported > 0 {
         log::info!(
@@ -161,6 +211,20 @@ fn sync_zcode_usage_from_path(
     }
 
     Ok(result)
+}
+
+fn load_zcode_seen_request_ids(conn: &rusqlite::Connection) -> Result<HashSet<String>, AppError> {
+    let mut stmt = conn
+        .prepare_cached("SELECT request_id FROM session_usage_dedup WHERE data_source = ?1")
+        .map_err(|e| AppError::Database(format!("预取 ZCode 去重台账失败: {e}")))?;
+    let rows = stmt
+        .query_map([ZCODE_DATA_SOURCE], |row| row.get::<_, String>(0))
+        .map_err(|e| AppError::Database(format!("查询 ZCode 去重台账失败: {e}")))?;
+    let mut seen = HashSet::new();
+    for row in rows {
+        seen.insert(row.map_err(|e| AppError::Database(format!("读取 ZCode 去重台账失败: {e}")))?);
+    }
+    Ok(seen)
 }
 
 fn model_usage_table_exists(conn: &rusqlite::Connection) -> Result<bool, AppError> {
@@ -311,24 +375,43 @@ fn format_error_message(row: &ZCodeUsageRow) -> Option<String> {
     }
 }
 
-/// 插入单条 ZCode 用量记录到 proxy_request_logs
-fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppError> {
-    let conn = lock_conn!(db.conn);
-
+fn is_skippable_empty_row(row: &ZCodeUsageRow) -> bool {
     // 跳过非错误类的全零 token 空记录；失败请求（status = 'error'）即使 token 为 0 也应保留错误信息
-    if row.status != "error"
+    row.status != "error"
         && row.input_tokens == 0
         && row.output_tokens == 0
         && row.reasoning_tokens == 0
         && row.cache_read_tokens == 0
         && row.cache_creation_tokens == 0
-    {
+}
+
+/// 插入单条 ZCode 用量记录到 proxy_request_logs（单行测试入口）
+#[cfg(test)]
+fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppError> {
+    if is_skippable_empty_row(row) {
         return Ok(false);
     }
 
+    let conn = lock_conn!(db.conn);
     let tx = conn
         .unchecked_transaction()
         .map_err(|error| AppError::Database(format!("启动 ZCode 用量导入事务失败: {error}")))?;
+    let mut pricing_cache = HashMap::new();
+    let inserted = insert_zcode_usage_on_conn(&tx, row, &mut pricing_cache, true)?;
+    tx.commit()
+        .map_err(|error| AppError::Database(format!("提交 ZCode 用量导入事务失败: {error}")))?;
+    Ok(inserted)
+}
+
+fn insert_zcode_usage_on_conn(
+    conn: &rusqlite::Connection,
+    row: &ZCodeUsageRow,
+    pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
+    check_dedup_table: bool,
+) -> Result<bool, AppError> {
+    if is_skippable_empty_row(row) {
+        return Ok(false);
+    }
 
     let model_id = row
         .model_id
@@ -355,7 +438,7 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
         (row.input_tokens - row.cache_read_tokens - row.cache_creation_tokens).max(0);
 
     // request_id 加前缀防跨源冲突
-    let request_id = format!("zcode_session:{}", row.id);
+    let request_id = format!("{ZCODE_DATA_SOURCE}:{}", row.id);
 
     // 去重必须同时查 session_usage_dedup 台账：proxy_request_logs 里 30 天前
     // 的明细会被 rollup_and_prune 删掉，只查它的话旧行会被重新导入并再次
@@ -363,25 +446,26 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     // 只用 request_id 精确判重：model_usage.id 唯一，不走指纹去重——
     // created_at 是秒级精度，同一秒内完成、token 完全相同的两次调用
     // （典型：并行 subagent）会被误判为重复，导致真实记录被永久跳过。
-    let seen: bool = tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE data_source = ?1 AND request_id = ?2)",
-        rusqlite::params!["zcode_session", request_id],
-        |r| r.get(0),
-    )?;
-    if seen {
-        return Ok(false);
+    if check_dedup_table {
+        let seen: bool = conn
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM session_usage_dedup WHERE data_source = ?1 AND request_id = ?2)",
+            )
+            .and_then(|mut stmt| {
+                stmt.query_row(rusqlite::params![ZCODE_DATA_SOURCE, request_id], |r| r.get(0))
+            })?;
+        if seen {
+            return Ok(false);
+        }
     }
-    if proxy_request_id_exists(&tx, &request_id)? {
-        tx.execute(
+    if proxy_request_id_exists(conn, &request_id)? {
+        conn.prepare_cached(
             "INSERT OR IGNORE INTO session_usage_dedup
              (data_source, request_id, semantic_id, has_entry_id)
              VALUES (?1, ?2, ?2, 1)",
-            rusqlite::params!["zcode_session", request_id],
         )
+        .and_then(|mut stmt| stmt.execute(rusqlite::params![ZCODE_DATA_SOURCE, request_id]))
         .map_err(|e| AppError::Database(format!("补写 ZCode 用量去重账本失败: {e}")))?;
-        tx.commit().map_err(|error| {
-            AppError::Database(format!("提交 ZCode 用量去重账本修复失败: {error}"))
-        })?;
         return Ok(false);
     }
 
@@ -400,27 +484,35 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
         message_id: None,
     };
 
-    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) =
-        match find_model_pricing(&tx, &model_id) {
-            Some(pricing) => {
-                let cost =
-                    CostCalculator::calculate_for_app("zcode", &usage, &pricing, Decimal::from(1));
-                (
-                    cost.input_cost.to_string(),
-                    cost.output_cost.to_string(),
-                    cost.cache_read_cost.to_string(),
-                    cost.cache_creation_cost.to_string(),
-                    cost.total_cost.to_string(),
-                )
-            }
-            None => (
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-                "0".to_string(),
-            ),
-        };
+    let pricing = if let Some(cached) = pricing_cache.get(&model_id) {
+        cached.as_ref()
+    } else {
+        let loaded = find_model_pricing(conn, &model_id);
+        pricing_cache.insert(model_id.clone(), loaded);
+        pricing_cache.get(&model_id).and_then(|p| p.as_ref())
+    };
+
+    let (input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost) = match pricing
+    {
+        Some(pricing) => {
+            let cost =
+                CostCalculator::calculate_for_app("zcode", &usage, pricing, Decimal::from(1));
+            (
+                cost.input_cost.to_string(),
+                cost.output_cost.to_string(),
+                cost.cache_read_cost.to_string(),
+                cost.cache_creation_cost.to_string(),
+                cost.total_cost.to_string(),
+            )
+        }
+        None => (
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+        ),
+    };
 
     let provider_id = row
         .provider_id
@@ -430,57 +522,58 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
     let status_code = status_to_code(&row.status);
     let error_message = format_error_message(row);
 
-    let inserted_rows = tx.execute(
-        "INSERT OR IGNORE INTO proxy_request_logs (
-            request_id, provider_id, app_type, model, request_model,
-            input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
-            input_token_semantics,
-            input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
-            latency_ms, first_token_ms, duration_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
-        rusqlite::params![
-            request_id,
-            provider_id,
-            "zcode",              // app_type
-            model_id,
-            model_id,             // request_model = model
-            fresh_input_tokens,
-            row.output_tokens,
-            row.cache_read_tokens,
-            row.cache_creation_tokens,
-            INPUT_TOKEN_SEMANTICS_FRESH,
-            input_cost,
-            output_cost,
-            cache_read_cost,
-            cache_creation_cost,
-            total_cost,
-            row.duration_ms.unwrap_or(0),
-            row.time_to_first_token_ms,
-            row.duration_ms,
-            status_code,
-            error_message,
-            row.session_id,
-            Some("zcode_session"),// provider_type
-            1i64,                 // is_streaming
-            "1.0",                // cost_multiplier
-            created_at,
-            "zcode_session",      // data_source
-        ],
-    )
-    .map_err(|e| AppError::Database(format!("插入 ZCode 会话日志失败: {e}")))?;
+    let inserted_rows = conn
+        .prepare_cached(
+            "INSERT OR IGNORE INTO proxy_request_logs (
+                request_id, provider_id, app_type, model, request_model,
+                input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                input_token_semantics,
+                input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
+                latency_ms, first_token_ms, duration_ms, status_code, error_message, session_id,
+                provider_type, is_streaming, cost_multiplier, created_at, data_source
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+        )
+        .and_then(|mut stmt| {
+            stmt.execute(rusqlite::params![
+                request_id,
+                provider_id,
+                "zcode",              // app_type
+                model_id,
+                model_id,             // request_model = model
+                fresh_input_tokens,
+                row.output_tokens,
+                row.cache_read_tokens,
+                row.cache_creation_tokens,
+                INPUT_TOKEN_SEMANTICS_FRESH,
+                input_cost,
+                output_cost,
+                cache_read_cost,
+                cache_creation_cost,
+                total_cost,
+                row.duration_ms.unwrap_or(0),
+                row.time_to_first_token_ms,
+                row.duration_ms,
+                status_code,
+                error_message,
+                row.session_id,
+                Some(ZCODE_DATA_SOURCE),// provider_type
+                1i64,                   // is_streaming
+                "1.0",                  // cost_multiplier
+                created_at,
+                ZCODE_DATA_SOURCE,      // data_source
+            ])
+        })
+        .map_err(|e| AppError::Database(format!("插入 ZCode 会话日志失败: {e}")))?;
 
     // 同步记账到去重台账：proxy_request_logs 里 30 天前的明细会被清理，
     // 台账不清理，保证旧行不会被再次导入并重复滚入日汇总。
-    tx.execute(
+    conn.prepare_cached(
         "INSERT OR IGNORE INTO session_usage_dedup
          (data_source, request_id, semantic_id, has_entry_id)
          VALUES (?1, ?2, ?2, 1)",
-        rusqlite::params!["zcode_session", request_id],
     )
+    .and_then(|mut stmt| stmt.execute(rusqlite::params![ZCODE_DATA_SOURCE, request_id]))
     .map_err(|e| AppError::Database(format!("写入 ZCode 用量去重账本失败: {e}")))?;
-    tx.commit()
-        .map_err(|error| AppError::Database(format!("提交 ZCode 用量导入事务失败: {error}")))?;
 
     Ok(inserted_rows > 0)
 }
@@ -488,6 +581,7 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::services::session_usage::load_sync_cursors;
 
     fn sample_row(id: &str) -> ZCodeUsageRow {
         ZCodeUsageRow {
@@ -868,6 +962,168 @@ mod tests {
         );
         assert_eq!(output_cost.parse::<Decimal>().unwrap(), Decimal::new(44, 2));
         assert_eq!(total_cost.parse::<Decimal>().unwrap(), Decimal::new(197, 2));
+        Ok(())
+    }
+
+    #[test]
+    fn batch_sync_reuses_provided_cursors_and_skips_unchanged_file() -> Result<(), AppError> {
+        use crate::services::session_usage::SyncCursor;
+
+        let dir = tempfile::tempdir().map_err(|e| AppError::Config(e.to_string()))?;
+        let db_path = dir.path().join("db.sqlite");
+        {
+            let source = rusqlite::Connection::open(&db_path)?;
+            source.execute_batch(
+                "CREATE TABLE model_usage (
+                    id TEXT, provider_id TEXT, model_id TEXT,
+                    input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER,
+                    cache_read_input_tokens INTEGER, cache_creation_input_tokens INTEGER,
+                    duration_ms INTEGER, time_to_first_token_ms INTEGER,
+                    status TEXT, started_at INTEGER, session_id TEXT
+                 );
+                 INSERT INTO model_usage VALUES
+                    ('c1', 'bigmodel', 'GLM-5.3', 1000, 100, 0, 200, 0, 1500, 400, 'completed', 1700000000000, 's1');",
+            )?;
+        }
+        let meta = fs::metadata(&db_path).map_err(|e| AppError::Config(e.to_string()))?;
+        let mut cursors = SyncCursors::new();
+        cursors.insert(
+            db_path.to_string_lossy().to_string(),
+            SyncCursor {
+                last_modified: metadata_modified_nanos(&meta),
+                ..Default::default()
+            },
+        );
+
+        let db = crate::database::Database::memory()?;
+        let res = sync_zcode_usage_from_path_with_cursors(&db, &db_path, &cursors)?;
+        assert_eq!(res.imported, 0);
+        assert_eq!(res.files_scanned, 1);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM proxy_request_logs", [], |r| r.get(0))?;
+        assert_eq!(
+            count, 0,
+            "provided cursor must short-circuit without querying db"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn batch_sync_isolates_single_row_failure_with_savepoint() -> Result<(), AppError> {
+        let dir = tempfile::tempdir().map_err(|e| AppError::Config(e.to_string()))?;
+        let db_path = dir.path().join("db.sqlite");
+        {
+            let source = rusqlite::Connection::open(&db_path)?;
+            source.execute_batch(
+                "CREATE TABLE model_usage (
+                    id TEXT, provider_id TEXT, model_id TEXT,
+                    input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER,
+                    cache_read_input_tokens INTEGER, cache_creation_input_tokens INTEGER,
+                    duration_ms INTEGER, time_to_first_token_ms INTEGER,
+                    status TEXT, started_at INTEGER, session_id TEXT
+                 );
+                 INSERT INTO model_usage VALUES
+                    ('good1', 'bigmodel', 'GLM-5.3', 1000, 100, 0, 200, 0, 1500, 400, 'completed', 1700000000000, 's1'),
+                    ('bad1',  'bigmodel', 'GLM-5.3', 1200, 150, 0, 300, 0, 1800, 500, 'completed', 1700000001000, 's1');",
+            )?;
+        }
+
+        let db = crate::database::Database::memory()?;
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute_batch(
+                "CREATE TRIGGER reject_bad_zcode_dedup
+                 BEFORE INSERT ON session_usage_dedup
+                 WHEN NEW.request_id = 'zcode_session:bad1'
+                 BEGIN
+                     SELECT RAISE(ABORT, 'forced single row dedup failure');
+                 END;",
+            )?;
+        }
+
+        let res = sync_zcode_usage_from_path(&db, &db_path)?;
+        assert_eq!(res.imported, 1);
+        assert_eq!(res.skipped, 1);
+        assert_eq!(res.errors.len(), 1);
+
+        let path_key = db_path.to_string_lossy().to_string();
+        assert!(
+            !load_sync_cursors(&db)?.contains_key(&path_key),
+            "cursor must not advance when any row in batch failed"
+        );
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let good_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'zcode_session:good1'",
+            [],
+            |r| r.get(0),
+        )?;
+        let bad_detail_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE request_id = 'zcode_session:bad1'",
+            [],
+            |r| r.get(0),
+        )?;
+        let bad_dedup_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM session_usage_dedup WHERE request_id = 'zcode_session:bad1'",
+            [],
+            |r| r.get(0),
+        )?;
+        assert_eq!(
+            good_count, 1,
+            "valid row must commit despite sibling failure"
+        );
+        assert_eq!(
+            bad_detail_count, 0,
+            "failing row must roll back from proxy_request_logs"
+        );
+        assert_eq!(
+            bad_dedup_count, 0,
+            "failing row must roll back from session_usage_dedup"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn batch_sync_imports_multiple_rows_and_skips_duplicates_on_rescan() -> Result<(), AppError> {
+        let dir = tempfile::tempdir().map_err(|e| AppError::Config(e.to_string()))?;
+        let db_path = dir.path().join("db.sqlite");
+        {
+            let source = rusqlite::Connection::open(&db_path)?;
+            source.execute_batch(
+                "CREATE TABLE model_usage (
+                    id TEXT, provider_id TEXT, model_id TEXT,
+                    input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER,
+                    cache_read_input_tokens INTEGER, cache_creation_input_tokens INTEGER,
+                    duration_ms INTEGER, time_to_first_token_ms INTEGER,
+                    status TEXT, started_at INTEGER, session_id TEXT
+                 );
+                 INSERT INTO model_usage VALUES
+                    ('m1', 'bigmodel', 'GLM-5.3', 1000, 100, 0, 200, 0, 1500, 400, 'completed', 1700000000000, 's1'),
+                    ('m2', 'bigmodel', 'GLM-5.3', 2000, 200, 0, 400, 0, 1600, 450, 'completed', 1700000001000, 's1'),
+                    ('empty', 'bigmodel', 'GLM-5.3', 0, 0, 0, 0, 0, NULL, NULL, 'cancelled', 1700000002000, 's1');",
+            )?;
+        }
+
+        let db = crate::database::Database::memory()?;
+        let first = sync_zcode_usage_from_path(&db, &db_path)?;
+        assert_eq!(first.imported, 2);
+        assert_eq!(first.skipped, 1);
+        assert!(first.errors.is_empty());
+
+        let path_key = db_path.to_string_lossy().to_string();
+        assert!(load_sync_cursors(&db)?.contains_key(&path_key));
+
+        // Reset cursor to force a full rescan of already-imported rows
+        {
+            let conn = crate::database::lock_conn!(db.conn);
+            conn.execute("DELETE FROM session_log_sync", [])?;
+        }
+        let second = sync_zcode_usage_from_path(&db, &db_path)?;
+        assert_eq!(second.imported, 0);
+        assert_eq!(second.skipped, 3);
+        assert!(second.errors.is_empty());
         Ok(())
     }
 }
