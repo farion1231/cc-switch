@@ -1212,12 +1212,18 @@ fn required_link_model<'a>(
 
 /// MiniMax Code、DeepSeek Harness 的自定义供应商节点，两家是同一种形状。模型只写名字：
 /// 两家客户端都接受（2026-11 实测 MCode 0.7.2、DSH 0.2.1），上下文窗口等留给用户在编辑器里补。
+///
+/// DSH 接受逗号分隔的模型列表，第一项是默认模型；MCode 仍只要一个。
 fn build_custom_provider_settings(
     app_type: &AppType,
     request: &DeepLinkImportRequest,
     api_format: Option<ApiFormat>,
 ) -> Result<serde_json::Value, AppError> {
-    let model = required_link_model(app_type, request)?;
+    let models = link_models(app_type, request)?;
+    let mut model_map = serde_json::Map::new();
+    for model in models {
+        model_map.insert(model.to_string(), json!({ "name": model }));
+    }
     Ok(json!({
         "name": request.name.clone().unwrap_or_default(),
         "kind": "custom",
@@ -1227,8 +1233,30 @@ fn build_custom_provider_settings(
             "baseURL": get_primary_endpoint(request),
             "apiKey": request.api_key.clone().unwrap_or_default(),
         },
-        "models": { model: { "name": model } },
+        "models": model_map,
     }))
+}
+
+/// 链接里的模型。DSH 的 `model` 用逗号分隔多个模型名，第一项是默认模型；
+/// 其他应用仍只取整个参数作为一个模型名。
+fn link_models<'a>(
+    app_type: &AppType,
+    request: &'a DeepLinkImportRequest,
+) -> Result<Vec<&'a str>, AppError> {
+    let model = required_link_model(app_type, request)?;
+    if !matches!(app_type, AppType::Dsh) {
+        return Ok(vec![model]);
+    }
+    let models: Vec<&str> = model
+        .split(',')
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+        .collect();
+    let mut seen = std::collections::HashSet::new();
+    Ok(models
+        .into_iter()
+        .filter(|model| seen.insert(*model))
+        .collect())
 }
 
 /// WorkBuddy 的自定义模型卡，形状同 WorkBuddy 页面的编辑器。`url` 是完整的 Chat Completions

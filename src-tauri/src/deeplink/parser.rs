@@ -70,6 +70,24 @@ pub fn parse_deeplink_url(url_str: &str) -> Result<DeepLinkImportRequest, AppErr
 /// Parse provider deep link parameters
 /// 内置图标名的形状：小写字母、数字、`-`、`_`、`.`，不超过 64 个字符。
 /// 只看形状，不核对图标是否存在（前端找不到时显示首字母）。
+fn has_link_model(model: Option<&str>) -> bool {
+    model.is_some_and(|model| model.split(',').any(|item| !item.trim().is_empty()))
+}
+
+/// DSH 的 `model` 沿用逗号分隔：第一项是默认模型，其余写入同一供应商节点。
+/// 模型名里的逗号必须写成 `%2C`，URL 解码后才会出现在这里。
+fn validate_dsh_model_list(model: Option<&str>) -> Result<(), String> {
+    let Some(model) = model else {
+        return Ok(());
+    };
+    if model.split(',').any(|item| item.trim().is_empty()) {
+        return Err(
+            "DSH model list has an empty entry; separate model names with commas".to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn is_builtin_icon_name(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -142,15 +160,21 @@ fn parse_provider_deeplink(
     // Extract optional fields
     let model = params.get("model").cloned();
     // 这几家的节点没有模型就选不到任何模型（见 `provider::build_pi_family_settings`）；
-    // WorkBuddy 的卡至少要一个模型才能保存
+    // WorkBuddy 的卡至少要一个模型才能保存。
+    // DSH 的 `model` 可以是逗号分隔的模型列表，第一个是默认模型。
     if matches!(
         app.as_str(),
         "pi" | "mcode" | "kimi" | "dsh" | "omp" | "workbuddy"
-    ) && model.as_deref().is_none_or(|model| model.trim().is_empty())
+    ) && !has_link_model(model.as_deref())
     {
         return Err(AppError::InvalidInput(format!(
             "{app} providers need a model; add 'model' to the link"
         )));
+    }
+    if app == "dsh" {
+        if let Err(message) = validate_dsh_model_list(model.as_deref()) {
+            return Err(AppError::InvalidInput(message));
+        }
     }
     let notes = params.get("notes").cloned();
     let haiku_model = params.get("haikuModel").cloned();
