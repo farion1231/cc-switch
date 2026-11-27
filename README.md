@@ -115,6 +115,11 @@ The platform also supports enterprise-grade concurrency, a dedicated admin conso
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>Thanks to SudoCode for sponsoring this project! SudoCode gives Claude Code and Codex one shared API endpoint, so a single key works with both tools. Its console breaks down the token usage and cost of every request by model, so you always know where your spend goes. SudoCode offers CC Switch users a special perk: register via <a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">this link</a>, then join QQ group 1030742788 to claim a day pass worth ¥10!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>Thanks to AIGoCode for sponsoring this project! AIGoCode is a subscription-based AI coding platform, not just pay-per-token. One account, one monthly plan for Claude Code, Codex and Gemini, with direct connection on the mainland and fast responses. Subscribe via <a href="https://aigocode.net/invite/CC-SWITCH">this link</a> to get an extra 10% credits!</td>
 </tr>
@@ -367,6 +372,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 | MiniMax Code | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | Coexist | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy | Coexist | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **Switch**: only one provider is active at a time; **Coexist**: multiple providers are written into the tool's own config at the same time, and you pick one inside the tool.
 - **Local Routing**: CC Switch forwards requests on your machine and converts API formats; see [Local Routing & Failover](#local-routing--failover) below. Claude Desktop providers can use "Direct" or "Model Mapping"; with "Model Mapping", requests go through local routing.
@@ -405,7 +411,7 @@ For detailed guides on every feature, check out the **[User Manual](docs/user-ma
 
 ### MCP, Prompts & Skills
 
-- **Unified MCP panel** — Manage all MCP servers in one place, choose which tools to sync each one to (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), import existing configs from each tool, and import via Deep Link
+- **Unified MCP panel** — Manage all MCP servers in one place, choose which tools to sync each one to (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy), import existing configs from each tool, and import via Deep Link
 - **Prompts** — A per-tool prompt library with a Markdown editor; enabling a prompt writes it to that tool's prompt file (CLAUDE.md / AGENTS.md / GEMINI.md), and the file's existing content is saved back to the library first, so nothing is lost. Pi can also edit SYSTEM.md, APPEND_SYSTEM.md, and prompt templates
 - **Skills** — Search skills.sh, or install in one click from GitHub repos or ZIP files; check for updates and update all in one click; sync to each tool automatically, via symlinks only, or via copies only; you can optionally store them in `~/.agents/skills`
 - All three panels support search, and MCP and Skills can also be enabled or disabled all at once per tool; providers, MCP servers, and prompts are edited full-page in the content area, and you're warned before leaving with unsaved changes

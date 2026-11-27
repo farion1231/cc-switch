@@ -2,6 +2,7 @@ import { useTranslation } from "react-i18next";
 import type { Provider } from "@/types";
 import { QuotaLines } from "@/components/quota/QuotaLines";
 import { useQuotaDisplay } from "@/components/quota/useQuotaDisplay";
+import { ManualQuotaIdle } from "@/components/SubscriptionQuotaFooter";
 import { boundWorkBuddyAccountId } from "./workbuddyOfficial";
 import { useWorkBuddyAccountQuota, workbuddyCardLines } from "./workbuddyQuota";
 
@@ -13,9 +14,17 @@ export function WorkBuddyQuotaFooter({ provider }: { provider: Provider }) {
   const { t, i18n } = useTranslation();
   const display = useQuotaDisplay();
   const accountId = boundWorkBuddyAccountId(provider);
-  const { data, isFetching, refresh } = useWorkBuddyAccountQuota(accountId, {
-    autoRefresh: true,
-  });
+  const { data, isFetching, refresh, manualIdle } = useWorkBuddyAccountQuota(
+    accountId,
+    {
+      autoRefresh: true,
+    },
+  );
+  if (!data) {
+    return manualIdle ? (
+      <ManualQuotaIdle inline loading={isFetching} refetch={refresh} />
+    ) : null;
+  }
   const lines = workbuddyCardLines(t, data, i18n.language, display);
   if (!lines) return null;
   return (

@@ -321,6 +321,17 @@ impl Provider {
                 str_at(settings.get("baseUrl")),
                 str_at(settings.get("apiKey")),
             ),
+            // CodeBuddy models.json entries keep the full chat/completions endpoint in
+            // `url`; usage scripts expect the API base, same trim as WorkBuddy.
+            AppType::Codebuddy => {
+                let url = str_at(settings.get("url"));
+                let base_url = url
+                    .trim_end_matches('/')
+                    .strip_suffix("/chat/completions")
+                    .map(str::to_string)
+                    .unwrap_or(url);
+                (base_url, str_at(settings.get("apiKey")))
+            }
             // Pi custom providers use the native models.json field names. Pi expands
             // `$NAME` references in `apiKey`, so resolve them before sending (#8822).
             AppType::Pi => (
@@ -351,6 +362,14 @@ impl Provider {
             }
             // OpenCode (OMO) nests credentials under `options` (the SDK options object).
             AppType::OpenCode | AppType::Mcode => {
+                let options = settings.get("options");
+                (
+                    str_at(options.and_then(|o| o.get("baseURL"))),
+                    str_at(options.and_then(|o| o.get("apiKey"))),
+                )
+            }
+            // ZCode nests credentials under `options` (baseURL/apiKey), same as OpenCode.
+            AppType::ZCode => {
                 let options = settings.get("options");
                 (
                     str_at(options.and_then(|o| o.get("baseURL"))),
@@ -1229,6 +1248,107 @@ pub struct OpenCodeModelLimit {
     pub output: Option<u64>,
 }
 
+// ============================================================================
+// ZCode 供应商配置结构
+// ============================================================================
+
+/// ZCode 供应商的 settings_config 结构
+///
+/// ZCode (zcode.z.ai) 的个人供应商规则位于 `~/.zcode/v2/provider_config.json`，
+/// 通过 `kind` 字段指定供应商类型（anthropic / openai-compatible / openai），
+/// 凭据嵌套在 `options`（baseURL / apiKey），与 OpenCode 结构类似。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeProviderConfig {
+    /// 供应商显示名称
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// 供应商类型："anthropic" | "openai-compatible" | "openai"
+    #[serde(default)]
+    pub kind: String,
+
+    /// 供应商选项（API 密钥、基础 URL 等）
+    #[serde(default)]
+    pub options: ZCodeProviderOptions,
+
+    /// 是否启用（可为 true/false/null）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+
+    /// 来源标记（如 "custom"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+
+    /// 模型定义映射（IndexMap 保持用户配置的模型顺序，写入 modelOrder 时不变）
+    #[serde(default)]
+    pub models: IndexMap<String, ZCodeModel>,
+
+    /// 捕获所有未明确定义的顶层字段，确保 import/live-sync 不会丢失
+    /// ZCode 配置中的额外属性。
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+/// ZCode 供应商选项
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeProviderOptions {
+    /// API 基础 URL
+    #[serde(rename = "baseURL", skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+
+    /// API 密钥
+    #[serde(rename = "apiKey", skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+
+    /// 额外选项（headers 等）
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+/// ZCode 模型定义
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeModel {
+    /// 模型限制（上下文和输出 token 数）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<ZCodeModelLimit>,
+
+    /// 模型输入/输出模态
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modalities: Option<ZCodeModelModalities>,
+
+    /// reasoning 能力描述
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Value>,
+
+    /// 额外字段
+    #[serde(flatten, default, skip_serializing_if = "HashMap::is_empty")]
+    pub extra: HashMap<String, Value>,
+}
+
+/// ZCode 模型限制
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeModelLimit {
+    /// 上下文 token 限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context: Option<u64>,
+
+    /// 输出 token 限制
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
+}
+
+/// ZCode 模型输入/输出模态
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ZCodeModelModalities {
+    /// 输入模态（如 ["text"]）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<String>,
+
+    /// 输出模态（如 ["text"]）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output: Vec<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1831,6 +1951,22 @@ mod tests {
             (
                 "https://api.deepseek.com".to_string(),
                 "sk-hermes".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn resolve_credentials_codebuddy_trims_chat_completions() {
+        let p = provider_with(json!({
+            "id": "deepseek-chat",
+            "url": "https://api.deepseek.com/v1/chat/completions/",
+            "apiKey": "sk-codebuddy",
+        }));
+        assert_eq!(
+            p.resolve_usage_credentials(&AppType::Codebuddy),
+            (
+                "https://api.deepseek.com/v1".to_string(),
+                "sk-codebuddy".to_string()
             )
         );
     }

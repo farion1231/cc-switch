@@ -43,7 +43,7 @@ use crate::store::AppState;
 // Re-export sub-module functions for external access
 pub use live::{
     import_default_config, import_hermes_providers_from_live, import_openclaw_providers_from_live,
-    import_opencode_providers_from_live, read_live_settings,
+    import_opencode_providers_from_live, import_zcode_providers_from_live, read_live_settings,
     should_import_default_config_on_startup, sync_current_to_live,
 };
 
@@ -179,13 +179,20 @@ pub struct ProviderService;
 /// Native provider lists refresh saved rows as well as reading them. Keep the
 /// entire snapshot/readback under the same per-app lock as provider mutations,
 /// so an in-flight list cannot restore a deleted row or overwrite a newer edit.
+/// Antigravity also uses this lock while a provider save changes its native login.
 fn lock_native_provider_operations(
     state: &AppState,
     app_type: &AppType,
 ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
     matches!(
         app_type,
-        AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot | AppType::WorkBuddy
+        AppType::Mcode
+            | AppType::Kimi
+            | AppType::Dsh
+            | AppType::Copilot
+            | AppType::WorkBuddy
+            | AppType::Codebuddy
+            | AppType::Agy
     )
     .then(|| {
         futures::executor::block_on(state.proxy_service.lock_switch_for_app(app_type.as_str()))
@@ -6012,13 +6019,15 @@ impl ProviderService {
         if app_type == AppType::Copilot {
             return Self::list_copilot(state);
         }
-        if matches!(app_type, AppType::Mcode | AppType::Kimi | AppType::Dsh) {
-            let native = if matches!(app_type, AppType::Dsh) {
-                crate::dsh_config::get_providers()?
-            } else if app_type == AppType::Kimi {
-                crate::kimi_config::get_providers()?
-            } else {
-                crate::mcode_config::get_providers()?
+        if matches!(
+            app_type,
+            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Codebuddy
+        ) {
+            let native = match app_type {
+                AppType::Dsh => crate::dsh_config::get_providers()?,
+                AppType::Kimi => crate::kimi_config::get_providers()?,
+                AppType::Codebuddy => crate::codebuddy_config::get_providers()?,
+                _ => crate::mcode_config::get_providers()?,
             };
             let mut saved = match state.db.get_all_providers(&app_type) {
                 Ok(saved) => saved,
@@ -6221,19 +6230,25 @@ impl ProviderService {
                 Ok(true)
             };
         }
-        let previous = state.db.get_provider_by_id(&provider.id, &AppType::Mcode)?;
-        state.db.save_provider(&AppType::Mcode, provider)?;
+        let write_live = write_live && !Self::is_codebuddy_official(app_type, provider);
+        let previous = state.db.get_provider_by_id(&provider.id, app_type)?;
+        state.db.save_provider(app_type, provider)?;
         if write_live {
             let config = provider.settings_config.clone();
-            let written = if create {
-                crate::mcode_config::add_provider(&provider.id, config)
-            } else {
-                crate::mcode_config::set_provider(&provider.id, config)
+            let written = match (app_type, create) {
+                (AppType::Codebuddy, true) => {
+                    crate::codebuddy_config::add_provider(&provider.id, config)
+                }
+                (AppType::Codebuddy, false) => {
+                    crate::codebuddy_config::set_provider(&provider.id, config)
+                }
+                (_, true) => crate::mcode_config::add_provider(&provider.id, config),
+                (_, false) => crate::mcode_config::set_provider(&provider.id, config),
             };
             if let Err(error) = written {
                 match previous {
-                    Some(previous) => state.db.save_provider(&AppType::Mcode, &previous)?,
-                    None => state.db.delete_provider(&AppType::Mcode, &provider.id)?,
+                    Some(previous) => state.db.save_provider(app_type, &previous)?,
+                    None => state.db.delete_provider(app_type, &provider.id)?,
                 }
                 return Err(error);
             }
@@ -6291,6 +6306,8 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::add(state, provider, add_to_live);
         }
+        // CodeBuddy 官方登录卡只绑定账号，永远不写进 models.json
+        let add_to_live = add_to_live && !Self::is_codebuddy_official(&app_type, &provider);
 
         if app_type == AppType::Omp {
             return omp::add(state, provider, add_to_live);
@@ -6311,7 +6328,7 @@ impl ProviderService {
 
         if matches!(
             app_type,
-            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot
+            AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Codebuddy | AppType::Copilot
         ) {
             // The key is user-chosen, and saving would overwrite an existing row or live node.
             // The per-app lock also serializes native list refreshes and other mutations;
@@ -6320,14 +6337,14 @@ impl ProviderService {
                 .db
                 .get_provider_by_id(&provider.id, &app_type)?
                 .is_some()
-                || if matches!(app_type, AppType::Dsh) {
-                    crate::dsh_config::provider_key_exists(&provider.id)?
-                } else if app_type == AppType::Kimi {
-                    crate::kimi_config::provider_key_exists(&provider.id)?
-                } else if app_type == AppType::Copilot {
-                    crate::copilot_config::provider_key_exists(&provider.id)?
-                } else {
-                    crate::mcode_config::provider_key_exists(&provider.id)?
+                || match app_type {
+                    AppType::Dsh => crate::dsh_config::provider_key_exists(&provider.id)?,
+                    AppType::Kimi => crate::kimi_config::provider_key_exists(&provider.id)?,
+                    AppType::Codebuddy => {
+                        crate::codebuddy_config::provider_key_exists(&provider.id)?
+                    }
+                    AppType::Copilot => crate::copilot_config::provider_key_exists(&provider.id)?,
+                    _ => crate::mcode_config::provider_key_exists(&provider.id)?,
                 }
             {
                 return Err(AppError::InvalidInput(format!(
@@ -7051,15 +7068,16 @@ impl ProviderService {
                 state.db.save_provider(&app_type, &provider)?;
                 return Ok(true);
             }
-            let live_config_managed = Self::check_live_config_exists(
-                &app_type,
-                &provider.id,
-                Self::provider_live_config_managed(&provider).or_else(|| {
-                    existing_provider
-                        .as_ref()
-                        .and_then(Self::provider_live_config_managed)
-                }),
-            )?;
+            let live_config_managed = !Self::is_codebuddy_official(&app_type, &provider)
+                && Self::check_live_config_exists(
+                    &app_type,
+                    &provider.id,
+                    Self::provider_live_config_managed(&provider).or_else(|| {
+                        existing_provider
+                            .as_ref()
+                            .and_then(Self::provider_live_config_managed)
+                    }),
+                )?;
             // Copilot 官方卡不在 providers.json 里（同名条目属于别人）。
             let live_config_managed = live_config_managed
                 && !(app_type == AppType::Copilot && copilot_direct::is_official(&provider));
@@ -7067,7 +7085,11 @@ impl ProviderService {
 
             if matches!(
                 app_type,
-                AppType::Mcode | AppType::Kimi | AppType::Dsh | AppType::Copilot
+                AppType::Mcode
+                    | AppType::Kimi
+                    | AppType::Dsh
+                    | AppType::Codebuddy
+                    | AppType::Copilot
             ) {
                 return Self::save_native_provider(
                     state,
@@ -7305,7 +7327,13 @@ impl ProviderService {
                 && existing
                     .as_ref()
                     .is_some_and(crate::workbuddy_config::is_official_provider);
-            if !workbuddy_official && Self::check_live_config_exists(&app_type, id, live_managed)? {
+            let codebuddy_official = existing
+                .as_ref()
+                .is_some_and(|provider| Self::is_codebuddy_official(&app_type, provider));
+            if !workbuddy_official
+                && !codebuddy_official
+                && Self::check_live_config_exists(&app_type, id, live_managed)?
+            {
                 remove_provider_from_live(&app_type, id)?;
             }
             state.db.delete_provider(&app_type, id)?;
@@ -7409,7 +7437,15 @@ impl ProviderService {
         if app_type == AppType::Pi {
             return pi::remove(state, id);
         }
-        if matches!(app_type, AppType::Dsh) {
+        if app_type == AppType::Codebuddy
+            && state
+                .db
+                .get_provider_by_id(id, &app_type)?
+                .is_some_and(|provider| crate::codebuddy_config::is_official_provider(&provider))
+        {
+            return Err(Self::codebuddy_official_not_a_model());
+        }
+        if app_type == AppType::Dsh {
             return crate::dsh_config::save_and_commit(id, None, false, || {
                 if let Some(mut provider) = state.db.get_provider_by_id(id, &app_type)? {
                     Self::set_provider_live_config_managed(&mut provider, false);
@@ -7609,7 +7645,11 @@ impl ProviderService {
             ));
         }
 
-        if matches!(app_type, AppType::Dsh) {
+        if Self::is_codebuddy_official(&app_type, _provider) {
+            return Err(Self::codebuddy_official_not_a_model());
+        }
+
+        if app_type == AppType::Dsh {
             let mut provider = _provider.clone();
             Self::set_provider_live_config_managed(&mut provider, true);
             crate::dsh_config::save_and_commit(
@@ -8058,7 +8098,9 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::Codebuddy => Ok(String::new()),
+            AppType::ZCode => Ok(String::new()),
         }
     }
 
@@ -8083,7 +8125,9 @@ impl ProviderService {
             | AppType::Agy
             | AppType::Omp
             | AppType::Copilot
-            | AppType::WorkBuddy => Ok(String::new()),
+            | AppType::WorkBuddy
+            | AppType::Codebuddy => Ok(String::new()),
+            AppType::ZCode => Ok(String::new()),
         }
     }
 
@@ -8700,6 +8744,19 @@ impl ProviderService {
         .await
     }
 
+    /// CodeBuddy 官方登录卡：绑定一个托管账号，切的是 CodeBuddy 的全局登录，不进 models.json。
+    fn is_codebuddy_official(app_type: &AppType, provider: &Provider) -> bool {
+        *app_type == AppType::Codebuddy && crate::codebuddy_config::is_official_provider(provider)
+    }
+
+    fn codebuddy_official_not_a_model() -> AppError {
+        AppError::localized(
+            "codebuddy.official.not_a_model",
+            "CodeBuddy 官方登录卡不会写进 models.json，请在供应商列表里点这张卡的「添加」切换到它的账号",
+            "CodeBuddy official sign-in cards are not written to models.json; click Add on the card in the provider list to sign in with its account",
+        )
+    }
+
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
         provider.validate_app_restriction(app_type)?;
         if let Some(raw) = provider
@@ -8864,11 +8921,23 @@ impl ProviderService {
             AppType::WorkBuddy => {
                 crate::workbuddy_config::validate_provider(&provider.settings_config)?
             }
+            // 官方登录卡没有模型配置，只绑定账号
+            AppType::Codebuddy if crate::codebuddy_config::is_official_provider(provider) => {}
+            AppType::Codebuddy => {
+                crate::codebuddy_config::validate_provider(&provider.id, &provider.settings_config)?
+            }
             AppType::Pi => {
                 crate::pi_config::validate_provider_node(&provider.id, &provider.settings_config)?;
             }
             AppType::Omp => {
                 crate::omp_config::validate_provider(&provider.id, &provider.settings_config)?;
+            }
+            AppType::ZCode => {
+                if !provider.settings_config.is_object() {
+                    return Err(AppError::InvalidInput(
+                        "ZCode configuration must be a JSON object".into(),
+                    ));
+                }
             }
         }
 

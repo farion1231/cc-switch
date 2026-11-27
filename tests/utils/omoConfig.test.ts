@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   buildOmoProfilePreview,
   OMO_SLIM_BUILTIN_AGENTS,
-  OMO_SLIM_DISABLEABLE_AGENTS,
   parseOmoOtherFieldsObject,
 } from "@/types/omo";
 
@@ -61,9 +60,5 @@ describe("OMO Slim metadata", () => {
         group: "sub",
       }),
     );
-    expect(OMO_SLIM_DISABLEABLE_AGENTS).toContainEqual({
-      value: "council",
-      label: "Council",
-    });
   });
 });

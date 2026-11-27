@@ -90,6 +90,16 @@ impl TempUserHome {
     }
 }
 
+/// Whether some file directly inside `dir` holds exactly `bytes`. Used to check that
+/// data a user could still recover by hand was kept rather than overwritten.
+pub(crate) fn dir_holds_file_with(dir: &Path, bytes: &[u8]) -> bool {
+    std::fs::read_dir(dir)
+        .expect("read dir")
+        .flatten()
+        .filter(|entry| entry.path().is_file())
+        .any(|entry| std::fs::read(entry.path()).is_ok_and(|content| content == bytes))
+}
+
 mod tests {
     use super::EnvVars;
 

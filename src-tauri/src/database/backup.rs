@@ -217,7 +217,7 @@ impl Database {
             fs::create_dir_all(parent).map_err(|e| AppError::io(parent, e))?;
         }
 
-        crate::config::atomic_write(target_path, dump.as_bytes())
+        crate::config::atomic_write_private(target_path, dump.as_bytes())
     }
 
     /// 从 SQL 文件导入，返回生成的备份 ID（若无备份则为空字符串）
@@ -1240,6 +1240,30 @@ impl Database {
         self.restore_from_backup_with_hook(filename, |_| Ok(()))
     }
 
+    /// Validate that a backup filename is a single normal `.db` filename with no path
+    /// separators, traversal segments, NULs, or (on Windows) drive prefixes / NTFS stream colons.
+    fn validate_backup_filename(filename: &str) -> Result<(), AppError> {
+        let mut components = Path::new(filename).components();
+        let is_single_normal = matches!(
+            (components.next(), components.next()),
+            (Some(std::path::Component::Normal(part)), None) if part == filename
+        );
+        if !is_single_normal
+            || filename.contains("..")
+            || filename.contains('/')
+            || filename.contains('\\')
+            || (cfg!(windows) && filename.contains(':'))
+            || filename.contains('\0')
+            || !filename.ends_with(".db")
+            || filename == ".db"
+        {
+            return Err(AppError::InvalidInput(
+                "Invalid backup filename".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     fn restore_from_backup_with_hook<F>(
         &self,
         filename: &str,
@@ -1248,16 +1272,8 @@ impl Database {
     where
         F: FnOnce(Option<&Path>) -> Result<(), AppError>,
     {
-        // Security: validate filename to prevent path traversal
-        if filename.contains("..")
-            || filename.contains('/')
-            || filename.contains('\\')
-            || !filename.ends_with(".db")
-        {
-            return Err(AppError::InvalidInput(
-                "Invalid backup filename".to_string(),
-            ));
-        }
+        // Security: validate filename to prevent path traversal and drive-relative paths
+        Self::validate_backup_filename(filename)?;
 
         let backup_file_guard = lock_backup_file_operations();
         let backup_dir = get_app_config_dir().join("backups");
@@ -1324,16 +1340,8 @@ impl Database {
 
     /// Rename a backup file. Returns the new filename.
     pub fn rename_backup(old_filename: &str, new_name: &str) -> Result<String, AppError> {
-        // Validate old filename (path traversal + .db suffix)
-        if old_filename.contains("..")
-            || old_filename.contains('/')
-            || old_filename.contains('\\')
-            || !old_filename.ends_with(".db")
-        {
-            return Err(AppError::InvalidInput(
-                "Invalid backup filename".to_string(),
-            ));
-        }
+        // Validate old filename (path traversal, drive prefix, + .db suffix)
+        Self::validate_backup_filename(old_filename)?;
 
         // Clean new name
         let trimmed = new_name.trim();
@@ -1345,16 +1353,22 @@ impl Database {
 
         // Length limit (without .db suffix)
         let name_part = trimmed.strip_suffix(".db").unwrap_or(trimmed);
+        if name_part.is_empty() {
+            return Err(AppError::InvalidInput(
+                "New name cannot be empty".to_string(),
+            ));
+        }
         if name_part.len() > 100 {
             return Err(AppError::InvalidInput(
                 "Name too long (max 100 characters)".to_string(),
             ));
         }
 
-        // Prevent path traversal in new name
+        // Prevent path traversal, drive-relative colons, and NUL bytes in new name
         if name_part.contains("..")
             || name_part.contains('/')
             || name_part.contains('\\')
+            || name_part.contains(':')
             || name_part.contains('\0')
         {
             return Err(AppError::InvalidInput(
@@ -1363,6 +1377,7 @@ impl Database {
         }
 
         let new_filename = format!("{name_part}.db");
+        Self::validate_backup_filename(&new_filename)?;
 
         let _backup_file_guard = lock_backup_file_operations();
         let backup_dir = get_app_config_dir().join("backups");
@@ -1388,16 +1403,8 @@ impl Database {
 
     /// Delete a backup file permanently.
     pub fn delete_backup(filename: &str) -> Result<(), AppError> {
-        // Validate filename (path traversal + .db suffix)
-        if filename.contains("..")
-            || filename.contains('/')
-            || filename.contains('\\')
-            || !filename.ends_with(".db")
-        {
-            return Err(AppError::InvalidInput(
-                "Invalid backup filename".to_string(),
-            ));
-        }
+        // Validate filename (path traversal, drive prefix, + .db suffix)
+        Self::validate_backup_filename(filename)?;
 
         let backup_file_guard = lock_backup_file_operations();
         let backup_path = get_app_config_dir().join("backups").join(filename);

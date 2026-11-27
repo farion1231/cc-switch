@@ -7,8 +7,12 @@ impl SkillService {
     ///
     /// 用于 skills.sh 安装回退：API 只返回 skillId（如 "find-skills"），
     /// 但实际文件可能在仓库子目录中（如 "skills/find-skills"）。
+    ///
+    /// 先只走非隐藏目录（保持既有选择顺序）；找不到再放开点开头目录，
+    /// 因为不少仓库只把技能放在 `.claude/skills/<name>`、`.agents/skills/<name>`
+    /// 这类客户端目录里（#10040）。`.git` 始终跳过。
     pub(super) fn find_skill_dir_by_name(root: &Path, target_name: &str) -> Option<PathBuf> {
-        fn walk(dir: &Path, target: &str, depth: usize) -> Option<PathBuf> {
+        fn walk(dir: &Path, target: &str, depth: usize, include_hidden: bool) -> Option<PathBuf> {
             if depth > 3 {
                 return None;
             }
@@ -20,19 +24,19 @@ impl SkillService {
                 }
                 let name = entry.file_name();
                 let name_str = name.to_string_lossy();
-                if name_str.starts_with('.') {
+                if name_str.starts_with('.') && (!include_hidden || name_str == ".git") {
                     continue;
                 }
                 if name_str.eq_ignore_ascii_case(target) && path.join("SKILL.md").exists() {
                     return Some(path);
                 }
-                if let Some(found) = walk(&path, target, depth + 1) {
+                if let Some(found) = walk(&path, target, depth + 1, include_hidden) {
                     return Some(found);
                 }
             }
             None
         }
-        walk(root, target_name, 0)
+        walk(root, target_name, 0, false).or_else(|| walk(root, target_name, 0, true))
     }
 
     /// 在仓库扫描结果中定位已安装的技能：已保存的源路径优先，其次目录名，

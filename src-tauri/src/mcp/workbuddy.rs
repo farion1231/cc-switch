@@ -1,6 +1,6 @@
 //! WorkBuddy 的用户级 MCP：`<data dir>/mcp.json`（默认 `~/.workbuddy/mcp.json`）。
 //!
-//! 格式与 CodeBuddy Code 相同：`{"mcpServers": {"<name>": {...}}}`。stdio 用
+//! 格式与 CodeBuddy 相同：`{"mcpServers": {"<name>": {...}}}`。stdio 用
 //! `command` / `args` / `env` / `cwd`，远程用 `url` / `headers`，`type` 取 `stdio` /
 //! `http` / `sse`（缺省时有 `command` 视为 stdio，有 `url` 视为 http）。WorkBuddy 桌面端
 //! 自己的 MCP 设置页读写的也是这个文件，单条用 `disabled: true` 停用；`managedBy:

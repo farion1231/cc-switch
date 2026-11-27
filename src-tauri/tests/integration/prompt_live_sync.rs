@@ -112,15 +112,8 @@ fn saving_inactive_prompts_keeps_a_hand_written_file_until_the_last_enabled_one_
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
     let home = ensure_test_home();
-    // HERMES_HOME is not redirected by the test support; an override keeps a
-    // developer's real SOUL.md out of reach.
-    let hermes_dir = home.join(".hermes-prompt-live-sync");
-    let _ = fs::remove_dir_all(&hermes_dir);
-    update_settings(AppSettings {
-        hermes_config_dir: Some(hermes_dir.to_string_lossy().into_owned()),
-        ..AppSettings::default()
-    })
-    .unwrap();
+    let hermes_dir = home.join(".hermes");
+    update_settings(AppSettings::default()).unwrap();
     let state = create_test_state().unwrap();
 
     for (app, path) in [

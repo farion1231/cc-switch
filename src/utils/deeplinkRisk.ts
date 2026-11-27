@@ -50,16 +50,25 @@ const ENV_HIJACK_PATTERNS: RegExp[] = [
   /^DYLD_/i, // macOS 对应物
   /^NODE_OPTIONS$/i, // --require 任意脚本
   /^NODE_EXTRA_CA_CERTS$/i, // 注入 CA → TLS 中间人
+  /^SSL_CERT_(?:FILE|DIR)$/i, // OpenSSL/Python/Ruby 信任自定义 CA
+  /^REQUESTS_CA_BUNDLE$/i, // Python requests 自定义 CA
+  /^CURL_CA_BUNDLE$/i, // curl 自定义 CA
   /^PYTHONPATH$/i,
   /^PYTHONSTARTUP$/i,
   /^RUBYOPT$/i,
   /^PERL5OPT$/i,
   /^JAVA_TOOL_OPTIONS$/i,
+  /^GIT_SSH_COMMAND$/i, // git 子进程命令执行
+  /^GIT_EXEC_PATH$/i, // git 子命令目录劫持
   /^BASH_ENV$/i,
+  /^ZDOTDIR$/i, // zsh 启动脚本目录劫持
+  /^PROMPT_COMMAND$/i,
   /^ENV$/i,
   /^IFS$/i,
   /^PATH$/i, // 整体劫持命令解析
-  /^HTTPS?_PROXY$/i, // 全量流量转发
+  /^COMSPEC$/i, // Windows 默认命令解释器劫持
+  /^PATHEXT$/i, // Windows 可执行扩展名劫持
+  /^(?:HTTPS?|ALL)_PROXY$/i, // 全量流量转发
 ];
 
 /** 会被 shell 解释成"执行下面这段字符串"的调用形态。 */
@@ -260,6 +269,121 @@ export function containsEnvVarReference(value: unknown): boolean {
 }
 
 /**
+ * 提取解释器自身在脚本文件 / `--` 之前的开关参数，避免把脚本自己的参数（例如
+ * `python3 server.py -c config.toml` 里的 `-c`）误判为解释器的内联执行开关。
+ */
+function interpreterFlagsBeforeScript(
+  args: unknown[],
+  optionsWithValue: Set<string>,
+  isTerminatingOption?: (arg: string) => boolean,
+): string[] {
+  const flags: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (typeof arg !== "string") continue;
+    if (arg === "--" || arg === "-" || !arg.startsWith("-")) {
+      break;
+    }
+    flags.push(arg);
+    if (isTerminatingOption?.(arg)) {
+      break;
+    }
+    if (optionsWithValue.has(arg)) {
+      i += 1;
+    }
+  }
+  return flags;
+}
+
+const NODE_OPTIONS_WITH_VALUE = new Set([
+  "-r",
+  "--require",
+  "--import",
+  "--loader",
+  "--experimental-loader",
+  "-C",
+  "--conditions",
+  "--env-file",
+  "--env-file-if-exists",
+  "--input-type",
+]);
+
+const PYTHON_OPTIONS_WITH_VALUE = new Set(["-W", "-X"]);
+const PERL_OPTIONS_WITH_VALUE = new Set(["-I", "-M", "-m"]);
+const RUBY_OPTIONS_WITH_VALUE = new Set(["-I", "-r", "-C", "-E", "-F", "-K"]);
+const PHP_OPTIONS_WITH_VALUE = new Set(["-c", "-d", "-f", "-z"]);
+const DENO_OPTIONS_WITH_VALUE = new Set([
+  "-c",
+  "--config",
+  "--import-map",
+  "--lock",
+  "--env-file",
+]);
+
+function isScriptingInlineExecution(base: string, args: unknown[]): boolean {
+  // Node.js / Bun: -e / -p / --eval / --print (or combined -pe / -ep) before script / `--`
+  if (/^(?:node|bun)(?:\.exe)?$/.test(base)) {
+    const flags = interpreterFlagsBeforeScript(args, NODE_OPTIONS_WITH_VALUE);
+    return flags.some(
+      (arg) =>
+        /^-(?:[ep]+)$/.test(arg) ||
+        arg === "--eval" ||
+        arg === "--print" ||
+        arg.startsWith("--eval=") ||
+        arg.startsWith("--print="),
+    );
+  }
+
+  // Deno: `deno [global-flags] eval ...` (stop at `--` or first subcommand)
+  if (/^deno(?:\.exe)?$/.test(base)) {
+    for (let i = 0; i < args.length; i += 1) {
+      const arg = args[i];
+      if (typeof arg !== "string") continue;
+      if (arg === "--") return false;
+      if (arg.startsWith("-")) {
+        if (DENO_OPTIONS_WITH_VALUE.has(arg)) {
+          i += 1;
+        }
+        continue;
+      }
+      return arg === "eval";
+    }
+    return false;
+  }
+
+  // Python (python, python3, python3.12, py): -c or combined short options ending in c (-uc, -Bc)
+  // before the script filename, `-m <module>`, or `--`
+  if (/^(?:python(?:\d+(?:\.\d+)*)?|py)(?:\.exe)?$/.test(base)) {
+    const flags = interpreterFlagsBeforeScript(
+      args,
+      PYTHON_OPTIONS_WITH_VALUE,
+      (arg) => /^-[bBdEiIOqSsuvP]*m/.test(arg),
+    );
+    return flags.some((arg) => /^-[bBdEiIOqSsuvP]*c/.test(arg));
+  }
+
+  // Perl: -e / -E (or combined -pe / -ne) before script / `--`
+  if (/^perl(?:\.exe)?$/.test(base)) {
+    const flags = interpreterFlagsBeforeScript(args, PERL_OPTIONS_WITH_VALUE);
+    return flags.some((arg) => /^-[anplswWTU]*[eE]/.test(arg));
+  }
+
+  // Ruby: -e before script / `--`
+  if (/^ruby(?:\.exe)?$/.test(base)) {
+    const flags = interpreterFlagsBeforeScript(args, RUBY_OPTIONS_WITH_VALUE);
+    return flags.some((arg) => /^-[anplswWvU]*e/.test(arg));
+  }
+
+  // PHP: -r before script / `--`
+  if (/^php(?:\.exe)?$/.test(base)) {
+    const flags = interpreterFlagsBeforeScript(args, PHP_OPTIONS_WITH_VALUE);
+    return flags.some((arg) => /^-[nq]*r/.test(arg));
+  }
+
+  return false;
+}
+
+/**
  * MCP server 的 `command` + `args`。
  *
  * 单看 `command` 完全不够：真实 payload 是 `command: "sh"` 配
@@ -275,15 +399,19 @@ export function classifyCommand(
   args?: unknown,
 ): RiskKind | null {
   if (typeof command !== "string" || !command) return null;
+  if (!Array.isArray(args)) return null;
 
   // 只取基名：`/bin/sh` 与 `sh` 是同一回事
   const base = command.split(/[/\\]/).pop()?.toLowerCase() ?? "";
-  if (!SHELL_INTERPRETERS.has(base)) return null;
+  if (SHELL_INTERPRETERS.has(base)) {
+    return args.some(
+      (arg) => typeof arg === "string" && isInlineCommandFlag(arg),
+    )
+      ? "shellCommand"
+      : null;
+  }
 
-  if (!Array.isArray(args)) return null;
-  return args.some((arg) => typeof arg === "string" && isInlineCommandFlag(arg))
-    ? "shellCommand"
-    : null;
+  return isScriptingInlineExecution(base, args) ? "shellCommand" : null;
 }
 
 /**

@@ -24,7 +24,6 @@ import {
   getLocaleFromLanguage,
   joinNames,
   joinClauses,
-  sumSpeedTotals,
   USD_DISPLAY,
 } from "@/components/usage/format";
 
@@ -163,7 +162,7 @@ describe("usage format helpers", () => {
     ).toBeNull();
   });
 
-  it("hides speed when the generation window is a transport burst", () => {
+  it("hides speed when the generation window is a transport or buffered burst", () => {
     // 2842 tps 实例：输出在首字后 19ms 内全部到达，算出来的是传输突发
     expect(
       getOutputTokensPerSecond({
@@ -172,6 +171,23 @@ describe("usage format helpers", () => {
         firstTokenMs: 3_425,
       }),
     ).toBeNull();
+    // 超过 10,000 tok/s 上限：1001 token / 100ms = 10,010 tok/s
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 1_001,
+        latencyMs: 200,
+        firstTokenMs: 100,
+      }),
+    ).toBeNull();
+    // 正常短快回复（如 Haiku 工具调用：首字 2.5s，600ms 输出 200 token -> 333.3 tok/s）不应误杀
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 200,
+        latencyMs: 3_100,
+        firstTokenMs: 2_500,
+      }),
+    ).toBeCloseTo(333.333, 2);
+    // 100ms 生成 150 token -> 1500 tok/s（未超过 10,000 tok/s 上限）
     expect(
       getOutputTokensPerSecond({
         outputTokens: 150,
@@ -179,6 +195,42 @@ describe("usage format helpers", () => {
         firstTokenMs: 1_000,
       }),
     ).toBe(1500);
+  });
+
+  it("excludes non-2xx requests from exact and estimated speed", () => {
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 500,
+        latencyMs: 6_000,
+        firstTokenMs: 1_000,
+        statusCode: 500,
+      }),
+    ).toBeNull();
+    expect(
+      getOutputTokensPerSecond({
+        outputTokens: 500,
+        latencyMs: 6_000,
+        firstTokenMs: 1_000,
+        statusCode: 200,
+      }),
+    ).toBe(100);
+    expect(
+      getEstimatedTokensPerSecond({
+        outputTokens: 1_000,
+        latencyMs: 10_000,
+        dataSource: "pi_session",
+        statusCode: 499,
+      }),
+    ).toBeNull();
+    // 估算速度也受 10,000 tok/s 上限保护
+    expect(
+      getEstimatedTokensPerSecond({
+        outputTokens: 20_000,
+        latencyMs: 1_500,
+        dataSource: "session_log",
+        statusCode: 200,
+      }),
+    ).toBeNull();
   });
 
   it("formats speed with integer or single-decimal precision", () => {
@@ -219,10 +271,6 @@ describe("usage format helpers", () => {
     const withFirstToken = { ...session, firstTokenMs: 4_000 };
     expect(getEstimatedTokensPerSecond(withFirstToken)).toBe(90);
     expect(getOutputTokensPerSecond(withFirstToken)).toBeNull();
-    expect(sumSpeedTotals([withFirstToken])).toEqual({
-      outputTokens: 0,
-      generationMs: 0,
-    });
   });
 
   it("formats first-token time in seconds", () => {
@@ -261,22 +309,8 @@ describe("usage format helpers", () => {
   });
 
   it("aggregates speed as total output over total generation time, not a mean of rates", () => {
-    const logs = [
-      // 1000 token / 10 s = 100 tok/s
-      { outputTokens: 1_000, latencyMs: 11_000, firstTokenMs: 1_000 },
-      // 200 token / 0.5 s = 400 tok/s（逐条平均会被它拉高）
-      { outputTokens: 200, latencyMs: 1_500, firstTokenMs: 1_000 },
-      // 不计：输出不到 100
-      { outputTokens: 50, latencyMs: 1_100, firstTokenMs: 1_000 },
-      // 不计：没有首字
-      { outputTokens: 5_000, latencyMs: 9_000 },
-    ];
-    const totals = sumSpeedTotals(logs);
-    expect(totals).toEqual({ outputTokens: 1_200, generationMs: 10_500 });
-    const tps = getAggregateTokensPerSecond(
-      totals.outputTokens,
-      totals.generationMs,
-    );
+    // 1000 token / 10 s 和 200 token / 0.5 s：逐条平均是 250，总量相除是 114.29
+    const tps = getAggregateTokensPerSecond(1_200, 10_500);
     expect(tps).toBeCloseTo(114.29, 2);
     expect(getAggregateTokensPerSecond(0, 0)).toBeNull();
     expect(getAggregateTokensPerSecond(500, 0)).toBeNull();

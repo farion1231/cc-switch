@@ -331,6 +331,50 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "shengsuanyun",
   },
   {
+    name: "SudoCode.chat",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    // /v1beta 用假 Key 探测为 401、乱写路径 404（2026-10-31）；模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.sudocode.chat",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.sudocode.chat",
+    model: "gemini-3.8-flash",
+    description: "SudoCode.chat",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
+    icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://sudocode.us",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://sudocode.us",
+    model: "gemini-3.8-flash",
+    description: "SudoCode.us",
+    category: "third_party",
+    isPartner: true,
+    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    icon: "sudocode-us",
+  },
+  {
     name: "AIGoCode",
     websiteUrl: "https://aigocode.net",
     apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
@@ -738,50 +782,6 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    // /v1beta 用假 Key 探测为 401、乱写路径 404（2026-10-31）；模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://api.sudocode.chat",
-        GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.8-flash",
-      },
-    },
-    baseURL: "https://api.sudocode.chat",
-    model: "gemini-3.8-flash",
-    description: "SudoCode.chat",
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    endpointCandidates: [
-      "https://api.sudocode.chat",
-      "https://api.sudorelay.com",
-    ],
-    icon: "sudocode",
-  },
-  {
-    name: "SudoCode.us",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      env: {
-        GOOGLE_GEMINI_BASE_URL: "https://sudocode.us",
-        GEMINI_API_KEY: "",
-        GEMINI_MODEL: "gemini-3.8-flash",
-      },
-    },
-    baseURL: "https://sudocode.us",
-    model: "gemini-3.8-flash",
-    description: "SudoCode.us",
-    category: "third_party",
-    isPartner: true,
-    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
-    icon: "sudocode-us",
-  },
-  {
     name: "XycAi",
     websiteUrl: "https://xycai.us",
     apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
@@ -867,6 +867,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
+  },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    // 需 Gemini 分组的 Key，Gemini 原生格式走站点根的 /v1beta（docs.fastaitoken.com/docs/api-manual）；
+    // 模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://www.fastaitoken.com",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://www.fastaitoken.com",
+    model: "gemini-3.8-flash",
+    description: "FastAIToken",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {

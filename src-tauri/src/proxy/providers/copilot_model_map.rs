@@ -14,6 +14,7 @@ use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CopilotProtocol {
+    Messages,
     Responses,
     Chat,
 }
@@ -218,30 +219,34 @@ pub fn transport_for(
     supported_endpoints: &[String],
     api_format: CodexCopilotApiFormat,
 ) -> Option<CopilotTransport> {
-    let supported = |expected: &[&str]| {
-        supported_endpoints.iter().find_map(|endpoint| {
-            let path = endpoint
-                .split_once('?')
-                .map_or(endpoint.as_str(), |(path, _)| path)
-                .trim_end_matches('/');
-            expected
-                .iter()
-                .any(|candidate| path.eq_ignore_ascii_case(candidate))
-                .then(|| path.to_string())
-        })
-    };
-
     let protocols: &[CopilotProtocol] = match api_format {
         CodexCopilotApiFormat::Auto => &[CopilotProtocol::Responses, CopilotProtocol::Chat],
         CodexCopilotApiFormat::OpenaiResponses => &[CopilotProtocol::Responses],
         CodexCopilotApiFormat::OpenaiChat => &[CopilotProtocol::Chat],
     };
+    advertised_transport(supported_endpoints, protocols)
+}
+
+pub(crate) fn advertised_transport(
+    supported_endpoints: &[String],
+    protocols: &[CopilotProtocol],
+) -> Option<CopilotTransport> {
     protocols.iter().find_map(|&protocol| {
         let paths: &[&str] = match protocol {
+            CopilotProtocol::Messages => &["/v1/messages"],
             CopilotProtocol::Responses => &["/responses", "/v1/responses"],
             CopilotProtocol::Chat => &["/chat/completions", "/v1/chat/completions"],
         };
-        supported(paths).map(|endpoint| CopilotTransport { protocol, endpoint })
+        supported_endpoints.iter().find_map(|endpoint| {
+            let path = endpoint.split('?').next()?.trim_end_matches('/');
+            paths
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(path))
+                .then(|| CopilotTransport {
+                    protocol,
+                    endpoint: path.to_string(),
+                })
+        })
     })
 }
 
@@ -441,6 +446,7 @@ mod tests {
             supports_parallel_tool_calls: None,
             supports_vision: None,
             reasoning_effort: None,
+            billing: None,
         }
     }
 

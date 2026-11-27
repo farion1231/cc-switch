@@ -2769,8 +2769,8 @@ fn test_stats_first_token_median_only_counts_successful_proxy_streams() -> Resul
     let p1 = providers.iter().find(|s| s.provider_id == "p1").unwrap();
     // 会话日志两条：50 和 3000
     assert_eq!(p1.est_first_token_median_ms, Some(1_525));
-    // 会话日志推出来的首字不算精确速度：进速度的只有路由的 a、b、c、err 四条
-    assert_eq!(p1.speed_output_tokens, 2_000);
+    // 会话日志推出来的首字与失败请求（err, status 500）都不算精确速度：只计 a、b、c 三条
+    assert_eq!(p1.speed_output_tokens, 1_500);
 
     let models = db.get_model_stats(None, None, None, None, None)?;
     let median_of = |m: &str| {
@@ -2948,6 +2948,149 @@ fn test_get_provider_stats_speed_sums_only_eligible_requests() -> Result<(), App
     // 路由服务的行没有首字（非流式）也不算估算速度
     assert_eq!(stats[0].est_speed_output_tokens, 0);
     assert_eq!(stats[0].est_speed_duration_ms, 0);
+
+    Ok(())
+}
+
+#[test]
+fn test_speed_sums_skip_failed_requests_and_bursts() -> Result<(), AppError> {
+    let db = Database::memory()?;
+
+    {
+        let conn = lock_conn!(db.conn);
+        let insert = |id: &str,
+                      provider: &str,
+                      model: &str,
+                      output: i64,
+                      latency: i64,
+                      first: Option<i64>,
+                      status: i64,
+                      source: &str| {
+            conn.execute(
+                "INSERT INTO proxy_request_logs (
+                        request_id, provider_id, app_type, model,
+                        input_tokens, output_tokens, total_cost_usd,
+                        latency_ms, first_token_ms, status_code, created_at, data_source
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                params![
+                    id, provider, "claude", model, 10, output, "0", latency, first, status, 1000,
+                    source
+                ],
+            )
+        };
+        // Included: 3 normal ~100 tok/s proxy streams + 1 slow 120s stream (2 tok/s)
+        insert("norm-1", "p1", "m1", 200, 2_500, Some(500), 200, "proxy")?;
+        insert("norm-2", "p1", "m1", 200, 2_500, Some(500), 200, "proxy")?;
+        insert("norm-3", "p1", "m1", 200, 2_500, Some(500), 200, "proxy")?;
+        insert(
+            "stalled",
+            "p1",
+            "m1",
+            240,
+            121_000,
+            Some(1_000),
+            200,
+            "proxy",
+        )?;
+        // Excluded: failed status_code = 500
+        insert("err-500", "p1", "m1", 500, 6_000, Some(1_000), 500, "proxy")?;
+        // Excluded: exceeds SPEED_MAX_TPS (10_000 tok/s): 2000 tokens in 150ms = 13_333 tok/s
+        insert(
+            "super-burst",
+            "p1",
+            "m1",
+            2_000,
+            350,
+            Some(200),
+            200,
+            "proxy",
+        )?;
+        // Included: genuine fast short reply (e.g. Haiku tool call: ttft = 2500ms, gen = 600ms, 200 tok = 333 tok/s)
+        insert(
+            "fast-short-ok",
+            "p1",
+            "m1",
+            200,
+            3_100,
+            Some(2_500),
+            200,
+            "proxy",
+        )?;
+
+        // Session logs for p2 / m2:
+        // Included: 2 normal (80, 120 tok/s) + 1 slow (2 tok/s)
+        insert(
+            "s-1",
+            "_session",
+            "m2",
+            800,
+            10_000,
+            None,
+            200,
+            "session_log",
+        )?;
+        insert(
+            "s-2",
+            "_session",
+            "m2",
+            1_200,
+            10_000,
+            None,
+            200,
+            "session_log",
+        )?;
+        insert(
+            "s-stall",
+            "_session",
+            "m2",
+            240,
+            120_000,
+            None,
+            200,
+            "session_log",
+        )?;
+        // Excluded session rows: non-2xx (499 aborted) & >10_000 tok/s burst
+        insert(
+            "s-err",
+            "_session",
+            "m2",
+            1_000,
+            10_000,
+            None,
+            499,
+            "session_log",
+        )?;
+        insert(
+            "s-burst",
+            "_session",
+            "m2",
+            20_000,
+            1_500,
+            None,
+            200,
+            "session_log",
+        )?;
+    }
+
+    let providers = db.get_provider_stats(None, None, None, None, None)?;
+    let p1 = providers.iter().find(|s| s.provider_id == "p1").unwrap();
+    assert_eq!(p1.speed_output_tokens, 1_040);
+    assert_eq!(p1.speed_generation_ms, 126_600);
+
+    let p2 = providers
+        .iter()
+        .find(|s| s.provider_id == "_session")
+        .unwrap();
+    assert_eq!(p2.est_speed_output_tokens, 2_240);
+    assert_eq!(p2.est_speed_duration_ms, 140_000);
+
+    let models = db.get_model_stats(None, None, None, None, None)?;
+    let m1 = models.iter().find(|s| s.model == "m1").unwrap();
+    assert_eq!(m1.speed_output_tokens, 1_040);
+    assert_eq!(m1.speed_generation_ms, 126_600);
+    let m2 = models.iter().find(|s| s.model == "m2").unwrap();
+    assert_eq!(m2.est_speed_output_tokens, 2_240);
+    assert_eq!(m2.est_speed_duration_ms, 140_000);
 
     Ok(())
 }

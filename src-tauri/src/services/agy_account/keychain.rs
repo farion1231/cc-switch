@@ -95,7 +95,7 @@ fn encode_bare(credential: &Value) -> Result<String, AppError> {
         if let Some(id_token) = object.remove("id_token") {
             let email = id_token
                 .as_str()
-                .and_then(super::oauth::identity)
+                .and_then(super::identity::identity)
                 .and_then(|claims| claims.email);
             if let (Some(email), false) = (email, object.contains_key("id_token_email")) {
                 object.insert("id_token_email".into(), Value::String(email));

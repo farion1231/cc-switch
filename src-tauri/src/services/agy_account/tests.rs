@@ -10,12 +10,18 @@ struct MemoryLogin {
     value: StdMutex<Option<String>>,
     writes: StdMutex<usize>,
     locked: StdMutex<bool>,
+    post_write_read_failures: StdMutex<usize>,
 }
 
 impl AgyLoginStore for MemoryLogin {
     fn read(&self) -> Result<Option<String>, AppError> {
         if *self.locked.lock().unwrap() {
             return Err(AppError::Config("test keychain is locked".into()));
+        }
+        let mut failures = self.post_write_read_failures.lock().unwrap();
+        if *failures > 0 && *self.writes.lock().unwrap() > 0 {
+            *failures -= 1;
+            return Err(AppError::Config("test keychain readback failed".into()));
         }
         Ok(self.value.lock().unwrap().clone())
     }
@@ -53,7 +59,7 @@ fn set_live(login: &MemoryLogin, credential: &Value) {
 fn live_sub(login: &MemoryLogin) -> Option<String> {
     let raw = login.value.lock().unwrap().clone()?;
     let credential = keychain::decode(&raw).ok()?;
-    oauth::identity(credential["id_token"].as_str()?)?.sub
+    identity::identity(credential["id_token"].as_str()?)?.sub
 }
 
 fn manager() -> (tempfile::TempDir, Arc<MemoryLogin>, AgyAccountManager) {
@@ -66,7 +72,7 @@ fn manager() -> (tempfile::TempDir, Arc<MemoryLogin>, AgyAccountManager) {
 async fn add(manager: &AgyAccountManager, sub: &str) {
     let mut store = manager.store.lock().await;
     let credential = credential(sub, "fresh");
-    let claims = oauth::identity(credential["id_token"].as_str().unwrap()).unwrap();
+    let claims = identity::identity(credential["id_token"].as_str().unwrap()).unwrap();
     upsert(&mut store, credential, &claims);
     manager.persist(&store).unwrap();
 }
@@ -75,6 +81,89 @@ async fn add(manager: &AgyAccountManager, sub: &str) {
 #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
 mod switching {
     use super::*;
+
+    use crate::app_config::AppType;
+    use crate::database::Database;
+    use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
+    use crate::services::provider::agy_direct::save_from_editor;
+    use crate::store::AppState;
+
+    fn official_card(account: &str) -> Provider {
+        let mut provider =
+            Provider::with_id("official".into(), "Antigravity".into(), json!({}), None);
+        provider.category = Some("official".into());
+        provider.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("agy_oauth".into()),
+                account_id: Some(account.into()),
+            }),
+            ..Default::default()
+        });
+        provider
+    }
+
+    #[test]
+    fn saving_a_new_provider_binding_changes_the_live_login() {
+        let (_dir, login, manager) = manager();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        set_live(&login, &credential("alice", "a1"));
+        tauri::async_runtime::block_on(add(&manager, "bob"));
+        state
+            .db
+            .save_provider(&AppType::Agy, &official_card("alice"))
+            .unwrap();
+
+        let mut card = official_card("bob");
+        save_from_editor(&state, &manager, card.clone()).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        let status = tauri::async_runtime::block_on(manager.status()).unwrap();
+        assert_eq!(status.current_account_id.as_deref(), Some("bob"));
+
+        tauri::async_runtime::block_on(manager.switch_to("alice")).unwrap();
+        card.name = "Renamed card".into();
+        save_from_editor(&state, &manager, card.clone()).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+
+        card.meta = None;
+        save_from_editor(&state, &manager, card).unwrap();
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn a_missing_bound_account_leaves_the_login_and_provider_unchanged() {
+        let (_dir, login, manager) = manager();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        set_live(&login, &credential("alice", "a1"));
+        let previous = official_card("alice");
+        state.db.save_provider(&AppType::Agy, &previous).unwrap();
+
+        let card = official_card("missing");
+        assert!(save_from_editor(&state, &manager, card.clone()).is_err());
+        let saved = state
+            .db
+            .get_provider_by_id(&card.id, &AppType::Agy)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved
+                .meta
+                .unwrap()
+                .managed_account_id_for("agy_oauth")
+                .as_deref(),
+            Some("alice")
+        );
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+
+        let mut new_card = card;
+        new_card.id = "new".into();
+        assert!(save_from_editor(&state, &manager, new_card).is_err());
+        assert!(state
+            .db
+            .get_provider_by_id("new", &AppType::Agy)
+            .unwrap()
+            .is_none());
+    }
 
     #[tokio::test]
     async fn status_collects_the_login_agy_already_has() {
@@ -88,6 +177,41 @@ mod switching {
             Some("alice@example.com")
         );
         assert_eq!(*login.writes.lock().unwrap(), 0, "查看状态不写钥匙串");
+    }
+
+    #[test]
+    fn cloud_snapshot_waits_for_a_failed_binding_save_to_roll_back() {
+        use crate::services::sync_protocol::sync_mutex;
+
+        struct CancelUnlock;
+
+        impl AgyLoginStore for CancelUnlock {
+            fn read(&self) -> Result<Option<String>, AppError> {
+                assert!(sync_mutex().try_lock().is_err());
+                Err(AppError::Message("keychain unlock cancelled".into()))
+            }
+
+            fn write(&self, _: &str) -> Result<(), AppError> {
+                unreachable!("a cancelled unlock must not write")
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let manager =
+            AgyAccountManager::with_login_store(dir.path().to_path_buf(), Arc::new(CancelUnlock));
+        tauri::async_runtime::block_on(add(&manager, "bob"));
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        state
+            .db
+            .save_provider(&AppType::Agy, &official_card("alice"))
+            .unwrap();
+        let before = state.db.export_sql_string_for_sync().unwrap();
+
+        let error = save_from_editor(&state, &manager, official_card("bob")).unwrap_err();
+        assert_eq!(error.to_string(), "keychain unlock cancelled");
+
+        let _sync_guard = sync_mutex().blocking_lock();
+        assert_eq!(state.db.export_sql_string_for_sync().unwrap(), before);
     }
 
     #[tokio::test]
@@ -155,6 +279,50 @@ mod switching {
         assert_eq!(*login.writes.lock().unwrap(), 0);
     }
 
+    #[test]
+    fn saving_a_binding_recovers_from_a_transient_readback_failure() {
+        let (_dir, login, manager) = manager();
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        set_live(&login, &credential("alice", "a1"));
+        tauri::async_runtime::block_on(add(&manager, "bob"));
+        *login.post_write_read_failures.lock().unwrap() = 1;
+
+        let card = official_card("bob");
+        save_from_editor(&state, &manager, card.clone()).unwrap();
+
+        let saved = state
+            .db
+            .get_provider_by_id(&card.id, &AppType::Agy)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            saved
+                .meta
+                .unwrap()
+                .managed_account_id_for("agy_oauth")
+                .as_deref(),
+            Some("bob")
+        );
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        assert_eq!(*login.writes.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn persistent_readback_failure_reports_that_the_login_is_unverified() {
+        let (_dir, login, manager) = manager();
+        set_live(&login, &credential("alice", "a1"));
+        add(&manager, "bob").await;
+        *login.post_write_read_failures.lock().unwrap() = 2;
+
+        let error = manager.switch_to("bob").await.unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Localized { key, .. } if key == "agy.account.write_verify_failed"
+        ));
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        assert_eq!(*login.writes.lock().unwrap(), 1);
+    }
+
     #[tokio::test]
     async fn removing_the_live_account_keeps_it_out_until_switched_away() {
         let (_dir, login, manager) = manager();
@@ -214,38 +382,84 @@ mod switching {
     }
 
     #[tokio::test]
-    async fn quota_uses_the_token_agy_refreshed_for_the_live_account() {
-        let (_dir, login, manager) = manager();
-        add(&manager, "alice").await;
-        let mut live = credential("alice", "renewed-by-agy");
-        live["token"]["expiry"] = json!(in_an_hour());
-        set_live(&login, &live);
-        assert_eq!(
-            manager.access_token("alice").await.unwrap(),
-            "renewed-by-agy"
-        );
-        assert_eq!(*login.writes.lock().unwrap(), 0, "查额度不写钥匙串");
-    }
-
-    #[tokio::test]
     async fn following_cards_query_the_account_agy_is_signed_in_with() {
         let (_dir, login, manager) = manager();
-        assert_eq!(
-            manager.live_account_id().await,
-            None,
-            "agy 没登录时改问 agy"
-        );
+        assert_eq!(manager.current_account_id().await, None, "agy 没登录");
 
         add(&manager, "alice").await;
         set_live(&login, &credential("bob", "b1"));
-        // 还没收录的号也收进来，之后直接查
-        assert_eq!(manager.live_account_id().await.as_deref(), Some("bob"));
+        // 还没收录的号也收进来
+        assert_eq!(manager.current_account_id().await.as_deref(), Some("bob"));
         assert_eq!(manager.list().await.len(), 2);
 
-        // 在 CC Switch 里删掉的号不再收回来，改问 agy
+        // 在 CC Switch 里删掉的号不再收回来
         manager.remove("bob").await.unwrap();
-        assert_eq!(manager.live_account_id().await, None);
+        assert_eq!(manager.current_account_id().await, None);
         assert_eq!(*login.writes.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn adding_an_account_waits_for_a_new_login_in_agy() {
+        let (_dir, login, manager) = manager();
+        set_live(&login, &credential("alice", "a1"));
+        let start = manager.start_login().await.unwrap();
+        // agy 原来登着的号先收进来，用户在 agy 里 /logout 也不会丢
+        assert_eq!(manager.list().await.len(), 1);
+        // 钥匙串没变、或已登出：继续等
+        assert!(manager.poll_login(&start.flow_id).await.unwrap().is_none());
+        *login.value.lock().unwrap() = None;
+        assert!(manager.poll_login(&start.flow_id).await.unwrap().is_none());
+
+        // 在 agy 里登录了新号：收录，这次登录结束
+        set_live(&login, &agy15_credential("bob", "b1"));
+        let account = manager.poll_login(&start.flow_id).await.unwrap().unwrap();
+        assert_eq!(account.id, "email:bob@example.com");
+        assert_eq!(account.email.as_deref(), Some("bob@example.com"));
+        assert_eq!(manager.list().await.len(), 2);
+        assert!(manager.poll_login(&start.flow_id).await.is_err());
+        assert_eq!(*login.writes.lock().unwrap(), 0, "加号不写钥匙串");
+    }
+
+    #[tokio::test]
+    async fn signing_in_again_with_the_same_account_replaces_its_copy() {
+        let (_dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        set_live(&login, &credential("alice", "a1"));
+        let start = manager.start_login().await.unwrap();
+        let mut again = agy15_credential("alice", "a2");
+        again["token"]["refresh_token"] = json!("new-refresh");
+        set_live(&login, &again);
+        let account = manager.poll_login(&start.flow_id).await.unwrap().unwrap();
+        assert_eq!(account.id, "alice", "按邮箱对回原来的号");
+        let store = manager.store.lock().await;
+        assert_eq!(store.accounts.len(), 1);
+        assert_eq!(
+            store.accounts["alice"].credential["token"]["refresh_token"],
+            "new-refresh"
+        );
+    }
+
+    #[tokio::test]
+    async fn quota_is_remembered_per_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let login = Arc::new(MemoryLogin::default());
+        let manager = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login.clone());
+        add(&manager, "alice").await;
+        assert!(manager.last_quota("alice").await.is_none());
+        let quota = SubscriptionQuota::not_found("agy");
+        manager.record_quota("alice", &quota).await;
+        manager.record_quota("nobody", &quota).await;
+        // 存在账号文件里，重启后还在
+        let reopened = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login);
+        assert_eq!(
+            reopened
+                .last_quota("alice")
+                .await
+                .map(|q| q.tool)
+                .as_deref(),
+            Some("agy")
+        );
+        assert_eq!(reopened.list().await.len(), 1);
     }
 
     /// agy 1.5 自己写回钥匙串的格式：没有 id_token，只有 id_token_email 和 writer_id。
@@ -270,11 +484,13 @@ mod switching {
         let status = manager.status().await.unwrap();
         assert_eq!(status.current_account_id.as_deref(), Some("alice"));
         assert_eq!(status.accounts.len(), 2, "不会多出一个认不出的号");
-        // agy 续过的令牌照样收回来，查额度直接用
+        // agy 续过的令牌照样收回来
+        let store = manager.store.lock().await;
         assert_eq!(
-            manager.access_token("alice").await.unwrap(),
+            store.accounts["alice"].credential["token"]["access_token"],
             "renewed-by-agy15"
         );
+        drop(store);
         assert_eq!(*login.writes.lock().unwrap(), 0);
     }
 
@@ -287,7 +503,7 @@ mod switching {
         live["token"]["refresh_token"] = json!("another-refresh");
         live["id_token_email"] = json!("Alice@Example.com");
         set_live(&login, &live);
-        assert_eq!(manager.live_account_id().await.as_deref(), Some("alice"));
+        assert_eq!(manager.current_account_id().await.as_deref(), Some("alice"));
         let store = manager.store.lock().await;
         assert_eq!(
             store.accounts["alice"].credential["token"]["refresh_token"],
@@ -327,7 +543,7 @@ mod switching {
         let status = manager.status().await.unwrap();
         assert_eq!(status.current_account_id, None);
         assert_eq!(status.accounts.len(), 1);
-        assert_eq!(manager.live_account_id().await, None);
+        assert_eq!(manager.current_account_id().await, None);
 
         // 切走时照样收录回 accounts，不会当成不认识的登录存进 stash
         manager.switch_to("bob").await.unwrap();
@@ -344,7 +560,7 @@ mod switching {
             store.dismissed.push("alice".into());
             manager.persist(&store).unwrap();
         }
-        // 第一次经带 id_token 的旧格式或 userinfo 认出是谁时，顺手把邮箱补进 dismissed_emails
+        // 第一次经带 id_token 的旧格式认出是谁时，顺手把邮箱补进 dismissed_emails
         set_live(&login, &credential("alice", "a1"));
         let status = manager.status().await.unwrap();
         assert_eq!(status.current_account_id, None);
@@ -361,33 +577,6 @@ mod switching {
         let status = manager.status().await.unwrap();
         assert_eq!(status.current_account_id, None);
         assert!(status.accounts.is_empty());
-    }
-
-    #[tokio::test]
-    async fn stored_refreshed_token_is_not_overwritten_by_stale_keychain_login() {
-        let (_dir, login, manager) = manager();
-        add(&manager, "alice").await;
-        // 钥匙串里还是过期的旧令牌，CC Switch 查额度时已经续期并存在自己的副本里
-        set_live(&login, &agy15_credential("alice", "expired-in-keychain"));
-        {
-            let mut store = manager.store.lock().await;
-            let cred = &mut store.accounts.get_mut("alice").unwrap().credential;
-            cred["token"]["access_token"] = json!("refreshed-by-cc-switch");
-            cred["token"]["expiry"] = json!(in_an_hour());
-        }
-        assert_eq!(
-            manager
-                .status()
-                .await
-                .unwrap()
-                .current_account_id
-                .as_deref(),
-            Some("alice")
-        );
-        assert_eq!(
-            manager.access_token("alice").await.unwrap(),
-            "refreshed-by-cc-switch"
-        );
     }
 
     /// 真机钥匙串冒烟：读写一条测试专用的条目（不是 agy 那条），确认写入（macOS 经 `security -i`，
@@ -444,38 +633,21 @@ fn in_an_hour() -> String {
 }
 
 #[tokio::test]
-async fn quota_token_comes_from_the_stored_copy_while_fresh() {
-    let (_dir, _login, manager) = manager();
+async fn an_unreadable_account_file_is_kept_instead_of_overwritten() {
+    let (dir, login, manager) = manager();
+    add(&manager, "alice").await;
     add(&manager, "bob").await;
-    manager
-        .store
-        .lock()
-        .await
-        .accounts
-        .get_mut("bob")
-        .unwrap()
-        .credential["token"]["expiry"] = json!(in_an_hour());
-    assert_eq!(manager.access_token("bob").await.unwrap(), "fresh");
-}
+    let store_path = dir.path().join(STORE_FILENAME);
+    let mut unreadable = std::fs::read(&store_path).unwrap();
+    unreadable.extend_from_slice(b"\n}");
+    std::fs::write(&store_path, &unreadable).unwrap();
+    set_live(&login, &credential("carol", "c1"));
 
-#[tokio::test]
-async fn quota_token_is_refused_for_unknown_or_expired_accounts() {
-    let (_dir, _login, manager) = manager();
-    assert!(matches!(
-        manager.access_token("nobody").await,
-        Err(AccountQuotaError::NotFound)
-    ));
-    add(&manager, "bob").await;
-    manager
-        .store
-        .lock()
-        .await
-        .accounts
-        .get_mut("bob")
-        .unwrap()
-        .requires_reauth = true;
-    assert!(matches!(
-        manager.access_token("bob").await,
-        Err(AccountQuotaError::NeedsReauth)
-    ));
+    let reopened = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login.clone());
+    reopened.status().await.unwrap();
+
+    assert!(
+        crate::test_support::dir_holds_file_with(dir.path(), &unreadable),
+        "the unreadable account file was overwritten"
+    );
 }

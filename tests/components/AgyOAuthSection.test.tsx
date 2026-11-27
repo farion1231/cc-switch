@@ -6,6 +6,7 @@ import { AgyOAuthSection } from "@/components/providers/forms/AgyOAuthSection";
 const mocks = vi.hoisted(() => ({
   useManagedAuth: vi.fn(),
   openExternal: vi.fn(),
+  openLoginTerminal: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/lib/query/accountPlans", () => ({
@@ -30,6 +31,10 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return {
     ...actual,
     settingsApi: { ...actual.settingsApi, openExternal: mocks.openExternal },
+    authApi: {
+      ...actual.authApi,
+      agyAccountOpenLoginTerminal: mocks.openLoginTerminal,
+    },
   };
 });
 
@@ -94,7 +99,7 @@ describe("AgyOAuthSection", () => {
     expect(auth.setDefaultAccount).toHaveBeenCalledWith("b");
   });
 
-  it("shows the browser sign-in hint instead of a device code", async () => {
+  it("asks to sign in within agy in the terminal instead of a browser page", async () => {
     const auth = baseAuth();
     Object.assign(auth, {
       isPolling: true,
@@ -104,26 +109,22 @@ describe("AgyOAuthSection", () => {
         provider: "agy_oauth",
         device_code: "flow",
         user_code: "",
-        verification_uri: "https://accounts.google.com/o/oauth2/v2/auth?x=1",
+        verification_uri: "",
         expires_in: 600,
-        interval: 1,
+        interval: 2,
       },
     });
     mocks.useManagedAuth.mockReturnValue(auth);
     render(<AgyOAuthSection />);
 
+    expect(screen.getByText(/已在终端打开 agy/)).toBeInTheDocument();
+    expect(screen.queryByText(/已在浏览器打开/)).not.toBeInTheDocument();
     expect(
-      screen.getByText(/已在浏览器打开 Antigravity 的登录页/),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByText("在浏览器中输入验证码："),
+      screen.queryByRole("button", { name: "复制登录链接" }),
     ).not.toBeInTheDocument();
-    await userEvent.click(
-      screen.getByRole("button", { name: "重新打开登录页" }),
-    );
-    expect(mocks.openExternal).toHaveBeenCalledWith(
-      "https://accounts.google.com/o/oauth2/v2/auth?x=1",
-    );
+    await userEvent.click(screen.getByRole("button", { name: "重新打开终端" }));
+    expect(mocks.openLoginTerminal).toHaveBeenCalled();
+    expect(mocks.openExternal).not.toHaveBeenCalled();
   });
 
   it("shows quota for every account that can still sign in", () => {

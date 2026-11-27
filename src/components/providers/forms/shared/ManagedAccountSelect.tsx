@@ -2,7 +2,10 @@ import React from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Plus } from "lucide-react";
-import { authApi } from "@/lib/api";
+import {
+  managedAuthStatusQuery,
+  xaiAuthStatusQuery,
+} from "@/lib/query/managedAuth";
 import type { ManagedAuthAccount, ManagedAuthProvider } from "@/lib/api/auth";
 import { Label } from "@/components/ui/label";
 import {
@@ -19,11 +22,7 @@ const MANAGE_ACCOUNTS = "__manage_accounts__";
 
 /** 授权中心里某一类账号（和授权中心、各官方卡共用同一个查询缓存） */
 export function useManagedAccounts(authProvider: ManagedAuthProvider) {
-  return useQuery({
-    queryKey: ["managed-auth-status", authProvider],
-    queryFn: () => authApi.authGetStatus(authProvider),
-    staleTime: 30000,
-  });
+  return useQuery(managedAuthStatusQuery(authProvider));
 }
 
 export interface ManagedAccountSelectLabels {
@@ -215,7 +214,11 @@ export function ManagedBoundAccountLine({
   hint,
 }: ManagedBoundAccountLineProps) {
   const { t } = useTranslation();
-  const { data, isSuccess } = useManagedAccounts(authProvider);
+  const { data, isSuccess } = useQuery(
+    authProvider === "xai_oauth"
+      ? xaiAuthStatusQuery
+      : managedAuthStatusQuery(authProvider),
+  );
   if (!isSuccess) return null;
   const account = data?.accounts.find((a) => a.id === accountId);
   if (!account) {

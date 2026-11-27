@@ -513,6 +513,43 @@ export const providerPresets: ProviderPreset[] = [
     icon: "fluxa",
   },
   {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.sudocode.chat",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://sudocode.us",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+  },
+  {
     name: "AIGoCode",
     websiteUrl: "https://aigocode.net",
     apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
@@ -1095,43 +1132,6 @@ export const providerPresets: ProviderPreset[] = [
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.sudocode.chat",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    endpointCandidates: [
-      "https://api.sudocode.chat",
-      "https://api.sudorelay.com",
-    ],
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://sudocode.us",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-  },
-  {
     name: "XycAi",
     websiteUrl: "https://xycai.us",
     apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
@@ -1188,6 +1188,23 @@ export const providerPresets: ProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
+  },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    // Sub2API 网关：Key 绑定分组，Claude Code 用 Claude 或「国模」分组的 Key，
+    // 地址填站点根（docs.fastaitoken.com/docs/cc-switch）；Claude 组按官方模型名透传
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://www.fastaitoken.com",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -1958,6 +1975,25 @@ export const providerPresets: ProviderPreset[] = [
     category: "cn_official",
     icon: "longcat",
     iconColor: "#29E154",
+  },
+  {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api-maas.teleai.com.cn",
+        ANTHROPIC_AUTH_TOKEN: "",
+        ANTHROPIC_MODEL: "Xing4.1-Preview[1m]",
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: "Xing4.1-Preview[1m]",
+        ANTHROPIC_DEFAULT_SONNET_MODEL: "Xing4.1-Preview[1m]",
+        ANTHROPIC_DEFAULT_OPUS_MODEL: "Xing4.1-Preview[1m]",
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: "128000",
+      },
+    },
+    category: "cn_official",
+    icon: "teleai",
   },
   {
     name: "MiniMax",

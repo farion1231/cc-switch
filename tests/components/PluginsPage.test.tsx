@@ -50,9 +50,10 @@ import {
   PluginsPage,
   availableFromCatalog,
   filterPlugins,
+  pluginRowKeys,
   withCatalogDetails,
 } from "@/components/plugins/PluginsPage";
-import { resetPluginWriteState } from "@/hooks/usePlugins";
+import { resetPluginWriteState, samePluginEntry } from "@/hooks/usePlugins";
 
 const plugin = (over: Partial<PluginEntry> = {}): PluginEntry => ({
   id: "frontend-design@official",
@@ -219,6 +220,122 @@ describe("plugin list helpers", () => {
     expect(withCatalogDetails(installed, catalog)[0].description).toBe(
       "Pinned package",
     );
+  });
+
+  it("filters non-user entries by projectPath and distinguishes rows by (id, scope, projectPath)", () => {
+    const localA = plugin({
+      id: "context7@official",
+      name: "context7",
+      scope: "local",
+      projectPath: "/work/proj-a",
+      manageable: false,
+    });
+    const localB = plugin({
+      id: "context7@official",
+      name: "context7",
+      scope: "local",
+      projectPath: "/work/proj-b",
+      manageable: false,
+    });
+    const projectA = plugin({
+      id: "context7@official",
+      name: "context7",
+      scope: "project",
+      projectPath: "/work/proj-a",
+      manageable: false,
+    });
+    const userRow = plugin({
+      id: "context7@official",
+      name: "context7",
+      scope: "user",
+      projectPath: "/ignored-user-path",
+      manageable: true,
+    });
+
+    expect(
+      filterPlugins([userRow, localA, localB], "PROJ-B").map(
+        (e) => e.projectPath,
+      ),
+    ).toEqual(["/work/proj-b"]);
+    expect(filterPlugins([userRow], "ignored-user-path")).toEqual([]);
+
+    expect(samePluginEntry(localA, { ...localA })).toBe(true);
+    expect(samePluginEntry(localA, localB)).toBe(false);
+    expect(samePluginEntry(localA, projectA)).toBe(false);
+    expect(samePluginEntry(userRow, localA)).toBe(false);
+    expect(samePluginEntry(userRow, { ...userRow, projectPath: null })).toBe(
+      true,
+    );
+    expect(
+      samePluginEntry(
+        plugin({ scope: null, projectPath: null }),
+        plugin({ scope: undefined, projectPath: "   " }),
+      ),
+    ).toBe(true);
+  });
+
+  it("generates unique, stable row keys across multi-project installs and stale caches", () => {
+    const localA = plugin({
+      id: "context7@official",
+      scope: "local",
+      projectPath: "/work/proj-a",
+      manageable: false,
+    });
+    const localB = plugin({
+      id: "context7@official",
+      scope: "local",
+      projectPath: "/work/proj-b",
+      manageable: false,
+    });
+    const projectA = plugin({
+      id: "context7@official",
+      scope: "project",
+      projectPath: "/work/proj-a",
+      manageable: false,
+    });
+    const keys = pluginRowKeys([localA, localB, projectA]);
+    expect(new Set(keys).size).toBe(3);
+
+    // 更新版本号或补齐 installPath 后，同一条目的 key 不变；user 范围忽略意外带入的 projectPath
+    const beforeReconcile = plugin({
+      id: "superpowers@official",
+      scope: "user",
+      version: undefined,
+      installPath: null,
+      projectPath: "/ignored-user-path",
+    });
+    const afterReconcile = plugin({
+      id: "superpowers@official",
+      scope: "user",
+      version: "2.0.0",
+      installPath: "/cache/superpowers/2.0.0",
+      projectPath: null,
+    });
+    expect(pluginRowKeys([beforeReconcile])).toEqual(
+      pluginRowKeys([afterReconcile]),
+    );
+    expect(
+      pluginRowKeys([plugin({ scope: "local", projectPath: "   " })]),
+    ).toEqual(pluginRowKeys([plugin({ scope: "local", projectPath: null })]));
+
+    // 旧缓存里两条相同 (id, scope) 且缺少 projectPath 的条目也必须生成唯一 key
+    const staleDup = plugin({
+      id: "context7@official",
+      scope: "local",
+      projectPath: undefined,
+      manageable: false,
+    });
+    const staleKeys = pluginRowKeys([staleDup, { ...staleDup }]);
+    expect(new Set(staleKeys).size).toBe(2);
+
+    // 冒号（如 Windows 盘符或 Pi 的 npm: 前缀）不会造成字段边界冲突
+    const colonKeys = pluginRowKeys([
+      plugin({ id: "a:b", scope: null, projectPath: null }),
+      plugin({ id: "a", scope: "b", projectPath: null }),
+      plugin({ id: "p@m", scope: "local", projectPath: "C:\\work\\a" }),
+      plugin({ id: "p@m", scope: "local", projectPath: "C:\\work\\b" }),
+    ]);
+    expect(new Set(colonKeys).size).toBe(4);
   });
 });
 
@@ -1349,5 +1466,327 @@ describe("PluginsPage", () => {
         }),
       ),
     );
+  });
+
+  it("cleans up all stale cached duplicate local-scope rows after refresh without leaving ghost DOM nodes", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // 模拟旧版 v4.0.40 缓存：同一个插件 id 在两个项目里装了 local 范围，但缓存里没有 projectPath
+      const staleLocal = plugin({
+        id: "context7@claude-plugins-official",
+        name: "context7",
+        marketplace: "claude-plugins-official",
+        version: "41f619d61b99",
+        scope: "local",
+        manageable: false,
+        removable: false,
+      });
+      const userPlugin = plugin({
+        id: "frontend-design@claude-plugins-official",
+        name: "frontend-design",
+        marketplace: "claude-plugins-official",
+        scope: "user",
+      });
+      const removableUserPlugin = plugin({
+        id: "playwright@claude-plugins-official",
+        name: "playwright",
+        marketplace: "claude-plugins-official",
+        scope: "user",
+      });
+      localStorage.setItem(
+        "cc-switch-cache:plugins:claude:installed",
+        JSON.stringify([
+          removableUserPlugin,
+          userPlugin,
+          staleLocal,
+          { ...staleLocal },
+        ]),
+      );
+
+      const fresh = deferred<PluginEntry[]>();
+      m.listInstalled.mockReturnValueOnce(fresh.promise);
+      renderPage();
+
+      const list = await screen.findByTestId("plugins-installed");
+      expect(within(list).getAllByText("context7")).toHaveLength(2);
+      expect(list.children).toHaveLength(4);
+
+      // 卸载排在前面的 user 插件时，后面重复的旧缓存 local 行不会触发幽灵节点残留
+      const uninstallPending = deferred<{ changed: boolean }>();
+      m.uninstall.mockReturnValue(uninstallPending.promise);
+      await userEvent.click(
+        within(list).getAllByRole("button", {
+          name: "pluginsPage.moreActions",
+        })[0],
+      );
+      await userEvent.click(
+        await screen.findByRole("menuitem", { name: "pluginsPage.uninstall" }),
+      );
+      const dialog = await screen.findByRole("dialog");
+      await userEvent.click(
+        within(dialog).getByRole("button", { name: "pluginsPage.uninstall" }),
+      );
+      await waitFor(() => expect(list.children).toHaveLength(3));
+      expect(within(list).queryByText("playwright")).not.toBeInTheDocument();
+      expect(within(list).getAllByText("context7")).toHaveLength(2);
+
+      // 在终端里删掉全部 local 插件后，对账刷新只返回剩余 user 插件：不能残留任何幽灵行
+      m.listInstalled.mockResolvedValue([userPlugin]);
+      await act(async () => uninstallPending.resolve({ changed: true }));
+      await waitFor(() =>
+        expect(within(list).queryByText("context7")).not.toBeInTheDocument(),
+      );
+      expect(list.children).toHaveLength(1);
+      expect(within(list).getByText("frontend-design")).toBeInTheDocument();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("renders, searches, and cleanly transitions multi-project local-scope installs", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const localA = plugin({
+        id: "context7@claude-plugins-official",
+        name: "context7",
+        marketplace: "claude-plugins-official",
+        scope: "local",
+        projectPath: "/work/alpha-app",
+        manageable: false,
+        removable: false,
+      });
+      const localB = plugin({
+        id: "context7@claude-plugins-official",
+        name: "context7",
+        marketplace: "claude-plugins-official",
+        scope: "local",
+        projectPath: "/work/beta-service",
+        manageable: false,
+        removable: false,
+      });
+      const userPlugin = plugin({
+        id: "frontend-design@official",
+        name: "frontend-design",
+        scope: "user",
+        projectPath: "/ignored-user-path",
+      });
+      const blankPathProject = plugin({
+        id: "lint@official",
+        name: "lint",
+        scope: "project",
+        projectPath: "   ",
+        manageable: false,
+        removable: false,
+      });
+
+      m.listInstalled.mockImplementation(async (app) =>
+        app === "codex"
+          ? [plugin({ id: "codex-only@m", name: "codex-only", scope: null })]
+          : [userPlugin, localA, localB, blankPathProject],
+      );
+      m.listCatalog.mockResolvedValue([superpowers]);
+
+      renderPage({ apps: ["claude", "codex"] });
+      const list = await screen.findByTestId("plugins-installed");
+      expect(list.children).toHaveLength(4);
+      expect(within(list).getByText("/work/alpha-app")).toHaveAttribute(
+        "title",
+        "/work/alpha-app",
+      );
+      expect(within(list).getByText("/work/beta-service")).toHaveAttribute(
+        "title",
+        "/work/beta-service",
+      );
+      expect(
+        within(list).queryByText("/ignored-user-path"),
+      ).not.toBeInTheDocument();
+      // 仅含空白的 projectPath 不应渲染多余的空路径段落
+      expect(list.children[3].querySelectorAll("p")).toHaveLength(1);
+
+      // 按项目路径过滤与清空不残留幽灵行
+      const searchBox = screen.getByRole("textbox", {
+        name: "pluginsPage.searchAria",
+      });
+      await userEvent.type(searchBox, "beta-service");
+      await waitFor(() => expect(list.children).toHaveLength(1));
+      expect(within(list).getByText("/work/beta-service")).toBeInTheDocument();
+      expect(
+        within(list).queryByText("/work/alpha-app"),
+      ).not.toBeInTheDocument();
+
+      await userEvent.clear(searchBox);
+      await waitFor(() => expect(list.children).toHaveLength(4));
+
+      // 切到发现页再切到 Codex：不会残留任何 Claude 的 local 行
+      await userEvent.click(
+        await screen.findByRole("tab", {
+          name: "pluginsPage.viewDiscoverCount",
+        }),
+      );
+      const discover = await screen.findByTestId("plugins-discover");
+      expect(discover.children).toHaveLength(1);
+      expect(within(discover).queryByText("context7")).not.toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByRole("tab", { name: "pluginsPage.viewInstalledCount" }),
+      );
+      await userEvent.click(screen.getByRole("button", { name: /Codex/ }));
+      await waitFor(() =>
+        expect(screen.getByText("codex-only")).toBeInTheDocument(),
+      );
+      expect(screen.queryByText("context7")).not.toBeInTheDocument();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it("isolates busy spinners and optimistic mutations from read-only local rows while keeping Discover install spinners working", async () => {
+    const userRow = plugin({
+      id: "context7@official",
+      name: "context7",
+      scope: "user",
+      enabled: true,
+      manageable: true,
+      removable: true,
+    });
+    const localRow = plugin({
+      id: "context7@official",
+      name: "context7",
+      scope: "local",
+      projectPath: "/work/alpha-app",
+      enabled: true,
+      manageable: false,
+      removable: false,
+    });
+    const updatableUserRow = plugin({
+      id: "playwright@official",
+      name: "playwright",
+      scope: "user",
+      enabled: true,
+      manageable: true,
+      removable: true,
+    });
+    const updatableLocalRow = plugin({
+      id: "playwright@official",
+      name: "playwright",
+      scope: "local",
+      projectPath: "/work/beta-app",
+      enabled: true,
+      manageable: false,
+      removable: false,
+    });
+    // Claude 目录条目在后端 Default 下 manageable 为 false，安装时仍需显示转圈
+    const claudeDiscoverItem = catalogItem({
+      id: "superpowers@official",
+      name: "superpowers",
+      manageable: false,
+    });
+    m.listInstalled.mockResolvedValue([
+      userRow,
+      localRow,
+      updatableUserRow,
+      updatableLocalRow,
+    ]);
+    m.listCatalog.mockResolvedValue([claudeDiscoverItem]);
+
+    renderPage({ apps: ["claude"] });
+    const list = await screen.findByTestId("plugins-installed");
+    expect(list.children).toHaveLength(4);
+
+    const togglePending = deferred<{ changed: boolean }>();
+    m.setEnabled.mockReturnValue(togglePending.promise);
+    const switches = within(list).getAllByRole("switch", {
+      name: "pluginsPage.enableAria",
+    });
+    expect(switches[0]).toBeEnabled();
+    expect(switches[1]).toBeDisabled();
+
+    await userEvent.click(switches[0]);
+    // 只有 user 行显示转圈并乐观切关；同名 local 只读行不转圈也不被改状态
+    expect(within(list).getAllByLabelText("pluginsPage.working")).toHaveLength(
+      1,
+    );
+    expect(switches[0]).toHaveAttribute("data-state", "unchecked");
+    expect(switches[1]).toHaveAttribute("data-state", "checked");
+
+    m.listInstalled.mockResolvedValue([
+      { ...userRow, enabled: false },
+      localRow,
+      updatableUserRow,
+      updatableLocalRow,
+    ]);
+    await act(async () => togglePending.resolve({ changed: true }));
+    await waitFor(() =>
+      expect(
+        within(list).queryByLabelText("pluginsPage.working"),
+      ).not.toBeInTheDocument(),
+    );
+
+    // 更新 user 行时：只有 user 行显示转圈，同名 local 只读行不显示转圈
+    const updatePending = deferred<{ changed: boolean }>();
+    m.update.mockReturnValue(updatePending.promise);
+    await userEvent.click(
+      within(list).getAllByRole("button", {
+        name: "pluginsPage.moreActions",
+      })[2],
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.update" }),
+    );
+    expect(within(list).getAllByLabelText("pluginsPage.working")).toHaveLength(
+      1,
+    );
+    await act(async () => updatePending.resolve({ changed: false }));
+    await waitFor(() =>
+      expect(
+        within(list).queryByLabelText("pluginsPage.working"),
+      ).not.toBeInTheDocument(),
+    );
+
+    // 卸载 user 行并在失败时回滚：local 行不显示转圈且始终保留
+    const uninstallPending = deferred<{ changed: boolean }>();
+    m.uninstall.mockReturnValue(uninstallPending.promise);
+    await userEvent.click(
+      within(list).getAllByRole("button", {
+        name: "pluginsPage.moreActions",
+      })[0],
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "pluginsPage.uninstall" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "pluginsPage.uninstall" }),
+    );
+    await waitFor(() => expect(list.children).toHaveLength(3));
+    expect(within(list).getByText("/work/alpha-app")).toBeInTheDocument();
+    expect(
+      within(list).queryByLabelText("pluginsPage.working"),
+    ).not.toBeInTheDocument();
+
+    await act(async () => uninstallPending.reject("boom"));
+    await waitFor(() => expect(list.children).toHaveLength(4));
+
+    // 切到发现页安装 manageable: false 的 Claude 目录项：按钮和转圈正常工作
+    const installPending = deferred<{ changed: boolean }>();
+    m.install.mockReturnValue(installPending.promise);
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "pluginsPage.viewDiscoverCount" }),
+    );
+    const discover = await screen.findByTestId("plugins-discover");
+    const installBtn = within(discover).getByRole("button", {
+      name: "pluginsPage.install",
+    });
+    await userEvent.click(installBtn);
+    expect(
+      within(discover).getByLabelText("pluginsPage.working"),
+    ).toBeInTheDocument();
+    expect(
+      within(discover).getByRole("button", { name: "pluginsPage.installing" }),
+    ).toBeDisabled();
+
+    await act(async () => installPending.resolve({ changed: true }));
   });
 });

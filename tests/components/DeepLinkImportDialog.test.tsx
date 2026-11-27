@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 import { Profiler } from "react";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
+import { zcodeKeys } from "@/hooks/useZcode";
 import { http, HttpResponse } from "msw";
 import i18n from "i18next";
 import { emitTauriEvent } from "../msw/tauriMocks";
@@ -173,6 +174,74 @@ describe("DeepLinkImportDialog", () => {
       failure.mockRestore();
     },
   );
+
+  it("names the target app by its display name", async () => {
+    render(<DeepLinkImportDialog />, { wrapper: Wrapper });
+    act(() =>
+      deliverDeepLink({
+        version: "v1",
+        resource: "provider",
+        app: "dsh",
+        name: "Imported Provider",
+        endpoint: "https://example.com/v1",
+        apiKey: "public-test-key",
+        model: "example-model",
+      }),
+    );
+    // 以前直接显示 ID 再用 CSS 首字母大写：「Dsh」「Zcode」
+    expect(await screen.findByText("DeepSeek Harness")).toBeInTheDocument();
+  });
+
+  it("rereads ZCode's added providers after a link import", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { staleTime: Infinity, retry: false } },
+    });
+    let liveIds: string[] = [];
+    const readLiveIds = vi.fn(async () => liveIds);
+    server.use(
+      http.post("http://tauri.local/import_from_deeplink_unified", () => {
+        liveIds = ["imported-provider"];
+        return HttpResponse.json({ type: "provider", id: "imported-provider" });
+      }),
+    );
+    function LiveState() {
+      const ids = useQuery({
+        queryKey: zcodeKeys.liveProviderIds,
+        queryFn: readLiveIds,
+      });
+      return <output data-testid="live-ids">{JSON.stringify(ids.data)}</output>;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <LiveState />
+        <DeepLinkImportDialog />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("live-ids")).toHaveTextContent("[]"),
+    );
+    act(() =>
+      deliverDeepLink({
+        version: "v1",
+        resource: "provider",
+        app: "zcode",
+        name: "Imported Provider",
+        endpoint: "https://example.com/v1",
+        apiKey: "public-test-key",
+        model: "example-model",
+      }),
+    );
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: "deeplink.import" }));
+    await waitFor(() =>
+      expect(screen.getByTestId("live-ids")).toHaveTextContent(
+        '["imported-provider"]',
+      ),
+    );
+    expect(readLiveIds).toHaveBeenCalledTimes(2);
+    client.clear();
+  });
 
   it("renders masked usage access token and user id for provider imports", async () => {
     render(<DeepLinkImportDialog />, { wrapper: Wrapper });

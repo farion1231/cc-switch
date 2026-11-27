@@ -12,8 +12,8 @@ interface AgyAccountQuotaFooterProps {
 }
 
 /**
- * 绑了授权中心账号的 Antigravity 官方卡：显示绑定那个号的额度（不是 agy 现在登着的号），
- * 和授权中心那一行共用同一份查询。
+ * 绑了授权中心账号的 Antigravity 官方卡：显示绑定那个号的额度，和授权中心那一行共用同一份查询。
+ * 这个号不是 agy 现在登着的号时，显示切走前最后一次查到的（没有就不显示）。
  */
 const AgyAccountQuotaFooter: React.FC<AgyAccountQuotaFooterProps> = ({
   accountId,
@@ -26,6 +26,7 @@ const AgyAccountQuotaFooter: React.FC<AgyAccountQuotaFooterProps> = ({
     data: quota,
     isFetching: loading,
     refetch,
+    manualIdle,
   } = useAgyAccountQuota(accountId, {
     enabled: true,
     autoQuery: isCurrent && autoQueryInterval > 0,
@@ -37,6 +38,7 @@ const AgyAccountQuotaFooter: React.FC<AgyAccountQuotaFooterProps> = ({
       quota={quota}
       loading={loading}
       refetch={refetch}
+      idle={manualIdle}
       appIdForExpiredHint="agy"
       inline={inline}
       display={display}

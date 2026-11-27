@@ -40,6 +40,7 @@ import {
   detectCodingPlanProvider,
 } from "@/config/codingPlanProviders";
 import { appHas } from "@/config/appSpecs";
+import { refreshAdditiveLiveState } from "@/lib/query/additiveLiveState";
 
 const API_FORMAT_LABELS: Record<
   NonNullable<DeepLinkImportRequest["apiFormat"]>,
@@ -252,10 +253,11 @@ export function DeepLinkImportDialog() {
         await queryClient.invalidateQueries({
           queryKey: ["providers", request.app],
         });
+        // 累加式应用导入时可能直接写进了客户端文件：「已添加」分组要跟着重读
+        if (request.app && appHas(request.app, "additive")) {
+          await refreshAdditiveLiveState(queryClient, request.app);
+        }
         if (request.app === "opencode") {
-          await queryClient.invalidateQueries({
-            queryKey: ["opencodeLiveProviderIds"],
-          });
           await queryClient.invalidateQueries({
             queryKey: ["opencode", "runtime-models"],
           });
@@ -476,8 +478,8 @@ export function DeepLinkImportDialog() {
                     <div className="font-medium text-sm text-fg-2">
                       {t("deeplink.app")}
                     </div>
-                    <div className="col-span-2 text-sm font-medium capitalize">
-                      {request.app}
+                    <div className="col-span-2 text-sm font-medium">
+                      {request.app ? getAppLabel(request.app) : null}
                     </div>
                   </div>
 

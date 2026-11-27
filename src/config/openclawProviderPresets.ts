@@ -1361,6 +1361,99 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     },
   },
   {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      baseUrl: "https://api.sudocode.chat/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+        },
+        {
+          id: "gpt-6-sol",
+          name: "GPT-6 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+        },
+        {
+          id: "gpt-6-luna",
+          name: "GPT-6 Luna",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+        },
+        {
+          id: "gpt-6-astra",
+          name: "GPT-6 Astra",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+          cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
+        },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "sudocode/gpt-6.1-sol",
+      },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      baseUrl: "https://sudocode.us/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: sudoCodeUsModels(),
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: {
+        primary: "sudocode-us/gpt-6.1-sol",
+      },
+    },
+  },
+  {
     name: "AIGoCode",
     websiteUrl: "https://aigocode.net",
     apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
@@ -2654,99 +2747,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      baseUrl: "https://api.sudocode.chat/v1",
-      apiKey: "",
-      api: "openai-responses",
-      models: [
-        {
-          id: "gpt-6.1-sol",
-          name: "GPT-6.1 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-          cost: { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
-        },
-        {
-          id: "gpt-6-sol",
-          name: "GPT-6 Sol",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-          cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
-        },
-        {
-          id: "gpt-6-luna",
-          name: "GPT-6 Luna",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-          cost: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
-        },
-        {
-          id: "gpt-6-astra",
-          name: "GPT-6 Astra",
-          reasoning: true,
-          input: ["text", "image"],
-          contextWindow: 272000,
-          maxTokens: 128000,
-          cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
-        },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "sudocode/gpt-6.1-sol",
-      },
-    },
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      baseUrl: "https://sudocode.us/v1",
-      apiKey: "",
-      api: "openai-responses",
-      models: sudoCodeUsModels(),
-    },
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "sudocode-us/gpt-6.1-sol",
-      },
-    },
-  },
-  {
     name: "XycAi",
     websiteUrl: "https://xycai.us",
     apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
@@ -2893,6 +2893,45 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
+  },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    // Sub2API 网关：Key 绑定分组，GPT 要用 OpenAI 分组的 Key（docs.fastaitoken.com/docs/api-manual）；
+    // 模型列表要登录才能看，模型 ID 取自官方文档示例 gpt-6.1-sol，未用真 Key 验证
+    settingsConfig: {
+      baseUrl: "https://www.fastaitoken.com/v1",
+      apiKey: "",
+      api: "openai-responses",
+      models: [
+        {
+          id: "gpt-6.1-sol",
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          input: ["text", "image"],
+          contextWindow: 272000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "fastaitoken/gpt-6.1-sol" },
+      modelCatalog: {
+        "fastaitoken/gpt-6.1-sol": { alias: "GPT-6.1 Sol" },
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -4248,6 +4287,47 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     suggestedDefaults: {
       model: { primary: "longcat/LongCat-2.0" },
       modelCatalog: { "longcat/LongCat-2.0": { alias: "LongCat" } },
+    },
+  },
+  {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      baseUrl: "https://api-maas.teleai.com.cn/v1",
+      apiKey: "",
+      api: "openai-completions",
+      authHeader: true,
+      models: [
+        {
+          id: "Xing4.1-Preview",
+          name: "Xing4.1-Preview",
+          reasoning: true,
+          input: ["text"],
+          contextWindow: 1024000,
+          maxTokens: 128000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
+    templateValues: {
+      baseUrl: {
+        label: "Base URL",
+        placeholder: "https://api-maas.teleai.com.cn/v1",
+        defaultValue: "https://api-maas.teleai.com.cn/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    suggestedDefaults: {
+      model: { primary: "teleai/Xing4.1-Preview" },
+      modelCatalog: { "teleai/Xing4.1-Preview": { alias: "Xing" } },
     },
   },
   {

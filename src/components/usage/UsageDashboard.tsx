@@ -49,7 +49,8 @@ import {
   useSessionUsageLastSync,
 } from "@/lib/query/usage";
 import { useSettingsQuery } from "@/lib/query";
-import { DEFAULT_VISIBLE_APPS } from "@/config/appConfig";
+import type { AppId } from "@/lib/api/types";
+import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useUsageEventBridge } from "@/hooks/useUsageEventBridge";
 import { useUsageAutoRefresh } from "@/hooks/useUsageAutoRefresh";
 import { usageApi } from "@/lib/api/usage";
@@ -559,22 +560,36 @@ export function UsageDashboard({
 
   // ── 筛选行 ───────────────────────────────────────────────────────────
   // 选中块是单独的滑块（SegmentThumb），切换应用时滑过去
-  // 只列「应用」页设为显示的应用；Claude Code 的用量在 Claude Desktop 显示时也算，
+  // 跟侧栏走：按「应用」页拖出来的顺序排，只列设为显示的应用；
+  // Claude Code 的用量在 Claude Desktop 显示时也算（排在两者在侧栏中更靠前的位置），
   // DeepSeek Harness（Web 与 Desktop 的会话用量合并记在 dsh 下）在 Desktop 显示时也算，
   // 当前选中的即使被隐藏也留着，免得筛选状态无处可见
   const { data: settings } = useSettingsQuery();
   const filterApps = useMemo(() => {
     const visible = { ...DEFAULT_VISIBLE_APPS, ...settings?.visibleApps };
-    return KNOWN_APP_TYPES.filter(
-      (app) =>
-        visible[app] ||
-        (app === "claude" && visible["claude-desktop"]) ||
-        app === appType,
+    const rank = new Map(
+      orderAppIds(settings?.appOrder).map((app, index) => [app, index]),
     );
-  }, [settings?.visibleApps, appType]);
+    const position = (apps: readonly AppId[]) =>
+      Math.min(...apps.map((app) => rank.get(app) ?? Infinity));
+    return KNOWN_APP_TYPES.flatMap((app) => {
+      const sourceApps: readonly AppId[] =
+        app === "claude" ? ["claude", "claude-desktop"] : [app];
+      const shownApps = sourceApps.filter((id) => visible[id]);
+      if (shownApps.length === 0 && app !== appType) return [];
+      return [
+        {
+          app,
+          position: position(shownApps.length ? shownApps : sourceApps),
+        },
+      ];
+    })
+      .sort((a, b) => a.position - b.position)
+      .map(({ app }) => app);
+  }, [settings?.visibleApps, settings?.appOrder, appType]);
   const appFilterIndicator = useSlidingIndicator<HTMLDivElement>(
     '[aria-pressed="true"]',
-    appType,
+    `${appType}:${filterApps.join(",")}`,
   );
   const chipClass = (pressed: boolean) =>
     cn(
