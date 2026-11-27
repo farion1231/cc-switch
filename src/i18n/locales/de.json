@@ -123,6 +123,8 @@
     "stackReselectHint": "Wählen Sie das aggregierte Modell im Modellwähler erneut aus, sobald CC Switch die Client-Konfiguration neu schreibt",
     "stackPartial": "Teilweise geschrieben; wird bei der nächsten Änderung oder beim Neustart von CC Switch abgeschlossen",
     "stackFailed": "Aggregierte Modelle konnten nicht gespeichert werden: {{error}}",
+    "roleBindingsSaved": "Modellzuordnungen gespeichert",
+    "roleBindingsFailed": "Modellzuordnungen konnten nicht gespeichert werden: {{error}}",
     "stackDefaultCannotRemove": "Der Standardanbieter kann nicht entfernt werden; legen Sie zuerst einen anderen Anbieter als Standard fest",
     "stackDefaultHint": "Dies ist der Standardanbieter: Das erste Modell in seiner Liste übernimmt den Start und die Hintergrundaufgaben von Claude Code",
     "officialModelsBundled": "Die offizielle Modellliste ist noch nicht verfügbar, daher wird vorerst die integrierte Liste von Codex verwendet; kontospezifische Modelle fehlen möglicherweise",
@@ -4504,6 +4506,13 @@
       "autoReviewUnavailable": "Das ausgewählte Modell ist nicht mehr in der Aggregation (der Anbieter wurde entfernt oder veröffentlicht es nicht mehr), daher verwenden Genehmigungen vorerst den Standard-Prüfer. Es kehrt zurück, sobald Sie es erneut hinzufügen.",
       "saveFailed": "Speichern fehlgeschlagen: {{error}}"
     },
+    "roleBindings": "Modellzuordnungen",
+    "roleBindingsTitle": "Modellzuordnungen",
+    "roleBindingsLead": "Wählen Sie für jede Modellstufe von Claude Code ein Modell. Wenn Sie „Standard verwenden“ wählen, wird das erste Modell des Standardanbieters verwendet.",
+    "roleBindingDefault": "Standard verwenden",
+    "roleBindingInvalidTag": "Nicht verfügbar",
+    "roleBindingInvalid": "Das gespeicherte Modell ist nicht mehr in der Aggregation. Wählen Sie ein anderes Modell oder verwenden Sie den Standard.",
+    "roleBindingsUnavailable": "Die Liste der aggregierten Modelle ist derzeit nicht verfügbar. Versuchen Sie es in Kürze erneut.",
     "queueMoved": "{{name}} an Position {{position}} verschoben.",
     "status": {
       "directLead": "Direkt ist aktiv · verbunden mit",

@@ -33,14 +33,17 @@ fn stack_exclusive(route: &Provider, others: &[&Provider]) -> Map<String, Value>
         .chain(others.iter().copied())
         .flat_map(|provider| stack::claude_models(&provider.id, provider))
         .collect();
-    let default = stack.first().cloned();
-    let (projection, contract) = claude_contract(
-        route,
-        "http://127.0.0.1:15721",
-        &stack,
-        default.as_ref(),
-        others,
-    );
+    let roles = stack
+        .first()
+        .map(|model| {
+            stack::CLAUDE_ROLES
+                .into_iter()
+                .map(|role| (role, model.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let (projection, contract) =
+        claude_contract(route, "http://127.0.0.1:15721", &stack, &roles, others);
     assert_eq!(contract.exclusive, projection.exclusive);
     projection.exclusive
 }
@@ -126,7 +129,13 @@ fn route_mode_keeps_only_the_route_switches() {
         }),
     );
     // 没有发布 Stack 模型（路由模式）时契约和原来一样，不看别家。
-    let (projection, _) = claude_contract(&route, "http://127.0.0.1:15721", &[], None, &[&other]);
+    let (projection, _) = claude_contract(
+        &route,
+        "http://127.0.0.1:15721",
+        &[],
+        &BTreeMap::new(),
+        &[&other],
+    );
     assert_env_str(&projection.exclusive, "ENABLE_TOOL_SEARCH", Some("true"));
     assert_env_str(
         &projection.exclusive,
@@ -137,7 +146,13 @@ fn route_mode_keeps_only_the_route_switches() {
 
 /// 以 `live` 为底写入 `provider` 的代理契约，和进入代理时的补丁相同。
 fn takeover(live: &Value, provider: &Provider) -> Value {
-    let (projection, _) = claude_contract(provider, "http://127.0.0.1:15721", &[], None, &[]);
+    let (projection, _) = claude_contract(
+        provider,
+        "http://127.0.0.1:15721",
+        &[],
+        &BTreeMap::new(),
+        &[],
+    );
     let mut doc = live.clone();
     direct_patch(None, &projection)
         .apply_to(Path::new("settings.json"), &mut doc)

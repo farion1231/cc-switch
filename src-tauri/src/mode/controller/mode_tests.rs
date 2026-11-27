@@ -3614,6 +3614,209 @@ async fn set_member(state: &AppState, id: &str, enabled: bool) -> Vec<StackMembe
 
 #[tokio::test]
 #[serial]
+async fn stack_role_bindings_follow_selected_members_and_fall_back_safely() {
+    let _home = Home::new();
+    seed_settings(USER_SETTINGS);
+    let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+    enter(&state, &AppType::Claude, true).await.expect("enter");
+    set_member(&state, "kimi", true).await;
+    set_member(&state, "zhipu", true).await;
+
+    let selected = StackRoleBindings {
+        haiku: Some(state::StackRoleTarget {
+            provider_id: "zhipu".into(),
+            model_id: "ccs-claude-zhipu--glm-5.2[1m]".into(),
+        }),
+        opus: Some(state::StackRoleTarget {
+            provider_id: "kimi".into(),
+            model_id: "ccs-claude-kimi--kimi-k3".into(),
+        }),
+        ..Default::default()
+    };
+    set_stack_role_bindings(&state, &AppType::Claude, selected.clone())
+        .await
+        .expect("save role bindings");
+    let env = settings()["env"].clone();
+    // haiku 档也带 1M 标记：Stack id 不是 claude- 开头，不带标记会按 200K 算。
+    assert_eq!(
+        env["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+        "ccs-claude-zhipu--glm-5.2[1m]"
+    );
+    assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"], "glm-5.2");
+    assert_eq!(
+        env["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "ccs-claude-kimi--kimi-k3"
+    );
+    assert_eq!(
+        env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+        "ccs-claude-a--claude-sonnet-4-6"
+    );
+    assert_eq!(
+        env["ANTHROPIC_DEFAULT_FABLE_MODEL"],
+        "ccs-claude-a--claude-sonnet-4-6"
+    );
+    assert_eq!(
+        stack_views(&state, &AppType::Claude).unwrap().role_bindings,
+        Some(selected)
+    );
+
+    set_member(&state, "kimi", false).await;
+    let view = stack_views(&state, &AppType::Claude).unwrap();
+    assert_eq!(view.role_invalid, vec!["opus"]);
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "ccs-claude-a--claude-sonnet-4-6"
+    );
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+        "ccs-claude-zhipu--glm-5.2[1m]"
+    );
+    set_member(&state, "kimi", true).await;
+    assert!(stack_views(&state, &AppType::Claude)
+        .unwrap()
+        .role_invalid
+        .is_empty());
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "ccs-claude-kimi--kimi-k3"
+    );
+
+    // 更换默认供应商只影响未绑定的档位，显式绑定保持目标。
+    ProviderService::switch(&state, AppType::Claude, "zhipu").expect("switch default");
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "ccs-claude-kimi--kimi-k3"
+    );
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+        "ccs-claude-zhipu--glm-5.2[1m]"
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn a_renamed_model_keeps_its_invalid_binding_while_other_roles_can_change() {
+    let _home = Home::new();
+    seed_settings(USER_SETTINGS);
+    let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+    enter(&state, &AppType::Claude, true).await.expect("enter");
+    set_member(&state, "kimi", true).await;
+    let old_target = state::StackRoleTarget {
+        provider_id: "kimi".into(),
+        model_id: "ccs-claude-kimi--kimi-k3".into(),
+    };
+    set_stack_role_bindings(
+        &state,
+        &AppType::Claude,
+        StackRoleBindings {
+            opus: Some(old_target.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("bind opus");
+
+    let mut kimi = state
+        .db
+        .get_provider_by_id("kimi", &AppType::Claude)
+        .unwrap()
+        .unwrap();
+    kimi.settings_config["env"]["ANTHROPIC_MODEL"] = json!("kimi-k4");
+    ProviderService::update(&state, AppType::Claude, None, kimi).expect("rename kimi model");
+    assert_eq!(
+        stack_views(&state, &AppType::Claude).unwrap().role_invalid,
+        vec!["opus"]
+    );
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "ccs-claude-a--claude-sonnet-4-6"
+    );
+
+    let next = StackRoleBindings {
+        opus: Some(old_target),
+        sonnet: Some(state::StackRoleTarget {
+            provider_id: "kimi".into(),
+            model_id: "ccs-claude-kimi--kimi-k4".into(),
+        }),
+        ..Default::default()
+    };
+    set_stack_role_bindings(&state, &AppType::Claude, next.clone())
+        .await
+        .expect("bind sonnet");
+    assert_eq!(
+        stack_views(&state, &AppType::Claude).unwrap().role_bindings,
+        Some(next)
+    );
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+        "ccs-claude-kimi--kimi-k4"
+    );
+    assert_eq!(
+        stack_views(&state, &AppType::Claude).unwrap().role_invalid,
+        vec!["opus"]
+    );
+}
+
+#[tokio::test]
+#[serial]
+async fn stack_role_bindings_reject_unpublished_models_and_apply_only_in_stack_mode() {
+    let _home = Home::new();
+    seed_settings(USER_SETTINGS);
+    let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+    let invalid = StackRoleBindings {
+        opus: Some(state::StackRoleTarget {
+            provider_id: "kimi".into(),
+            model_id: "ccs-claude-kimi--kimi-k3".into(),
+        }),
+        ..Default::default()
+    };
+    assert!(
+        !set_stack_role_bindings(&state, &AppType::Claude, invalid.clone())
+            .await
+            .unwrap_err()
+            .partial
+    );
+    assert!(stack_state().role_bindings.is_empty());
+
+    set_member(&state, "kimi", true).await;
+    set_stack_role_bindings(&state, &AppType::Claude, invalid.clone())
+        .await
+        .expect("save before entering stack");
+    assert_eq!(stack_state().role_bindings, invalid);
+    enter(&state, &AppType::Claude, false)
+        .await
+        .expect("route mode");
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "claude-opus-5"
+    );
+    enter(&state, &AppType::Claude, true)
+        .await
+        .expect("stack mode");
+    assert_eq!(
+        settings()["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "ccs-claude-kimi--kimi-k3"
+    );
+    let mapped = settings()["env"].clone();
+    let mismatched = StackRoleBindings {
+        opus: Some(state::StackRoleTarget {
+            provider_id: "a".into(),
+            model_id: "ccs-claude-kimi--kimi-k3".into(),
+        }),
+        ..Default::default()
+    };
+    assert!(
+        !set_stack_role_bindings(&state, &AppType::Claude, mismatched)
+            .await
+            .unwrap_err()
+            .partial
+    );
+    assert_eq!(settings()["env"], mapped);
+    assert_eq!(stack_state().role_bindings, invalid);
+}
+
+#[tokio::test]
+#[serial]
 async fn stack_models_join_the_claude_contract_and_leave_with_it() {
     let _home = Home::new();
     seed_settings(USER_SETTINGS);

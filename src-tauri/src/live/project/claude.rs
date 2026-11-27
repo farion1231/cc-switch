@@ -3,6 +3,7 @@
 //! 行里其余的键（旧版回填进来的插件、hooks，深链带进来的超时设置等）不投影：它们归
 //! 用户和客户端，新版只从 live 里读写它们。
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde_json::{json, Map, Value};
@@ -361,8 +362,7 @@ pub enum ProxyAuth {
     Managed { auth_token: bool },
 }
 
-/// Stack 模式下 Claude Code 四档别名都指向的模型：默认那家列表里的第一个
-/// （`mode::stack::claude_route_default`）。
+/// Stack 模式下 Claude Code 单个档位解析后的模型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StackRoleModel<'a> {
     /// 发布给客户端的 Stack id，1M 模型带 `[1m]`。
@@ -375,24 +375,24 @@ pub struct StackRoleModel<'a> {
 ///
 /// - 关键字段：本地代理地址、占位凭据、按角色写的模型；其余关键字段（协议选择器、云凭据、
 ///   `/model` 的选择等）一律清空，否则 Claude Code 会绕过代理；
-///   - 路由模式（`stack_default` 为 `None`）：稳定的 `claude-*` 别名，显示名跟着路由供应商，
+///   - 路由模式（`stack_roles` 为 `None`）：稳定的 `claude-*` 别名，显示名跟着路由供应商，
 ///     说明写 `<route_name> · <上游模型名>`，真实模型由代理映射；
-///   - Stack 模式：四档都写 `stack_default` 的 Stack id，请求直达默认那家的这个模型；
+///   - Stack 模式：逐档写解析后的 Stack id；未绑定的档位优先跟随默认供应商首个模型；
 /// - 独有字段：路由供应商的。它们在客户端发请求时生效，代理不能替它补上。
 pub fn proxy_projection(
     route: &ClaudeProjection,
     route_name: &str,
     proxy_url: &str,
     auth: ProxyAuth,
-    stack_default: Option<StackRoleModel<'_>>,
+    stack_roles: Option<&BTreeMap<&str, StackRoleModel<'_>>>,
 ) -> ClaudeProjection {
     let mut env = Map::new();
     env.insert(
         "ANTHROPIC_BASE_URL".to_string(),
         Value::String(proxy_url.to_string()),
     );
-    let fields = match stack_default {
-        Some(model) => stack_model_fields(model),
+    let fields = match stack_roles {
+        Some(roles) => stack_model_fields(&route.env, route_name, roles),
         None => proxy_model_fields(&route.env, route_name),
     };
     for (key, value) in fields {
@@ -675,39 +675,35 @@ pub(crate) fn client_model_for_subagent(upstream: &str) -> String {
     client_model
 }
 
-/// Stack 模式的四档：都写同一个 Stack id（1M 模型带 `[1m]` 标记），显示名也一样。haiku 档
-/// 也带标记：Stack id 不是 `claude-` 开头，不带标记 Claude Code 会按 200K 算这一档的窗口
-/// （路由契约的 haiku 别名是 `claude-haiku-5-5`，Claude Code 本身就按 1M 算，所以那边不用）。
-/// 不写 `CLAUDE_CODE_SUBAGENT_MODEL`：子代理跟随主模型，也就是用户在 `/model` 里选的。
-fn stack_model_fields(model: StackRoleModel<'_>) -> Vec<(&'static str, String)> {
-    let roles = [
-        (
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-            "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
-            model.id,
-        ),
-        (
-            "ANTHROPIC_DEFAULT_SONNET_MODEL",
-            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
-            model.id,
-        ),
-        (
-            "ANTHROPIC_DEFAULT_OPUS_MODEL",
-            "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",
-            model.id,
-        ),
-        (
-            "ANTHROPIC_DEFAULT_FABLE_MODEL",
-            "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",
-            model.id,
-        ),
-    ];
-    let name = model.name.trim();
-    let mut fields = Vec::with_capacity(roles.len() * 2);
-    for (model_key, name_key, id) in roles {
-        fields.push((model_key, id.to_string()));
+/// Stack 模式按档写 Stack id。包括 Haiku 在内的 1M 模型都带 `[1m]`：Stack id 不是 `claude-`
+/// 开头，不带标记 Claude Code 会按 200K 算。子代理跟随主模型，不写单独的模型。
+fn stack_model_fields(
+    route_env: &Map<String, Value>,
+    route_name: &str,
+    roles: &BTreeMap<&str, StackRoleModel<'_>>,
+) -> Vec<(&'static str, String)> {
+    let mut fields = if roles.len() == Tier::ENV_ORDER.len() {
+        Vec::with_capacity(roles.len() * 2)
+    } else {
+        // 没有默认 Stack 模型时，缺的档仍用路由契约；已绑定的档不沿用路由的名称或说明。
+        let mut fields = proxy_model_fields(route_env, route_name);
+        fields.retain(|(key, _)| {
+            *key != "CLAUDE_CODE_SUBAGENT_MODEL"
+                && !Tier::ENV_ORDER.into_iter().any(|tier| {
+                    roles.contains_key(tier.alias())
+                        && [tier.model_key(), tier.name_key(), tier.description_key()].contains(key)
+                })
+        });
+        fields
+    };
+    for tier in Tier::ENV_ORDER {
+        let Some(model) = roles.get(tier.alias()) else {
+            continue;
+        };
+        fields.push((tier.model_key(), model.id.to_string()));
+        let name = model.name.trim();
         if !name.is_empty() {
-            fields.push((name_key, name.to_string()));
+            fields.push((tier.name_key(), name.to_string()));
         }
     }
     fields
@@ -1027,15 +1023,24 @@ mod tests {
             "CLAUDE_CODE_SUBAGENT_MODEL": "glm-4.7-air"
         }});
         let route = ClaudeProjection::of(&row);
+        let roles = ["haiku", "sonnet", "opus", "fable"]
+            .into_iter()
+            .map(|role| {
+                (
+                    role,
+                    StackRoleModel {
+                        id: "ccs-claude-z--glm-5.2[1m]",
+                        name: "GLM 5.2",
+                    },
+                )
+            })
+            .collect();
         let stacked = proxy_projection(
             &route,
             "Route",
             "http://127.0.0.1:15721",
             ProxyAuth::AuthToken,
-            Some(StackRoleModel {
-                id: "ccs-claude-z--glm-5.2[1m]",
-                name: "GLM 5.2",
-            }),
+            Some(&roles),
         );
         let env = |key: &str| stacked.env.get(key).and_then(Value::as_str);
         // haiku 档也带 1M 标记：Stack id 不是 claude- 开头，不带标记会按 200K 算。
@@ -1101,6 +1106,46 @@ mod tests {
             .env
             .keys()
             .all(|key| !key.ends_with("_MODEL_DESCRIPTION")));
+    }
+
+    #[test]
+    fn stack_override_keeps_route_metadata_only_for_unbound_tiers() {
+        let route = ClaudeProjection::of(&json!({ "env": {
+            "ANTHROPIC_MODEL": "claude-opus-5.5",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "old-sonnet",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Old Sonnet",
+            "CLAUDE_CODE_SUBAGENT_MODEL": "old-sonnet"
+        }}));
+        let roles = BTreeMap::from([(
+            "sonnet",
+            StackRoleModel {
+                id: "ccs-claude-alt--new-sonnet",
+                name: "New Sonnet",
+            },
+        )]);
+        let stacked = proxy_projection(
+            &route,
+            "Route",
+            "http://127.0.0.1:15721",
+            ProxyAuth::AuthToken,
+            Some(&roles),
+        );
+        let env = |key: &str| stacked.env.get(key).and_then(Value::as_str);
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            Some("ccs-claude-alt--new-sonnet")
+        );
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"),
+            Some("New Sonnet")
+        );
+        assert_eq!(env("ANTHROPIC_DEFAULT_SONNET_MODEL_DESCRIPTION"), None);
+        assert_eq!(env("ANTHROPIC_DEFAULT_OPUS_MODEL"), Some("claude-opus-5-5"));
+        assert_eq!(
+            env("ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION"),
+            Some("Route · claude-opus-5.5")
+        );
+        assert_eq!(env("CLAUDE_CODE_SUBAGENT_MODEL"), None);
     }
 
     #[test]
