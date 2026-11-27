@@ -5383,3 +5383,43 @@ fn duplicate_exact_tool_identity_is_idempotent_without_panic() {
     assert_eq!(tools[1]["function"]["name"], "shell");
     assert_eq!(tools[1]["function"]["description"], "First shell.");
 }
+
+#[test]
+fn responses_agent_message_rejects_unproven_encrypted_content() {
+    // Reviewer requested opaque-task coverage. The policy deliberately does
+    // not infer provenance from the payload's appearance or text alias.
+    for part in [
+        json!({"type": "encrypted_content", "encrypted_content": "gAAAA-real-opaque-task"}),
+        json!({"type": "encrypted_content", "encrypted_content": "只回复 PONG，不做别的。"}),
+        json!({"type": "encrypted_content", "text": "PONG"}),
+        json!({"type": "encrypted_content"}),
+    ] {
+        let input = json!({"model": "glm-5.2", "input": [{
+            "type": "agent_message", "content": [
+                {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+                part
+            ]
+        }]});
+        let err = responses_to_chat_completions_with_reasoning(input, None, true).unwrap_err();
+        assert!(matches!(err, ProxyError::TransformError(_)));
+        assert_eq!(
+            err.to_string(),
+            "格式转换错误: Cannot convert encrypted agent_message content to Chat Completions; use a Responses upstream that supports agent-message decryption"
+        );
+    }
+}
+
+#[test]
+fn responses_agent_message_preserves_explicit_input_text() {
+    let result = convert_test_input(vec![json!({
+        "type": "agent_message", "content": [
+            {"type": "input_text", "text": "Message Type: NEW_TASK\nPayload:\n"},
+            {"type": "input_text", "text": "只回复 PONG，不做别的。"}
+        ]
+    })]);
+    assert_eq!(result["messages"][0]["role"], "user");
+    assert_eq!(
+        result["messages"][0]["content"],
+        "Message Type: NEW_TASK\nPayload:\n\n只回复 PONG，不做别的。"
+    );
+}
