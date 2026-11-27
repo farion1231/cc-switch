@@ -3594,6 +3594,11 @@
       "httpsOnly": "GitLab / Gitea 저장소는 https 주소만 지원합니다",
       "allowInsecureHttp": "안전하지 않은 HTTP 연결 허용 (신뢰할 수 있는 LAN / 자체 호스팅만)",
       "insecureHttpWarning": "HTTP는 암호화되지 않으므로 스킬과 토큰이 네트워크에서 가로채거나 변조될 수 있습니다. 완전히 신뢰할 수 있는 로컬 네트워크에서만 활성화하세요. 액세스 토큰이 있는 요청은 계속 HTTPS를 사용합니다. 이 설정과 허용 목록은 이 기기에만 저장되며 동기화되지 않습니다.",
+      "insecureHttpHostPlaceholder": "예: 192.168.1.10:3000",
+      "insecureHttpHostAdd": "허용",
+      "insecureHttpHostInvalid": "호스트와 포트만 입력하세요. 예: 192.168.1.10:3000",
+      "insecureHttpHostGithub": "GitHub 저장소는 항상 HTTPS를 사용합니다",
+      "insecureHttpRemoveHost": "{{host}} 제거",
       "token": {
         "title": "액세스 토큰",
         "description": "비공개 저장소를 읽을 때 사용합니다. 토큰은 사이트별로 시스템 자격 증명 저장소(macOS 키체인, Windows 자격 증명 관리자)에 저장되며 클라우드 동기화되지 않습니다. 읽기 권한만 있으면 됩니다.",

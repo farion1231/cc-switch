@@ -112,6 +112,9 @@ export function RepoManagerPanel({
   const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
+  const [hostDraft, setHostDraft] = useState("");
+  const [hostError, setHostError] = useState("");
+  const [allowingHost, setAllowingHost] = useState(false);
 
   const handleAdd = async () => {
     setError("");
@@ -124,21 +127,15 @@ export function RepoManagerPanel({
       setError(t("skills.repo.invalidUrl"));
       return;
     }
-    // 开关打开时，用户填的 http 地址本身就是对这台主机的明确放行。先记主机，
-    // 再触发发现：addRepo 会立刻按新仓库去下载，后端此刻就要能查到放行记录。
-    if (insecureHttp?.enabled && /^http:\/\//i.test(repoUrl.trim())) {
-      if (parsed.host) {
-        try {
-          await insecureHttp.onAllowHost(parsed.host);
-        } catch (e) {
-          setError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
-          setAdding(false);
-          return;
-        }
-      }
-    }
     setAdding(true);
     try {
+      // 开关打开时，用户填的 http 地址本身就是对这台主机的明确放行。先记主机，
+      // 再触发发现：addRepo 会立刻按新仓库去下载，后端此刻就要能查到放行记录。
+      if (insecureHttp?.enabled && /^http:\/\//i.test(repoUrl.trim())) {
+        if (parsed.host) {
+          await insecureHttp.onAllowHost(parsed.host);
+        }
+      }
       await onAdd({
         ...(parsed.host ? { host: parsed.host } : {}),
         owner: parsed.owner,
@@ -152,6 +149,40 @@ export function RepoManagerPanel({
       setError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
     } finally {
       setAdding(false);
+    }
+  };
+
+  /**
+   * 手动放行一台主机。同步过来的仓库不带 scheme，本机放行清单里没有它就只能走 https，
+   * 所以这里必须能在不重新添加仓库的前提下补上放行记录。
+   */
+  const handleAllowHost = async () => {
+    if (!insecureHttp) return;
+    setHostError("");
+    const host = hostDraft.trim().toLowerCase();
+    if (!host) return;
+    if (host === GITHUB_HOST) {
+      setHostError(t("skills.repo.insecureHttpHostGithub"));
+      return;
+    }
+    if (!/^[a-z0-9.-]+(:\d{1,5})?$/.test(host)) {
+      setHostError(
+        t("skills.repo.insecureHttpHostInvalid", { host: hostDraft.trim() }),
+      );
+      return;
+    }
+    if (insecureHttp.hosts.some((known) => known.toLowerCase() === host)) {
+      setHostDraft("");
+      return;
+    }
+    setAllowingHost(true);
+    try {
+      await insecureHttp.onAllowHost(host);
+      setHostDraft("");
+    } catch (e) {
+      setHostError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
+    } finally {
+      setAllowingHost(false);
     }
   };
 
@@ -211,6 +242,12 @@ export function RepoManagerPanel({
                           <button
                             type="button"
                             className="rounded-control border border-border px-2 py-1 font-mono text-xs text-fg-2 hover:text-danger-text"
+                            aria-label={t(
+                              "skills.repo.insecureHttpRemoveHost",
+                              {
+                                host,
+                              },
+                            )}
                             onClick={() => insecureHttp.onRemoveHost(host)}
                           >
                             {host}
@@ -218,6 +255,43 @@ export function RepoManagerPanel({
                         </li>
                       ))}
                     </ul>
+                  )}
+                  <div className="flex items-start gap-1.5">
+                    <input
+                      className={cn(MONO_FIELD_CLASS, "min-w-0 flex-1")}
+                      placeholder={t("skills.repo.insecureHttpHostPlaceholder")}
+                      value={hostDraft}
+                      aria-label={t("skills.repo.insecureHttpHostPlaceholder")}
+                      aria-invalid={Boolean(hostError)}
+                      aria-describedby={
+                        hostError ? "sk-insecure-http-host-error" : undefined
+                      }
+                      autoComplete="off"
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      onChange={(event) => {
+                        setHostDraft(event.target.value);
+                        setHostError("");
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void handleAllowHost();
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="neutral"
+                      size="regular"
+                      disabled={allowingHost || !hostDraft.trim()}
+                      onClick={() => void handleAllowHost()}
+                    >
+                      {t("skills.repo.insecureHttpHostAdd")}
+                    </Button>
+                  </div>
+                  {hostError && (
+                    <FieldError id="sk-insecure-http-host-error">
+                      {hostError}
+                    </FieldError>
                   )}
                 </>
               )}

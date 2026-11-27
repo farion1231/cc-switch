@@ -3523,6 +3523,11 @@
       "httpsOnly": "GitLab ve Gitea depoları yalnızca https adresiyle desteklenir",
       "allowInsecureHttp": "Güvensiz HTTP bağlantılarına izin ver (yalnızca güvenilir LAN / kendi sunucunuz)",
       "insecureHttpWarning": "HTTP şifrelenmemiş veri aktarır: beceriler ve tokenlar ağda ele geçirilebilir veya değiştirilebilir. Yalnızca tamamen güvenilir bir yerel ağda etkinleştirin. Erişim tokenlı istekler yine HTTPS kullanır. Bu anahtar ve izin listesi yalnızca bu cihazda saklanır ve senkronize edilmez.",
+      "insecureHttpHostPlaceholder": "ör. 192.168.1.10:3000",
+      "insecureHttpHostAdd": "İzin ver",
+      "insecureHttpHostInvalid": "Yalnızca ana makine ve bağlantı noktasını girin, ör. 192.168.1.10:3000",
+      "insecureHttpHostGithub": "GitHub depoları her zaman HTTPS kullanır",
+      "insecureHttpRemoveHost": "{{host}} kaldır",
       "token": {
         "title": "Erişim belirteçleri",
         "description": "Özel depoları okumak için kullanılır. Belirteçler site başına sistemin kimlik bilgisi deposunda (macOS Anahtar Zinciri, Windows Kimlik Bilgileri Yöneticisi) saklanır ve asla eşitlenmez. Salt okuma izni yeterlidir.",

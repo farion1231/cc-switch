@@ -3594,6 +3594,11 @@
       "httpsOnly": "GitLab- und Gitea-Repositories müssen eine https-Adresse verwenden",
       "allowInsecureHttp": "Unsichere HTTP-Verbindungen erlauben (nur für vertrauenswürdige LANs / Self-Hosting)",
       "insecureHttpWarning": "HTTP überträgt unverschlüsselt: Skills und Tokens können im Netzwerk abgefangen oder ersetzt werden. Nur in einem vollständig vertrauenswürdigen lokalen Netzwerk aktivieren. Anfragen mit Zugriffstoken nutzen weiterhin HTTPS. Schalter und Zulassungsliste werden nur auf diesem Gerät gespeichert und nicht synchronisiert.",
+      "insecureHttpHostPlaceholder": "z. B. 192.168.1.10:3000",
+      "insecureHttpHostAdd": "Zulassen",
+      "insecureHttpHostInvalid": "Nur Host und Port eingeben, z. B. 192.168.1.10:3000",
+      "insecureHttpHostGithub": "GitHub-Repositories verwenden immer HTTPS",
+      "insecureHttpRemoveHost": "{{host}} entfernen",
       "token": {
         "title": "Zugriffstokens",
         "description": "Werden zum Lesen privater Repositories verwendet. Tokens werden pro Seite im Anmeldedatenspeicher des Systems gespeichert (macOS-Schlüsselbund, Windows-Anmeldeinformationsverwaltung) und nie synchronisiert. Lesezugriff genügt.",

@@ -3594,6 +3594,11 @@
       "httpsOnly": "GitLab / Gitea 仓库只支持 https 地址",
       "allowInsecureHttp": "允许不安全的 HTTP 连接（仅限可信内网/自建实例）",
       "insecureHttpWarning": "HTTP 传输不加密，技能内容与凭证可能被窃听或篡改。请仅在完全可信的本地网络中启用；带访问令牌的请求仍只走 HTTPS。开关与放行清单只保存在本机，不会随云同步。",
+      "insecureHttpHostPlaceholder": "例如 192.168.1.10:3000",
+      "insecureHttpHostAdd": "放行",
+      "insecureHttpHostInvalid": "只填主机名和端口，例如 192.168.1.10:3000",
+      "insecureHttpHostGithub": "GitHub 仓库始终使用 HTTPS",
+      "insecureHttpRemoveHost": "移除 {{host}}",
       "token": {
         "title": "访问令牌",
         "description": "读取私有仓库时使用。令牌按站点保存在系统的凭据存储里（macOS 钥匙串、Windows 凭据管理器），不随云同步，只需要只读权限。",

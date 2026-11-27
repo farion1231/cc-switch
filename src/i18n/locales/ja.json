@@ -3594,6 +3594,11 @@
       "httpsOnly": "GitLab / Gitea リポジトリは https のアドレスのみ対応しています",
       "allowInsecureHttp": "安全でない HTTP 接続を許可する（信頼できる LAN／セルフホストのみ）",
       "insecureHttpWarning": "HTTP は暗号化されないため、スキルやトークンがネットワーク上で傍受・改変される可能性があります。完全に信頼できるローカルネットワークでのみ有効にしてください。アクセストークン付きのリクエストは引き続き HTTPS を使用します。この設定と許可リストはこのデバイスにのみ保存され、同期されません。",
+      "insecureHttpHostPlaceholder": "例：192.168.1.10:3000",
+      "insecureHttpHostAdd": "許可",
+      "insecureHttpHostInvalid": "ホスト名とポートのみ入力してください（例：192.168.1.10:3000）",
+      "insecureHttpHostGithub": "GitHub のリポジトリは常に HTTPS を使用します",
+      "insecureHttpRemoveHost": "{{host}} を削除",
       "token": {
         "title": "アクセストークン",
         "description": "プライベートリポジトリの読み取りに使います。トークンはサイトごとにシステムの資格情報ストア（macOS のキーチェーン、Windows の資格情報マネージャー）に保存され、クラウド同期されません。読み取り権限だけで十分です。",

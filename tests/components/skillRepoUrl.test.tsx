@@ -306,7 +306,65 @@ describe("RepoManagerPanel add form", () => {
     expect(screen.getByText("skills.repo.insecureHttpWarning")).toBeVisible();
     fireEvent.click(screen.getByRole("checkbox"));
     expect(onChange).toHaveBeenCalledWith(false);
-    fireEvent.click(screen.getByRole("button", { name: /git\.internal:3000/ }));
+    // 无障碍名称说清点击是移除，可见文字仍是主机本身
+    const chip = screen.getByRole("button", {
+      name: "skills.repo.insecureHttpRemoveHost",
+    });
+    expect(chip).toHaveTextContent("git.internal:3000");
+    fireEvent.click(chip);
     expect(onRemoveHost).toHaveBeenCalledWith("git.internal:3000");
+  });
+
+  it("allows a host typed straight into the allowlist, for repos synced from another device", async () => {
+    const onAllowHost = vi.fn().mockResolvedValue(undefined);
+    renderPanel(undefined, {
+      enabled: true,
+      hosts: [],
+      onChange: vi.fn(),
+      onAllowHost,
+      onRemoveHost: vi.fn(),
+    });
+    fireEvent.change(
+      screen.getByLabelText("skills.repo.insecureHttpHostPlaceholder"),
+      { target: { value: "  Git.Internal:3000  " } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "skills.repo.insecureHttpHostAdd" }),
+    );
+    await waitFor(() =>
+      expect(onAllowHost).toHaveBeenCalledWith("git.internal:3000"),
+    );
+  });
+
+  it("rejects allowlist entries that are not a bare host, and refuses GitHub", async () => {
+    const onAllowHost = vi.fn().mockResolvedValue(undefined);
+    renderPanel(undefined, {
+      enabled: true,
+      hosts: [],
+      onChange: vi.fn(),
+      onAllowHost,
+      onRemoveHost: vi.fn(),
+    });
+    const field = screen.getByLabelText(
+      "skills.repo.insecureHttpHostPlaceholder",
+    );
+    const allow = screen.getByRole("button", {
+      name: "skills.repo.insecureHttpHostAdd",
+    });
+
+    fireEvent.change(field, {
+      target: { value: "http://git.internal:3000/x" },
+    });
+    fireEvent.click(allow);
+    expect(
+      screen.getByText("skills.repo.insecureHttpHostInvalid"),
+    ).toBeInTheDocument();
+
+    fireEvent.change(field, { target: { value: "github.com" } });
+    fireEvent.click(allow);
+    expect(
+      screen.getByText("skills.repo.insecureHttpHostGithub"),
+    ).toBeInTheDocument();
+    expect(onAllowHost).not.toHaveBeenCalled();
   });
 });
