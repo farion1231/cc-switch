@@ -284,6 +284,8 @@ function createCatalogRow(seed?: Partial<CodexCatalogModel>): CodexCatalogRow {
     model: seed?.model ?? "",
     displayName: seed?.displayName ?? "",
     contextWindow: seed?.contextWindow ?? "",
+    ...(typeof seed?.fast === "boolean" ? { fast: seed.fast } : {}),
+    ...(typeof seed?.lite === "boolean" ? { lite: seed.lite } : {}),
     // Carry native-profile overrides verbatim (not user-editable in the row UI,
     // but must survive load->save so the official catalog fidelity is kept).
     ...(seed?.supportsParallelToolCalls !== undefined
@@ -405,6 +407,8 @@ function catalogRowsMatchModels(
       (row.displayName ?? "") === (incoming.displayName ?? "") &&
       String(row.contextWindow ?? "") ===
         String(incoming.contextWindow ?? "") &&
+      (row.fast ?? null) === (incoming.fast ?? null) &&
+      (row.lite ?? null) === (incoming.lite ?? null) &&
       (row.supportsParallelToolCalls ?? null) ===
         (incoming.supportsParallelToolCalls ?? null) &&
       (row.baseInstructions ?? "") === (incoming.baseInstructions ?? "") &&
@@ -1957,6 +1961,47 @@ export function CodexFormFields({
                       <Trash2 className="h-4 w-4" />
                     </Button>
                   </HoverTip>
+                  {!isCopilotPreset &&
+                    effectiveApiFormat === "openai_responses" && (
+                      <div className="col-span-full flex gap-4 px-1 text-xs text-fg-2">
+                        {(["fast", "lite"] as const).map((tier) => (
+                          <label key={tier} className="flex items-center gap-1">
+                            {tier === "fast" ? "Fast" : "Lite"}
+                            <select
+                              value={
+                                row[tier] === undefined
+                                  ? "inherit"
+                                  : String(row[tier])
+                              }
+                              onChange={(event) =>
+                                handleUpdateCatalogRow(index, {
+                                  [tier]:
+                                    event.target.value === "inherit"
+                                      ? undefined
+                                      : event.target.value === "true",
+                                })
+                              }
+                            >
+                              <option value="inherit">
+                                {t("codexConfig.tierInherit", {
+                                  defaultValue: "Default",
+                                })}
+                              </option>
+                              <option value="true">
+                                {t("codexConfig.tierEnabled", {
+                                  defaultValue: "Enabled",
+                                })}
+                              </option>
+                              <option value="false">
+                                {t("codexConfig.tierDisabled", {
+                                  defaultValue: "Disabled",
+                                })}
+                              </option>
+                            </select>
+                          </label>
+                        ))}
+                      </div>
+                    )}
                   <GptContextWindowHint
                     modelId={row.model}
                     contextWindow={row.contextWindow}

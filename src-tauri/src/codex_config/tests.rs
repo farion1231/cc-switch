@@ -653,6 +653,8 @@ fn proxy_chat_catalog_entries_carry_reasoning_summaries_flag() {
         base_instructions: None,
         reasoning_levels: None,
         default_reasoning_level: None,
+        fast: None,
+        lite: None,
     }];
     let catalog = codex_model_catalog_from_specs(
         &specs,
@@ -1168,6 +1170,8 @@ fn catalog_infers_image_input_independently_of_tool_profile() {
             base_instructions: None,
             reasoning_levels: None,
             default_reasoning_level: None,
+            fast: None,
+            lite: None,
         },
         CodexCatalogModelSpec {
             model: "qwen/qwen3-coder-plus".to_string(),
@@ -1178,6 +1182,8 @@ fn catalog_infers_image_input_independently_of_tool_profile() {
             base_instructions: None,
             reasoning_levels: None,
             default_reasoning_level: None,
+            fast: None,
+            lite: None,
         },
         CodexCatalogModelSpec {
             model: "deepseek/deepseek-v4-flash-0731".to_string(),
@@ -1188,6 +1194,8 @@ fn catalog_infers_image_input_independently_of_tool_profile() {
             base_instructions: None,
             reasoning_levels: None,
             default_reasoning_level: None,
+            fast: None,
+            lite: None,
         },
         CodexCatalogModelSpec {
             model: "glm-5.2v".to_string(),
@@ -1198,6 +1206,8 @@ fn catalog_infers_image_input_independently_of_tool_profile() {
             base_instructions: None,
             reasoning_levels: None,
             default_reasoning_level: None,
+            fast: None,
+            lite: None,
         },
         CodexCatalogModelSpec {
             model: "deepseek-v4-flash".to_string(),
@@ -1208,6 +1218,8 @@ fn catalog_infers_image_input_independently_of_tool_profile() {
             base_instructions: None,
             reasoning_levels: None,
             default_reasoning_level: None,
+            fast: None,
+            lite: None,
         },
         CodexCatalogModelSpec {
             model: "custom-text-alias".to_string(),
@@ -1218,6 +1230,8 @@ fn catalog_infers_image_input_independently_of_tool_profile() {
             base_instructions: None,
             reasoning_levels: None,
             default_reasoning_level: None,
+            fast: None,
+            lite: None,
         },
     ];
 
@@ -1568,6 +1582,8 @@ fn proxy_catalog_profiles_keep_apply_patch_and_disable_original_image_detail() {
         base_instructions: None,
         reasoning_levels: None,
         default_reasoning_level: None,
+        fast: None,
+        lite: None,
     }];
     let mut proxy_template = template.clone();
     proxy_template["apply_patch_tool_type"] = json!("freeform");
@@ -2035,6 +2051,174 @@ fn card_can_keep_official_speed_tiers_on_native_gpt_rows() {
 }
 
 #[test]
+fn absent_or_invalid_route_speed_tiers_are_explicitly_disabled() {
+    with_official_models(official_gpt_rows(), || {
+        for value in [None, Some(json!(null)), Some(json!("true")), Some(json!(1))] {
+            let mut route = json!({"modelCatalog": {"models": [{"model": "gpt-6-sol"}]}});
+            if let Some(value) = value {
+                route["modelCatalog"]["officialSpeedTiers"] = value;
+            }
+            let member = json!({"modelCatalog": {"officialSpeedTiers": true, "models": [{"model": "gpt-5.5", "fast": true}]}});
+            let direct = codex_model_catalog_from_settings(
+                &route,
+                "",
+                CodexCatalogToolProfile::NativeResponses,
+            )
+            .unwrap()
+            .unwrap();
+            let stack = plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &route,
+                    config_text: "",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[CodexStackCatalogMember {
+                    key: "relay",
+                    provider_name: "Relay",
+                    row: CodexCatalogRow {
+                        settings: &member,
+                        config_text: "",
+                        profile: CodexCatalogToolProfile::NativeResponses,
+                    },
+                }],
+                false,
+            )
+            .unwrap();
+            assert_eq!(
+                stack["models"][1]["additional_speed_tiers"],
+                json!(["fast"])
+            );
+            for mut catalog in [direct, stack] {
+                assert_eq!(catalog["cc_switch_official_speed_tiers"], false);
+                // Legacy row inference must not override the route's explicit default.
+                catalog["models"][0]["additional_speed_tiers"] = json!(["fast"]);
+                let restored =
+                    build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+                assert!(restored.get("officialSpeedTiers").is_none());
+                assert_eq!(restored["models"].as_array().unwrap().len(), 1);
+            }
+        }
+        let official = plan_codex_stack_catalog(
+            CodexStackRoute::Official {
+                native: official_gpt_rows(),
+                config_text: "",
+            },
+            &[],
+            false,
+        )
+        .unwrap();
+        assert!(official.get("cc_switch_official_speed_tiers").is_none());
+    });
+}
+
+#[test]
+fn provider_speed_tiers_recover_across_direct_and_stack_catalogs() {
+    with_official_models(official_gpt_rows(), || {
+        for (route_fast, member_fast) in [(true, false), (false, true)] {
+            let route = json!({"modelCatalog": {"officialSpeedTiers": route_fast, "models": [{"model": "gpt-6-sol", "fast": false}]}});
+            let member = json!({"modelCatalog": {"officialSpeedTiers": member_fast, "models": [{"model": "gpt-5.5", "fast": true}]}});
+            let stack = plan_codex_stack_catalog(
+                CodexStackRoute::ThirdParty(CodexCatalogRow {
+                    settings: &route,
+                    config_text: "",
+                    profile: CodexCatalogToolProfile::NativeResponses,
+                }),
+                &[CodexStackCatalogMember {
+                    key: "relay",
+                    provider_name: "Relay",
+                    row: CodexCatalogRow {
+                        settings: &member,
+                        config_text: "",
+                        profile: CodexCatalogToolProfile::NativeResponses,
+                    },
+                }],
+                false,
+            )
+            .unwrap();
+            let direct = codex_model_catalog_from_settings(
+                &route,
+                "",
+                CodexCatalogToolProfile::NativeResponses,
+            )
+            .unwrap()
+            .unwrap();
+            for catalog in [direct, stack] {
+                assert_eq!(catalog["cc_switch_official_speed_tiers"], route_fast);
+                let mut restored =
+                    build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+                assert_eq!(
+                    restored
+                        .get("officialSpeedTiers")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    route_fast
+                );
+                assert_eq!(restored["models"].as_array().unwrap().len(), 1);
+                assert_eq!(restored["models"][0]["fast"], false);
+                restored["models"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("fast");
+                let regenerated = codex_model_catalog_from_settings(
+                    &json!({"modelCatalog": restored}),
+                    "",
+                    CodexCatalogToolProfile::NativeResponses,
+                )
+                .unwrap()
+                .unwrap();
+                assert_eq!(
+                    regenerated["models"][0]["additional_speed_tiers"],
+                    if route_fast {
+                        json!(["fast"])
+                    } else {
+                        json!([])
+                    }
+                );
+            }
+        }
+        let old = codex_model_catalog_from_settings(
+            &json!({"modelCatalog": {"officialSpeedTiers":true,"models":[{"model":"gpt-6-sol"}]}}),
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .unwrap()
+        .unwrap();
+        let mut legacy = old.clone();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("cc_switch_official_speed_tiers");
+        assert_eq!(
+            build_simplified_catalog_from_texts("", &legacy.to_string()).unwrap()
+                ["officialSpeedTiers"],
+            true
+        );
+        let mut explicit_off = old;
+        explicit_off["cc_switch_official_speed_tiers"] = json!(false);
+        assert!(
+            build_simplified_catalog_from_texts("", &explicit_off.to_string())
+                .unwrap()
+                .get("officialSpeedTiers")
+                .is_none()
+        );
+        let overridden = codex_model_catalog_from_settings(&json!({"modelCatalog": {"models":[{"model":"gpt-6-sol","fast":true},{"model":"gpt-5.5"}]}}), "", CodexCatalogToolProfile::NativeResponses).unwrap().unwrap();
+        let restored = build_simplified_catalog_from_texts("", &overridden.to_string()).unwrap();
+        assert!(restored.get("officialSpeedTiers").is_none());
+        let regenerated = codex_model_catalog_from_settings(
+            &json!({"modelCatalog": restored}),
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            regenerated["models"][1]["additional_speed_tiers"],
+            json!([])
+        );
+    });
+}
+
+#[test]
 fn official_models_match_like_codex() {
     let rows = official_gpt_rows();
     let found = |model: &str| {
@@ -2239,7 +2423,8 @@ fn official_gpt_context_windows_survive_catalog_round_trip() {
             )
             .unwrap()
             .unwrap();
-            assert_eq!(regenerated, catalog);
+            assert_eq!(regenerated["models"], catalog["models"]);
+            assert_eq!(regenerated["cc_switch_official_speed_tiers"], false);
         }
     });
 }
@@ -2262,7 +2447,8 @@ fn official_gpt_global_context_windows_do_not_become_per_model_overrides() {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(regenerated, catalog);
+        assert_eq!(regenerated["models"], catalog["models"]);
+        assert_eq!(regenerated["cc_switch_official_speed_tiers"], false);
     });
 }
 
@@ -2304,6 +2490,164 @@ fn stacked_official_gpt_rows_keep_each_providers_context_window() {
             );
         }
     });
+}
+
+#[test]
+fn explicit_fast_and_lite_are_per_model_in_native_catalog() {
+    let models = catalog_for(
+        json!([
+            { "model": "first", "fast": true, "lite": true },
+            { "model": "second", "fast": false, "lite": false }
+        ]),
+        "",
+        CodexCatalogToolProfile::NativeResponses,
+    );
+    assert_eq!(models[0]["use_responses_lite"], true);
+    assert_eq!(models[0]["additional_speed_tiers"], json!(["fast"]));
+    assert_eq!(models[0]["service_tiers"][0]["id"], "priority");
+    assert_eq!(models[1]["use_responses_lite"], false);
+    assert_eq!(models[1]["additional_speed_tiers"], json!([]));
+}
+
+#[test]
+fn legacy_lite_flag_applies_and_round_trips() {
+    let models = catalog_for(
+        json!([
+            { "model": "enabled", "fast": true, "useResponsesLite": true },
+            { "model": "disabled", "fast": false, "useResponsesLite": false },
+            { "model": "override", "lite": false, "useResponsesLite": true }
+        ]),
+        "",
+        CodexCatalogToolProfile::NativeResponses,
+    );
+    assert_eq!(models[0]["use_responses_lite"], true);
+    assert_eq!(models[1]["cc_switch_lite"], false);
+    assert_eq!(models[2]["use_responses_lite"], false);
+    let restored =
+        build_simplified_catalog_from_texts("", &json!({"models": models}).to_string()).unwrap();
+    assert_eq!(restored["models"][0]["lite"], true);
+    assert_eq!(restored["models"][1]["lite"], false);
+    assert_eq!(restored["models"][1]["fast"], false);
+}
+
+#[test]
+fn per_model_tiers_work_in_stack_and_not_converted_profiles() {
+    let settings = json!({ "modelCatalog": { "models": [{ "model": "example", "fast": true, "lite": true }] } });
+    let native = codex_stack_third_party_rows(&CodexCatalogRow {
+        settings: &settings,
+        config_text: "",
+        profile: CodexCatalogToolProfile::NativeResponses,
+    })
+    .unwrap();
+    assert_eq!(native[0]["use_responses_lite"], true);
+    assert_eq!(native[0]["additional_speed_tiers"], json!(["fast"]));
+    for profile in [
+        CodexCatalogToolProfile::ProxyChat,
+        CodexCatalogToolProfile::Anthropic,
+    ] {
+        let rows = codex_stack_third_party_rows(&CodexCatalogRow {
+            settings: &settings,
+            config_text: "",
+            profile,
+        })
+        .unwrap();
+        assert_ne!(rows[0]["use_responses_lite"], true);
+        assert_ne!(rows[0]["additional_speed_tiers"], json!(["fast"]));
+    }
+}
+
+#[test]
+fn direct_and_stacked_tier_defaults_and_overrides_follow_existing_contract() {
+    with_official_models(official_gpt_rows(), || {
+        let settings = json!({"modelCatalog": {"officialSpeedTiers": true, "models": [
+            {"model": "gpt-6-sol"},
+            {"model": "example/model", "fast": true, "lite": true},
+            {"model": "gpt-5.5", "fast": false, "lite": false}
+        ]}});
+        let direct = codex_model_catalog_from_settings(
+            &settings,
+            "",
+            CodexCatalogToolProfile::NativeResponses,
+        )
+        .unwrap()
+        .unwrap();
+        let stack = plan_codex_stack_catalog(
+            CodexStackRoute::ThirdParty(CodexCatalogRow {
+                settings: &settings,
+                config_text: "",
+                profile: CodexCatalogToolProfile::NativeResponses,
+            }),
+            &[],
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            direct["models"][0]["additional_speed_tiers"],
+            json!(["fast"])
+        );
+        assert_eq!(stack["models"][0]["additional_speed_tiers"], json!([]));
+        for catalog in [direct, stack] {
+            assert_eq!(catalog["models"][0]["use_responses_lite"], false);
+            assert_eq!(catalog["models"][1]["use_responses_lite"], true);
+            assert_eq!(
+                catalog["models"][1]["additional_speed_tiers"],
+                json!(["fast"])
+            );
+            assert_eq!(catalog["models"][2]["use_responses_lite"], false);
+            assert_eq!(catalog["models"][2]["additional_speed_tiers"], json!([]));
+        }
+    });
+}
+
+#[test]
+fn converted_profiles_preserve_tier_choices_without_enabling_them() {
+    with_official_models(official_gpt_rows(), || {
+        for profile in [
+            CodexCatalogToolProfile::ProxyChat,
+            CodexCatalogToolProfile::Anthropic,
+            CodexCatalogToolProfile::Copilot,
+        ] {
+            let settings = json!({"modelCatalog": {"models": [
+                {"model": "gpt-6-sol", "fast": true, "lite": true},
+                {"model": "custom", "fast": false, "lite": false},
+                {"model": "unset"}
+            ]}});
+            let catalog = codex_model_catalog_from_settings(&settings, "", profile)
+                .unwrap()
+                .unwrap();
+            for (index, value) in [(0, true), (1, false)] {
+                assert_eq!(catalog["models"][index]["cc_switch_fast"], value);
+                assert_eq!(catalog["models"][index]["cc_switch_lite"], value);
+                assert_ne!(catalog["models"][index]["use_responses_lite"], true);
+                assert_ne!(
+                    catalog["models"][index]["additional_speed_tiers"],
+                    json!(["fast"])
+                );
+            }
+            assert!(catalog["models"][2].get("cc_switch_fast").is_none());
+            assert!(catalog["models"][2].get("cc_switch_lite").is_none());
+            let restored = build_simplified_catalog_from_texts("", &catalog.to_string()).unwrap();
+            assert_eq!(restored["models"][0]["fast"], true);
+            assert_eq!(restored["models"][0]["lite"], true);
+            assert_eq!(restored["models"][1]["fast"], false);
+            assert_eq!(restored["models"][1]["lite"], false);
+            assert!(restored["models"][2].get("fast").is_none());
+            assert!(restored["models"][2].get("lite").is_none());
+        }
+    });
+}
+
+#[test]
+fn recovered_catalog_preserves_enabled_per_model_tiers() {
+    let models = catalog_for(
+        json!([{ "model": "custom", "fast": true, "lite": true }]),
+        "",
+        CodexCatalogToolProfile::NativeResponses,
+    );
+    let restored =
+        build_simplified_catalog_from_texts("", &json!({"models": models}).to_string()).unwrap();
+    assert_eq!(restored["models"][0]["fast"], true);
+    assert_eq!(restored["models"][0]["lite"], true);
 }
 
 #[test]

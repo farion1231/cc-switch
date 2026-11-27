@@ -87,6 +87,12 @@ export const mapCodexCatalogModelForForm = (item: any): CodexCatalogModel => {
             typeof item?.context_window === "number"
           ? item.context_window
           : "",
+    ...(typeof item?.fast === "boolean" ? { fast: item.fast } : {}),
+    ...(typeof item?.lite === "boolean"
+      ? { lite: item.lite }
+      : typeof item?.useResponsesLite === "boolean"
+        ? { lite: item.useResponsesLite }
+        : {}),
     ...(supportsParallelToolCalls !== undefined
       ? { supportsParallelToolCalls }
       : {}),

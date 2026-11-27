@@ -1496,6 +1496,8 @@ struct CodexCatalogModelSpec {
     /// template default is kept if it is still in the list, otherwise the last
     /// (highest) declared level wins.
     default_reasoning_level: Option<String>,
+    fast: Option<bool>,
+    lite: Option<bool>,
 }
 
 fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
@@ -1593,6 +1595,15 @@ fn codex_catalog_model_specs(settings: &Value) -> Vec<CodexCatalogModelSpec> {
             base_instructions,
             reasoning_levels,
             default_reasoning_level,
+            fast: model_config.get("fast").and_then(Value::as_bool),
+            lite: model_config
+                .get("lite")
+                .and_then(Value::as_bool)
+                .or_else(|| {
+                    model_config
+                        .get("useResponsesLite")
+                        .and_then(Value::as_bool)
+                }),
         });
     }
 
@@ -2359,13 +2370,56 @@ fn codex_model_catalog_from_settings(
         return Ok(None);
     }
     let mut catalog = codex_catalog_from_specs_for_row(&specs, config_text, profile)?;
+    let keep_official_speed_tiers = codex_card_keeps_official_speed_tiers(settings);
+    catalog["cc_switch_official_speed_tiers"] = json!(keep_official_speed_tiers);
     if let Some(model) = codex_card_auto_review_model(settings) {
         apply_codex_auto_review_model(&mut catalog, model);
     }
-    if codex_card_keeps_official_speed_tiers(settings) {
+    if keep_official_speed_tiers {
         apply_codex_official_speed_tiers(&mut catalog, config_text, profile);
     }
+    if let Some(entries) = catalog.get_mut("models").and_then(Value::as_array_mut) {
+        apply_codex_per_model_tiers(entries, &specs, profile);
+    }
     Ok(Some(catalog))
+}
+
+fn apply_codex_per_model_tiers(
+    entries: &mut [Value],
+    specs: &[CodexCatalogModelSpec],
+    profile: CodexCatalogToolProfile,
+) {
+    for (entry, spec) in entries.iter_mut().zip(specs) {
+        let Some(obj) = entry.as_object_mut() else {
+            continue;
+        };
+        if let Some(fast) = spec.fast {
+            obj.insert("cc_switch_fast".into(), json!(fast));
+        }
+        if let Some(lite) = spec.lite {
+            obj.insert("cc_switch_lite".into(), json!(lite));
+        }
+        if profile != CodexCatalogToolProfile::NativeResponses {
+            continue;
+        }
+        if let Some(fast) = spec.fast {
+            obj.insert(
+                "additional_speed_tiers".into(),
+                if fast { json!(["fast"]) } else { json!([]) },
+            );
+            obj.insert(
+                "service_tiers".into(),
+                if fast {
+                    json!([{ "id": "priority", "name": "Fast", "description": "Faster responses" }])
+                } else {
+                    json!([])
+                },
+            );
+        }
+        if let Some(lite) = spec.lite {
+            obj.insert("use_responses_lite".into(), json!(lite));
+        }
+    }
 }
 
 /// 卡上的「保留官方 Fast 档」（`modelCatalog.officialSpeedTiers`）。和自动审批模型一样只在
@@ -2861,6 +2915,12 @@ pub(crate) fn plan_codex_stack_catalog(
     stack: &[CodexStackCatalogMember<'_>],
     classic_subagents: bool,
 ) -> Result<Value, AppError> {
+    let route_speed_tiers = match &route {
+        CodexStackRoute::ThirdParty(row) => {
+            Some(codex_card_keeps_official_speed_tiers(row.settings))
+        }
+        CodexStackRoute::Official { .. } => None,
+    };
     let mut entries = match route {
         CodexStackRoute::ThirdParty(row) => {
             let mut rows = codex_stack_third_party_rows(&row)?;
@@ -2941,7 +3001,11 @@ pub(crate) fn plan_codex_stack_catalog(
             }
         }
     }
-    Ok(json!({ "models": entries }))
+    let mut catalog = json!({ "models": entries });
+    if let Some(keep) = route_speed_tiers {
+        catalog["cc_switch_official_speed_tiers"] = json!(keep);
+    }
+    Ok(catalog)
 }
 
 /// Codex 按目录行的 `multi_agent_version` 决定子 agent 用哪套工具（codex-rs
@@ -2974,6 +3038,7 @@ pub(crate) fn codex_stack_third_party_rows(
         sink_row_windows(entry, &windows, true);
     }
     apply_codex_responses_lite(&mut entries, &specs, row.profile, follows_codex_default);
+    apply_codex_per_model_tiers(&mut entries, &specs, row.profile);
     Ok(entries)
 }
 
@@ -3264,10 +3329,11 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
                 {
                     restored["displayName"] = json!(name);
                 }
-                official_speed_tiers |= entry
-                    .get("additional_speed_tiers")
-                    .and_then(Value::as_array)
-                    .is_some_and(|tiers| !tiers.is_empty());
+                official_speed_tiers |= entry.get("cc_switch_fast").is_none()
+                    && entry
+                        .get("additional_speed_tiers")
+                        .and_then(Value::as_array)
+                        .is_some_and(|tiers| !tiers.is_empty());
                 // Compare effort IDs, not descriptions: wording changes in the official
                 // catalog must not become sticky user overrides on recovery.
                 let efforts = |row: &Value| {
@@ -3292,6 +3358,12 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
                         restored["defaultReasoningLevel"] = json!(default);
                     }
                 }
+                if let Some(lite) = entry.get("cc_switch_lite").and_then(Value::as_bool) {
+                    restored["lite"] = json!(lite);
+                }
+                if let Some(fast) = entry.get("cc_switch_fast").and_then(Value::as_bool) {
+                    restored["fast"] = json!(fast);
+                }
                 entries.push(restored);
                 continue;
             }
@@ -3299,6 +3371,12 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
 
         let mut obj = serde_json::Map::new();
         obj.insert("model".to_string(), json!(model));
+        if let Some(lite) = entry.get("cc_switch_lite").and_then(Value::as_bool) {
+            obj.insert("lite".into(), json!(lite));
+        }
+        if let Some(fast) = entry.get("cc_switch_fast").and_then(Value::as_bool) {
+            obj.insert("fast".into(), json!(fast));
+        }
 
         if let Some(display_name) = entry
             .get("display_name")
@@ -3369,7 +3447,11 @@ fn build_simplified_catalog_from_texts(config_text: &str, catalog_text: &str) ->
     if let Some(model) = auto_review {
         simplified["autoReviewModel"] = json!(model);
     }
-    if official_speed_tiers {
+    if catalog
+        .get("cc_switch_official_speed_tiers")
+        .and_then(Value::as_bool)
+        .unwrap_or(official_speed_tiers)
+    {
         simplified["officialSpeedTiers"] = json!(true);
     }
     Some(simplified)

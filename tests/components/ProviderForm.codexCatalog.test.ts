@@ -108,6 +108,48 @@ describe("ProviderForm Codex catalog helpers", () => {
     ]);
   });
 
+  it("round-trips per-model Fast and Lite flags without affecting other rows", () => {
+    const stored = [
+      { model: "fast-lite", fast: true, lite: true },
+      { model: "disabled", fast: false, lite: false },
+      { model: "legacy" },
+    ];
+    expect(
+      normalizeCodexCatalogModelsForSave(
+        stored.map(mapCodexCatalogModelForForm),
+      ),
+    ).toEqual(stored);
+  });
+
+  it("loads legacy useResponsesLite and preserves explicit false", () => {
+    const stored = [
+      { model: "enabled", fast: true, useResponsesLite: true },
+      { model: "disabled", fast: false, useResponsesLite: false },
+      { model: "override", lite: false, useResponsesLite: true },
+    ];
+    expect(
+      normalizeCodexCatalogModelsForSave(
+        stored.map(mapCodexCatalogModelForForm),
+      ),
+    ).toEqual([
+      { model: "enabled", fast: true, lite: true },
+      { model: "disabled", fast: false, lite: false },
+      { model: "override", lite: false },
+    ]);
+  });
+
+  it("ignores invalid tier values and falls back to a boolean legacy Lite flag", () => {
+    const stored = [
+      { model: "invalid", fast: "true", lite: "false", useResponsesLite: true },
+      { model: "absent", fast: 1, lite: null, useResponsesLite: "true" },
+    ];
+    expect(
+      normalizeCodexCatalogModelsForSave(
+        stored.map(mapCodexCatalogModelForForm),
+      ),
+    ).toEqual([{ model: "invalid", lite: true }, { model: "absent" }]);
+  });
+
   it("trims reasoning level values on save", () => {
     // 手编 JSON 里的 " high " 不得原样落库/发给上游。
     expect(

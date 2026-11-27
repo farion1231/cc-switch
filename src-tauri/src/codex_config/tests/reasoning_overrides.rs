@@ -233,7 +233,8 @@ fn legacy_official_reasoning_overrides_survive_catalog_recovery() {
                     )
                     .unwrap()
                     .unwrap();
-                    assert_eq!(regenerated, catalog);
+                    assert_eq!(regenerated["models"], catalog["models"]);
+                    assert_eq!(regenerated["cc_switch_official_speed_tiers"], false);
                 }
             }
         }

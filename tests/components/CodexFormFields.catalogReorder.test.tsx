@@ -69,6 +69,98 @@ const DRAG_HANDLE = /^(provider\.dragHandle|拖拽排序)$/;
 const rows = (...models: string[]) =>
   models.map((model, i) => ({ rowId: `r${i}`, model }));
 
+describe("per-model capabilities", () => {
+  it.each(["auto", "openai_chat", "openai_responses"] as const)(
+    "hides unsupported Fast and Lite for Copilot %s",
+    (copilotApiFormat) => {
+      render(
+        <Harness
+          {...makeProps({
+            isCopilotPreset: true,
+            copilotApiFormat,
+            apiFormat: "openai_responses",
+            catalogModels: [{ model: "model-1", fast: true, lite: true }],
+          })}
+        />,
+      );
+      expect(screen.queryByRole("combobox", { name: "Fast" })).toBeNull();
+      expect(screen.queryByRole("combobox", { name: "Lite" })).toBeNull();
+    },
+  );
+  it("shows stored Fast and Lite and updates the selected row", () => {
+    const onCatalogModelsChange = vi.fn();
+    render(
+      <Harness
+        {...makeProps({
+          catalogModels: [{ model: "model-1", fast: true, lite: true }],
+          onCatalogModelsChange,
+        })}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Fast" })).toHaveValue("true");
+    fireEvent.change(screen.getByRole("combobox", { name: "Lite" }), {
+      target: { value: "false" },
+    });
+    expect(onCatalogModelsChange).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ model: "model-1", fast: true, lite: false }),
+      ]),
+    );
+  });
+
+  it.each([false, true])(
+    "shows inheritance and allows resetting overrides with provider Fast %s",
+    async (officialSpeedTiers) => {
+      const onCatalogModelsChange = vi.fn();
+      render(
+        <Harness
+          {...makeProps({
+            catalogModels: [{ model: "model-1" }],
+            officialSpeedTiers,
+            onOfficialSpeedTiersChange: vi.fn(),
+            onCatalogModelsChange,
+          })}
+        />,
+      );
+      const fast = screen.getByRole("combobox", { name: "Fast" });
+      const lite = screen.getByRole("combobox", { name: "Lite" });
+      expect(fast).toHaveValue("inherit");
+      expect(lite).toHaveValue("inherit");
+      expect(fast.querySelector('option[value="inherit"]')).toHaveTextContent(
+        "Default",
+      );
+      fireEvent.change(fast, { target: { value: "false" } });
+      await waitFor(() =>
+        expect(onCatalogModelsChange).toHaveBeenLastCalledWith(
+          expect.arrayContaining([expect.objectContaining({ fast: false })]),
+        ),
+      );
+      fireEvent.change(fast, { target: { value: "inherit" } });
+      await waitFor(() =>
+        expect(onCatalogModelsChange).toHaveBeenLastCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({ fast: undefined }),
+          ]),
+        ),
+      );
+      fireEvent.change(lite, { target: { value: "true" } });
+      await waitFor(() =>
+        expect(onCatalogModelsChange).toHaveBeenLastCalledWith(
+          expect.arrayContaining([expect.objectContaining({ lite: true })]),
+        ),
+      );
+      fireEvent.change(lite, { target: { value: "inherit" } });
+      await waitFor(() =>
+        expect(onCatalogModelsChange).toHaveBeenLastCalledWith(
+          expect.arrayContaining([
+            expect.objectContaining({ lite: undefined }),
+          ]),
+        ),
+      );
+    },
+  );
+});
+
 describe("reorderCatalogRows", () => {
   it("makes the row moved to the top the new default model", () => {
     const result = reorderCatalogRows(rows("a", "b", "c"), "r2", "r0", "a");
