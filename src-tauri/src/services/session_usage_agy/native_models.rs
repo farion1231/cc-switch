@@ -80,6 +80,49 @@ impl DurationValue {
     }
 }
 
+// Field 4 holds the generation's token usage. Transcripts written before 2026-10-10 carry no
+// token counts, so this is the only record of historical usage. Decoded on its own so an
+// unexpected wire type there can never hide the model name or timing.
+#[derive(Clone, PartialEq, Message)]
+struct GenerationUsage {
+    #[prost(message, optional, tag = "1")]
+    response: Option<ResponseUsage>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct ResponseUsage {
+    #[prost(message, optional, tag = "4")]
+    tokens: Option<UsageTokens>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+struct UsageTokens {
+    #[prost(uint64, tag = "2")]
+    input_tokens: u64,
+    #[prost(uint64, tag = "3")]
+    output_tokens: u64,
+    #[prost(uint64, tag = "5")]
+    cache_read_tokens: u64,
+}
+
+/// Token counts recorded by agy for one generation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Tokens {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+}
+
+fn tokens_of(bytes: &[u8]) -> Option<Tokens> {
+    let tokens = GenerationUsage::decode(bytes).ok()?.response?.tokens?;
+    let tokens = Tokens {
+        input: tokens.input_tokens,
+        output: tokens.output_tokens,
+        cache_read: tokens.cache_read_tokens,
+    };
+    (tokens.input > 0 || tokens.output > 0 || tokens.cache_read > 0).then_some(tokens)
+}
+
 /// Exact timing recorded by agy for one generation.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Timing {
@@ -91,6 +134,7 @@ pub(super) struct Timing {
 pub(super) struct Generation {
     pub model: Option<String>,
     pub timing: Option<Timing>,
+    pub tokens: Option<Tokens>,
 }
 
 fn timing_of(bytes: &[u8]) -> Option<Timing> {
@@ -232,8 +276,16 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
             .map(|model| model.trim().to_string())
             .find(|model| !model.is_empty() && !model.eq_ignore_ascii_case("unknown"));
         let timing = timing_of(&bytes);
-        if model.is_some() || timing.is_some() {
-            generations.insert(step, Generation { model, timing });
+        let tokens = tokens_of(&bytes);
+        if model.is_some() || timing.is_some() || tokens.is_some() {
+            generations.insert(
+                step,
+                Generation {
+                    model,
+                    timing,
+                    tokens,
+                },
+            );
         }
     }
     Ok(generations)
@@ -313,9 +365,79 @@ pub(super) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
     fields
 }
 
+/// Field 4 (token usage) with the given input, output and cache-read counts.
+#[cfg(test)]
+pub(super) fn test_tokens(input: u64, output: u64, cache_read: u64) -> Vec<u8> {
+    ResponseUsage {
+        tokens: Some(UsageTokens {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cache_read,
+        }),
+    }
+    .encode_to_vec()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_token_usage_without_hiding_the_model_or_timing() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.db");
+        let conn = write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-4-argon"),
+                (2, 1, "gemini-3.8-flash-tiered"),
+                (3, 2, "claude-opus-5-5-medium"),
+                (4, 3, "gemini-3.8-flash-n"),
+                (5, 4, "gemini-4-argon"),
+            ],
+        );
+        let mut usage = test_tokens(150, 42, 30);
+        usage.extend_from_slice(&test_model_id("gemini-4-argon-high"));
+        usage.extend_from_slice(&test_timing(2799, 1722));
+        set_test_generation(&conn, 0, "gemini-4-argon", &usage);
+        set_test_generation(
+            &conn,
+            1,
+            "gemini-3.8-flash-tiered",
+            &test_tokens(200, 50, 0),
+        );
+        // All-zero usage is the same as no usage.
+        set_test_generation(&conn, 3, "gemini-3.8-flash-n", &test_tokens(0, 0, 0));
+        // Field 4 as a varint (wrong wire type) must not hide the model.
+        set_test_generation(&conn, 4, "gemini-4-argon", b"\x20\x07");
+        let got = read_generations(&path, &[1, 2, 3, 4, 5, 99]).unwrap();
+        assert_eq!(got.len(), 5);
+        assert_eq!(got[&1].model.as_deref(), Some("gemini-4-argon-high"));
+        assert_eq!(
+            got[&1].tokens,
+            Some(Tokens {
+                input: 150,
+                output: 42,
+                cache_read: 30,
+            })
+        );
+        assert!(got[&1].timing.is_some());
+        assert_eq!(
+            got[&2].tokens,
+            Some(Tokens {
+                input: 200,
+                output: 50,
+                cache_read: 0,
+            })
+        );
+        for step in [3, 4, 5] {
+            assert!(got[&step].model.is_some(), "step {step}");
+            assert_eq!(got[&step].tokens, None, "step {step}");
+        }
+    }
 
     #[test]
     fn orchestrator_native_aliases_use_generation_role_instead_of_generic_display() {

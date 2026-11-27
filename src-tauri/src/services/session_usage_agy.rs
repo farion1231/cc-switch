@@ -227,8 +227,10 @@ fn import_records_with_cursor(
 
     // 子代理通常没有 Model Selection；Orchestrator 的选择只代表模式，需逐次读取实际模型。
     // 耗时和首字也只在原生库里有（transcript 的时间戳只到秒、没有完成时间）。
+    // 2026-10-10 前的 transcript 不记录 Token，需要从原生生成记录中回填。
     let mut timing_by_step = std::collections::HashMap::new();
     let mut native_model_by_step = HashMap::new();
+    let mut native_tokens_by_step = HashMap::new();
     let mut native_ok = true;
     if let Some(transcript) = transcript {
         let (settled, pruned) = steps_with_timing(db, session, &ordered)?;
@@ -243,7 +245,16 @@ fn import_records_with_cursor(
                 let needs_model = selected
                     .is_none_or(|m| is_orchestrator(m) || is_orchestrator_worker(m))
                     && !pruned.contains(&step);
-                (needs_model || !settled.contains(&step)).then_some(step)
+                let needs_tokens = !pruned.contains(&step)
+                    && [
+                        "input_tokens",
+                        "output_tokens",
+                        "cache_read_tokens",
+                        "cache_write_tokens",
+                    ]
+                    .iter()
+                    .all(|name| row[*name].as_u64().unwrap_or(0) == 0);
+                (needs_model || needs_tokens || !settled.contains(&step)).then_some(step)
             })
             .collect();
         if !wanted.is_empty() {
@@ -255,6 +266,9 @@ fn import_records_with_cursor(
                         }
                         if let Some(timing) = generation.timing {
                             timing_by_step.insert(step, timing);
+                        }
+                        if let Some(tokens) = generation.tokens {
+                            native_tokens_by_step.insert(step, tokens);
                         }
                     }
                 }
@@ -283,10 +297,19 @@ fn import_records_with_cursor(
                 .and_then(|v| i64::try_from(v).ok())
                 .unwrap_or(0)
         };
-        let input = token("input_tokens");
-        let output = token("output_tokens");
-        let cache = token("cache_read_tokens");
+        let mut input = token("input_tokens");
+        let mut output = token("output_tokens");
+        let mut cache = token("cache_read_tokens");
         let write = token("cache_write_tokens");
+        // The transcript wins whenever it has any count; native usage only fills empty rows.
+        if input == 0 && output == 0 && cache == 0 && write == 0 {
+            if let Some(native) = native_tokens_by_step.get(&step) {
+                let count = |v: u64| i64::try_from(v).unwrap_or(i64::MAX);
+                input = count(native.input);
+                output = count(native.output);
+                cache = count(native.cache_read);
+            }
+        }
         if input == 0 && output == 0 && cache == 0 && write == 0 {
             continue;
         }
@@ -459,6 +482,97 @@ fn known_model(row: &Value) -> Option<&str> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn historical_tokens_are_recovered_from_native_database() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("conversations")).unwrap();
+        let source = dir
+            .path()
+            .join("brain/hist_session/.system_generated/logs/transcript_full.jsonl");
+        let path = dir.path().join("conversations/hist_session.db");
+        let conn = native_models::write_test_database(
+            &path,
+            &[
+                (1, 0, "gemini-4-argon"),
+                (2, 1, "gemini-3.8-flash-tiered"),
+                (4, 2, "gemini-4-argon"),
+            ],
+        );
+        let mut usage = native_models::test_tokens(500, 100, 50);
+        usage.extend_from_slice(&native_models::test_model_id("gemini-4-argon-high"));
+        native_models::set_test_generation(&conn, 0, "gemini-4-argon", &usage);
+        native_models::set_test_generation(
+            &conn,
+            1,
+            "gemini-3.8-flash-tiered",
+            &native_models::test_tokens(200, 30, 0),
+        );
+        native_models::set_test_generation(
+            &conn,
+            2,
+            "gemini-4-argon",
+            &native_models::test_tokens(9999, 9999, 9999),
+        );
+
+        let db = Database::memory().unwrap();
+        // Transcripts written before 2026-10-10 leave the token fields out or record 0.
+        let rows = vec![
+            json!({"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE"}),
+            json!({"step_index":2,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":0,"output_tokens":0}),
+            // No native record: still skipped.
+            json!({"step_index":3,"type":"PLANNER_RESPONSE","status":"DONE"}),
+            // Transcript counts always win over native counts.
+            json!({"step_index":4,"type":"PLANNER_RESPONSE","status":"DONE","input_tokens":7,"output_tokens":3}),
+        ];
+        assert_eq!(
+            import_records(&db, "hist_session", &rows, Some(&source)).unwrap(),
+            (3, 0)
+        );
+
+        {
+            let conn = db.conn.lock().unwrap();
+            let get = |step: u64| {
+                conn.query_row(
+                    "SELECT model,input_tokens,output_tokens,cache_read_tokens,total_cost_usd
+                     FROM proxy_request_logs WHERE request_id=?1",
+                    [format!("agy:hist_session:{step}")],
+                    |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, i64>(1)?,
+                            r.get::<_, i64>(2)?,
+                            r.get::<_, i64>(3)?,
+                            r.get::<_, String>(4)?,
+                        ))
+                    },
+                )
+                .unwrap()
+            };
+            let step1 = get(1);
+            assert_eq!(
+                (step1.0.as_str(), step1.1, step1.2, step1.3),
+                ("gemini-4-argon-high", 500, 100, 50)
+            );
+            assert!(step1.4.parse::<f64>().unwrap() > 0.0);
+            let step2 = get(2);
+            assert_eq!(
+                (step2.0.as_str(), step2.1, step2.2, step2.3),
+                ("gemini-3.8-flash-tiered", 200, 30, 0)
+            );
+            let step4 = get(4);
+            assert_eq!((step4.1, step4.2, step4.3), (7, 3, 0));
+        }
+
+        // Re-importing changes nothing and creates no duplicates.
+        assert_eq!(
+            import_records(&db, "hist_session", &rows, Some(&source)).unwrap(),
+            (0, 3)
+        );
+    }
 
     #[test]
     fn native_models_backfill_unknown_rows_without_changing_tokens_or_deduplication() {
