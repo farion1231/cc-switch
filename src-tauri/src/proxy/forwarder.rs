@@ -2550,9 +2550,9 @@ impl RequestForwarder {
             );
         }
 
-        // The shared local Codex provider intentionally omits upstream headers.
-        // Resolve them from this request's selected row instead, so aggregate
-        // routing and failover never reuse another provider's header values.
+        // The local provider exposes the route's actor-authorization marker for
+        // Codex tool discovery. Resolve upstream headers from the selected row,
+        // so aggregate routing and failover cannot reuse the route's marker.
         if matches!(app_type, AppType::Codex) && !codex_official_auth_passthrough {
             apply_codex_provider_header_overrides(&mut ordered_headers, provider, is_copilot);
         }

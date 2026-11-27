@@ -850,6 +850,10 @@ x-non-string = 1
         "model_provider = \"other\"\n[model_providers.other.http_headers]\nx-other = \"selected\""
     );
     let mut other_headers = http::HeaderMap::new();
+    other_headers.insert(
+        "x-openai-actor-authorization",
+        http::HeaderValue::from_static("outgoing-route-marker"),
+    );
     apply_codex_provider_header_overrides(&mut other_headers, &provider, false);
     assert_eq!(other_headers["x-other"], "selected");
     assert!(other_headers.get("x-openai-actor-authorization").is_none());
@@ -3177,6 +3181,7 @@ mod codex_stack {
         for (name, value) in [
             ("content-type", "application/json"),
             ("authorization", "Bearer chatgpt-access-token"),
+            ("x-openai-actor-authorization", "outgoing-route-marker"),
             ("chatgpt-account-id", "acct-workspace"),
             ("originator", "codex_cli_rs"),
             ("session_id", "session-1"),
@@ -3421,6 +3426,17 @@ mod codex_stack {
                 .to_string();
             assert!(auth.contains("sk-third-party"), "{api_format}: {auth}");
             assert!(!auth.contains("chatgpt"), "{api_format}: {auth}");
+            let without_marker = send(
+                &forwarder(true),
+                &upstream,
+                provider(&upstream, api_format),
+                "/responses",
+                body("listed", json!([])),
+            )
+            .await;
+            assert!(!without_marker
+                .headers
+                .contains_key("x-openai-actor-authorization"));
         }
 
         // Routing requests to a third party keep the session and client headers

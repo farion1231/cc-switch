@@ -235,6 +235,9 @@ pub(super) fn apply_codex_provider_header_overrides(
     provider: &Provider,
     is_copilot: bool,
 ) {
+    // The shared client marker belongs to the route, not necessarily the
+    // upstream chosen for this request (Stack or failover).
+    headers.remove("x-openai-actor-authorization");
     let Some(config) = provider
         .settings_config
         .get("config")
