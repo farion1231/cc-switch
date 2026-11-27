@@ -155,7 +155,8 @@ export function WhatsNewDialog({
 /**
  * 启动时的更新摘要：当前版本比 settings.json 里记的 whatsNewSeenVersion 新，
  * 就把这之间有内容的版本弹给用户看，关掉后记下当前版本。
- * 排在欢迎弹窗和「界面改版了」后面，那两个确认时会顺手记下当前版本，不会接着弹。
+ * 排在首次运行教程和「界面改版了」后面，那两个确认时会顺手记下当前版本，不会接着弹；
+ * 这次启动弹过首次运行教程的话，整个会话都不弹。
  */
 export function WhatsNewNotice() {
   const queryClient = useQueryClient();
@@ -168,6 +169,16 @@ export function WhatsNewNotice() {
   });
   const [closed, setClosed] = useState(false);
   const stampedRef = useRef(false);
+  // 这次启动弹过首次运行教程：整个会话都不弹更新摘要，教程确认后只静默记下当前版本。
+  // 教程确认时本来就会记下版本，这里兜住它读不到版本、没记上的情况。
+  const [firstRunSession, setFirstRunSession] = useState(false);
+  if (
+    !firstRunSession &&
+    settings != null &&
+    settings.firstRunNoticeConfirmed !== true
+  ) {
+    setFirstRunSession(true);
+  }
 
   const seen = settings?.whatsNewSeenVersion;
   const due =
@@ -190,7 +201,7 @@ export function WhatsNewNotice() {
     entries: WhatsNewEntry[];
     since?: string;
   } | null>(null);
-  if (shown === null && entries.length > 0) {
+  if (shown === null && entries.length > 0 && !firstRunSession) {
     setShown({ entries, since: seen });
   }
 
@@ -212,12 +223,13 @@ export function WhatsNewNotice() {
     }
   }, [settings, currentVersion, queryClient]);
 
-  // 区间里没有可显示的内容：静默记下当前版本，下次升级才有准确的起点
+  // 区间里没有可显示的内容、或者是首次运行：静默记下当前版本，下次升级才有准确的起点
+  const silent = entries.length === 0 || firstRunSession;
   useEffect(() => {
-    if (!due || entries.length > 0 || stampedRef.current) return;
+    if (!due || !silent || stampedRef.current) return;
     stampedRef.current = true;
     void acknowledge();
-  }, [due, entries.length, acknowledge]);
+  }, [due, silent, acknowledge]);
 
   if (!shown) return null;
 
