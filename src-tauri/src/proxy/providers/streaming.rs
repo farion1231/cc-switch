@@ -270,7 +270,14 @@ pub fn create_anthropic_sse_stream<E: std::error::Error + Send + 'static>(
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    if let Err(error) = sse.try_push_bytes(&bytes) {
+                        let event = json!({
+                            "type": "error",
+                            "error": { "type": "stream_error", "message": error.to_string() },
+                        });
+                        yield Ok(Bytes::from(format!("event: error\ndata: {event}\n\n")));
+                        return;
+                    }
 
                     while let Some(line) = sse.next_block() {
                         if line.trim().is_empty() {
