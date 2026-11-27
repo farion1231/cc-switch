@@ -497,6 +497,31 @@ impl AppType {
         self.spec().id
     }
 
+    /// 应用全称（产品名，不翻译）。Claude 与 Claude Desktop、Pi 与 Oh My Pi
+    /// 必须能区分，用户可见的错误文案和托盘菜单都用它，不要另建映射。
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            AppType::Claude => "Claude Code",
+            AppType::ClaudeDesktop => "Claude Desktop",
+            AppType::Codex => "Codex",
+            AppType::Gemini => "Gemini CLI",
+            AppType::GrokBuild => "Grok Build",
+            AppType::OpenCode => "OpenCode",
+            AppType::OpenClaw => "OpenClaw",
+            AppType::Hermes => "Hermes",
+            AppType::Pi => "Pi",
+            AppType::Mcode => "MiniMax Code",
+            AppType::Kimi => "Kimi Code",
+            AppType::Dsh => "DeepSeek Harness",
+            AppType::WorkBuddy => "WorkBuddy",
+            AppType::Agy => "Antigravity",
+            AppType::Omp => "Oh My Pi",
+            AppType::Copilot => "Copilot CLI",
+            AppType::Codebuddy => "CodeBuddy",
+            AppType::ZCode => "ZCode",
+        }
+    }
+
     /// 所有应用，按默认顺序
     pub const ALL: [AppType; 18] = [
         AppType::Claude,
