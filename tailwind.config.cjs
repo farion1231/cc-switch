@@ -213,6 +213,7 @@ module.exports = {
         "control-sm": "var(--h-control-sm)",
         "nav-row": "var(--h-nav-row)",
         "card-y": "var(--card-py)",
+        "rail-item": "var(--w-sidebar-rail-item)",
       },
       minHeight: {
         card: "var(--h-card)",

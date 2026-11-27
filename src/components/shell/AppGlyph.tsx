@@ -21,6 +21,7 @@ export const APP_DISPLAY_NAME: Record<AppId, string> = {
   omp: "Oh My Pi",
   copilot: "Copilot CLI",
   workbuddy: "WorkBuddy",
+  codebuddy: "CodeBuddy",
   zcode: "ZCode",
 };
 
@@ -41,6 +42,7 @@ const APP_ICON_NAME: Record<AppId, string> = {
   omp: "omp",
   copilot: "githubcopilot",
   workbuddy: "workbuddy",
+  codebuddy: "codebuddy",
   zcode: "zcode",
 };
 

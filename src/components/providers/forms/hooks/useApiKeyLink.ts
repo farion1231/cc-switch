@@ -8,7 +8,7 @@ import type { OpenCodeProviderPreset } from "@/config/opencodeProviderPresets";
 import type { ZCodeProviderPreset } from "@/config/zcodeProviderPresets";
 import type { ClaudeDesktopProviderPreset } from "@/config/claudeDesktopProviderPresets";
 import { extractBaseUrlForUsageDetection } from "@/config/codingPlanProviders";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 
 type PresetEntry = {
   id: string;

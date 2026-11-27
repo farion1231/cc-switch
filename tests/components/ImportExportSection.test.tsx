@@ -112,4 +112,22 @@ describe("ImportExportSection Component", () => {
     expect(screen.getByText("settings.importFailed")).toBeInTheDocument();
     expect(screen.getByText("Parse failed")).toBeInTheDocument();
   });
+
+  it("should display post-sync warning details and backup ID on partial-success", () => {
+    render(
+      <ImportExportSection
+        {...baseProps}
+        status="partial-success"
+        backupId="backup-warn-1"
+        errorMessage="prompts: Permission denied"
+      />,
+    );
+
+    expect(
+      screen.getByText("settings.importPartialSuccess"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/backup-warn-1/)).toBeInTheDocument();
+    expect(screen.getByText("prompts: Permission denied")).toBeInTheDocument();
+    expect(screen.getByText("settings.importPartialHint")).toBeInTheDocument();
+  });
 });

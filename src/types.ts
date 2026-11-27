@@ -414,6 +414,7 @@ export interface Settings {
   useAppWindowControls?: boolean;
   // 启用 Claude 插件联动（写入 ~/.claude/config.json 的 primaryApiKey）
   enableClaudePluginIntegration?: boolean;
+  copilotVscode?: { enabled: boolean; targets: string[] };
   // 跳过 Claude Code 初次安装确认（写入 ~/.claude.json 的 hasCompletedOnboarding）
   skipClaudeOnboarding?: boolean;
   // 是否开机自启
@@ -487,6 +488,8 @@ export interface Settings {
   language?: Language;
   // 按档的额度百分比写剩余还是已用（默认剩余；余额、Credits 不受影响）
   quotaDisplay?: "left" | "used";
+  // 官方账号额度只在手动刷新时查询（授权中心开关，#8990；默认自动查询）
+  officialQuotaManualOnly?: boolean;
 
   // 主页面显示的应用（默认全部显示）
   visibleApps?: VisibleApps;
@@ -544,6 +547,8 @@ export interface Settings {
   backupIntervalHours?: number;
   // Maximum backup files to retain (default 10)
   backupRetainCount?: number;
+  // Total size limit for the backups folder in MB (unset or 0 = unlimited, default)
+  backupMaxTotalMb?: number;
 
   // ===== 终端设置 =====
   // 首选终端应用（可选，默认使用系统默认终端）
@@ -840,6 +845,7 @@ export interface McpServerSpec {
 export interface McpApps {
   mcode?: boolean;
   kimi?: boolean;
+  codebuddy?: boolean;
   dsh?: boolean;
   workbuddy?: boolean;
   agy?: boolean;
@@ -1110,7 +1116,7 @@ export interface ZCodeProviderOptions {
 // ZCode 供应商配置（settings_config 结构）
 export interface ZCodeProviderConfig {
   name?: string;
-  kind?: string; // "anthropic-messages" | "openai-chat-completions" | "openai-responses"
+  kind?: string; // "anthropic" | "openai-compatible" | "openai"
   options?: ZCodeProviderOptions;
   enabled?: boolean | null;
   source?: string;

@@ -38,14 +38,15 @@ pub fn scan_sessions() -> Vec<SessionMeta> {
 }
 
 fn scan(conn: &Connection) -> rusqlite::Result<Vec<SessionMeta>> {
-    // subagent 子会话（task_type = subagent_child）和已删除的（time_deleted 软删）不进列表；
-    // 用户主动创建的 fork 会话（task_type = 'fork'）需保留，尽管它的 parent_id 非空。
+    // 与 ZCode 主列表一致：只列 interactive、fork、workflow_parent。subagent / workflow 子会话
+    // 和已删除的（time_deleted 软删）不进列表；fork 的 parent_id 非空，仍要保留。
     // ZCode 桌面没有 CLI，无法给出恢复命令。
     let mut query = conn.prepare(
         "SELECT id, title, directory, time_created, time_updated
          FROM session
          WHERE time_deleted IS NULL
-           AND ((parent_id IS NULL AND task_type = 'interactive') OR task_type = 'fork')
+           AND ((parent_id IS NULL AND task_type = 'interactive')
+                OR task_type IN ('fork', 'workflow_parent'))
          ORDER BY time_updated DESC",
     )?;
     let rows = query.query_map([], |row| {
@@ -77,7 +78,8 @@ pub fn load_messages(source: &str) -> Result<Vec<SessionMessage>, String> {
 fn read_messages(conn: &Connection, id: &str) -> rusqlite::Result<Vec<SessionMessage>> {
     let mut query = conn.prepare(
         "SELECT id, sequence, data FROM message
-         WHERE session_id = ?1 AND json_extract(data, '$.role') IN ('user', 'assistant')
+         WHERE session_id = ?1 AND json_valid(data)
+           AND json_extract(data, '$.role') IN ('user', 'assistant')
          ORDER BY sequence",
     )?;
     let rows = query.query_map([id], |row| {

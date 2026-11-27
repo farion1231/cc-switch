@@ -25,7 +25,7 @@
 //!   `~/.workbuddy-ai`）或 CodeBuddy（`Tencent-Cloud.coding-copilot.info`）混淆。
 //! - 额度只能经运行中的 WorkBuddy 的本地 IPC 只读查当前登着的号，结果缓存进账号表（见 [`quota`]）。
 
-mod quota;
+pub(crate) mod quota;
 
 use crate::sync_utils::MutexExt;
 #[cfg(test)]
@@ -649,10 +649,15 @@ impl WorkBuddyAccountManager {
                 .clone()
         };
         let current = current.as_deref() == Some(account_id);
+        // 企业号（`.info` 带 `enterpriseId`）的额度走企业接口（同 WorkBuddy `billing()`）
+        let enterprise = current
+            && live_account(&self.paths)
+                .is_some_and(|account| plain(account.get("enterpriseId")).is_some());
         Ok(quota::QuotaContext {
             cached,
             current,
             running: current && (self.running)(),
+            enterprise,
             discovery: self.paths.wbipc_discovery.clone(),
         })
     }
@@ -1043,14 +1048,7 @@ pub fn user_data_dir() -> PathBuf {
 }
 
 fn user_data_dir_in(paths: &WorkBuddyPaths, root: &Path) -> PathBuf {
-    if paths.logout_marker().exists() {
-        return root.to_path_buf();
-    }
-    let account = std::fs::read(paths.info())
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
-        .and_then(|mut doc| doc.get_mut("account").map(Value::take));
-    let Some(account) = account else {
+    let Some(account) = live_account(paths) else {
         return root.to_path_buf();
     };
     let Some(uid) = plain(account.get("uid")).filter(|uid| is_path_segment(uid)) else {
@@ -1060,6 +1058,17 @@ fn user_data_dir_in(paths: &WorkBuddyPaths, root: &Path) -> PathBuf {
         .filter(|scope| is_path_segment(scope))
         .unwrap_or_else(|| "personal".to_string());
     root.join(format!("user-{uid}-{scope}"))
+}
+
+/// `.info` 里明文的 `account`（uid、版型、`enterpriseId` 等，不含 token）；没登录或读不出时为 `None`。
+fn live_account(paths: &WorkBuddyPaths) -> Option<Value> {
+    if paths.logout_marker().exists() {
+        return None;
+    }
+    std::fs::read(paths.info())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .and_then(|mut doc| doc.get_mut("account").map(Value::take))
 }
 
 /// 拼进目录名的明文字段：不能带路径分隔符或 `..`（`.info` 是外部文件）。

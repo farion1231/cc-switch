@@ -138,6 +138,7 @@ pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError>
                         copilot: false,
                         dsh: false,
                         workbuddy: false,
+                        codebuddy: false,
                         zcode: zcode_enabled,
                     },
                     description: None,

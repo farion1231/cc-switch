@@ -4,7 +4,7 @@ import type { ProviderPreset } from "@/config/claudeProviderPresets";
 import type { CodexProviderPreset } from "@/config/codexProviderPresets";
 import type { ZCodeProviderPreset } from "@/config/zcodeProviderPresets";
 import type { ProviderMeta, EndpointCandidate } from "@/types";
-import { extractCodexBaseUrl } from "@/utils/providerConfigUtils";
+import { extractCodexBaseUrl } from "@/utils/codexConfigUtils";
 
 type PresetEntry = {
   id: string;

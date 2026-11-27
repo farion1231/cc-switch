@@ -80,6 +80,11 @@ Platform ayrıca kurumsal düzeyde eşzamanlılığı, özel bir yönetim konsol
 </tr>
 
 <tr>
+<td width="180"><a href="https://www.string.ink/register?ref=661AE533A60AF110"><img src="assets/partners/logos/stringai-banner.png" alt="StringAI" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için StringAI'ye teşekkürler! StringAI; yapay zekâ ile kodlama, görsel üretimi, metinden sese (TTS) ve video üretimi olmak üzere dört yeteneğe tek noktadan erişim sunan, uygun maliyetli, hızlı ve istikrarlı bir model API platformudur. Dünyanın önde gelen pek çok modelini bir araya getirir; kendi barındırdığı, bulut sağlayıcılarından ve resmi API'lerden gelen kaynaklar arasında seçim sunarak üniversitelerin, şirketlerin, bireysel geliştiricilerin ve girişim ekiplerinin ihtiyaçlarını karşılar. Uzman bir ekip kurulum rehberliği ve teknik destek sağlar. StringAI, CC Switch kullanıcılarına özel bir avantaj sunuyor: <a href="https://www.string.ink/register?ref=661AE533A60AF110">bu bağlantı</a> üzerinden kaydolun, ilk 3,74 $'lık yüklemenize ek olarak 3,74 $ bonus kredi kazanın!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL"><img src="assets/partners/logos/fenno-banner.png" alt="Fenno.ai" width="150"></a></td>
 <td>Bu projeye sponsor olduğu için Fenno.ai'ye teşekkürler! Fenno.ai, şu anda Codex aktarmasına odaklanan, kararlı ve verimli bir API aktarma hizmeti sağlayıcısıdır. OpenAI ve Anthropic protokolleriyle uyumludur ve Codex, Claude Code, OpenCode ve diğer ana akım kodlama araçlarından esnek biçimde kullanılabilir. Günde yüz milyarlarca token'lık kurumsal düzeydeki iş yüklerini güvenilir biçimde destekler; yurt içi ve yurt dışı tüzel kişiler için kurumsal (B2B) mutabakat ve fatura hizmeti sunar. Fenno.ai, CC Switch kullanıcılarına özel bir avantaj sunar: <a href="https://api.fenno.ai/register?redirect=/purchase?tab=subscription%26group=16&aff=P9MR3D3PLCNL">bu bağlantıdan</a> 50 $ kredi değerindeki 1,99 $'lık Deneme Planına (7 gün geçerli) abone olun ve %20'ye varan tavsiye ödülü kazanın — ne kadar çok davet ederseniz o kadar çok kazanırsınız!</td>
 </tr>
@@ -362,6 +367,7 @@ Sağlayıcı yönetimi, MCP/İstemler/Skills, yerel yönlendirme ve yük devri v
 | MiniMax Code | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy | Birlikte | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **Geçiş**: aynı anda yalnızca bir sağlayıcı etkindir; **Birlikte**: birden fazla sağlayıcı aynı anda aracın kendi yapılandırmasına yazılır ve birini aracın içinden seçersiniz.
 - **Yerel Yönlendirme**: CC Switch istekleri makinenizde iletir ve API biçimlerini dönüştürür; aşağıdaki [Yerel Yönlendirme ve Yük Devretme](#yerel-yönlendirme-ve-yük-devretme) bölümüne bakın. Claude Desktop sağlayıcıları "Doğrudan" veya "Model Eşleme" kullanabilir; "Model Eşleme" ile istekler yerel yönlendirmeden geçer.
@@ -400,7 +406,7 @@ Sağlayıcı yönetimi, MCP/İstemler/Skills, yerel yönlendirme ve yük devri v
 
 ### MCP, İstemler ve Skills
 
-- **Birleşik MCP paneli** — Tüm MCP sunucularını tek yerden yönetin, her birinin hangi araçlarla eşitleneceğini seçin (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), her aracın mevcut yapılandırmalarını içe aktarın ve Deep Link ile içe aktarın
+- **Birleşik MCP paneli** — Tüm MCP sunucularını tek yerden yönetin, her birinin hangi araçlarla eşitleneceğini seçin (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy), her aracın mevcut yapılandırmalarını içe aktarın ve Deep Link ile içe aktarın
 - **İstemler** — Markdown düzenleyicili, araç başına bir istem kitaplığı; bir istemi etkinleştirmek onu aracın istem dosyasına (CLAUDE.md / AGENTS.md / GEMINI.md) yazar ve dosyanın mevcut içeriği önce kitaplığa kaydedilir, böylece hiçbir şey kaybolmaz. Pi ayrıca SYSTEM.md, APPEND_SYSTEM.md ve istem şablonlarını düzenleyebilir
 - **Skills** — skills.sh'de arayın veya GitHub depolarından ya da ZIP dosyalarından tek tıkla kurun; güncellemeleri denetleyin ve tümünü tek tıkla güncelleyin; her araca otomatik olarak, yalnızca sembolik bağlarla veya yalnızca kopyalarla eşitleyin; isteğe bağlı olarak `~/.agents/skills` içinde saklayabilirsiniz
 - Her üç panel de aramayı destekler; MCP ve Skills ayrıca araç başına tek seferde etkinleştirilip devre dışı bırakılabilir; sağlayıcılar, MCP sunucuları ve istemler içerik alanında tam sayfa düzenlenir ve kaydedilmemiş değişikliklerle ayrılmadan önce uyarılırsınız

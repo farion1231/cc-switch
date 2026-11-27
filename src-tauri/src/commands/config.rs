@@ -1,8 +1,5 @@
-#![allow(non_snake_case)]
-
 use tauri::{AppHandle, State};
 use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_opener::OpenerExt;
 
 use crate::app_config::AppType;
 use crate::codex_config;
@@ -144,6 +141,13 @@ pub async fn get_config_status(
                 .to_string_lossy()
                 .into_owned(),
         }),
+        AppType::Codebuddy => Ok(ConfigStatus {
+            exists: crate::codebuddy_config::config_path().exists()
+                || crate::codebuddy_config::settings_path().exists(),
+            path: crate::codebuddy_config::data_dir()
+                .to_string_lossy()
+                .into_owned(),
+        }),
         AppType::ZCode => {
             let provider_config = crate::zcode_config::get_zcode_provider_config_path();
             Ok(ConfigStatus {
@@ -183,6 +187,7 @@ fn app_config_dir(app: &str) -> Result<std::path::PathBuf, String> {
         AppType::Agy => crate::agy_config::agy_dir(),
         AppType::Copilot => crate::copilot_config::copilot_dir(),
         AppType::WorkBuddy => crate::workbuddy_config::data_dir(),
+        AppType::Codebuddy => crate::codebuddy_config::data_dir(),
         AppType::ZCode => crate::zcode_config::get_zcode_dir(),
     };
 
@@ -197,9 +202,7 @@ pub async fn open_config_folder(handle: AppHandle, app: String) -> Result<bool, 
         std::fs::create_dir_all(&config_dir).map_err(|e| format!("创建目录失败: {e}"))?;
     }
 
-    handle
-        .opener()
-        .open_path(config_dir.to_string_lossy().to_string(), None::<String>)
+    crate::host_open::open_path(&handle, &config_dir)
         .map_err(|e| format!("打开文件夹失败: {e}"))?;
 
     Ok(true)
@@ -244,9 +247,7 @@ pub async fn open_app_config_folder(handle: AppHandle) -> Result<bool, String> {
         std::fs::create_dir_all(&config_dir).map_err(|e| format!("创建目录失败: {e}"))?;
     }
 
-    handle
-        .opener()
-        .open_path(config_dir.to_string_lossy().to_string(), None::<String>)
+    crate::host_open::open_path(&handle, &config_dir)
         .map_err(|e| format!("打开文件夹失败: {e}"))?;
 
     Ok(true)

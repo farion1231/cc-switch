@@ -116,9 +116,9 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
+        "kimi-k3.1-pro": { name: "Kimi K3.1 Pro" },
+        "kimi-k3.1-pro-highspeed": { name: "Kimi K3.1 Pro HighSpeed" },
         "kimi-k3": { name: "Kimi K3" },
-        "kimi-k2.7-code": { name: "Kimi K2.7 Code" },
-        "kimi-k2.6": { name: "Kimi K2.6" },
       },
     },
     category: "cn_official",
@@ -175,6 +175,7 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
+        "MiniMax-M3.1-Flash": { name: "MiniMax M3.1 Flash" },
         "MiniMax-M3": { name: "MiniMax M3" },
       },
     },
@@ -233,12 +234,8 @@ export const zcodeProviderPresets: ZCodeProviderPreset[] = [
         apiKey: "",
       },
       models: {
-        "mimo-v2.5-pro": {
-          name: "MiMo V2.5 Pro",
-          limit: { context: 1048576, output: 131072 },
-          modalities: { input: ["text"], output: ["text"] },
-        },
-        "mimo-v2.5": { name: "MiMo V2.5" },
+        "mimo-v2.6-pro": { name: "MiMo V2.6 Pro" },
+        "mimo-v2.6-flash": { name: "MiMo V2.6 Flash" },
       },
     },
     category: "cn_official",

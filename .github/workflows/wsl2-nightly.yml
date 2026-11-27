@@ -60,7 +60,7 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri -> target
-          shared-key: backend
+          shared-key: backend-v2
           save-if: false
 
       - name: Install cargo-nextest

@@ -60,7 +60,9 @@
   "apiKeyInput": {
     "placeholder": "API-Schlüssel eingeben",
     "show": "API-Schlüssel anzeigen",
-    "hide": "API-Schlüssel ausblenden"
+    "hide": "API-Schlüssel ausblenden",
+    "copied": "API-Schlüssel kopiert",
+    "copyFailed": "API-Schlüssel konnte nicht kopiert werden"
   },
   "jsonEditor": {
     "mustBeObject": "Die Konfiguration muss ein JSON-Objekt sein, kein Array oder anderer Typ",
@@ -233,7 +235,7 @@
         "account": "Konto",
         "accountFollow": "Aktueller Anmeldung von agy folgen",
         "accountMissing": "Ein Konto, das nicht auf diesem Computer vorhanden ist",
-        "accountHelp": "Bei ausgewähltem Konto wechselt „Terminal öffnen“ zuerst die Anmeldung von agy zu diesem Konto (das gilt global: danach gestartete agy-Sitzungen verwenden es). Konten fügen Sie in der Kontoverwaltung hinzu."
+        "accountHelp": "Wenn Sie eine neue Kontoverknüpfung speichern, verwenden neue agy-Sitzungen dieses Konto. Auch beim Öffnen eines Terminals über diese Karte wechselt agy zum verknüpften Konto. Konten können Sie in der Kontoverwaltung hinzufügen."
       },
       "gemini": {
         "model": "Modell",
@@ -241,17 +243,19 @@
         "oauthHint": "Google Official verwendet die persönliche OAuth-Authentifizierung; ein API-Schlüssel ist nicht nötig. Beim ersten Gebrauch öffnet sich automatisch der Browser zur Anmeldung.",
         "apiKeyPlaceholder": "Gemini-API-Schlüssel eingeben"
       },
-      "claudeAccount": {
+      "managedAccount": {
         "label": "Anmeldemethode",
+        "missing": "Konto nicht auf diesem Computer vorhanden",
+        "reauthBadge": "Erneute Anmeldung erforderlich"
+      },
+      "claudeAccount": {
         "default": "Claude-Code-Anmeldung folgen",
         "defaultDescription": "Das Konto ändert sich mit der aktuellen Claude-Code-Anmeldung",
-        "missing": "Konto nicht auf diesem Computer vorhanden",
         "manage": "Claude-Konten hinzufügen oder verwalten",
         "helpTerminal": "Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Wechsel zu dieser Karte die Anmeldung von Claude Code nicht. Verwenden Sie „Terminal öffnen“ auf der Karte, um das ausgewählte Konto zu nutzen.",
         "helpWsl": "Der Claude-Konfigurationsordner liegt in WSL, wo Claude-Konten noch nicht unterstützt werden. Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code nicht.",
         "help": "Der Wechsel zu dieser Karte ändert die Anmeldung von Claude Code sofort auf das ausgewählte Konto, auch für bereits laufende Sitzungen. Um mehrere Konten gleichzeitig zu nutzen, verwenden Sie „Terminal öffnen“ auf der Karte.",
         "claudeAccount": "Claude-Konto",
-        "reauthBadge": "Erneute Anmeldung erforderlich",
         "terminalHint": "Über „Terminal öffnen“ nutzen",
         "wslHint": "In WSL nicht unterstützt",
         "plan": {
@@ -263,6 +267,13 @@
           "teamPremium": "Team Premium",
           "enterprise": "Enterprise"
         }
+      },
+      "grokAccount": {
+        "default": "Grok-CLI-Anmeldung folgen",
+        "defaultDescription": "Verwendet das Konto, mit dem Grok CLI angemeldet ist",
+        "manage": "xAI-Konten hinzufügen oder verwalten",
+        "help": "Wenn Sie zu dieser Karte wechseln, wird die Anmeldung von Grok CLI (~/.grok/auth.json) auf das ausgewählte Konto umgestellt. Das zuvor angemeldete Konto wird zuerst in der Kontoverwaltung gespeichert und kehrt zurück, wenn Sie zur Karte „Grok-CLI-Anmeldung folgen“ wechseln.",
+        "xaiAccount": "xAI-Konto"
       }
     },
     "duplicateLiveIdsLoadFailed": "Anbieterkennungen konnten nicht aus der Konfiguration gelesen werden. Bitte beheben Sie die Konfiguration und versuchen Sie es erneut",
@@ -597,6 +608,9 @@
       "safetyBackupId": "ID der Sicherheitskopie",
       "intervalLabel": "Intervall für automatische Sicherung",
       "retainLabel": "Aufbewahrung von Sicherungen",
+      "maxTotalLabel": "Größenlimit für Sicherungen",
+      "maxTotalUnlimited": "Kein Limit",
+      "maxTotalHint": "Standardmäßig deaktiviert. Wenn ein Limit gesetzt ist, werden die ältesten Sicherungen gelöscht, sobald der Sicherungsordner diese Größe überschreitet. Die neueste Sicherung und jede Sicherung, die eine Wiederherstellung verwendet, bleiben immer erhalten. Daher kann der Ordner über dem Limit bleiben, wenn eine einzelne Sicherung größer ist. Gilt ab der nächsten Sicherung oder der täglichen Wartung.",
       "intervalDisabled": "Deaktiviert",
       "intervalHours": "{{hours}} Stunden",
       "intervalDays": "{{days}} Tage",
@@ -903,6 +917,14 @@
     "minimizeToTrayDescription": "Wenn aktiviert, blendet die Schließen-Schaltfläche das Fenster im System-Tray aus, andernfalls wird die App direkt beendet.",
     "useAppWindowControls": "Fenstersteuerung der App aktivieren",
     "useAppWindowControlsDescription": "Integrierte Schaltflächen zum Minimieren, Maximieren/Wiederherstellen und Schließen in der Kopfzeile der App verwenden.",
+    "copilotVscode": {
+      "enable": "Auf die VS-Code-Erweiterung Copilot anwenden",
+      "description": "Übernimmt die in der CLI hinzugefügten Modelle und API-Schlüssel automatisch in alle erkannten VS-Code-Profile. Änderungen an Anbietern werden automatisch synchronisiert.",
+      "pending": "Synchronisierung der VS-Code-Modelle ausstehend",
+      "pendingDescription": "VS Code verwendet möglicherweise noch die vorherige Konfiguration. Versuchen Sie es erneut, um die neuesten Änderungen zu synchronisieren.",
+      "noTargets": "Keine VS-Code-Konfiguration gefunden. Starten Sie VS Code einmal und versuchen Sie es erneut.",
+      "failed": "Synchronisierung mit VS Code Copilot fehlgeschlagen"
+    },
     "enableClaudePluginIntegration": "Auf die Claude-Code-Erweiterung anwenden",
     "enableClaudePluginIntegrationDescription": "Wenn aktiviert, wechselt der Anbieter der VS-Code-Erweiterung Claude Code zusammen mit dieser App",
     "skipClaudeOnboarding": "Erstbestätigung von Claude Code überspringen",
@@ -1087,6 +1109,7 @@
     "toolUpgradeUnanchoredHint": "Es lässt sich nicht bestimmen, welche Installation Ihre Kommandozeile verwendet; der Standard-Upgrade-Befehl wird ausgeführt (installiert möglicherweise in das erste npm im PATH).",
     "toolUpgradeUnmanagedTitle": "Upgrade dieser Tools übersprungen",
     "toolUpgradeUnmanagedDetail": "{{tool}} ({{path}}) wurde weder per npm noch mit einem bekannten Installer installiert, daher kann CC Switch nicht erkennen, wie es zu aktualisieren ist. Aktualisieren Sie es auf dem Weg, auf dem Sie es installiert haben (z. B. winget, Scoop oder erneutes Ausführen des offiziellen Installationsskripts).",
+    "toolUpgradeDesktopManagedDetail": "Diese OpenCode-CLI ist in OpenCode Desktop enthalten und wird zusammen mit der Desktop-App aktualisiert.",
     "envBadge": {
       "wsl": "WSL",
       "windows": "Win",
@@ -1262,6 +1285,8 @@
       "credits": "Credits",
       "leftOf": "{{remaining}} / {{total}} übrig",
       "usedOf": "{{used}} / {{total}} verbraucht",
+      "unlimited": "Unbegrenzt",
+      "unlimitedUsed": "Unbegrenzt, {{used}} verbraucht",
       "usedUp": "Aufgebraucht (von {{total}})",
       "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
       "staleNotRunning": "WorkBuddy läuft nicht; letztes Ergebnis wird angezeigt",
@@ -1454,6 +1479,7 @@
     "contentSearchToggle": "Nachrichtentext durchsuchen",
     "contentSearchToggleFailed": "Die Einstellung für die Nachrichtentextsuche konnte nicht geändert werden: {{error}}",
     "contentIndexing": "Nachrichtentext wird indiziert ({{processed}}/{{total}}). Texttreffer sind möglicherweise unvollständig",
+    "contentSearchFailed": "Textsuche fehlgeschlagen; derzeit kann nur in Titeln, Ordnern und der ersten/letzten Nachricht gesucht werden",
     "contentHitPrefix": "Text: ",
     "contentHitMore": " ({{count}} Nachrichten passen)",
     "moreContentHits": "Weitere Texttreffer",
@@ -1523,6 +1549,7 @@
     "selectSessionLabel": "{{title}} auswählen",
     "agyDeleteHint": "Löschen Sie diese Sitzung in Antigravity, um auch ihren Laufzeitstatus zu entfernen",
     "mcodeDeleteHint": "In MiniMax Code löschen",
+    "codebuddyDeleteHint": "Verwalten Sie diese Sitzung in CodeBuddy: Hintergrundaufgaben, Teammitglieder und der Dateiverlauf verweisen auf ihr Transkript",
     "groupMeta": "{{count}} Sitzungen · {{time}}",
     "bucketToday": "Heute",
     "bucketYesterday": "Gestern",
@@ -1816,6 +1843,7 @@
       "subrouter": "SubRouter ist ein KI-Relay-Aggregator, der mit einem Schlüssel Zugriff auf mehrere Modelle und Anbieter ermöglicht.",
       "qiniu": "Qiniu Cloud ist ein Multiprotokoll-KI-Relay: ein Schlüssel für native Claude-, GPT- und Gemini-Modelle, mit Unterstützung der Anthropic-, OpenAI- und Gemini-APIs.",
       "haoai": "hao.ai ist ein schnelles, stabiles, einheitliches LLM-API-Gateway für Entwickler und Teams: Mit einem Schlüssel erreichen Sie GPT, Claude, Grok und weitere führende Modelle über OpenAI- und Anthropic-kompatible APIs, mit Modell-Routing, Failover und vollständigen Anfrageprotokollen, zu Preisen ab 15 % der offiziellen Referenzpreise. CC-Switch-Nutzer, die sich über diesen Link registrieren, erhalten 5 % Bonusguthaben auf ihre erste Bestellung!",
+      "stringai": "StringAI ist eine preiswerte, schnelle und stabile Modell-API-Plattform mit Zugang zu KI-Coding, Bildgenerierung, Sprachsynthese und Videogenerierung aus einer Hand. Exklusives Angebot für CC-Switch-Nutzer: Registrieren Sie sich über diesen Link und erhalten Sie bei Ihrer ersten Aufladung von 3,74 $ zusätzlich 3,74 $ Bonusguthaben!",
       "fenno": "Fenno.ai ist ein stabiler, effizienter API-Relay mit Zugang zu zahlreichen gängigen Modellen. Exklusives Angebot für CC-Switch-Nutzer: Abonnieren Sie über diesen Link den Testtarif für 1,99 $ mit 50 $ Guthaben, gültig für 7 Tage!",
       "teamorouter": "TeamoRouter bietet Claude Code einen Schlüssel für Opus 5.5, Sonnet 5.5 und Fable 5.1, mit Opus 5.5 für etwa 28 % des offiziellen Preises, nutzungsbasiert abgerechnet, über das native Anthropic-Protokoll. CC-Switch-Nutzer, die sich über diesen Link registrieren, erhalten 10 % zusätzliches Guthaben auf eine erste Aufladung von 10 $, 20 $ oder 50 $!",
       "ppio": "PPIO ist ein führender unabhängiger Agentic-Cloud-Anbieter in China und stellt alle führenden Open-Source-Modelle über einen einzigen API-Schlüssel bereit. Registrieren Sie sich über diesen Link und schließen Sie die Identitätsprüfung ab, um einen Gutschein über ¥10 zu erhalten.",
@@ -2030,6 +2058,7 @@
     "deploymentGitHubCom": "GitHub.com",
     "deploymentEnterprise": "GitHub Enterprise Server",
     "enterpriseDomainPlaceholder": "z. B. company.ghe.com",
+    "autoModelName": "GitHub Copilot Auto",
     "form": {
       "officialTitle": "Verwendet die GitHub-Anmeldung der Copilot CLI",
       "officialHint": "„Terminal öffnen“ startet copilot mit dem Modell dieser Karte. Verknüpfen Sie ein Konto aus der Kontoverwaltung, um es mit diesem Konto zu starten.",
@@ -2107,6 +2136,7 @@
     "selectAccount": "Konto auswählen",
     "selectAccountPlaceholder": "xAI-Konto auswählen",
     "useDefaultAccount": "Standardkonto verwenden",
+    "account": "xAI-Konto",
     "accounts": "xAI-Konten",
     "defaultAccount": "Standard",
     "expired": "Anmeldedaten abgelaufen",
@@ -2220,7 +2250,8 @@
     "autoReviewModelMainDefault": "Hauptmodell prüft selbst (Standard)",
     "autoReviewModelNoList": "Diese Karte hat keine Modellliste: Codex prüft Genehmigungen mit dem offiziellen codex-auto-review, das nur manche Relays akzeptieren, die an ChatGPT-Konten weiterleiten; die übrigen geben 404 zurück. Fügen Sie oben Modelle zur Liste hinzu, um eines auszuwählen.",
     "officialSpeedTiersLabel": "Offizielle Fast-Stufe beibehalten",
-    "officialSpeedTiersHint": "Behält die offizielle Fast-Geschwindigkeitsstufe bei GPT-Modellen in der Modellliste bei, sodass die Wahl von Fast in Codex service_tier=priority sendet. Nur Relays, die an offizielle ChatGPT-Konten weiterleiten (z. B. CPA), akzeptieren das, und es verbraucht das Kontingent schneller; andere Upstreams lehnen es eventuell ab oder berechnen einen höheren Preis. Nach dem Aktivieren gilt eine unter der offiziellen Karte getroffene Fast-Wahl sofort für diesen Anbieter. Wird im Aggregationsmodus nicht verwendet. Starten Sie Codex nach der Änderung neu.",
+    "officialSpeedTiersHint": "Behält die offizielle Fast-Geschwindigkeitsstufe bei GPT-Modellen in der Modellliste bei, sodass die Wahl von Fast in Codex service_tier=priority sendet. Nur Relays, die an offizielle ChatGPT-Konten weiterleiten (z. B. CPA), akzeptieren das, und es verbraucht das Kontingent schneller; andere Upstreams lehnen es eventuell ab oder berechnen einen höheren Preis. Die Codex-Desktop-App zeigt Fast nur an, solange sie mit ChatGPT angemeldet ist: Melden Sie sich dort an und aktivieren Sie in den Einstellungen „Offizielle Anmeldung bei direkten Wechseln beibehalten“ (oder nutzen Sie den Routing-Modus); Anfragen gehen weiterhin an diese Karte. Ohne Anmeldung kann nur die Codex-CLI Fast verwenden (/fast). Nach dem Aktivieren gilt eine unter der offiziellen Karte getroffene Fast-Wahl sofort für diesen Anbieter. Wird im Aggregationsmodus nicht verwendet. Starten Sie Codex nach der Änderung neu.",
+    "officialSpeedTiersNoList": "Diese Karte hat keine Modellliste: Die Fast-Stufe wird nur GPT-Modellen in der Modellliste hinzugefügt und lässt sich daher noch nicht aktivieren. Fügen Sie oben GPT-Modelle zur Liste hinzu, um sie zu aktivieren.",
     "modelListHint": "Starten Sie Codex nach Änderungen neu.",
     "modelListDefaultHelp": "Diese Modelle erscheinen im /model-Menü von Codex; die erste Zeile ist das Standardmodell. Zeilen, die nach einem offiziellen GPT-Modell benannt sind, verwenden den offiziellen Eintrag; ihr Anzeigename, Fenster und Reasoning-Stufen werden ignoriert.",
     "addCatalogModel": "Manuell hinzufügen",
@@ -2357,6 +2388,7 @@
     "loginWith": {
       "deepseek": "Mit einem DeepSeek-Konto anmelden",
       "workbuddy": "Mit einem WorkBuddy-Konto anmelden",
+      "codebuddy": "Mit einem CodeBuddy-Konto anmelden",
       "kimi": "Mit einem Kimi-Konto anmelden",
       "claude": "Mit einem Claude-Konto anmelden",
       "chatgpt": "Mit einem ChatGPT-Konto anmelden",
@@ -2536,8 +2568,8 @@
     "input": "Eingabe",
     "output": "Ausgabe",
     "cacheWrite": "Erstellung",
-    "cacheWriteNotReported": "Das OpenAI-Protokoll unterscheidet die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
-    "cacheWritePartial": "Einige Protokolle (z. B. OpenAI) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
+    "cacheWriteNotReported": "Gemini und Grok Build melden die Cache-Erstellung nicht; nur Cache-Treffer werden gemeldet",
+    "cacheWritePartial": "Einige Protokolle (z. B. Gemini) melden die Cache-Erstellung nicht; der Wert kann unvollständig sein",
     "cacheRead": "Treffer",
     "baseCost": "Basis",
     "costMultiplier": "Kostenmultiplikator",
@@ -2678,7 +2710,7 @@
       "label": "Kennzahlen",
       "more": "Weitere Kennzahlen",
       "realTotalHelpTitle": "Wie die Token-Gesamtzahl berechnet wird",
-      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa OpenAI) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
+      "realTotalHelp": "Neue Eingabe + Ausgabe + Cache-Schreibvorgänge + Cache-Treffer. Die neue Eingabe schließt den Cache aus; einige Protokolle (etwa Gemini) melden keine Cache-Schreibvorgänge, daher kann dieser Anteil zu niedrig ausfallen.",
       "hitRateHelpTitle": "Wie die Cache-Trefferquote berechnet wird",
       "hitRateHelp": "Cache-Treffer ÷ (neue Eingabe + Cache-Schreibvorgänge + Cache-Treffer)."
     },
@@ -2750,6 +2782,7 @@
       "duration": "Dauer",
       "durationEstimated": "Dauer (geschätzt)",
       "speedTooFew": "Unter 100 Ausgabe-Token, daher keine Geschwindigkeit",
+      "speedBurst": "Als gepufferter Burst eingetroffen, daher keine Geschwindigkeit",
       "speedEstimateTooFew": "Unter 200 Ausgabe-Token, daher keine Schätzung",
       "noTimingSession": "Sitzungsprotokolle enthalten keine Zeitdaten",
       "noFirstToken": "Keine Zeit bis zum ersten Token, daher keine Geschwindigkeit",
@@ -3517,6 +3550,7 @@
       "skillDirNotFound": "Skill-Verzeichnis nicht gefunden: {{path}}",
       "directoryConflict": "Das Skill-Verzeichnis „{{directory}}“ ist bereits von {{existing_repo}} belegt und kann nicht aus {{new_repo}} installiert werden",
       "emptyArchive": "Das heruntergeladene Archiv ist leer",
+      "archiveInvalid": "Der Download ist kein ZIP-Archiv: Diese Seite ist möglicherweise kein GitHub-/GitLab-/Gitea-Repository und wird noch nicht unterstützt",
       "invalidRepoRef": "Ungültiger Repository-Verweis: {{owner}}/{{name}}",
       "archiveTooLarge": "Das Archiv überschreitet das Entpacklimit von {{limit_mb}} MB; abgebrochen",
       "archiveDownloadTooLarge": "Der Download des Repository-Archivs überschreitet das Limit von {{limit_mb}} MB; abgebrochen",
@@ -3745,7 +3779,10 @@
       "command": "Befehl",
       "args": "Argumente",
       "env": "Umgebung",
-      "url": "URL"
+      "url": "URL",
+      "type": "Typ",
+      "cwd": "Arbeitsverzeichnis",
+      "headers": "Header"
     },
     "prompt": {
       "title": "System-Prompt importieren",
@@ -3779,7 +3816,8 @@
     "risk": {
       "envHijack": "Diese Konfiguration setzt Umgebungsvariablen, die verändern, wie Prozesse Code laden (z. B. Bibliotheken einschleusen oder CA-Zertifikate ersetzen). Importieren Sie nur aus einer Quelle, der Sie vertrauen.",
       "privateEndpoint": "Diese Adresse zeigt auf localhost oder ein privates Netzwerk. Nur importieren, wenn es Ihr eigener lokaler Dienst ist.",
-      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile."
+      "shellCommand": "Diese Konfiguration führt eine vollständige Befehlszeile über eine Shell aus – was tatsächlich läuft, steht in den Argumenten. Prüfen Sie jede Zeile.",
+      "mcpDangerousField": "Diese MCP-Konfiguration enthält risikoreiche Felder, die Host-Umgebungsvariablen auslesen (z. B. bearer_token_env_var, env_http_headers, env_vars), Hilfsbefehle ausführen (http_headers_helper) oder das Arbeitsverzeichnis ändern (cwd) können. Nur aus vollständig vertrauenswürdigen Quellen importieren."
     }
   },
   "iconPicker": {
@@ -4024,7 +4062,29 @@
     "reachableSlow": "{{providerName}} ist erreichbar, aber langsam ({{responseTimeMs}} ms)",
     "unreachable": "{{providerName}} ist nicht erreichbar: {{message}}",
     "unreachableHint": "Es konnte keine Verbindung hergestellt werden (DNS / Verbindung / TLS / Zeitüberschreitung). Prüfen Sie die base_url und Ihr Netzwerk.",
+    "hint": {
+      "blocked": "Das System hat die Verbindung abgelehnt. Meist blockiert eine Firewall oder Sicherheitssoftware CC Switch. Erlaube CC Switch in der Firewall den Netzwerkzugriff; auch Adressen im lokalen Netz brauchen das.",
+      "refused": "Die Adresse ist erreichbar, aber auf diesem Port läuft kein Dienst. Prüfe, ob der Dienst gestartet ist und der Port stimmt.",
+      "timeout": "Zeitüberschreitung beim Verbinden. Prüfe Netzwerk und Adresse; möglicherweise verwirft auch eine Firewall oder Sicherheitssoftware die Verbindung stillschweigend.",
+      "dns": "Der Domainname konnte nicht aufgelöst werden. Prüfe die Domain in der Adresse auf Tippfehler sowie Netzwerk und DNS.",
+      "tls": "Die HTTPS-Verbindung ist fehlgeschlagen (Zertifikat- oder Handshake-Fehler). Prüfe, ob die Adresse http oder https verwenden muss und ob das Serverzertifikat gültig ist."
+    },
     "error": "Fehler bei der Prüfung von {{providerName}}: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "Suche nach CC Switch-Updates fehlgeschlagen",
+      "description": "Beim Start fragt CC Switch dl.ccswitch.io (ersatzweise github.com) nach einer neuen Version, diesmal ohne Erfolg: {{detail}}. Alles andere funktioniert weiter; blockiert dein Netzwerk oder deine Firewall die Anfrage, kannst du das ignorieren."
+    },
+    "modelsDevSyncFailed": {
+      "title": "Modellpreise konnten nicht synchronisiert werden",
+      "description": "CC Switch lädt regelmäßig Modellpreise von models.dev, um Nutzungskosten zu berechnen, diesmal ohne Erfolg: {{detail}}. Alles andere funktioniert weiter."
+    },
+    "networkError": "Server nicht erreichbar",
+    "mute": "Nicht mehr anzeigen",
+    "disableModelsDevSync": "Automatische Synchronisierung ausschalten",
+    "modelsDevSyncDisabled": "Die automatische Synchronisierung der Modellpreise ist aus. Unter Nutzungsstatistik → Modellpreise kannst du sie wieder einschalten.",
+    "disableFailed": "Ausschalten fehlgeschlagen: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Routing-Hauptschalter",
@@ -4646,6 +4706,7 @@
     },
     "updatedAt": "Aktualisiert {{time}}",
     "clickToRefresh": "Klicken, um erneut abzufragen",
+    "manualIdle": "Zum Abfragen des Kontingents auf Aktualisieren klicken",
     "resetCredits": {
       "label": "Zurücksetzungen",
       "left": "Verbleibende Zurücksetzungen: {{count}}",
@@ -4773,6 +4834,7 @@
       "failedTitle": "Einige Apps konnten nicht gelesen werden",
       "filesTitle": "Welche Dateien gelesen wurden",
       "claudeNote": " (mcpServers auf oberster Ebene)",
+      "codebuddyNote": " (die erste vorhandene von .mcp.json, mcp.json, ~/.codebuddy.json)",
       "dshNote": " (in jedes initialisierte Profil geschrieben: web, desktop, headless, acp. Die Datei auf Home-Ebene ~/.dsh/cordis.patch.yml wird weder gelesen noch geschrieben; MCP-Server darin bitte dort verwalten)",
       "ok": "Verstanden"
     },
@@ -4924,9 +4986,9 @@
       "disableAria": "Die {{count}} ausgewählten Skills ausschalten in",
       "uninstall": "Deinstallieren"
     },
-    "piColumnTitle": "Pi zählt einen Skill als aktiviert, wenn sein Ordner in ~/.pi/agent/skills existiert",
+    "piColumnTitle": "Pi liest auch ~/.agents/skills, daher sind nicht ausgewählte Skills in diesem Pfad weiterhin direkt verfügbar",
     "piHelpTitle": "Wie Pi als aktiviert zählt",
-    "piHelp": "Ob der Ordner in ~/.pi/agent/skills existiert.",
+    "piHelp": "Pi liest auch ~/.agents/skills, daher sind nicht ausgewählte Skills in diesem Pfad weiterhin direkt verfügbar.",
     "pop": {
       "onlyApp": "Nur in {{app}} aktivierte anzeigen",
       "showAll": "Alle Skills anzeigen"
@@ -5050,7 +5112,7 @@
   "pluginsPage": {
     "title": "Plugins",
     "helpTitle": "Plugins",
-    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw und Pi installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
+    "help": "Plugins für Claude Code, Codex, Grok Build, MiniMax Code, OpenClaw, Pi und Antigravity CLI installieren, aktivieren und entfernen. CC Switch führt die jeweilige CLI der App aus, das Ergebnis ist also dasselbe wie beim Plugin-Befehl im Terminal. Bei Pi sind Plugins Pi-Pakete, und der Katalog stammt von npm.",
     "appAria": "App",
     "viewAria": "Plugin-Ansichten",
     "viewInstalled": "Installiert",
@@ -5110,9 +5172,11 @@
     "confirmRemoveMarketBody": "{{app}} listet keine Plugins aus diesem Marketplace mehr auf und deinstalliert möglicherweise die daraus installierten Plugins. Sie können ihn später erneut hinzufügen.",
     "toast": {
       "installed": "{{name}} installiert",
+      "installedNeedsConfig": "Deaktiviert installiert. Führen Sie in {{app}} /plugin aus, um die MCP-Server zu konfigurieren und es zu aktivieren.",
       "installFailed": "{{name}} konnte nicht installiert werden",
       "installNeedsTerminal": "Dieses Plugin führt bei der Installation einen vom Marketplace deklarierten Befehl auf Ihrem Rechner aus, und CC Switch bestätigt das nicht für Sie. Führen Sie {{command}} in einem Terminal aus, bestätigen Sie dort und aktualisieren Sie dann hier.",
       "authRequired": "{{app}} erfordert zuerst eine Anmeldung. Führen Sie {{command}} in einem Terminal aus und versuchen Sie es dann erneut.",
+      "pluginInUse": "Dieses Plugin wird derzeit von einem anderen {{app}}- / {{cli}}-Prozess verwendet (z. B. einer laufenden Sitzung, dem Hub oder einem Hintergrunddienst). Schließen Sie ihn und versuchen Sie es erneut.",
       "uninstalled": "{{name}} deinstalliert",
       "uninstallFailed": "{{name}} konnte nicht deinstalliert werden",
       "enabled": "{{name}} aktiviert",
@@ -5121,6 +5185,7 @@
       "updated": "{{name}} aktualisiert",
       "upToDate": "{{name}} ist bereits auf dem neuesten Stand",
       "updateFailed": "{{name}} konnte nicht aktualisiert werden",
+      "updateNeedsReinstall": "Dieses Plugin liegt in einem Ordner älterer Antigravity-Versionen, daher kann CC Switch es nicht aktualisieren. Deinstallieren Sie es und installieren Sie es unter „Entdecken“ erneut, um die neueste Version zu erhalten.",
       "refreshed": "Marketplaces aktualisiert",
       "refreshFailed": "Marketplaces konnten nicht aktualisiert werden",
       "marketAdded": "Marketplace {{source}} hinzugefügt",
@@ -5157,6 +5222,7 @@
       "chatgptHelp": "Wird von ChatGPT-Vorlagen in Claude Code und Claude Desktop sowie von der Bindung an die offizielle Codex-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "xaiHelp": "Wird von xAI-Vorlagen in Claude Code, Claude Desktop und Codex verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "agyHelp": "Die offizielle Anmeldung der Antigravity CLI (agy). agy kann nur mit einem Konto gleichzeitig angemeldet sein; „Wechseln“ ersetzt die Anmeldung von agy durch das ausgewählte Konto, und danach gestartete agy-Sitzungen verwenden es. Das Konto, mit dem agy bereits angemeldet war, wird hier automatisch hinzugefügt, sodass es beim Wechseln nie verloren geht.",
+      "codebuddyHelp": "Die offizielle Anmeldung für CodeBuddy (China- und internationale Website). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „CodeBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „CodeBuddy-Offizielle-Anmeldung“ hinzu. „Konto hinzufügen“ öffnet ein Terminal mit codebuddy und fügt das Konto hier hinzu, sobald Sie fertig sind; ist CodeBuddy bereits angemeldet, wird es vorübergehend abgemeldet und kann wiederhergestellt werden, falls Sie abbrechen. CodeBuddy erneuert seine Tokens selbst.",
       "workbuddyHelp": "Die offizielle Anmeldung der WorkBuddy-Desktop-App. CC Switch kann sich nicht für Sie bei WorkBuddy anmelden; es kann nur das Konto speichern, mit dem WorkBuddy angemeldet ist (ein Snapshot seiner Anmeldedateien). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „WorkBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „WorkBuddy Official Sign-in“ hinzu (es wird jeweils nur eine offizielle Karte hinzugefügt). Snapshots funktionieren nur auf diesem Computer und werden nicht synchronisiert.",
       "claudeHelpTerminal": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Kartenwechsel die Anmeldung von Claude Code nicht. Wählen Sie ein Konto auf einer offiziellen Karte und verwenden Sie „Terminal öffnen“ auf der Karte.",
       "claudeHelpWsl": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Wird noch nicht unterstützt, solange der Claude-Konfigurationsordner in WSL liegt.",
@@ -5203,7 +5269,6 @@
       "reauthed": "Erneut als {{login}} angemeldet."
     },
     "quota": {
-      "updating": "Wird aktualisiert …",
       "loading": "Kontingent wird geprüft …",
       "refresh": "Kontingent aktualisieren",
       "refreshAria": "Kontingent für {{login}} aktualisieren",
@@ -5217,6 +5282,33 @@
       "removeNote": "agy bleibt angemeldet: Wenn agy dieses Konto verwendet, funktioniert es nach dem Entfernen weiter.",
       "switched": "Gewechselt. Neue agy-Sitzungen verwenden dieses Konto.",
       "switchedWhileRunning": "Gewechselt. agy läuft: Geöffnete agy-Sitzungen verwenden weiter das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie agy und öffnen Sie es erneut."
+    },
+    "codebuddy": {
+      "mainland": "China",
+      "global": "International",
+      "expiredNote": "Anmeldung abgelaufen, bitte erneut anmelden",
+      "addedOn": "Hinzugefügt am {{date}}",
+      "imported": "{{login}} hinzugefügt.",
+      "uncollected": "CodeBuddy ist als {{login}} angemeldet; dieses Konto steht noch nicht in dieser Liste.",
+      "importCurrent": "Aktuelles Konto hinzufügen",
+      "unrecognized": "Die Anmeldedatei von CodeBuddy hat ein unbekanntes Format",
+      "unrecognizedNote": "Sie ist möglicherweise von WorkBuddy verschlüsselt. CC Switch lässt sie unverändert und kann keine Konten wechseln.",
+      "statusLoadFailed": "CodeBuddy-Konten konnten nicht gelesen werden. Versuchen Sie es erneut.",
+      "empty": "Noch keine CodeBuddy-Konten. Klicken Sie auf „Konto hinzufügen“, um sich anzumelden, oder fügen Sie das Konto hinzu, mit dem CodeBuddy angemeldet ist.",
+      "login": "Mit neuem Konto anmelden",
+      "current": "Von CodeBuddy verwendet",
+      "pendingNote": "codebuddy wurde in einem Terminal geöffnet. Folgen Sie den Anweisungen zur Anmeldung (geben Sie /login ein, falls kein Anmeldebildschirm erscheint); das Konto wird hier hinzugefügt, sobald Sie fertig sind.",
+      "reopenTerminal": "Terminal erneut öffnen",
+      "removeNote": "Entfernt nur die Kopie in CC Switch. CodeBuddy bleibt angemeldet.",
+      "localOnly": "Kontokopien werden nur auf diesem Computer gespeichert und nicht synchronisiert. Fügen Sie die Konten auf einem anderen Computer erneut hinzu.",
+      "quota": {
+        "credits": "Credits",
+        "enterprise": "Enterprise",
+        "unlimited": "Unbegrenzt",
+        "detail": "{{remaining}} von {{total}} Credits übrig, {{used}} verbraucht",
+        "usedDetail": "{{used}} Credits in diesem Zeitraum verbraucht",
+        "refreshPending": "Das Token wartet auf die Erneuerung durch CodeBuddy. Wechseln Sie zu diesem Konto, verwenden Sie es einmal und prüfen Sie dann erneut."
+      }
     },
     "workbuddy": {
       "addedOn": "Hinzugefügt am {{date}}",
@@ -5270,6 +5362,10 @@
     "openBrowser": {
       "title": "Browser bei der Anmeldung öffnen",
       "description": "Schalten Sie dies aus, um nur den Anmeldelink zu kopieren und in einem Browser Ihrer Wahl zu öffnen – praktisch, wenn Sie Konten in getrennten Browserprofilen führen."
+    },
+    "autoQuota": {
+      "title": "Kontingent automatisch abfragen",
+      "description": "Wenn deaktiviert, werden offizielle Kontokontingente nur beim Klicken auf Aktualisieren abgefragt: Das Öffnen des Auth-Centers, geplante Kartenaktualisierungen und das Überfahren des Tray-Symbols fragen sie nicht ab. DeepSeek-Kontoguthaben werden zusammen mit dem Anmeldestatus angezeigt und sind von diesem Schalter nicht betroffen."
     }
   },
   "kimi": {
@@ -5366,6 +5462,49 @@
       "legacyModelsJson": "Oh My Pi hat noch eine alte models.json, die omp beim nächsten Start nach models.yml migriert. Führen Sie omp einmal aus und fügen Sie den Anbieter dann erneut hinzu."
     }
   },
+  "codebuddy": {
+    "empty": {
+      "title": "Noch keine benutzerdefinierten Modelle",
+      "description": "Die offiziellen Modelle von CodeBuddy verwaltet CodeBuddy selbst. Um offizielle Konten zu wechseln, legen Sie eine Karte „CodeBuddy-Offizielle-Anmeldung“ für das Konto an und klicken Sie hier auf „Hinzufügen“. Benutzerdefinierte Modelle, die bereits in ~/.codebuddy/models.json stehen, erscheinen hier automatisch. Mit der Schaltfläche + oben rechts fügen Sie eine Vorlage oder ein benutzerdefiniertes Modell hinzu."
+    },
+    "modelsHint": "Die Modell-ID ist die id, die in models.json geschrieben wird, und der Name, den Sie in /model auswählen – meist der Modellname des Endpunkts. Sie lässt sich nach dem Hinzufügen nicht mehr ändern. Der Anzeigename entspricht dem Namen oben.",
+    "modelIdDuplicate": "Diese Modell-ID wird bereits verwendet",
+    "modelIdInvalid": "Die Modell-ID darf nicht mit einem Leerzeichen beginnen oder enden.",
+    "vendor": "Anbieterbezeichnung",
+    "urlHint": "Verwenden Sie den vollständigen Pfad, meist mit /chat/completions am Ende. Umgebungsverweise wie ${VAR} funktionieren.",
+    "urlInvalid": "Geben Sie eine gültige http(s)-URL ein.",
+    "apiKeyPlaceholder": "API-Schlüssel eingeben oder eine Umgebungsvariable als ${MY_API_KEY} referenzieren",
+    "maxInputTokens": "Max. Eingabe-Tokens",
+    "maxOutputTokens": "Max. Ausgabe-Tokens",
+    "jsonHint": "Ein Modelleintrag in models.json (seine id stammt aus der Modell-ID oben). CodeBuddy lädt die Datei nach dem Speichern selbst neu.",
+    "official": {
+      "presetName": "CodeBuddy-Offizielle-Anmeldung",
+      "account": "Konto",
+      "accountHint": "Wählen Sie das CodeBuddy-Konto, das diese Karte verwendet. CodeBuddy kann nur mit einem Konto gleichzeitig angemeldet sein: Klicken Sie in der Anbieterliste bei dieser Karte auf „Hinzufügen“, um CodeBuddy damit anzumelden; ein laufendes CodeBuddy übernimmt es automatisch.",
+      "accountDeleted": "Konto entfernt. Wählen Sie ein anderes aus.",
+      "accountDeletedChip": "Konto entfernt",
+      "unbound": "Noch kein Konto ausgewählt. Bearbeiten Sie die Karte, um eines auszuwählen.",
+      "statusLoading": "Konten werden geladen …",
+      "expired": "Die Anmeldung dieses Kontos ist abgelaufen. Melden Sie sich in der Kontoverwaltung erneut an, bevor Sie es hinzufügen.",
+      "importCurrent": "Aktuelle Anmeldung hinzufügen ({{login}})",
+      "adding": "Wird hinzugefügt …",
+      "added": "{{name}} hinzugefügt. CodeBuddy ist jetzt mit diesem Konto angemeldet; ein laufendes CodeBuddy wechselt automatisch, und neue Sitzungen verwenden es ebenfalls.",
+      "addFailed": "Hinzufügen fehlgeschlagen: {{error}}",
+      "switched": "CodeBuddy ist jetzt mit {{name}} angemeldet. Ein laufendes CodeBuddy wechselt automatisch, und neue Sitzungen verwenden es ebenfalls.",
+      "switchFailed": "Wechseln fehlgeschlagen: {{error}}",
+      "removeHint": "CodeBuddy kann nur mit einem Konto gleichzeitig angemeldet sein. Fügen Sie eine andere offizielle Karte hinzu, um zu wechseln."
+    },
+    "login": {
+      "confirmTitle": "Mit einem anderen CodeBuddy-Konto anmelden",
+      "confirmMessage": "CodeBuddy ist als {{login}} angemeldet und kann nur ein Konto gleichzeitig verwenden. Wenn Sie fortfahren, wird dieses Konto zuerst zur Kontoverwaltung hinzugefügt, CodeBuddy dann vorübergehend abgemeldet (die Anmeldung bleibt erhalten, kein Server wird kontaktiert) und ein Terminal zur Anmeldung mit dem neuen Konto geöffnet.\n\nDanach erscheinen laufende CodeBuddy-Sitzungen als abgemeldet, bis Sie die Anmeldung abgeschlossen haben. Brechen Sie ab, können Sie die ursprüngliche Anmeldung mit einem Klick wiederherstellen.",
+      "confirm": "Fortfahren",
+      "signedInHint": "Solange CodeBuddy angemeldet ist, wird es bei der Anmeldung mit einem neuen Konto zuerst vom aktuellen abgemeldet: Laufende CodeBuddy-Sitzungen erscheinen als abgemeldet, bis Sie die Anmeldung abgeschlossen haben.",
+      "pendingReplacing": "CodeBuddy wurde vorübergehend vom aktuellen Konto abgemeldet und codebuddy in einem Terminal geöffnet. Folgen Sie den Anweisungen, um sich mit dem neuen Konto anzumelden; es wird hier hinzugefügt, sobald Sie fertig sind.",
+      "restore": "Ursprüngliche Anmeldung wiederherstellen",
+      "restored": "Die ursprüngliche CodeBuddy-Anmeldung wurde wiederhergestellt.",
+      "restoreFailed": "Die ursprüngliche Anmeldung konnte nicht wiederhergestellt werden (CodeBuddy schreibt möglicherweise gerade seine Anmeldedatei). Melden Sie sich in der Kontoverwaltung oder in einem Terminal erneut an."
+    }
+  },
   "dsh": {
     "empty": {
       "title": "DeepSeek-Harness-Anbieter hinzufügen",
@@ -5418,42 +5557,34 @@
     "confirmMessage": "„{{name}}“ löschen? Nur dieser CC-Switch-Eintrag wird entfernt; die Konfigurationsdateien der Apps bleiben unverändert."
   },
   "zcode": {
-    "addExtraOption": "Add",
-    "addModel": "Add Model",
-    "apiKeyRequired": "API Key is required",
-    "baseUrl": "Base URL",
-    "baseUrlHint": "Custom API endpoint URL",
-    "baseUrlRequired": "Base URL is required",
-    "extraOptionKey": "Key",
-    "extraOptionKeyPlaceholder": "timeout",
-    "extraOptionValue": "Value",
-    "extraOptionValuePlaceholder": "600000",
-    "extraOptions": "Extra Options",
-    "extraOptionsHint": "Configure extra provider options. Values are auto-parsed to appropriate types (number, boolean, etc.).",
-    "kind": "Provider Kind",
-    "kindHint": "API protocol format used by this provider",
-    "kindPlaceholder": "Select provider kind",
-    "limitContext": "Context",
-    "limitOutput": "Output",
-    "modelId": "Model ID",
-    "modelLimits": "Token Limits",
-    "modelName": "Display Name",
-    "models": "Models",
-    "modelsHint": "Configure available models and their display names",
-    "noExtraOptions": "No extra options configured",
-    "noModels": "No models configured",
-    "providerKey": "Provider Key",
-    "providerKeyDuplicate": "This key is already in use",
-    "providerKeyHint": "Unique identifier in ~/.zcode/v2/provider_config.json. Use lowercase letters, numbers, colons, and hyphens only.",
-    "providerKeyInvalid": "Invalid format. Use lowercase letters, numbers, colons, and hyphens only.",
-    "providerKeyLockedHint": "This provider has already been added to the ZCode config, so its key can no longer be changed.",
+    "addModel": "Modell hinzufügen",
+    "apiKeyRequired": "API-Schlüssel ist erforderlich",
+    "baseUrl": "Basis-URL",
+    "baseUrlHint": "URL des eigenen API-Endpunkts",
+    "baseUrlRequired": "Basis-URL ist erforderlich",
+    "kind": "Anbietertyp",
+    "kindHint": "API-Protokoll, das dieser Anbieter verwendet",
+    "kindPlaceholder": "Anbietertyp auswählen",
+    "limitContext": "Kontext",
+    "limitOutput": "Ausgabe",
+    "modelId": "Modell-ID",
+    "modelLimits": "Token-Grenzen",
+    "modelLimitsHint": "Leer lassen, um die von ZCode empfohlenen Werte zu verwenden.",
+    "models": "Modelle",
+    "modelsHint": "Verfügbare Modelle und ihre Anzeigenamen festlegen",
+    "noModels": "Keine Modelle festgelegt",
+    "providerKey": "Anbieter-Schlüssel",
+    "providerKeyDuplicate": "Dieser Schlüssel wird bereits verwendet",
+    "providerKeyHint": "Eindeutige Kennung in ~/.zcode/v2/provider_config.json. Nur Buchstaben, Ziffern, Doppelpunkte, Unterstriche und Bindestriche.",
+    "providerKeyInvalid": "Ungültiges Format. Nur Buchstaben, Ziffern, Doppelpunkte, Unterstriche und Bindestriche.",
+    "providerKeyLockedHint": "Dieser Anbieter ist bereits in der ZCode-Konfiguration eingetragen, sein Schlüssel lässt sich nicht mehr ändern.",
     "providerKeyPlaceholder": "my-provider",
-    "providerKeyRequired": "Provider key is required",
-    "providerKeyStatusLoading": "Loading provider key status, please try again later",
-    "providerName": "Provider Name",
-    "providerNameHint": "Display name shown in ZCode",
-    "providerNamePlaceholder": "My Provider",
-    "toggleModelDetails": "Toggle model details",
-    "activationHint": "ZCode keeps all providers live at once: saving adds this provider to ZCode's list, but you must switch to it inside ZCode's provider picker for it to take effect."
+    "providerKeyRequired": "Anbieter-Schlüssel ist erforderlich",
+    "providerKeyStatusLoading": "Status des Anbieter-Schlüssels wird geladen, bitte später erneut versuchen",
+    "providerName": "Anbietername",
+    "providerNameHint": "Name, der in ZCode angezeigt wird",
+    "providerNamePlaceholder": "Mein Anbieter",
+    "toggleModelDetails": "Modelldetails ein-/ausblenden",
+    "activationHint": "In ZCode sind alle Anbieter gleichzeitig eingetragen: Beim Speichern wird dieser Anbieter in die Liste von ZCode aufgenommen. Damit er wirkt, wählen Sie ihn in ZCode in der Anbieterauswahl aus."
   }
 }

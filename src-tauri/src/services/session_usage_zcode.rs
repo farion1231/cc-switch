@@ -347,12 +347,12 @@ fn insert_zcode_usage(db: &Database, row: &ZCodeUsageRow) -> Result<bool, AppErr
                 .unwrap_or(0)
         });
 
-    // ZCode 的 input_tokens 是 OpenAI 语义：已包含缓存命中部分
-    // （provider_total_tokens = input + output，cache_read 是 input 的子集）。
-    // cc-switch 账本是 Anthropic 语义（input = 未命中缓存的新增输入，
-    // cache_read 单列），所以要把缓存部分从 input 里拆出来，否则总量会把
-    // 缓存读取双计一遍（实测恰好多一倍）。
-    let fresh_input_tokens = (row.input_tokens - row.cache_read_tokens).max(0);
+    // ZCode 的 input_tokens 是总输入：普通输入 + 缓存写入 + 缓存命中都算在内，
+    // cache_read / cache_creation 只是它的拆分（ZCode docs/design/v2/model/token-usage.md）。
+    // cc-switch 账本是 Anthropic 语义（input = 未命中缓存的新增输入，缓存读写单列），
+    // 所以两部分都要从 input 里扣掉，否则总量和费用会把缓存读写再算一遍。
+    let fresh_input_tokens =
+        (row.input_tokens - row.cache_read_tokens - row.cache_creation_tokens).max(0);
 
     // request_id 加前缀防跨源冲突
     let request_id = format!("zcode_session:{}", row.id);
@@ -704,6 +704,35 @@ mod tests {
         assert_eq!(dur, Some(1_200));
         assert_eq!(fresh, 700);
         assert_eq!(total, 1_200);
+        Ok(())
+    }
+
+    #[test]
+    fn cache_write_is_split_out_of_total_input() -> Result<(), AppError> {
+        use crate::services::sql_helpers::real_total_tokens_sql;
+
+        let db = crate::database::Database::memory()?;
+        let mut row = sample_row("cache-write");
+        // 总输入 1000 = 普通 500 + 缓存写入 200 + 缓存命中 300
+        row.input_tokens = 1_000;
+        row.output_tokens = 100;
+        row.cache_read_tokens = 300;
+        row.cache_creation_tokens = 200;
+        assert!(insert_zcode_usage(&db, &row)?);
+
+        let conn = crate::database::lock_conn!(db.conn);
+        let total_sql = real_total_tokens_sql("");
+        let (inp, cw, total): (i64, i64, i64) = conn.query_row(
+            &format!(
+                "SELECT input_tokens, cache_creation_tokens, {total_sql}
+                 FROM proxy_request_logs WHERE request_id = 'zcode_session:cache-write'"
+            ),
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        assert_eq!(inp, 500);
+        assert_eq!(cw, 200);
+        assert_eq!(total, 1_100, "cache write must not be counted twice");
         Ok(())
     }
 

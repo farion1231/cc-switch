@@ -39,10 +39,52 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
+        AppType::Codebuddy => crate::codebuddy_config::provider_key_exists(provider_id),
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
-        _ => Ok(false),
+        AppType::ZCode => crate::zcode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
+        // 切换式应用的 live 只有当前那一家，没有按标识存的条目。
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::Agy => Ok(false),
+    }
+}
+
+/// 只从累加式应用的 live 配置里删掉这家供应商的条目，不动 DB。
+///
+/// Pi、Omp、Kimi、DSH、Copilot 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
+/// 这里之前就分流了；切换式应用没有按标识存的条目。这些应用都报错，不静默跳过。
+pub(crate) fn remove_provider_from_live(
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<(), AppError> {
+    match app_type {
+        AppType::OpenCode => remove_opencode_provider_from_live(provider_id),
+        AppType::OpenClaw => remove_openclaw_provider_from_live(provider_id),
+        AppType::Hermes => remove_hermes_provider_from_live(provider_id),
+        AppType::Mcode => crate::mcode_config::remove_provider(provider_id),
+        AppType::Codebuddy => crate::codebuddy_config::remove_provider(provider_id),
+        AppType::WorkBuddy => crate::workbuddy_config::remove_provider(provider_id),
+        AppType::ZCode => crate::zcode_config::remove_provider(provider_id),
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::Pi
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Agy
+        | AppType::Omp
+        | AppType::Copilot => Err(AppError::Message(format!(
+            "App {} does not support remove from live config",
+            app_type.as_str()
+        ))),
     }
 }
 
@@ -317,6 +359,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::ZCode
         | AppType::ClaudeDesktop => false,
     }
@@ -401,6 +444,7 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::ZCode => Ok(settings.clone()),
     }
 }
@@ -437,7 +481,7 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
     if matches!(app_type, AppType::GrokBuild) {
-        super::grok_direct::reapply(db, Some(provider), provider)?;
+        super::grok_direct::reapply(state, Some(provider), provider)?;
         return Ok(());
     }
     if matches!(app_type, AppType::Agy | AppType::Copilot) {
@@ -761,6 +805,15 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
             }
             crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
         }
+        AppType::Codebuddy => {
+            // 官方登录卡只绑定账号，不是 models.json 里的模型
+            if crate::codebuddy_config::is_official_provider(provider) {
+                return Err(AppError::InvalidInput(
+                    "CodeBuddy official sign-in cards are not written to models.json".into(),
+                ));
+            }
+            crate::codebuddy_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
                 "Pi providers use the Pi provider service".to_string(),
@@ -881,7 +934,7 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
         super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
     } else if matches!(app_type, AppType::GrokBuild) {
         // 编辑前的行用来推断旧版写的表（还没有写入记录时），改了表名也能删掉旧表。
-        super::grok_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
+        super::grok_direct::reapply(state, prev.or(Some(provider)), provider)?;
     } else {
         write_live_for_state(state, app_type, provider)?;
     }
@@ -980,6 +1033,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Codebuddy
                 | AppType::Copilot
         ) {
             continue;
@@ -1141,6 +1195,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
+        AppType::Codebuddy => Ok(json!(crate::codebuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1286,6 +1341,7 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy
+        | AppType::Codebuddy
         | AppType::ZCode => {
             unreachable!("additive mode apps are handled by early return")
         }
@@ -1384,7 +1440,7 @@ pub fn should_import_default_config_on_startup(
 ///
 /// This is specific to OpenCode's additive mode - removing a provider
 /// from the opencode.json file.
-pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::opencode_config;
 
     // Check if OpenCode config directory exists
@@ -1497,8 +1553,9 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
 
 /// 从 ZCode 的个人规则文件导入供应商到数据库。
 ///
-/// ZCode 自管的条目（`builtin:` / `account:` / 按模板 id 建号的）由 ZCode 自己维护，
-/// 导入时跳过，避免把「登录得到的连接」变成可删除的 CC Switch 卡片。
+/// 用户在 ZCode 里自己建的规则（内置 / 账号连接、从模板新建的、新建空白的）归 ZCode 管，
+/// 导入时跳过（见 [`crate::zcode_config::is_zcode_user_owned_rule`]）：CC Switch 表达不全
+/// 它们的模板和端点，导入后一回写就会丢字段。
 pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
     let providers = crate::zcode_config::get_providers()?;
     if providers.is_empty() {
@@ -1508,9 +1565,10 @@ pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppEr
     let mut imported = 0;
     let mut updated = 0;
     let existing_ids = state.db.get_provider_ids(&AppType::ZCode)?;
+    let zcode_owned = crate::zcode_config::zcode_user_owned_provider_ids()?;
 
     for (id, settings_config) in providers {
-        if crate::zcode_config::is_zcode_managed_provider_id(&id) {
+        if zcode_owned.contains(&id) {
             continue;
         }
 
@@ -1525,11 +1583,11 @@ pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppEr
                 Ok(Some(existing)) => {
                     // 字段级合并：只覆盖 ZCode 原生配置里真正存在的字段，
                     // 保留用户在 CC Switch 里改过的其余内容（如 notes、category）。
-                    if existing.settings_config != settings_config || existing.name != name {
+                    let merged = merge_zcode_settings(&existing.settings_config, &settings_config);
+                    if existing.settings_config != merged || existing.name != name {
                         let mut provider = existing;
                         provider.name = name;
-                        provider.settings_config =
-                            merge_zcode_settings(&provider.settings_config, &settings_config);
+                        provider.settings_config = merged;
                         if let Err(e) = state.db.save_provider(&AppType::ZCode, &provider) {
                             log::warn!(
                                 "Failed to update ZCode provider '{id}' from live config: {e}"
@@ -1575,7 +1633,45 @@ fn merge_zcode_settings(current: &Value, live: &Value) -> Value {
     };
     let mut merged = current_obj.clone();
     for (key, value) in live_obj {
-        merged.insert(key.clone(), value.clone());
+        let merged_value = match (key.as_str(), current_obj.get(key)) {
+            // options：live 只还原得出 baseURL / apiKey，其余键（请求头、超时等）留 DB 的
+            ("options", Some(Value::Object(db_options))) => match value.as_object() {
+                Some(live_options) => {
+                    let mut options = db_options.clone();
+                    for (k, v) in live_options {
+                        options.insert(k.clone(), v.clone());
+                    }
+                    Value::Object(options)
+                }
+                None => value.clone(),
+            },
+            // models：哪些模型、什么顺序以 live 为准；同 id 的模型逐键合并，live 带的键
+            // （上下文 / 输出上限 `limit`，读回时总会带上）以 live 为准，名称等 live 表达不了的留 DB 的
+            ("models", Some(Value::Object(db_models))) => match value.as_object() {
+                Some(live_models) => Value::Object(
+                    live_models
+                        .iter()
+                        .map(|(id, live_model)| {
+                            let model = match (db_models.get(id), live_model) {
+                                (Some(Value::Object(db_model)), Value::Object(lm)) => {
+                                    let mut m = db_model.clone();
+                                    for (k, v) in lm {
+                                        m.insert(k.clone(), v.clone());
+                                    }
+                                    Value::Object(m)
+                                }
+                                (Some(db_model), _) => db_model.clone(),
+                                (None, _) => live_model.clone(),
+                            };
+                            (id.clone(), model)
+                        })
+                        .collect(),
+                ),
+                None => value.clone(),
+            },
+            _ => value.clone(),
+        };
+        merged.insert(key.clone(), merged_value);
     }
     Value::Object(merged)
 }
@@ -1740,7 +1836,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
 ///
 /// This removes a specific provider from ~/.hermes/config.yaml
 /// without affecting other providers in the file.
-pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::hermes_config;
 
     // Check if Hermes config directory exists
@@ -1759,7 +1855,7 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
 ///
 /// This removes a specific provider from ~/.openclaw/openclaw.json
 /// without affecting other providers in the file.
-pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::openclaw_config;
 
     // Check if OpenClaw config directory exists
@@ -1778,6 +1874,57 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn zcode_import_merge_keeps_what_live_cannot_express() {
+        let db = json!({
+            "kind": "anthropic",
+            "options": {"baseURL": "https://old", "apiKey": "old", "timeout": 30},
+            "models": {
+                "glm-5.2": {"name": "GLM 5.2", "limit": {"context": 200000}},
+                "dropped": {"name": "Dropped"}
+            },
+            "notes": "mine"
+        });
+        let live = json!({
+            "kind": "anthropic",
+            "options": {"baseURL": "https://new", "apiKey": "new"},
+            "models": {"glm-5.2": {}, "glm-5.2-air": {}}
+        });
+        let merged = merge_zcode_settings(&db, &live);
+        assert_eq!(merged["options"]["baseURL"], json!("https://new"));
+        assert_eq!(merged["options"]["timeout"], json!(30));
+        assert_eq!(merged["models"]["glm-5.2"]["name"], json!("GLM 5.2"));
+        assert_eq!(
+            merged["models"]["glm-5.2"]["limit"]["context"],
+            json!(200000)
+        );
+        assert!(merged["models"].get("dropped").is_none());
+        assert_eq!(merged["models"]["glm-5.2-air"], json!({}));
+        assert_eq!(merged["notes"], json!("mine"));
+        // 再合并一次结果不变：启动导入不会每次都重存
+        assert_eq!(merge_zcode_settings(&merged, &live), merged);
+    }
+
+    #[test]
+    fn zcode_import_merge_takes_limits_from_live() {
+        let db = json!({
+            "models": {
+                "a": {"name": "A", "limit": {"context": 200000, "output": 8000}},
+                "b": {"limit": {"context": 1000}}
+            }
+        });
+        // ZCode 里改过 a 的上限、删了 b 的上限：读回器给每个模型都带 limit
+        let live = json!({
+            "models": {"a": {"limit": {"context": 60000}}, "b": {"limit": {}}}
+        });
+        let merged = merge_zcode_settings(&db, &live);
+        assert_eq!(
+            merged["models"]["a"],
+            json!({"name": "A", "limit": {"context": 60000}})
+        );
+        assert_eq!(merged["models"]["b"], json!({"limit": {}}));
+    }
 
     #[test]
     fn claude_common_config_remove_strips_what_old_versions_merged() {

@@ -3,10 +3,9 @@ import type { ZCodeModel, ZCodeProviderConfig } from "@/types";
 import {
   ZCODE_DEFAULT_KIND,
   ZCODE_DEFAULT_CONFIG,
-  ZCODE_EXTRA_OPTION_DRAFT_PREFIX,
   extractZcodeConfigExtras,
+  extractZcodeOptionExtras,
   parseZcodeConfig,
-  toZcodeExtraOptions,
 } from "../helpers/zcodeFormUtils";
 
 interface UseZcodeFormStateParams {
@@ -26,7 +25,6 @@ export interface ZcodeFormState {
   zcodeApiKey: string;
   zcodeBaseUrl: string;
   zcodeModels: Record<string, ZCodeModel>;
-  zcodeExtraOptions: Record<string, string>;
   /** Whether an API key was present in the initial config (used for validation). */
   zcodeApiKeyRequired: boolean;
   handleZcodeKindChange: (kind: string) => void;
@@ -34,7 +32,6 @@ export interface ZcodeFormState {
   handleZcodeApiKeyChange: (apiKey: string) => void;
   handleZcodeBaseUrlChange: (baseUrl: string) => void;
   handleZcodeModelsChange: (models: Record<string, ZCodeModel>) => void;
-  handleZcodeExtraOptionsChange: (options: Record<string, string>) => void;
   resetZcodeState: (config?: ZCodeProviderConfig) => void;
   /** 外部改写 settingsConfig（JSON 编辑器/粘贴）后，把结构化字段重新对齐 */
   hydrateFromJson: (json: string) => void;
@@ -46,7 +43,6 @@ interface ZcodeFieldState {
   apiKey: string;
   baseUrl: string;
   models: Record<string, ZCodeModel>;
-  extraOptions: Record<string, string>;
   /** Preserved from the initial config so edits don't silently flip it. */
   enabled: boolean | null;
   /** Preserved from the initial config so edits don't overwrite the source. */
@@ -94,7 +90,6 @@ export function useZcodeFormState({
         ? initialZcodeOptions.baseURL
         : "",
     models: initialZcodeConfig?.models || {},
-    extraOptions: toZcodeExtraOptions(initialZcodeOptions),
     // Preserve the original enabled/source so editing an unrelated field
     // doesn't silently re-enable a disabled provider or rewrite its source.
     enabled:
@@ -116,7 +111,6 @@ export function useZcodeFormState({
           apiKey: "",
           baseUrl: "",
           models: {},
-          extraOptions: {},
           enabled: null,
           source: undefined,
         },
@@ -140,6 +134,11 @@ export function useZcodeFormState({
   // （用户在 JSON 编辑器里粘贴/修改）还是自己 emit 的回声，避免循环互相覆盖。
   const lastEmittedRef = useRef<string | null>(null);
   const extrasRef = useRef(initialExtras);
+  // ZCode 没有放超时、请求头这类供应商选项的位置，表单不再编辑它们；
+  // 已有的原样带着走，免得改别的字段时把 JSON 里的值删掉。
+  const optionExtrasRef = useRef(
+    appId === "zcode" ? extractZcodeOptionExtras(initialZcodeOptions) : {},
+  );
 
   /**
    * Rebuild the full ZCodeProviderConfig from the given (next) field state and
@@ -148,19 +147,10 @@ export function useZcodeFormState({
   const emitConfig = useCallback(
     (next: ZcodeFieldState) => {
       const options: Record<string, unknown> = {
+        ...optionExtrasRef.current,
         baseURL: next.baseUrl.trim().replace(/\/+$/, ""),
         apiKey: next.apiKey,
       };
-      for (const [k, v] of Object.entries(next.extraOptions)) {
-        const trimmedKey = k.trim();
-        if (trimmedKey && !k.startsWith(ZCODE_EXTRA_OPTION_DRAFT_PREFIX)) {
-          try {
-            options[trimmedKey] = JSON.parse(v);
-          } catch {
-            options[trimmedKey] = v;
-          }
-        }
-      }
 
       // Extras (priority, tags, …) go first so the structured fields the form
       // owns always win; anything the user cannot edit here passes through.
@@ -197,15 +187,14 @@ export function useZcodeFormState({
         ...prev,
         kind: parsed.kind || ZCODE_DEFAULT_KIND,
         name: parsed.name || "",
-        baseUrl:
-          typeof options.baseURL === "string" ? options.baseURL : prev.baseUrl,
+        baseUrl: typeof options.baseURL === "string" ? options.baseURL : "",
         apiKey: typeof options.apiKey === "string" ? options.apiKey : "",
         models: parsed.models || {},
-        extraOptions: toZcodeExtraOptions(options),
         enabled: parsed.enabled === undefined ? null : parsed.enabled,
         source: parsed.source,
       }));
       extrasRef.current = extractZcodeConfigExtras(parsed);
+      optionExtrasRef.current = extractZcodeOptionExtras(options);
     } catch {
       // JSON 还没写完整（用户输入中），保持现有字段不动
     }
@@ -242,10 +231,6 @@ export function useZcodeFormState({
     (models: Record<string, ZCodeModel>) => updateFields({ models }),
     [updateFields],
   );
-  const handleZcodeExtraOptionsChange = useCallback(
-    (extraOptions: Record<string, string>) => updateFields({ extraOptions }),
-    [updateFields],
-  );
 
   const resetZcodeState = useCallback((config?: ZCodeProviderConfig) => {
     const next: ZcodeFieldState = {
@@ -254,13 +239,13 @@ export function useZcodeFormState({
       baseUrl: config?.options?.baseURL || "",
       apiKey: config?.options?.apiKey || "",
       models: config?.models || {},
-      extraOptions: toZcodeExtraOptions(config?.options || {}),
       enabled: config?.enabled === undefined ? null : config.enabled,
       source: config?.source,
     };
     // A reset installs a whole new config (e.g. a preset), so its extras —
     // if any — replace whatever the previous provider carried.
     extrasRef.current = extractZcodeConfigExtras(config);
+    optionExtrasRef.current = extractZcodeOptionExtras(config?.options);
     fieldsRef.current = next;
     setZcodeProviderKey("");
     setFields(next);
@@ -274,14 +259,12 @@ export function useZcodeFormState({
     zcodeApiKey: fields.apiKey,
     zcodeBaseUrl: fields.baseUrl,
     zcodeModels: fields.models,
-    zcodeExtraOptions: fields.extraOptions,
     zcodeApiKeyRequired,
     handleZcodeKindChange,
     handleZcodeNameChange,
     handleZcodeApiKeyChange,
     handleZcodeBaseUrlChange,
     handleZcodeModelsChange,
-    handleZcodeExtraOptionsChange,
     resetZcodeState,
     hydrateFromJson,
   };

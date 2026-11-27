@@ -41,7 +41,7 @@
 
 use crate::config::atomic_write_private;
 use crate::error::AppError;
-use crate::provider::ZCodeProviderConfig;
+use crate::provider::{ZCodeModel, ZCodeModelLimit, ZCodeProviderConfig};
 use crate::settings::get_zcode_override_dir;
 use indexmap::IndexMap;
 use serde_json::{json, Map, Value};
@@ -453,37 +453,15 @@ pub fn get_zcode_usage_db_path() -> PathBuf {
 // ============================================================================
 
 /// ZCode 内置供应商模板。`base_url` + `api_type` 用于从 cc-switch 供应商的
-/// `options.baseURL` + `kind` 反查 `templateId`；`models` 是模板内置模型，
-/// 用作 `modelOrder` 默认值。列表摘自 ZCode 3.14.x 的 zcode-builtin.json
-///（revision 30）；ZCode 升级后模板若更名，未匹配的供应商会退化为无模板
-/// 规则（自定义 api 覆写），仍可用。
+/// `options.baseURL` + `kind` 反查 `templateId`。模板自带哪些模型不在这里抄，
+/// 由 ZCode 按自己的 zcode-builtin.json 决定（会随版本变）。ZCode 升级后模板若更名，
+/// 未匹配的供应商会退化为无模板规则（自定义 api 覆写），仍可用。
 struct ZCodeTemplate {
     template_id: &'static str,
     base_url: &'static str,
     access_type: &'static str,
     api_type: &'static str,
-    models: &'static [&'static str],
 }
-
-const GLM_CODING_PLAN_MODELS: &[&str] = &["GLM-5.3", "GLM-5.3-Flash"];
-const GLM_STANDARD_MODELS: &[&str] = &[
-    "GLM-5.3",
-    "GLM-5.3-Flash",
-    "GLM-5V-Turbo",
-    "GLM-5.1",
-    "GLM-5.1-Highspeed",
-    "GLM-5",
-    "GLM-5-Turbo",
-    "GLM-4.7",
-    "GLM-4.7-FlashX",
-    "GLM-4.7-Flash",
-    "GLM-4.6",
-    "GLM-4.5-Air",
-    "GLM-4.5",
-    "GLM-4.6V",
-    "GLM-4.6V-Flash",
-    "GLM-4.6V-FlashX",
-];
 
 const ZCODE_TEMPLATES: &[ZCodeTemplate] = &[
     ZCodeTemplate {
@@ -491,117 +469,84 @@ const ZCODE_TEMPLATES: &[ZCodeTemplate] = &[
         base_url: "https://api.z.ai/api/anthropic",
         access_type: "zhipu-coding-plan-api-key",
         api_type: "anthropic-messages",
-        models: GLM_CODING_PLAN_MODELS,
     },
     ZCodeTemplate {
         template_id: "zai-standard-api",
         base_url: "https://api.z.ai/api/paas/v4",
         access_type: "api-key",
         api_type: "openai-chat-completions",
-        models: GLM_STANDARD_MODELS,
     },
     ZCodeTemplate {
         template_id: "bigmodel-api",
         base_url: "https://open.bigmodel.cn/api/anthropic",
         access_type: "zhipu-coding-plan-api-key",
         api_type: "anthropic-messages",
-        models: GLM_CODING_PLAN_MODELS,
     },
     ZCodeTemplate {
         template_id: "bigmodel-standard-api",
         base_url: "https://open.bigmodel.cn/api/paas/v4",
         access_type: "api-key",
         api_type: "openai-chat-completions",
-        models: GLM_STANDARD_MODELS,
     },
     ZCodeTemplate {
         template_id: "moonshot-kimi",
         base_url: "https://api.moonshot.cn/anthropic",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &["kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "k3", "k3-256k"],
     },
     ZCodeTemplate {
         template_id: "minimax",
         base_url: "https://api.minimaxi.com/anthropic",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.5", "MiniMax-M2"],
     },
     ZCodeTemplate {
         template_id: "deepseek",
         base_url: "https://api.deepseek.com/anthropic",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &["deepseek-flash", "deepseek-v4-pro"],
     },
     ZCodeTemplate {
         template_id: "qwen-alibaba-model-studio-cn",
         base_url: "https://dashscope.aliyuncs.com/apps/anthropic",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &[
-            "qwen3.8-max",
-            "qwen3.8-flash",
-            "qwen3.7-max",
-            "qwen3.5-plus",
-        ],
     },
     ZCodeTemplate {
         template_id: "qwen-alibaba-model-studio-intl",
         base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
         access_type: "api-key",
         api_type: "openai-chat-completions",
-        models: &[
-            "qwen3.8-max",
-            "qwen3.8-flash",
-            "qwen3.7-max",
-            "qwen3.5-plus",
-        ],
     },
     ZCodeTemplate {
         template_id: "xiaomi-mimo",
         base_url: "https://api.xiaomimimo.com/anthropic",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &["mimo-v2.5-pro", "mimo-v2.5"],
     },
     ZCodeTemplate {
         template_id: "openai",
         base_url: "https://api.openai.com/v1",
         access_type: "api-key",
         api_type: "openai-responses",
-        models: &["gpt-5.6", "gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex"],
     },
     ZCodeTemplate {
         template_id: "anthropic",
         base_url: "https://api.anthropic.com/v1",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &[
-            "claude-opus-5",
-            "claude-sonnet-5",
-            "claude-haiku-4-5-20251001",
-        ],
     },
     ZCodeTemplate {
         template_id: "xai",
         base_url: "https://api.x.ai/v1",
         access_type: "api-key",
         api_type: "openai-responses",
-        models: &["grok-4.6", "grok-build-0.1", "grok-4.3"],
     },
     ZCodeTemplate {
         template_id: "openrouter",
         base_url: "https://openrouter.ai/api",
         access_type: "api-key",
         api_type: "anthropic-messages",
-        models: &[
-            "anthropic/claude-opus-5",
-            "openai/gpt-5.6",
-            "deepseek/deepseek-v4-pro",
-            "z-ai/glm-5.3",
-        ],
     },
 ];
 
@@ -643,6 +588,51 @@ fn template_by_id(template_id: &str) -> Option<&'static ZCodeTemplate> {
 /// 与 OpenCode 等 additive 应用「自管节点跳过」的策略一致。
 pub fn is_zcode_managed_provider_id(id: &str) -> bool {
     id.starts_with("builtin:") || id.starts_with("account:") || template_by_id(id).is_some()
+}
+
+/// `id` 是不是 ZCode 给「从模板新建」或「新建空白」分配的编号：`<base>` 或 `<base>-<n>`
+/// （ZCode config-service 的 nextPersonalProviderId）。
+fn is_zcode_numbered_id(id: &str, base: &str) -> bool {
+    id == base
+        || id
+            .strip_prefix(base)
+            .and_then(|rest| rest.strip_prefix('-'))
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// 这条个人规则是不是用户在 ZCode 里自己建的（不归 CC Switch 管）。
+///
+/// 这类规则带着 ZCode 侧的模板、端点、logo、请求头等字段，CC Switch 的结构表达不全，
+/// 导入后一回写就会丢字段，所以导入时一律跳过：
+/// - 内置 / 账号连接、模板 id 本身（[`is_zcode_managed_provider_id`]）；
+/// - 带 `templateId` 且 id 是 `<templateId>` 或 `<templateId>-<n>` 的（ZCode 从模板新建）；
+/// - 模板不在 CC Switch 已知表里的（还原不出端点）；
+/// - `new-provider`、`new-provider-<n>`（ZCode 新建空白供应商的编号）。
+pub fn is_zcode_user_owned_rule(rule: &Value) -> bool {
+    let Some(id) = rule.get("providerId").and_then(Value::as_str) else {
+        return true;
+    };
+    if is_zcode_managed_provider_id(id) || is_zcode_numbered_id(id, "new-provider") {
+        return true;
+    }
+    match rule.get("templateId").and_then(Value::as_str) {
+        Some(template) => template_by_id(template).is_none() || is_zcode_numbered_id(id, template),
+        None => false,
+    }
+}
+
+/// provider_config.json 里用户在 ZCode 自建、导入时要跳过的规则 id。
+pub fn zcode_user_owned_provider_ids() -> Result<std::collections::HashSet<String>, AppError> {
+    let doc = read_zcode_provider_config()?;
+    Ok(read_provider_rules(&doc)
+        .iter()
+        .filter(|rule| is_zcode_user_owned_rule(rule))
+        .filter_map(|rule| {
+            rule.get("providerId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect())
 }
 
 // ============================================================================
@@ -701,59 +691,315 @@ fn read_provider_rules(doc: &Value) -> Vec<Value> {
 /// （create/delete/reorder 时），外部写入的残缺数组会让新 provider 在
 /// 有效顺序里跳到已有个人 provider 之前。字段缺省时 ZCode 按 rules
 /// 数组顺序推导，等价于「追加到末尾」。
-fn upsert_provider_rule(doc: &mut Value, id: &str, rule: Value) {
-    if doc.get("schemaVersion").is_none() {
-        doc["schemaVersion"] = json!(1);
-    }
-    if !doc.get("config").is_some_and(Value::is_object) {
-        doc["config"] = json!({});
-    }
-    let cfg = doc
-        .get_mut("config")
-        .and_then(Value::as_object_mut)
-        .expect("config forced to object above");
-
-    let rules_root = cfg
-        .entry("providerConfigRules")
-        .or_insert_with(|| json!({}));
-    if !rules_root.is_object() {
-        *rules_root = json!({});
-    }
-    let rules_obj = rules_root
+///
+/// `models` 为 `Some` 时同步这家各模型的上下文 / 输出上限（见 [`sync_model_limit_rules`]）；
+/// 结构解析不全的兜底写入传 `None`，模型规则原样不动。
+fn upsert_provider_rule(
+    doc: &mut Value,
+    id: &str,
+    rule: Value,
+    models: Option<&IndexMap<String, ZCodeModel>>,
+) -> Result<(), AppError> {
+    let shape_error = |what: &str| {
+        AppError::Config(format!(
+            "ZCode provider_config.json has an unexpected shape ({what}); refusing to rewrite it"
+        ))
+    };
+    // 在副本上改，全部成功才替换：拒绝时调用方手里的文档保持原样
+    let mut work = doc.clone();
+    let root = work
         .as_object_mut()
-        .expect("providerConfigRules normalized to object above");
-    let arr = rules_obj
-        .entry("providerRules")
-        .or_insert_with(|| json!([]));
-    if !arr.is_array() {
-        *arr = json!([]);
+        .ok_or_else(|| shape_error("root is not an object"))?;
+    // 只认识 v1：更新的格式原样留给 ZCode，别按旧结构改写
+    match root.get("schemaVersion") {
+        None => {
+            root.insert("schemaVersion".into(), json!(1));
+        }
+        Some(v) if v.as_i64() == Some(1) => {}
+        Some(_) => return Err(shape_error("unsupported schemaVersion")),
     }
-    let arr = arr
+    let cfg = root
+        .entry("config")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| shape_error("config is not an object"))?;
+    // ZCode 解码时 modelConfigRules 必须带两个数组，缺了整个个人层都读不进去
+    cfg.entry("modelConfigRules")
+        .or_insert_with(|| json!({"providerModelRules": [], "manualProviderModelRules": []}));
+    let arr = cfg
+        .entry("providerConfigRules")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| shape_error("providerConfigRules is not an object"))?
+        .entry("providerRules")
+        .or_insert_with(|| json!([]))
         .as_array_mut()
-        .expect("providerRules normalized to array");
-    if let Some(slot) = arr
+        .ok_or_else(|| shape_error("providerRules is not an array"))?;
+    let previous_model_ids = match arr
         .iter_mut()
         .find(|r| r.get("providerId").and_then(Value::as_str) == Some(id))
     {
-        *slot = rule;
-    } else {
-        arr.push(rule);
+        Some(slot) => std::mem::replace(slot, rule)
+            .get("config")
+            .map(rule_model_ids)
+            .unwrap_or_default(),
+        None => {
+            arr.push(rule);
+            Vec::new()
+        }
+    };
+    if let Some(models) = models {
+        let model_rules = cfg
+            .get_mut("modelConfigRules")
+            .ok_or_else(|| shape_error("modelConfigRules is missing"))?;
+        sync_model_limit_rules(model_rules, id, models, &previous_model_ids)
+            .map_err(shape_error)?;
+    }
+    *doc = work;
+    Ok(())
+}
+
+/// 规则 `config` 里列出的模型 id（`personalModelIds` + `modelOrder`，去重保序）。
+fn rule_model_ids(rule_config: &Value) -> Vec<String> {
+    let mut ids: Vec<String> = Vec::new();
+    for key in ["modelOrder", "personalModelIds"] {
+        for model_id in rule_config
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            if !model_id.is_empty() && !ids.iter().any(|m| m == model_id) {
+                ids.push(model_id.to_string());
+            }
+        }
+    }
+    ids
+}
+
+// ZCode 模型规则里上下文 / 输出上限所在的路径（`ModelConfig` 的 properties / optionSpecs）。
+const CONTEXT_WINDOW_PATH: &[&str] = &["config", "properties", "contextWindow"];
+const MAX_OUTPUT_PATH: &[&str] = &["config", "optionSpecs", "maxOutputTokens", "max"];
+const PROVIDER_MODEL_RULES: &str = "providerModelRules";
+const MANUAL_PROVIDER_MODEL_RULES: &str = "manualProviderModelRules";
+
+/// ZCode 只收正整数（zod `int().positive()`），0 或超出 JS 安全整数的值会让整份个人层作废，
+/// 这类值当作没填。
+fn positive_limit(value: Option<u64>) -> Option<u64> {
+    const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+    value.filter(|n| (1..=MAX_SAFE_INTEGER).contains(n))
+}
+
+fn is_exact_model_rule(rule: &Value, provider_id: &str, model_id: &str) -> bool {
+    rule.get("providerId").and_then(Value::as_str) == Some(provider_id)
+        && rule.get("modelId").and_then(Value::as_str) == Some(model_id)
+}
+
+/// 沿 `path` 写入叶子，缺的（或为 null 的）中间层补成对象。
+fn set_leaf(root: &mut Value, path: &[&str], leaf: Value) {
+    let Some((last, parents)) = path.split_last() else {
+        return;
+    };
+    let mut node = root;
+    for key in parents {
+        if !node.is_object() {
+            *node = json!({});
+        }
+        node = node
+            .as_object_mut()
+            .expect("just ensured object")
+            .entry(*key)
+            .or_insert_with(|| json!({}));
+    }
+    if !node.is_object() {
+        *node = json!({});
+    }
+    node.as_object_mut()
+        .expect("just ensured object")
+        .insert((*last).to_string(), leaf);
+}
+
+/// 删掉 `path` 的叶子，并把因此变空的上层对象一并删掉。返回 `root` 是否已变空。
+fn clear_leaf(root: &mut Value, path: &[&str]) -> bool {
+    let Some(obj) = root.as_object_mut() else {
+        return false;
+    };
+    match path {
+        [] => {}
+        [leaf] => {
+            obj.remove(*leaf);
+        }
+        [head, rest @ ..] => {
+            if obj
+                .get_mut(*head)
+                .is_some_and(|child| clear_leaf(child, rest))
+            {
+                obj.remove(*head);
+            }
+        }
+    }
+    obj.is_empty()
+}
+
+/// 把 CC Switch 表单里的模型上下文 / 输出上限同步进 `modelConfigRules`。
+///
+/// 写法与 ZCode 自己界面的「推荐配置」模式一致：`providerModelRules` 里一条只带用户填了的
+/// 叶子的稀疏规则，其余能力项（图片、推理档位及其请求映射）继续沿用 ZCode 内置推荐值。
+/// 不新建手动规则：ZCode 要求手动规则写全所有能力项，连推理参数的映射表达式也要带上。
+///
+/// - 该模型已有手动规则（用户在 ZCode 里切了手动）：只改填了的两项，空着的保留 ZCode 原值，
+///   因为手动规则里这两项是必填的；
+/// - 已有推荐规则：填了的写入、空着的删掉，ZCode 写的 `enabled` 等其余字段不动，删空了整条去掉；
+/// - 没有规则：至少填了一项才新建；
+/// - 从列表里移除的模型：只撤掉这两项，规则里 ZCode 自己的字段留着。
+fn sync_model_limit_rules(
+    model_rules: &mut Value,
+    provider_id: &str,
+    models: &IndexMap<String, ZCodeModel>,
+    previous_model_ids: &[String],
+) -> Result<(), &'static str> {
+    let rules = model_rules
+        .as_object_mut()
+        .ok_or("modelConfigRules is not an object")?;
+    for key in [PROVIDER_MODEL_RULES, MANUAL_PROVIDER_MODEL_RULES] {
+        if !rules.entry(key).or_insert_with(|| json!([])).is_array() {
+            return Err("modelConfigRules entry is not an array");
+        }
+    }
+
+    let removed = previous_model_ids
+        .iter()
+        .filter(|m| !models.contains_key(m.as_str()))
+        .map(|m| (m.as_str(), None, None));
+    let current = models
+        .iter()
+        .filter(|(m, _)| !m.is_empty())
+        .map(|(m, model)| {
+            let limit = model.limit.as_ref();
+            (
+                m.as_str(),
+                positive_limit(limit.and_then(|l| l.context)),
+                positive_limit(limit.and_then(|l| l.output)),
+            )
+        });
+    let targets: Vec<(&str, Option<u64>, Option<u64>)> = removed.chain(current).collect();
+
+    for (model_id, context, output) in targets {
+        let manual = rules[MANUAL_PROVIDER_MODEL_RULES]
+            .as_array_mut()
+            .expect("checked above");
+        if let Some(rule) = manual
+            .iter_mut()
+            .find(|r| is_exact_model_rule(r, provider_id, model_id))
+        {
+            if let Some(c) = context {
+                set_leaf(rule, CONTEXT_WINDOW_PATH, json!(c));
+            }
+            if let Some(o) = output {
+                set_leaf(rule, MAX_OUTPUT_PATH, json!(o));
+            }
+            continue;
+        }
+
+        let smart = rules[PROVIDER_MODEL_RULES]
+            .as_array_mut()
+            .expect("checked above");
+        let existing = smart
+            .iter()
+            .position(|r| is_exact_model_rule(r, provider_id, model_id));
+        let index = match existing {
+            Some(i) => i,
+            None if context.is_some() || output.is_some() => {
+                smart.push(json!({"providerId": provider_id, "modelId": model_id, "config": {}}));
+                smart.len() - 1
+            }
+            None => continue,
+        };
+        let rule = &mut smart[index];
+        for (path, value) in [(CONTEXT_WINDOW_PATH, context), (MAX_OUTPUT_PATH, output)] {
+            match value {
+                Some(v) => set_leaf(rule, path, json!(v)),
+                None => {
+                    clear_leaf(rule, path);
+                }
+            }
+        }
+        // 两项都撤掉后规则里只剩身份：整条去掉，免得留一条空规则
+        if rule
+            .get("config")
+            .is_none_or(|c| c.as_object().is_some_and(Map::is_empty))
+        {
+            smart.remove(index);
+        }
+    }
+    Ok(())
+}
+
+/// 从 `modelConfigRules` 读回某个模型的上下文 / 输出上限（手动规则优先，它覆盖推荐规则）。
+fn read_model_limit(
+    model_rules: Option<&Value>,
+    provider_id: &str,
+    model_id: &str,
+) -> ZCodeModelLimit {
+    let find = |key: &str| {
+        model_rules
+            .and_then(|r| r.get(key))
+            .and_then(Value::as_array)
+            .and_then(|rules| {
+                rules
+                    .iter()
+                    .find(|r| is_exact_model_rule(r, provider_id, model_id))
+            })
+    };
+    let leaf = |path: &[&str]| {
+        [MANUAL_PROVIDER_MODEL_RULES, PROVIDER_MODEL_RULES]
+            .into_iter()
+            .filter_map(find)
+            .find_map(|rule| {
+                path.iter()
+                    .try_fold(rule, |node, key| node.get(*key))
+                    .and_then(Value::as_u64)
+            })
+    };
+    ZCodeModelLimit {
+        context: leaf(CONTEXT_WINDOW_PATH),
+        output: leaf(MAX_OUTPUT_PATH),
     }
 }
 
-fn remove_provider_rule(doc: &mut Value, id: &str) {
+/// 删掉 `id` 的规则；返回是否真有改动（没改就不必写盘）。
+fn remove_provider_rule(doc: &mut Value, id: &str) -> bool {
     let Some(cfg) = doc.get_mut("config").and_then(Value::as_object_mut) else {
-        return;
+        return false;
     };
+    let mut changed = false;
     if let Some(arr) = cfg.get_mut("providerOrder").and_then(Value::as_array_mut) {
+        let before = arr.len();
         arr.retain(|v| v.as_str() != Some(id));
+        changed |= arr.len() != before;
     }
     if let Some(rules) = cfg
         .get_mut("providerConfigRules")
         .and_then(|r| r.get_mut("providerRules"))
         .and_then(Value::as_array_mut)
     {
+        let before = rules.len();
         rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(id));
+        changed |= rules.len() != before;
+    }
+    // ZCode 删供应商时也会删掉它的全部模型规则（deleteExactForProvider），这里照做
+    if let Some(model_rules) = cfg
+        .get_mut("modelConfigRules")
+        .and_then(Value::as_object_mut)
+    {
+        for key in [PROVIDER_MODEL_RULES, MANUAL_PROVIDER_MODEL_RULES] {
+            if let Some(rules) = model_rules.get_mut(key).and_then(Value::as_array_mut) {
+                let before = rules.len();
+                rules.retain(|r| r.get("providerId").and_then(Value::as_str) != Some(id));
+                changed |= rules.len() != before;
+            }
+        }
     }
     if cfg
         .get("defaultModelSelection")
@@ -762,7 +1008,9 @@ fn remove_provider_rule(doc: &mut Value, id: &str) {
         == Some(id)
     {
         cfg.remove("defaultModelSelection");
+        changed = true;
     }
+    changed
 }
 
 /// 把 cc-switch 的 ZCodeProviderConfig 转成 provider_config.json 的个人规则。
@@ -785,28 +1033,16 @@ fn provider_config_to_rule(id: &str, config: &ZCodeProviderConfig) -> Value {
         access["apiKey"] = json!(key);
     }
 
-    let template_models = template.map(|t| t.models).unwrap_or(&[]);
-    let user_model_ids: Vec<&str> = config
+    // 用户选的模型全部写进 personalModelIds：ZCode 解析时会自己剔掉和模板内置重复的
+    // （resolver.ts 的 personalIdsInOrder），不用 CC Switch 维护一份会过时的模板模型表。
+    // 一个都没选就都留空，ZCode 按模板内置的模型和顺序来。
+    let user_model_ids: Vec<Value> = config
         .models
         .keys()
-        .map(String::as_str)
         .filter(|s| !s.is_empty())
+        .map(|m| json!(m))
         .collect();
-    let (model_order, personal_ids): (Vec<Value>, Vec<Value>) = if user_model_ids.is_empty() {
-        (
-            template_models.iter().map(|m| json!(m)).collect(),
-            Vec::new(),
-        )
-    } else {
-        (
-            user_model_ids.iter().map(|m| json!(m)).collect(),
-            user_model_ids
-                .iter()
-                .filter(|m| !template_models.contains(m))
-                .map(|m| json!(m))
-                .collect(),
-        )
-    };
+    let (model_order, personal_ids) = (user_model_ids.clone(), user_model_ids);
 
     let mut rule_config = json!({
         "group": "standard-personal",
@@ -842,7 +1078,13 @@ fn provider_config_to_rule(id: &str, config: &ZCodeProviderConfig) -> Value {
 
 /// 个人规则 → cc-switch 的 ZCodeProviderConfig（import / live 读取用）。
 /// 解析不出 providerId 的规则返回 None。
-fn provider_rule_to_config(rule: &Value) -> Option<(String, ZCodeProviderConfig)> {
+///
+/// `model_rules` 是文件里的 `modelConfigRules`：每个模型都带上 `limit`（没设上限就是空的），
+/// 让启动导入以 live 为准覆盖数据库里的旧上限。
+fn provider_rule_to_config(
+    rule: &Value,
+    model_rules: Option<&Value>,
+) -> Option<(String, ZCodeProviderConfig)> {
     use crate::provider::ZCodeProviderOptions;
     use std::collections::HashMap;
 
@@ -870,16 +1112,17 @@ fn provider_rule_to_config(rule: &Value) -> Option<(String, ZCodeProviderConfig)
         .map(str::to_string)
         .or_else(|| template.map(|t| t.api_type.to_string()));
 
-    let mut models = IndexMap::new();
-    for key in ["modelOrder", "personalModelIds"] {
-        if let Some(ids) = rule_config.get(key).and_then(Value::as_array) {
-            for model_id in ids.iter().filter_map(Value::as_str) {
-                if !model_id.is_empty() {
-                    models.entry(model_id.to_string()).or_default();
-                }
-            }
-        }
-    }
+    let models: IndexMap<String, ZCodeModel> = rule_model_ids(rule_config)
+        .into_iter()
+        .map(|model_id| {
+            let limit = read_model_limit(model_rules, &id, &model_id);
+            let model = ZCodeModel {
+                limit: Some(limit),
+                ..Default::default()
+            };
+            (model_id, model)
+        })
+        .collect();
 
     Some((
         id,
@@ -934,8 +1177,9 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
     let doc = read_zcode_provider_config()?;
     let mut result = Map::new();
 
+    let model_rules = doc.get("config").and_then(|c| c.get("modelConfigRules"));
     for rule in read_provider_rules(&doc) {
-        match provider_rule_to_config(&rule) {
+        match provider_rule_to_config(&rule, model_rules) {
             Some((id, config)) => {
                 let value = match serde_json::to_value(&config) {
                     Ok(v) => v,
@@ -960,8 +1204,9 @@ pub fn get_providers() -> Result<Map<String, Value>, AppError> {
 /// `config` 应为 ZCodeProviderConfig 形状；解析失败时退化为从原始 JSON 摘
 /// 最小字段（与 live.rs 的 raw fallback 对应）。
 pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
-    let rule = match serde_json::from_value::<ZCodeProviderConfig>(config.clone()) {
-        Ok(typed) => provider_config_to_rule(id, &typed),
+    let typed = serde_json::from_value::<ZCodeProviderConfig>(config.clone());
+    let rule = match &typed {
+        Ok(typed) => provider_config_to_rule(id, typed),
         Err(e) => {
             log::warn!(
                 "Failed to parse ZCode provider config for '{id}', writing minimal rule: {e}"
@@ -969,11 +1214,12 @@ pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
             raw_value_to_rule(id, &config)
         }
     };
+    let models = typed.as_ref().ok().map(|t| &t.models);
 
     let path = get_zcode_provider_config_path();
     with_zcode_file_lock(&path, || {
         let mut doc = read_zcode_provider_config()?;
-        upsert_provider_rule(&mut doc, id, rule);
+        upsert_provider_rule(&mut doc, id, rule, models)?;
         write_zcode_provider_config_unlocked(&path, &doc)
     })
 }
@@ -982,8 +1228,13 @@ pub fn set_provider(id: &str, config: Value) -> Result<(), AppError> {
 pub fn remove_provider(id: &str) -> Result<(), AppError> {
     let path = get_zcode_provider_config_path();
     with_zcode_file_lock(&path, || {
+        if !path.exists() {
+            return Ok(());
+        }
         let mut doc = read_zcode_provider_config()?;
-        remove_provider_rule(&mut doc, id);
+        if !remove_provider_rule(&mut doc, id) {
+            return Ok(());
+        }
         write_zcode_provider_config_unlocked(&path, &doc)
     })
 }
@@ -994,7 +1245,7 @@ pub fn set_typed_provider(id: &str, config: &ZCodeProviderConfig) -> Result<(), 
     let path = get_zcode_provider_config_path();
     with_zcode_file_lock(&path, || {
         let mut doc = read_zcode_provider_config()?;
-        upsert_provider_rule(&mut doc, id, rule);
+        upsert_provider_rule(&mut doc, id, rule, Some(&config.models))?;
         write_zcode_provider_config_unlocked(&path, &doc)
     })
 }
@@ -1282,7 +1533,7 @@ mod tests {
 
     fn write_rule_and_roundtrip(config: &ZCodeProviderConfig) -> (Value, ZCodeProviderConfig) {
         let rule = provider_config_to_rule("dp-1", config);
-        let restored = provider_rule_to_config(&rule).unwrap().1;
+        let restored = provider_rule_to_config(&rule, None).unwrap().1;
         (rule, restored)
     }
 
@@ -1325,8 +1576,8 @@ mod tests {
             // baseURL 来自模板（回读时模板 URL 无尾斜杠）
             Some("https://api.moonshot.cn/anthropic")
         );
-        // 用户没配模型时回填模板内置模型
-        assert!(restored.models.contains_key("kimi-k2.6"));
+        // 用户没配模型时规则里不列模型，ZCode 按模板内置的模型和顺序来
+        assert!(restored.models.is_empty());
     }
 
     #[test]
@@ -1348,12 +1599,16 @@ mod tests {
             &mut doc,
             "uuid-1",
             json!({"providerId": "uuid-1", "config": {}}),
-        );
+            None,
+        )
+        .unwrap();
         upsert_provider_rule(
             &mut doc,
             "uuid-1",
             json!({"providerId": "uuid-1", "config": {"group": "standard-personal"}}),
-        );
+            None,
+        )
+        .unwrap();
 
         let rules = read_provider_rules(&doc);
         assert_eq!(rules.len(), 2);
@@ -1382,11 +1637,86 @@ mod tests {
             &mut doc,
             "uuid-1",
             json!({"providerId": "uuid-1", "config": {}}),
-        );
+            None,
+        )
+        .unwrap();
 
         assert!(read_provider_rules(&doc).len() == 1);
         // 字段缺省保持缺省：ZCode 的 encode 对 undefined 本就省略该键
         assert!(doc["config"].get("providerOrder").is_none());
+    }
+
+    #[test]
+    fn first_write_has_the_shape_zcode_requires() {
+        let mut doc = json!({});
+        upsert_provider_rule(
+            &mut doc,
+            "a",
+            json!({"providerId": "a", "config": {}}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(doc["schemaVersion"], json!(1));
+        assert_eq!(
+            doc["config"]["modelConfigRules"],
+            json!({"providerModelRules": [], "manualProviderModelRules": []})
+        );
+        assert_eq!(read_provider_rules(&doc).len(), 1);
+    }
+
+    #[test]
+    fn unknown_layout_is_refused_instead_of_rewritten() {
+        for doc in [
+            json!([]),
+            json!({"schemaVersion": 2, "config": {}}),
+            json!({"schemaVersion": 1, "config": []}),
+            json!({"schemaVersion": 1, "config": {"providerConfigRules": {"providerRules": {}}}}),
+        ] {
+            let mut copy = doc.clone();
+            assert!(
+                upsert_provider_rule(&mut copy, "a", json!({"providerId": "a"}), None).is_err()
+            );
+            assert_eq!(
+                copy, doc,
+                "a refused write must leave the document untouched"
+            );
+        }
+    }
+
+    #[test]
+    fn removing_an_absent_rule_reports_no_change() {
+        let mut doc =
+            json!({"schemaVersion": 1, "config": {"providerConfigRules": {"providerRules": []}}});
+        assert!(!remove_provider_rule(&mut doc, "missing"));
+        assert!(!remove_provider_rule(&mut json!({}), "missing"));
+    }
+
+    #[test]
+    fn rules_created_in_zcode_are_left_to_zcode() {
+        let owned = |rule: Value| is_zcode_user_owned_rule(&rule);
+        assert!(owned(json!({"providerId": "builtin:bigmodel-coding-plan"})));
+        assert!(owned(
+            json!({"providerId": "zai-api", "templateId": "zai-api"})
+        ));
+        assert!(owned(
+            json!({"providerId": "zai-api-2", "templateId": "zai-api"})
+        ));
+        assert!(owned(
+            json!({"providerId": "volcengine-ark", "templateId": "volcengine-ark"})
+        ));
+        assert!(owned(
+            json!({"providerId": "my-ark", "templateId": "volcengine-ark"})
+        ));
+        assert!(owned(json!({"providerId": "new-provider-3"})));
+        assert!(owned(json!({"config": {}})));
+        // CC Switch 写的：自定义 key，模板要么没有，要么是已知模板
+        assert!(!owned(json!({"providerId": "my-glm"})));
+        assert!(!owned(
+            json!({"providerId": "my-glm", "templateId": "zai-api"})
+        ));
+        assert!(!owned(
+            json!({"providerId": "zai-api-x", "templateId": "zai-api"})
+        ));
     }
 
     #[test]
@@ -1402,7 +1732,7 @@ mod tests {
             }
         });
 
-        remove_provider_rule(&mut doc, "a");
+        assert!(remove_provider_rule(&mut doc, "a"));
 
         assert_eq!(doc["config"]["providerOrder"], json!(["b"]));
         let rules = read_provider_rules(&doc);
@@ -1411,8 +1741,192 @@ mod tests {
         assert!(doc["config"].get("defaultModelSelection").is_none());
     }
 
+    fn limited(context: Option<u64>, output: Option<u64>) -> ZCodeModel {
+        ZCodeModel {
+            limit: Some(ZCodeModelLimit { context, output }),
+            ..Default::default()
+        }
+    }
+
+    fn model_rules(doc: &Value, key: &str) -> Vec<Value> {
+        doc["config"]["modelConfigRules"][key]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    fn rule_for<'a>(rules: &'a [Value], provider: &str, model: &str) -> Option<&'a Value> {
+        rules
+            .iter()
+            .find(|r| is_exact_model_rule(r, provider, model))
+    }
+
     #[test]
+    fn limits_are_written_as_sparse_recommended_rules() {
+        let manual_config = json!({
+            "enabled": true,
+            "properties": {"contextWindow": 1000, "supportsJsonSchemaOutput": true,
+                           "supportsNativeWebSearch": false, "supportsMidConversationSystem": false,
+                           "inputFormat": {"supportsImage": true, "supportsVideo": false, "supportsPdf": true}},
+            "optionSpecs": {"reasoningLevel": {"values": ["disabled", "enabled"], "map": "{}"},
+                            "maxOutputTokens": {"max": 2000}}
+        });
+        let mut doc = json!({
+            "schemaVersion": 1,
+            "config": {
+                "providerConfigRules": {"providerRules": [
+                    {"providerId": "p", "config": {"personalModelIds": ["m1", "gone", "gone-zcode"],
+                                                   "modelOrder": ["m1", "gone", "gone-zcode"]}}
+                ]},
+                "modelConfigRules": {
+                    "providerModelRules": [
+                        // ZCode 加模型时自己写的规则：enabled 必须原样留下
+                        {"providerId": "p", "modelId": "m1", "config": {"enabled": true}},
+                        {"providerId": "p", "modelId": "gone",
+                         "config": {"properties": {"contextWindow": 5}}},
+                        {"providerId": "p", "modelId": "gone-zcode",
+                         "config": {"enabled": true, "properties": {"contextWindow": 5}}},
+                        {"providerId": "other", "modelId": "m1",
+                         "config": {"properties": {"contextWindow": 9}}}
+                    ],
+                    "manualProviderModelRules": [
+                        {"providerId": "p", "modelId": "manual", "config": manual_config}
+                    ]
+                }
+            }
+        });
+        let models: IndexMap<String, ZCodeModel> = [
+            ("m1".to_string(), limited(Some(60000), Some(4321))),
+            ("zero".to_string(), limited(Some(0), None)),
+            ("manual".to_string(), limited(Some(70000), None)),
+            ("plain".to_string(), ZCodeModel::default()),
+        ]
+        .into_iter()
+        .collect();
+
+        upsert_provider_rule(
+            &mut doc,
+            "p",
+            json!({"providerId": "p", "config": {}}),
+            Some(&models),
+        )
+        .unwrap();
+
+        let smart = model_rules(&doc, PROVIDER_MODEL_RULES);
+        assert_eq!(
+            rule_for(&smart, "p", "m1").unwrap()["config"],
+            json!({"enabled": true,
+                   "properties": {"contextWindow": 60000},
+                   "optionSpecs": {"maxOutputTokens": {"max": 4321}}})
+        );
+        // 0 不合 ZCode 的正整数约束，按没填处理；没填的不新建规则
+        assert!(rule_for(&smart, "p", "zero").is_none());
+        assert!(rule_for(&smart, "p", "plain").is_none());
+        // 手动规则不另建推荐规则，只改填了的那项
+        assert!(rule_for(&smart, "p", "manual").is_none());
+        let manual = model_rules(&doc, MANUAL_PROVIDER_MODEL_RULES);
+        let mut expected_manual = manual_config.clone();
+        expected_manual["properties"]["contextWindow"] = json!(70000);
+        assert_eq!(
+            rule_for(&manual, "p", "manual").unwrap()["config"],
+            expected_manual
+        );
+        // 移出列表的模型：只剩上限的规则整条去掉，ZCode 的 enabled 留着
+        assert!(rule_for(&smart, "p", "gone").is_none());
+        assert_eq!(
+            rule_for(&smart, "p", "gone-zcode").unwrap()["config"],
+            json!({"enabled": true})
+        );
+        // 别家的规则不碰
+        assert_eq!(
+            rule_for(&smart, "other", "m1").unwrap()["config"],
+            json!({"properties": {"contextWindow": 9}})
+        );
+    }
+
     #[test]
+    fn clearing_a_limit_keeps_other_zcode_leaves() {
+        let mut doc = json!({
+            "schemaVersion": 1,
+            "config": {
+                "providerConfigRules": {"providerRules": []},
+                "modelConfigRules": {
+                    "providerModelRules": [
+                        {"providerId": "p", "modelId": "m", "config": {
+                            "properties": {"contextWindow": 60000, "supportsJsonSchemaOutput": true},
+                            "optionSpecs": {"maxOutputTokens": {"max": 4321}}}}
+                    ],
+                    "manualProviderModelRules": []
+                }
+            }
+        });
+        let models: IndexMap<String, ZCodeModel> = [("m".to_string(), limited(None, Some(8000)))]
+            .into_iter()
+            .collect();
+
+        upsert_provider_rule(
+            &mut doc,
+            "p",
+            json!({"providerId": "p", "config": {}}),
+            Some(&models),
+        )
+        .unwrap();
+
+        assert_eq!(
+            model_rules(&doc, PROVIDER_MODEL_RULES)[0]["config"],
+            json!({"properties": {"supportsJsonSchemaOutput": true},
+                   "optionSpecs": {"maxOutputTokens": {"max": 8000}}})
+        );
+    }
+
+    #[test]
+    fn limits_round_trip_through_the_live_reader() {
+        let mut doc = json!({});
+        let mut config = provider("Custom", "anthropic", "https://api.example.com", "sk", &[]);
+        config.models = [
+            ("m1".to_string(), limited(Some(60000), Some(4321))),
+            ("m2".to_string(), ZCodeModel::default()),
+        ]
+        .into_iter()
+        .collect();
+        let rule = provider_config_to_rule("p", &config);
+        upsert_provider_rule(&mut doc, "p", rule, Some(&config.models)).unwrap();
+
+        let model_rules = doc["config"].get("modelConfigRules");
+        let (_, restored) =
+            provider_rule_to_config(&read_provider_rules(&doc)[0], model_rules).unwrap();
+        let m1 = restored.models["m1"].limit.as_ref().unwrap();
+        assert_eq!((m1.context, m1.output), (Some(60000), Some(4321)));
+        // 没设上限的模型也带空 limit：导入时以 live 为准清掉数据库里的旧值
+        let m2 = restored.models["m2"].limit.as_ref().unwrap();
+        assert_eq!((m2.context, m2.output), (None, None));
+    }
+
+    #[test]
+    fn removing_a_provider_drops_its_model_rules() {
+        let mut doc = json!({
+            "config": {
+                "providerConfigRules": {"providerRules": [{"providerId": "a", "config": {}}]},
+                "modelConfigRules": {
+                    "providerModelRules": [
+                        {"providerId": "a", "modelId": "m", "config": {"enabled": true}},
+                        {"providerId": "b", "modelId": "m", "config": {"enabled": true}}
+                    ],
+                    "manualProviderModelRules": [
+                        {"providerId": "a", "modelId": "x", "config": {}}
+                    ]
+                }
+            }
+        });
+
+        assert!(remove_provider_rule(&mut doc, "a"));
+
+        let smart = model_rules(&doc, PROVIDER_MODEL_RULES);
+        assert_eq!(smart.len(), 1);
+        assert_eq!(smart[0]["providerId"], json!("b"));
+        assert!(model_rules(&doc, MANUAL_PROVIDER_MODEL_RULES).is_empty());
+    }
+
     #[test]
     fn managed_ids_cover_builtin_and_templates() {
         assert!(is_zcode_managed_provider_id("builtin:bigmodel-coding-plan"));

@@ -116,24 +116,6 @@ export function DeepLinkImportDialog() {
     };
   }, [request]);
 
-  // 容错判断：MCP 导入结果可能缺少 type 字段
-  const isMcpImportResult = (
-    value: unknown,
-  ): value is {
-    importedCount: number;
-    importedIds: string[];
-    failed: Array<{ id: string; error: string }>;
-    type?: "mcp";
-  } => {
-    if (!value || typeof value !== "object") return false;
-    const v = value as Record<string, unknown>;
-    return (
-      typeof v.importedCount === "number" &&
-      Array.isArray(v.importedIds) &&
-      Array.isArray(v.failed)
-    );
-  };
-
   // effect 只随挂载/卸载运行，不能依赖 t：启动时校正语言会换掉 t，effect 一重建，
   // 正在处理的链接就被丢下。翻译函数从 ref 读最新值。
   const tRef = useRef(t);
@@ -168,10 +150,12 @@ export function DeepLinkImportDialog() {
         try {
           next = await deeplinkApi.mergeDeeplinkConfig(incoming);
         } catch (error) {
+          if (disposed) return false;
           console.error("Failed to merge config:", error);
           toast.error(tRef.current("deeplink.configMergeError"), {
             description: error instanceof Error ? error.message : String(error),
           });
+          return true;
         }
       }
       if (disposed) return false;
@@ -263,11 +247,40 @@ export function DeepLinkImportDialog() {
         };
       }
       const result = await deeplinkApi.importFromDeeplink(payload);
-      const refreshMcp = async (summary: {
-        importedCount: number;
-        importedIds: string[];
-        failed: Array<{ id: string; error: string }>;
-      }) => {
+      // Handle different result types
+      if (result.type === "provider") {
+        await queryClient.invalidateQueries({
+          queryKey: ["providers", request.app],
+        });
+        if (request.app === "opencode") {
+          await queryClient.invalidateQueries({
+            queryKey: ["opencodeLiveProviderIds"],
+          });
+          await queryClient.invalidateQueries({
+            queryKey: ["opencode", "runtime-models"],
+          });
+        }
+        await refreshTrayMenu();
+        toast.success(t("deeplink.importSuccess"), {
+          description: t("deeplink.importSuccessDescription", {
+            name: request.name,
+          }),
+          closeButton: true,
+        });
+      } else if (result.type === "prompt") {
+        // Prompts don't use React Query, trigger a custom event for refresh
+        window.dispatchEvent(
+          new CustomEvent("prompt-imported", {
+            detail: { app: request.app },
+          }),
+        );
+        toast.success(t("deeplink.promptImportSuccess"), {
+          description: t("deeplink.promptImportSuccessDescription", {
+            name: request.name,
+          }),
+          closeButton: true,
+        });
+      } else if (result.type === "mcp") {
         // 强制刷新 MCP 相关缓存，确保管理页重新从数据库加载
         await queryClient.invalidateQueries({
           queryKey: ["mcp", "all"],
@@ -278,88 +291,34 @@ export function DeepLinkImportDialog() {
           type: "all",
         });
 
-        if (summary.failed.length > 0) {
+        if (result.failed.length > 0) {
           toast.warning(t("deeplink.mcpPartialSuccess"), {
             description: t("deeplink.mcpPartialSuccessDescription", {
-              success: summary.importedCount,
-              failed: summary.failed.length,
+              success: result.importedCount,
+              failed: result.failed.length,
             }),
           });
         } else {
           toast.success(t("deeplink.mcpImportSuccess"), {
             description: t("deeplink.mcpImportSuccessDescription", {
-              count: summary.importedCount,
+              count: result.importedCount,
             }),
             closeButton: true,
           });
         }
-      };
-
-      // Handle different result types
-      if ("type" in result) {
-        if (result.type === "provider") {
-          await queryClient.invalidateQueries({
-            queryKey: ["providers", request.app],
-          });
-          if (request.app === "opencode") {
-            await queryClient.invalidateQueries({
-              queryKey: ["opencodeLiveProviderIds"],
-            });
-            await queryClient.invalidateQueries({
-              queryKey: ["opencode", "runtime-models"],
-            });
-          }
-          await refreshTrayMenu();
-          toast.success(t("deeplink.importSuccess"), {
-            description: t("deeplink.importSuccessDescription", {
-              name: request.name,
-            }),
-            closeButton: true,
-          });
-        } else if (result.type === "prompt") {
-          // Prompts don't use React Query, trigger a custom event for refresh
-          window.dispatchEvent(
-            new CustomEvent("prompt-imported", {
-              detail: { app: request.app },
-            }),
-          );
-          toast.success(t("deeplink.promptImportSuccess"), {
-            description: t("deeplink.promptImportSuccessDescription", {
-              name: request.name,
-            }),
-            closeButton: true,
-          });
-        } else if (result.type === "mcp") {
-          await refreshMcp(result);
-        } else if (result.type === "skill") {
-          // Refresh Skills with aggressive strategy
-          queryClient.invalidateQueries({
-            queryKey: ["skills"],
-            refetchType: "all",
-          });
-          await queryClient.refetchQueries({
-            queryKey: ["skills"],
-            type: "all",
-          });
-          toast.success(t("deeplink.skillImportSuccess"), {
-            description: t("deeplink.skillImportSuccessDescription", {
-              repo: request.repo,
-            }),
-            closeButton: true,
-          });
-        }
-      } else if (isMcpImportResult(result)) {
-        // 兜底处理：旧版本后端可能未返回 type 字段
-        await refreshMcp(result);
-      } else {
-        // Legacy return type (string ID) - assume provider
-        await queryClient.invalidateQueries({
-          queryKey: ["providers", request.app],
+      } else if (result.type === "skill") {
+        // Refresh Skills with aggressive strategy
+        queryClient.invalidateQueries({
+          queryKey: ["skills"],
+          refetchType: "all",
         });
-        await refreshTrayMenu();
-        toast.success(t("deeplink.importSuccess"), {
-          description: t("deeplink.importSuccessDescription", {
-            name: request.name,
+        await queryClient.refetchQueries({
+          queryKey: ["skills"],
+          type: "all",
+        });
+        toast.success(t("deeplink.skillImportSuccess"), {
+          description: t("deeplink.skillImportSuccessDescription", {
+            repo: request.repo,
           }),
           closeButton: true,
         });
@@ -913,18 +872,40 @@ export function DeepLinkImportDialog() {
 
                       {/* Usage Base URL (if different from provider) */}
                       {request.usageBaseUrl &&
-                        request.usageBaseUrl !== request.endpoint && (
-                          <div className="grid grid-cols-3 items-center gap-4">
-                            <div className="font-medium text-sm text-fg-2">
-                              {t("deeplink.usageBaseUrl", {
-                                defaultValue: "用量查询地址",
-                              })}
+                        request.usageBaseUrl.trim() !==
+                          request.endpoint?.trim() &&
+                        (() => {
+                          const trimmedUsageBaseUrl =
+                            request.usageBaseUrl.trim();
+                          const usageBaseUrlRisk =
+                            classifyEndpoint(trimmedUsageBaseUrl);
+                          return (
+                            <div className="grid grid-cols-3 items-start gap-4">
+                              <div className="font-medium text-sm text-fg-2 pt-0.5">
+                                {t("deeplink.usageBaseUrl", {
+                                  defaultValue: "用量查询地址",
+                                })}
+                              </div>
+                              <div
+                                className={`col-span-2 text-sm break-all ${
+                                  usageBaseUrlRisk
+                                    ? "text-warning-text font-semibold"
+                                    : ""
+                                }`}
+                              >
+                                {usageBaseUrlRisk && (
+                                  <span aria-hidden="true">⚠ </span>
+                                )}
+                                {trimmedUsageBaseUrl}
+                                {usageBaseUrlRisk && (
+                                  <div className="text-xs font-normal mt-0.5">
+                                    {t(riskI18nKey(usageBaseUrlRisk))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                            <div className="col-span-2 text-sm break-all">
-                              {request.usageBaseUrl}
-                            </div>
-                          </div>
-                        )}
+                          );
+                        })()}
 
                       {/* Usage Access Token (if present) */}
                       {request.usageAccessToken && (

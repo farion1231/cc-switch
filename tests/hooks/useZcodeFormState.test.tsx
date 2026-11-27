@@ -90,6 +90,36 @@ describe("useZcodeFormState", () => {
     expect(emitted.options.apiKey).toBe("key-2");
   });
 
+  it("carries legacy option keys through edits and emits model limits", () => {
+    // ZCode 没有放超时这类供应商选项的地方，表单不再编辑它们，但旧值不能被编辑删掉
+    const { result, getSettingsConfig } = renderZcodeFormState({
+      options: {
+        baseURL: "https://example.com",
+        apiKey: "key-1",
+        timeout: 600000,
+      },
+      models: {},
+    });
+
+    act(() =>
+      result.current.handleZcodeModelsChange({
+        "glm-5.2": { limit: { context: 200000, output: 64000 } },
+      }),
+    );
+    act(() => result.current.handleZcodeApiKeyChange("key-2"));
+
+    const emitted = JSON.parse(getSettingsConfig());
+    expect(emitted.options).toEqual({
+      baseURL: "https://example.com",
+      apiKey: "key-2",
+      timeout: 600000,
+    });
+    expect(emitted.models["glm-5.2"].limit).toEqual({
+      context: 200000,
+      output: 64000,
+    });
+  });
+
   it("derives apiKeyRequired from the real initial config, not the default template", () => {
     // 新建供应商：没有初始 settingsConfig。parseZcodeConfig(undefined) 会回退到
     // 默认模板（options 里带 apiKey: ""），不得据此判定「初始配置里有 key」

@@ -63,14 +63,19 @@ import {
   pluginMarketplacesQuery,
   pluginPatches,
   prefetchInstalledOnce,
+  projectPathOf,
+  samePluginEntry,
   usePluginWrites,
 } from "@/hooks/usePlugins";
 import {
   PLUGIN_APP_FEATURES,
   PLUGIN_AUTH_REQUIRED,
+  PLUGIN_CLI_NAME,
   PLUGIN_CLI_NOT_INSTALLED,
+  PLUGIN_IN_USE,
   PLUGIN_LOGIN_COMMAND,
   PLUGIN_NEEDS_TERMINAL_CONFIRM,
+  PLUGIN_UPDATE_NEEDS_REINSTALL,
   pluginsApi,
   type PluginActionOutcome,
   type PluginApp,
@@ -89,7 +94,7 @@ export const DEFAULT_PLUGIN_PAGE_SIZE = 50;
 
 const NO_MARKETPLACES: PluginMarketplace[] = [];
 
-/** 名字、显示名、市场、描述、分类里任一包含关键词（不分大小写）。 */
+/** 名字、显示名、市场、描述、分类、项目路径里任一包含关键词（不分大小写）。 */
 export function filterPlugins(
   entries: PluginEntry[],
   query: string,
@@ -104,8 +109,29 @@ export function filterPlugins(
       entry.description,
       entry.category,
       entry.marketplace,
+      projectPathOf(entry),
     ].some((field) => field?.toLowerCase().includes(q)),
   );
+}
+
+/**
+ * 为插件列表生成唯一且稳定的 React key。
+ *
+ * 同一插件在不同项目装成 local / project 范围时 id 和 scope 相同，靠 projectPath 区分；
+ * 旧版缓存里还没有 projectPath（或 CLI 返回重复项）时再按出现次序去重，避免 React key 冲突残留幽灵行。
+ */
+export function pluginRowKeys(entries: readonly PluginEntry[]): string[] {
+  const seen = new Map<string, number>();
+  return entries.map((entry) => {
+    const base = JSON.stringify([
+      entry.id,
+      entry.scope || null,
+      projectPathOf(entry),
+    ]);
+    const count = seen.get(base) ?? 0;
+    seen.set(base, count + 1);
+    return count === 0 ? base : `${base}#${count}`;
+  });
 }
 
 /** 已安装的条目缺描述、显示名（插件清单里没写）时，用目录里同一 id 的补上。 */
@@ -157,6 +183,7 @@ export interface PluginsPageProps {
 
 type WriteMessages = {
   success: (outcome: PluginActionOutcome) => string;
+  successDescription?: (outcome: PluginActionOutcome) => string;
   failure: string;
   /** 后端返回已知错误码时换成的说明；没给或不认识时显示原始报错。 */
   describeError?: (error: string) => string | undefined;
@@ -268,7 +295,8 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     const result = await runWrite(write);
     if (result.ok && result.outcome) {
       toast.success(messages.success(result.outcome), {
-        description: restartNote,
+        description:
+          messages.successDescription?.(result.outcome) ?? restartNote,
         closeButton: true,
       });
     } else {
@@ -281,7 +309,12 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
                 app: appName,
                 command: PLUGIN_LOGIN_COMMAND[app] ?? `${app} login`,
               })
-            : error),
+            : error === PLUGIN_IN_USE
+              ? t("pluginsPage.toast.pluginInUse", {
+                  app: appName,
+                  cli: PLUGIN_CLI_NAME[app],
+                })
+              : error),
         closeButton: true,
       });
     }
@@ -301,12 +334,19 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         action: "install",
         task: () => pluginsApi.install(app, entry.id),
         // 安装要联网、可能失败，不先挪；装好立即放进已安装，版本等对账时补齐
-        onSuccess: pluginPatches.add(installedFromCatalog(app, entry)),
+        onSuccess: (outcome) =>
+          pluginPatches.add(
+            installedFromCatalog(app, entry, !outcome.needsConfiguration),
+          ),
         reconcile: ["installed"],
       },
       {
         success: () =>
           t("pluginsPage.toast.installed", { name: pluginLabel(entry) }),
+        successDescription: (outcome) =>
+          outcome.needsConfiguration
+            ? t("pluginsPage.toast.installedNeedsConfig", { app: appName })
+            : restartNote,
         failure: t("pluginsPage.toast.installFailed", {
           name: pluginLabel(entry),
         }),
@@ -364,12 +404,16 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
         failure: t("pluginsPage.toast.updateFailed", {
           name: pluginLabel(entry),
         }),
+        describeError: (error) =>
+          error === PLUGIN_UPDATE_NEEDS_REINSTALL
+            ? t("pluginsPage.toast.updateNeedsReinstall")
+            : undefined,
       },
     );
 
   const uninstall = (entry: PluginEntry) => {
-    const index = (installedQuery.data ?? []).findIndex(
-      (e) => e.id === entry.id && (e.scope ?? null) === (entry.scope ?? null),
+    const index = (installedQuery.data ?? []).findIndex((e) =>
+      samePluginEntry(e, entry),
     );
     return run(
       {
@@ -684,6 +728,7 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
     }
 
     const shown = view === "discover" ? discoverPager.pageRows : rows;
+    const rowKeys = pluginRowKeys(shown);
     return (
       <>
         <div className="flex h-14 shrink-0 items-center gap-3">
@@ -734,10 +779,14 @@ export function PluginsPage({ apps, initialApp }: PluginsPageProps) {
             >
               {shown.map((entry, index) => (
                 <PluginRow
-                  key={`${entry.id}:${entry.scope ?? ""}`}
+                  key={rowKeys[index]}
                   entry={entry}
                   isLast={index === shown.length - 1}
-                  busyAction={busy[entry.id]}
+                  busyAction={
+                    entry.installed && !entry.manageable
+                      ? undefined
+                      : busy[entry.id]
+                  }
                   canUpdate={features.update}
                   onInstall={() => requestInstall(entry)}
                   onToggle={(enabled) => void toggle(entry, enabled)}
@@ -1124,6 +1173,7 @@ function PluginRow({
 }) {
   const { t } = useTranslation();
   const label = pluginLabel(entry);
+  const projectPath = projectPathOf(entry);
   const busy = Boolean(busyAction);
   const readOnlyScope = entry.installed && !entry.manageable;
   // 随应用自带、只能开关的插件（OpenClaw 的 bundled）
@@ -1181,6 +1231,14 @@ function PluginRow({
             title={entry.description}
           >
             {entry.description}
+          </p>
+        )}
+        {projectPath && (
+          <p
+            className="m-0 truncate font-mono text-caption text-fg-3"
+            title={projectPath}
+          >
+            {projectPath}
           </p>
         )}
       </div>

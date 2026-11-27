@@ -42,7 +42,7 @@ pub fn delete_env_vars(conflicts: Vec<EnvConflict>) -> Result<BackupInfo, String
 /// Create backup file before deletion
 fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
     // Get backup directory
-    let backup_dir = backup_dir()?;
+    let backup_dir = backup_dir();
     fs::create_dir_all(&backup_dir).map_err(|e| format!("创建备份目录失败: {e}"))?;
 
     // Generate backup file name with timestamp
@@ -66,9 +66,10 @@ fn create_backup(conflicts: &[EnvConflict]) -> Result<BackupInfo, String> {
 }
 
 /// Get backup directory path
-pub(crate) fn backup_dir() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or("无法获取用户主目录")?;
-    Ok(home.join(".cc-switch").join("backups"))
+pub(crate) fn backup_dir() -> PathBuf {
+    crate::config::get_home_dir()
+        .join(".cc-switch")
+        .join("backups")
 }
 
 /// Delete a single environment variable
@@ -129,9 +130,10 @@ fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
             let content = fs::read_to_string(file_path)
                 .map_err(|e| format!("读取文件失败 {file_path}: {e}"))?;
 
-            // Filter out the line containing the environment variable
-            let new_content: Vec<String> = content
-                .lines()
+            // Filter out the line containing the environment variable. Each kept line carries
+            // its own line ending, so the file's final newline and CRLF endings stay as they are.
+            let new_content: String = content
+                .split_inclusive('\n')
                 .filter(|line| {
                     let trimmed = line.trim();
                     let export_line = trimmed.strip_prefix("export ").unwrap_or(trimmed);
@@ -144,11 +146,10 @@ fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
                         true
                     }
                 })
-                .map(|s| s.to_string())
                 .collect();
 
             // Write back to file
-            fs::write(file_path, new_content.join("\n"))
+            fs::write(file_path, new_content)
                 .map_err(|e| format!("写入文件失败 {file_path}: {e}"))?;
 
             Ok(())
@@ -161,18 +162,12 @@ fn delete_single_env(conflict: &EnvConflict) -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
 
     #[cfg(not(target_os = "windows"))]
     use tempfile::tempdir;
-
-    #[test]
-    fn test_backup_dir_creation() {
-        let backup_dir = backup_dir();
-        assert!(backup_dir.is_ok());
-    }
 
     #[cfg(not(target_os = "windows"))]
     #[test]
@@ -203,5 +198,41 @@ mod tests {
         delete_single_env(&conflict).expect("delete variable from shell config");
         let deleted = fs::read_to_string(&file_path).expect("read updated shell config");
         assert!(!deleted.contains("OPENAI_API_KEY"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn delete_file_env_keeps_the_other_lines_and_their_endings() {
+        let temp = tempdir().expect("create temp directory");
+        let file_path = temp.path().join(".zshrc");
+
+        for (before, after) in [
+            (
+                "export OPENAI_API_KEY=original\nexport EDITOR=vim\nalias ll='ls -l'\n",
+                "export EDITOR=vim\nalias ll='ls -l'\n",
+            ),
+            (
+                "export OPENAI_API_KEY=original\r\nexport EDITOR=vim\r\n",
+                "export EDITOR=vim\r\n",
+            ),
+            (
+                "export OPENAI_API_KEY=original\nexport EDITOR=vim",
+                "export EDITOR=vim",
+            ),
+        ] {
+            fs::write(&file_path, before).expect("write shell config");
+            let conflict = EnvConflict {
+                var_name: "OPENAI_API_KEY".to_string(),
+                var_value: "original".to_string(),
+                source_type: "file".to_string(),
+                source_path: format!("{}:1", file_path.display()),
+            };
+
+            delete_single_env(&conflict).expect("delete variable from shell config");
+            assert_eq!(
+                fs::read_to_string(&file_path).expect("read updated shell config"),
+                after
+            );
+        }
     }
 }

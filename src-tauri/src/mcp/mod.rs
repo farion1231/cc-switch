@@ -39,6 +39,7 @@ pub use opencode::{
 };
 pub use zcode::{import_from_zcode, remove_server_from_zcode, sync_single_server_to_zcode};
 
+pub(crate) mod codebuddy;
 pub(crate) mod copilot;
 pub(crate) mod kimi;
 pub(crate) mod mcode;

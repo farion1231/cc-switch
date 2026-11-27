@@ -291,11 +291,11 @@ impl ApiFormat {
             (AppType::Copilot, OpenAiChat) => Some("completions"),
             (AppType::Copilot, OpenAiResponses) => Some("responses"),
             (AppType::WorkBuddy, OpenAiChat) => Some("openai-completions"),
-            // ZCode 的个人规则用 `kind` 选协议：anthropic-messages /
-            // openai-chat-completions / openai-responses（ZCode 原生取值）。
-            (AppType::ZCode, Anthropic) => Some("anthropic-messages"),
-            (AppType::ZCode, OpenAiChat) => Some("openai-chat-completions"),
-            (AppType::ZCode, OpenAiResponses) => Some("openai-responses"),
+            // ZCode 卡片的 `kind` 是 CC Switch 自己的取值（anthropic / openai-compatible /
+            // openai），写盘时再由 zcode_config 换成 ZCode 原生的 api.type。
+            (AppType::ZCode, Anthropic) => Some("anthropic"),
+            (AppType::ZCode, OpenAiChat) => Some("openai-compatible"),
+            (AppType::ZCode, OpenAiResponses) => Some("openai"),
             _ => None,
         }
     }
@@ -443,6 +443,11 @@ pub(crate) fn build_provider_from_request(
         AppType::Kimi => build_kimi_settings(request, api_format)?,
         AppType::Copilot => build_copilot_settings(request, api_format)?,
         AppType::WorkBuddy => build_workbuddy_settings(request)?,
+        AppType::Codebuddy => {
+            return Err(AppError::InvalidInput(
+                "Add CodeBuddy models from the CodeBuddy page".into(),
+            ))
+        }
         AppType::Agy => {
             let mut settings = build_gemini_settings(request);
             settings["env"]
@@ -1778,6 +1783,23 @@ fn merge_additive_config(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zcode_kind_uses_the_values_the_zcode_card_understands() {
+        assert_eq!(
+            native_protocol(&AppType::ZCode, Some(ApiFormat::Anthropic)),
+            "anthropic"
+        );
+        assert_eq!(
+            native_protocol(&AppType::ZCode, Some(ApiFormat::OpenAiChat)),
+            "openai-compatible"
+        );
+        assert_eq!(
+            native_protocol(&AppType::ZCode, Some(ApiFormat::OpenAiResponses)),
+            "openai"
+        );
+        assert_eq!(native_protocol(&AppType::ZCode, None), "openai-compatible");
+    }
 
     fn hermes_request() -> DeepLinkImportRequest {
         DeepLinkImportRequest {

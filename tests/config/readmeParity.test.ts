@@ -50,7 +50,9 @@ describe.each(READMES)("%s", (file) => {
   it("links every other README from its language switcher", () => {
     const switcher = text
       .split("\n")
-      .find((line) => line.includes("(CHANGELOG.md)") && line.includes("README"));
+      .find(
+        (line) => line.includes("(CHANGELOG.md)") && line.includes("README"),
+      );
     expect(switcher, "language switcher line").toBeDefined();
     for (const [other, name] of READMES) {
       if (other === file) {

@@ -73,6 +73,7 @@ fn parse_entry(item: &Value, config_text: &str, wsl_root: Option<&Path>) -> Opti
         installed,
         enabled: installed && is_enabled(config_text, &name),
         scope: None,
+        project_path: None,
         manageable: true,
         removable: true,
         installable: true,

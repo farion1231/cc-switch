@@ -92,7 +92,7 @@ import {
   setCodexWireApi,
   extractCodexModelName,
   setCodexModelName as setCodexModelNameInConfig,
-} from "@/utils/providerConfigUtils";
+} from "@/utils/codexConfigUtils";
 import { getCodexCustomTemplate } from "@/config/codexTemplates";
 import CodexConfigEditor from "./CodexConfigEditor";
 import { CommonConfigEditor } from "./CommonConfigEditor";
@@ -125,6 +125,7 @@ import { AgyAccountSelect } from "./AgyOAuthSection";
 import { ClaudeAccountSelect } from "./ClaudeOfficialSection";
 import { McodeProviderForm } from "./McodeProviderForm";
 import { WorkBuddyProviderForm } from "./WorkBuddyProviderForm";
+import { CodebuddyProviderForm } from "./CodebuddyProviderForm";
 import { PiProviderForm } from "./PiProviderForm";
 import { OmoFormFields } from "./OmoFormFields";
 import { parseOmoOtherFieldsObject } from "@/types/omo";
@@ -381,6 +382,7 @@ export function ProviderForm(props: ProviderFormProps) {
   if (props.appId === "mcode" || props.appId === "dsh")
     return <McodeProviderForm {...props} />;
   if (props.appId === "workbuddy") return <WorkBuddyProviderForm {...props} />;
+  if (props.appId === "codebuddy") return <CodebuddyProviderForm {...props} />;
   if (appHas(props.appId, "piFamily")) {
     return <PiProviderForm {...props} />;
   }
@@ -1441,7 +1443,8 @@ function ProviderFormFull({
       return hermesLiveProviderIds.includes(providerId);
     }
     if (appId === "zcode") {
-      return zcodeLiveProviderIds.includes(providerId);
+      // ZCode 卡片的 key 就是数据库行 id，保存时不会改名，编辑时一律锁定
+      return true;
     }
     return false;
   }, [
@@ -1452,7 +1455,6 @@ function ProviderFormFull({
     openclawLiveProviderIds,
     opencodeLiveProviderIds,
     providerId,
-    zcodeLiveProviderIds,
   ]);
 
   const shouldApplyLocalProxyRequestOverrides =
@@ -3340,8 +3342,6 @@ function ProviderFormFull({
               onAutoSelectChange={setEndpointAutoSelect}
               models={zcodeForm.zcodeModels}
               onModelsChange={zcodeForm.handleZcodeModelsChange}
-              extraOptions={zcodeForm.zcodeExtraOptions}
-              onExtraOptionsChange={zcodeForm.handleZcodeExtraOptionsChange}
             />
           )}
 
@@ -3453,7 +3453,7 @@ function ProviderFormFull({
                       : appId === "zcode"
                         ? `{
   "name": "my-provider",
-  "kind": "anthropic-messages",
+  "kind": "anthropic",
   "enabled": true,
   "source": "custom",
   "options": {

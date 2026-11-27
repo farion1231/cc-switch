@@ -19,15 +19,11 @@ export const ZCODE_DEFAULT_CONFIG = JSON.stringify(
   2,
 );
 
-export const ZCODE_KNOWN_OPTION_KEYS = ["baseURL", "apiKey"] as const;
-
-// Contains ":", which is not valid in an HTTP field name, so it cannot
-// collide with a legitimate custom option from an existing configuration.
-export const ZCODE_EXTRA_OPTION_DRAFT_PREFIX = "draft-option:";
+const ZCODE_KNOWN_OPTION_KEYS = ["baseURL", "apiKey"] as const;
 
 // ── Pure functions ───────────────────────────────────────────────────
 
-export function isKnownZcodeOptionKey(key: string): boolean {
+function isKnownZcodeOptionKey(key: string): boolean {
   return ZCODE_KNOWN_OPTION_KEYS.includes(
     key as (typeof ZCODE_KNOWN_OPTION_KEYS)[number],
   );
@@ -67,14 +63,13 @@ export function parseZcodeConfig(
   }
 }
 
-export function toZcodeExtraOptions(
-  options: ZCodeProviderConfig["options"],
-): Record<string, string> {
-  const extra: Record<string, string> = {};
+/** `options` 里表单不管的键（旧版表单写的超时等），原样带过每次编辑。 */
+export function extractZcodeOptionExtras(
+  options?: ZCodeProviderConfig["options"],
+): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(options || {})) {
-    if (!isKnownZcodeOptionKey(k)) {
-      extra[k] = typeof v === "string" ? v : JSON.stringify(v);
-    }
+    if (!isKnownZcodeOptionKey(k)) extra[k] = v;
   }
   return extra;
 }
