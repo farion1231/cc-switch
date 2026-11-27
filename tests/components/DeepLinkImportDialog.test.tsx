@@ -1142,7 +1142,16 @@ it.each([false, true])(
   },
 );
 
-it.each(["agy", "kimi", "dsh", "omp", "copilot", "workbuddy", "codebuddy", "zcode"])(
+it.each([
+  "agy",
+  "kimi",
+  "dsh",
+  "omp",
+  "copilot",
+  "workbuddy",
+  "codebuddy",
+  "zcode",
+])(
   "keeps an unsupported %s import unprotected and explains why",
   async (app) => {
     const submit = vi.fn();
