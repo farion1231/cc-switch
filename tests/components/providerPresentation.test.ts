@@ -639,6 +639,9 @@ describe("buildAdditiveSections", () => {
   });
 
   it("lets OpenClaw pick the default model and protects the current default", () => {
+    const current = provider("relay", {
+      settingsConfig: { models: [{ id: "gpt" }] },
+    });
     const multi = provider("multi", {
       settingsConfig: {
         models: [{ id: "m-1", name: "Model 1" }, { id: "m-2" }],
@@ -648,7 +651,7 @@ describe("buildAdditiveSections", () => {
     const sections = buildAdditiveSections({
       app: "openclaw",
       t,
-      providers: [relay, multi],
+      providers: [current, multi],
       isInConfig: () => true,
       defaultModel: { providerId: "relay", model: "gpt" },
       defaultModelOptions: (p) =>
@@ -680,6 +683,103 @@ describe("buildAdditiveSections", () => {
     setDefault.submenu?.options[1].onSelect();
     expect(actions.setDefault).toHaveBeenCalledWith(multi, "m-2");
     expect(item(sections, "relay").menuItems).toBeUndefined();
+  });
+
+  it("lets OpenClaw repair its default after the configured model ID changes", () => {
+    const edited = provider("relay", {
+      settingsConfig: { models: [{ id: "new-model" }] },
+    });
+    const actions = additiveActions();
+    const sections = buildAdditiveSections({
+      app: "openclaw",
+      t,
+      providers: [edited],
+      isInConfig: () => true,
+      defaultModel: { providerId: "relay", model: "old-model" },
+      defaultModelOptions: () => [{ id: "new-model" }],
+      actions,
+    });
+
+    const setDefault = setDefaultItem(sections, "relay");
+    expect(setDefault.disabledReason).toBeUndefined();
+    expect(item(sections, "relay").status).toBeUndefined();
+    expect(item(sections, "relay").tone).toBeUndefined();
+    expect(item(sections, "relay").chips.map((chip) => chip.key)).not.toContain(
+      "defaultModel",
+    );
+    expect(button(sections, "relay", "remove").disabledReason).toBe(
+      "providerCard.reason.defaultCannotRemove",
+    );
+    expect(actions.setDefault).not.toHaveBeenCalled();
+    setDefault.onSelect();
+    expect(actions.setDefault).toHaveBeenCalledWith(edited, "new-model");
+  });
+
+  it.each([
+    { models: [] },
+    { models: [{ id: "new-model" }, { id: "vendor/old-model-extra" }] },
+  ])(
+    "does not treat an absent OpenClaw model as default in $models",
+    ({ models }) => {
+      const sections = buildAdditiveSections({
+        app: "openclaw",
+        t,
+        providers: [relay],
+        isInConfig: () => true,
+        defaultModel: { providerId: "relay", model: "vendor/old-model" },
+        defaultModelOptions: () => models,
+        actions: additiveActions(),
+      });
+
+      expect(item(sections, "relay").status).toBeUndefined();
+      expect(button(sections, "relay", "remove").disabledReason).toBe(
+        "providerCard.reason.defaultCannotRemove",
+      );
+    },
+  );
+
+  it("keeps a valid non-first OpenClaw model as default only on its provider", () => {
+    const sections = buildAdditiveSections({
+      app: "openclaw",
+      t,
+      providers: [relay, backup],
+      isInConfig: () => true,
+      defaultModel: { providerId: "relay", model: "vendor/model" },
+      defaultModelOptions: () => [{ id: "other" }, { id: "vendor/model" }],
+      actions: additiveActions(),
+    });
+
+    expect(item(sections, "relay").status?.label).toBe(
+      "providerCard.status.default",
+    );
+    expect(item(sections, "relay").buttons.map((b) => b.key)).toEqual([
+      "remove",
+    ]);
+    expect(item(sections, "relay").menuItems).toBeUndefined();
+    expect(item(sections, "backup").status).toBeUndefined();
+    expect(setDefaultItem(sections, "backup").submenu?.options).toHaveLength(2);
+    expect(button(sections, "backup", "remove").disabledReason).toBeUndefined();
+  });
+
+  it("keeps OpenCode defaults outside a partial declared catalog", () => {
+    const sections = buildAdditiveSections({
+      app: "opencode",
+      t,
+      providers: [relay],
+      isInConfig: () => true,
+      defaultModel: { providerId: "relay", model: "builtin-model" },
+      defaultModelOptions: () => [{ id: "custom-model" }],
+      actions: additiveActions(),
+    });
+
+    expect(item(sections, "relay").status?.label).toBe(
+      "providerCard.status.default",
+    );
+    expect(item(sections, "relay").buttons.map((b) => b.key)).toEqual([
+      "remove",
+    ]);
+    expect(item(sections, "relay").menuItems).toBeUndefined();
+    expect(button(sections, "relay", "remove").disabledReason).toBeUndefined();
   });
 
   it("lets OpenCode set the top-level default model without blocking removal", () => {
