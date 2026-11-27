@@ -4351,6 +4351,8 @@
       "agyThirdPartyFiveHour": "Claude 5h",
       "agyThirdPartyWeekly": "Claude Wk",
       "monthly": "Mo",
+      "kimiMonthlyTotal": "Mo total",
+      "kimiMonthlyCode": "Mo code",
       "credits": "Credits",
       "copilotPremium": "Credits"
     },
@@ -4372,6 +4374,8 @@
     "agyThirdPartyWeekly": "Claude/GPT weekly",
     "weeklyLimit": "Weekly",
     "monthly": "Monthly",
+    "kimiMonthlyTotal": "Monthly total",
+    "kimiMonthlyCode": "Monthly coding",
     "credits": "Credits",
     "copilotPremium": "Credits",
     "copilotCompletions": "Completions",

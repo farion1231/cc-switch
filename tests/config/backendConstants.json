@@ -40,6 +40,10 @@
   "codingPlanProviderByUrl": {
     "https://api.kimi.com/coding/": "kimi",
     "HTTPS://API.KIMI.COM/CODING/v1": "kimi",
+    "https://api.kimi.ai/coding": "kimi",
+    "https://api.kimi.ai/coding/": "kimi",
+    "HTTPS://API.KIMI.AI/CODING/v1": "kimi",
+    "https://api.kimi.ai.evil.example/coding": null,
     "https://open.bigmodel.cn/api/anthropic": "zhipu",
     "https://api.z.ai/api/anthropic": "zhipu",
     "https://api.minimaxi.com/anthropic": "minimax",
@@ -98,6 +102,10 @@
     "wss://api.deepseek.com/v1": "deepseek",
     "https://api.openai.com/v1": null
   },
+  "kimiMonthlyTiers": [
+    "kimi_monthly_total",
+    "kimi_monthly_code"
+  ],
   "quotaWarnBelowPercent": 20.0,
   "exchangeRateCurrencies": [
     "CNY",

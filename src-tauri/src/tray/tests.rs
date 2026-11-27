@@ -595,6 +595,39 @@ fn fable_stays_separate_and_weekly_aliases_use_the_highest() {
 }
 
 #[test]
+fn kimi_monthly_pools_stay_separate_in_the_tray() {
+    let quota = make_quota(
+        "kimi_oauth",
+        true,
+        vec![
+            tier(TIER_FIVE_HOUR, 23.0),
+            tier("kimi_monthly_total", 40.0),
+            tier("kimi_monthly_code", 35.0),
+        ],
+    );
+    assert_eq!(
+        sub_title(&en(), &quota).as_deref(),
+        Some("5-hour 77% left · Monthly total 60% left · Monthly coding 65% left")
+    );
+    let result = usage_result(
+        true,
+        vec![
+            usage_data(Some(TIER_FIVE_HOUR), 23.0),
+            usage_data(Some("kimi_monthly_total"), 40.0),
+            usage_data(Some("kimi_monthly_code"), 35.0),
+        ],
+    );
+    let Some(QuotaView::Lines(lines)) = format_script_result(&zh(), &result) else {
+        panic!("expected lines");
+    };
+    let texts: Vec<&str> = lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        ["5 小时剩余 77%", "月总额度剩余 60%", "月编程额度剩余 65%"]
+    );
+}
+
+#[test]
 fn monthly_and_thirty_day_windows_keep_their_own_words() {
     let codex_free = make_quota("codex", true, vec![tier(TIER_THIRTY_DAY, 85.0)]);
     assert_eq!(

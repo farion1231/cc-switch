@@ -414,9 +414,13 @@ pub const TIER_SEVEN_DAY_SONNET: &str = "seven_day_sonnet";
 pub const TIER_WEEKLY_LIMIT: &str = "weekly_limit";
 
 /// 月窗口 tier 名。火山方舟 Agent Plan / Coding Plan 有 5h / 周 / 月 三个展示
-/// 窗口（Kimi / MiniMax 只有 5h + 周），月窗口共用此标识；前端 `TIER_I18N_KEYS`
+/// 窗口，月窗口共用此标识；前端 `TIER_I18N_KEYS`
 /// 映射到 `subscription.monthly`。
 pub const TIER_MONTHLY: &str = "monthly";
+
+/// Kimi 新套餐的月总额度与月编程额度，分别展示，不能合并或当作周额度。
+pub const TIER_KIMI_MONTHLY_TOTAL: &str = "kimi_monthly_total";
+pub const TIER_KIMI_MONTHLY_CODE: &str = "kimi_monthly_code";
 
 /// Codex 免费方案的 30 天（月）滚动窗口 tier 名。付费方案的次要窗口是 7 天
 /// (`seven_day`)，免费方案则是 30 天。由 `window_seconds_to_tier_name` 产出、

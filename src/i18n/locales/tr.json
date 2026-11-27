@@ -4280,6 +4280,8 @@
       "agyThirdPartyFiveHour": "Claude 5 sa.",
       "agyThirdPartyWeekly": "Claude haftalık",
       "monthly": "Ay",
+      "kimiMonthlyTotal": "Ay toplam",
+      "kimiMonthlyCode": "Ay kod",
       "credits": "Kredi",
       "copilotPremium": "Credits"
     },
@@ -4301,6 +4303,8 @@
     "agyThirdPartyWeekly": "Claude/GPT haftalık",
     "weeklyLimit": "Haftalık",
     "monthly": "Aylık",
+    "kimiMonthlyTotal": "Aylık toplam",
+    "kimiMonthlyCode": "Aylık kodlama",
     "credits": "Kredi",
     "copilotPremium": "Credits",
     "copilotCompletions": "Kod tamamlama",

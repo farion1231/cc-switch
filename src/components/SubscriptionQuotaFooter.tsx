@@ -67,6 +67,8 @@ export const TIER_I18N_KEYS: Record<string, string> = {
   weekly_limit: "subscription.sevenDay",
   // 火山方舟 Agent Plan / Coding Plan 的月窗口
   monthly: "subscription.monthly",
+  kimi_monthly_total: "subscription.kimiMonthlyTotal",
+  kimi_monthly_code: "subscription.kimiMonthlyCode",
   // Grok credit 额度的兜底窗口（重置距离可识别时归入 weekly_limit/monthly）
   credits: "subscription.credits",
   // GitHub Copilot
@@ -79,7 +81,8 @@ const HIDDEN_INLINE_TIERS = new Set(["seven_day_sonnet"]);
 /**
  * 卡片上按组只留剩余最少的一档、标签写组名（展开时仍逐档列出）：
  * Antigravity 的 Gemini、Claude 和 GPT 两组各有 5 小时和每周两档（Pro 档 Gemini 组另有 Argon 每周），
- * 四五档在卡片上放不下。Argon 也算进 Gemini 组，卡片始终两行、位置不随用量跳
+ * 四五档在卡片上放不下。Argon 也算进 Gemini 组，卡片始终两行、位置不随用量跳。
+ * Kimi 的两个月额度池同样只显示剩余最少的一档，明细保留各自的值。
  */
 const INLINE_TIER_GROUPS: Record<string, string> = {
   agy_gemini_five_hour: "subscription.agyGemini",
@@ -87,9 +90,11 @@ const INLINE_TIER_GROUPS: Record<string, string> = {
   agy_gemini_argon_weekly: "subscription.agyGemini",
   agy_third_party_five_hour: "subscription.agyThirdParty",
   agy_third_party_weekly: "subscription.agyThirdParty",
+  kimi_monthly_total: "subscription.monthly",
+  kimi_monthly_code: "subscription.monthly",
 };
 
-function collapseInlineGroups(tiers: QuotaTier[]): QuotaTier[] {
+export function collapseInlineGroups(tiers: QuotaTier[]): QuotaTier[] {
   const kept = new Map<string, QuotaTier>();
   for (const tier of tiers) {
     const group = INLINE_TIER_GROUPS[tier.name] ?? tier.name;
@@ -131,12 +136,18 @@ export function tierBreakdown(
   };
 }
 
-export function tierLabel(t: TFunction, name: string): string {
-  return TIER_I18N_KEYS[name] ? t(TIER_I18N_KEYS[name]) : name;
+export function tierLabel(t: TFunction, name: string, inline = false): string {
+  const key = (inline && INLINE_TIER_GROUPS[name]) || TIER_I18N_KEYS[name];
+  return key ? t(key) : name;
 }
 
 /** 卡片合并行里的短档名（`subscription.short.*`，英日用缩写） */
-export function tierShortLabel(t: TFunction, name: string): string {
+export function tierShortLabel(
+  t: TFunction,
+  name: string,
+  inline = false,
+): string {
+  if (inline && INLINE_TIER_GROUPS[name]) return t(INLINE_TIER_GROUPS[name]);
   const key = TIER_I18N_KEYS[name];
   return key ? t(key.replace("subscription.", "subscription.short.")) : name;
 }

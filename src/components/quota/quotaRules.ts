@@ -108,6 +108,8 @@ const TIER_WINDOW_ORDER: Record<string, number> = {
   weekly_limit: 2,
   "30_day": 3,
   monthly: 3,
+  kimi_monthly_total: 3,
+  kimi_monthly_code: 3,
   credits: 3,
   premium: 3,
 };

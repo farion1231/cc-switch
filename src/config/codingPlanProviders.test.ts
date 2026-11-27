@@ -250,6 +250,39 @@ describe("injectCodingPlanUsageScript", () => {
     expect(injected.meta?.usage_script?.codingPlanProvider).toBe("kimi");
   });
 
+  it("injects Kimi for the global (kimi.ai) host in every shape", () => {
+    // 「Kimi For Coding Global」预设的海外端点；Claude Code 式写法带尾斜杠、
+    // 不带 /v1，kimi app 预设带 /v1，都要认出同一个套餐供应商
+    for (const baseUrl of [
+      "https://api.kimi.ai/coding",
+      "https://api.kimi.ai/coding/",
+      "https://api.kimi.ai/coding/v1",
+    ]) {
+      expect(
+        inject("claude", {
+          settingsConfig: { env: { ANTHROPIC_BASE_URL: baseUrl } },
+        }).meta?.usage_script,
+      ).toMatchObject({ enabled: true, codingPlanProvider: "kimi" });
+    }
+    expect(
+      inject("kimi", {
+        settingsConfig: {
+          provider: { type: "kimi", base_url: "https://api.kimi.ai/coding/v1" },
+        },
+      }).meta?.usage_script,
+    ).toMatchObject({ enabled: true, codingPlanProvider: "kimi" });
+    // 近似 host 不注入
+    expect(
+      inject("claude", {
+        settingsConfig: {
+          env: {
+            ANTHROPIC_BASE_URL: "https://api.kimi.ai.evil.example/coding",
+          },
+        },
+      }).meta?.usage_script,
+    ).toBeUndefined();
+  });
+
   it("injects every coding plan for non-claude apps", () => {
     expect(
       inject("opencode", {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { APP_PROFILE_SCOPE } from "@/components/profiles/scope";
 import { WARN_BELOW_PERCENT } from "@/components/quota/quotaRules";
+import { TIER_I18N_KEYS } from "@/components/SubscriptionQuotaFooter";
 import { DISPLAY_CURRENCIES } from "@/components/usage/format";
 import type { AppId } from "@/lib/api/types";
 import { isValidUserAgentHeader } from "@/lib/userAgent";
@@ -83,6 +84,14 @@ describe("frontend copies of backend constants", () => {
 
   it("warns about quota at the same percentage as the tray", () => {
     expect(WARN_BELOW_PERCENT).toBe(backend.quotaWarnBelowPercent);
+  });
+
+  it("displays both Kimi monthly tiers emitted by the backend", () => {
+    expect(
+      Object.keys(TIER_I18N_KEYS).filter((name) =>
+        name.startsWith("kimi_monthly_"),
+      ),
+    ).toEqual(backend.kimiMonthlyTiers);
   });
 
   it("offers USD plus exactly the currencies the backend fetches rates for", () => {

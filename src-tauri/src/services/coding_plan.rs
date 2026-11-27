@@ -4,8 +4,8 @@
 //! Ollama Cloud、小米 MiMo Token Plan 的套餐额度查询。复用 subscription 模块的 SubscriptionQuota / QuotaTier 类型。
 
 use super::subscription::{
-    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_CREDITS, TIER_FIVE_HOUR, TIER_MONTHLY,
-    TIER_WEEKLY_LIMIT,
+    CredentialStatus, QuotaTier, SubscriptionQuota, TIER_CREDITS, TIER_FIVE_HOUR,
+    TIER_KIMI_MONTHLY_CODE, TIER_KIMI_MONTHLY_TOTAL, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
 };
 use super::usage_http::{parse_f64, send_for_json, JsonReply};
 use crate::codex_config::codex_url_host_matches_any;
@@ -42,7 +42,7 @@ fn detect_provider(base_url: &str) -> Option<CodingPlanProvider> {
     let host_is = |hosts: &[&str]| codex_url_host_matches_any(base_url, hosts);
     let path = url_path(base_url);
     let path_starts = |prefixes: &[&str]| prefixes.iter().any(|p| path.starts_with(p));
-    if host_is(&["api.kimi.com"]) && path_starts(&["/coding"]) {
+    if host_is(&["api.kimi.com", "api.kimi.ai"]) && path_starts(&["/coding"]) {
         Some(CodingPlanProvider::Kimi)
     } else if host_is(&["bigmodel.cn"]) {
         Some(CodingPlanProvider::ZhipuCn)
@@ -191,8 +191,24 @@ impl CodingPlanOutcome {
 
 // ── Kimi For Coding ─────────────────────────────────────────
 
-async fn query_kimi(api_key: &str) -> Result<SubscriptionQuota, String> {
-    query_kimi_at("https://api.kimi.com/coding/v1", api_key).await
+/// Resolve the Kimi quota API root from the user's configured `base_url`.
+///
+/// Kimi For Coding 分国内站与海外站（「Kimi For Coding Global」，www.kimi.ai +
+/// api.kimi.ai），两套账号体系互不鉴权：拿海外 Key 查国内端点（或反过来）只会
+/// 得到 401，所以额度查询必须跟着 provider 所在区域走。Coding 数据面的 API 根
+/// 在两个区域都固定是 `{host}/coding/v1`——像 Claude Code 的
+/// `ANTHROPIC_BASE_URL=https://api.kimi.ai/coding/` 这类不带 `/v1` 的写法，
+/// 直接拼 `/usages` 会 404（实测两端点均如此），这里统一归一到带 `/v1` 的根。
+fn kimi_quota_base(base_url: &str) -> &'static str {
+    if codex_url_host_matches_any(base_url, &["api.kimi.ai"]) {
+        "https://api.kimi.ai/coding/v1"
+    } else {
+        "https://api.kimi.com/coding/v1"
+    }
+}
+
+async fn query_kimi(base_url: &str, api_key: &str) -> Result<SubscriptionQuota, String> {
+    query_kimi_at(kimi_quota_base(base_url), api_key).await
 }
 
 /// `base_url` is the Kimi Code API root (`https://api.kimi.ai/coding/v1` for
@@ -261,6 +277,39 @@ pub(crate) async fn query_kimi_at(
             used_value_usd: None,
             max_value_usd: None,
         });
+    }
+
+    // 新套餐只有 usages 比例字段，月总额度与月编程额度是两个独立的桶。
+    // 旧计数字段存在时保留其结果（部分旧套餐的 ratio 曾返回 0），只补缺失的档位。
+    if let Some(usages) = body.get("usages") {
+        for (field, name) in [
+            ("limit_5h", TIER_FIVE_HOUR),
+            ("limit_7d", TIER_WEEKLY_LIMIT),
+            ("limit_month_total", TIER_KIMI_MONTHLY_TOTAL),
+            ("limit_month_code", TIER_KIMI_MONTHLY_CODE),
+        ] {
+            if tiers.iter().any(|tier| tier.name == name) {
+                continue;
+            }
+            let Some(entry) = usages.get(field) else {
+                continue;
+            };
+            let Some(utilization) = entry
+                .get("used_ratio")
+                .and_then(parse_f64)
+                .map(|ratio| ratio * 100.0)
+                .filter(|value| value.is_finite() && *value >= 0.0)
+            else {
+                continue;
+            };
+            tiers.push(QuotaTier {
+                name: name.to_string(),
+                utilization,
+                resets_at: entry.get("reset_time").and_then(extract_reset_time),
+                used_value_usd: None,
+                max_value_usd: None,
+            });
+        }
     }
 
     Ok(SubscriptionQuota {
@@ -1904,7 +1953,7 @@ pub(crate) async fn query_coding_plan(
         CodingPlanProvider::ZhipuCn | CodingPlanProvider::ZhipuEn => {
             return query_zhipu(base_url, api_key).await
         }
-        CodingPlanProvider::Kimi => query_kimi(api_key).await,
+        CodingPlanProvider::Kimi => query_kimi(base_url, api_key).await,
         CodingPlanProvider::MiniMaxCn => query_minimax(api_key, true).await,
         CodingPlanProvider::MiniMaxEn => query_minimax(api_key, false).await,
         CodingPlanProvider::ZenMux => query_zenmux(base_url, api_key).await,
@@ -1923,16 +1972,150 @@ pub(crate) async fn query_coding_plan(
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_provider, detect_provider_id, parse_afp_tiers, parse_coding_plan_tiers,
-        parse_command_code_quota, parse_mimo_token_plan_tiers, parse_minimax_tiers,
-        parse_ollama_cloud_tiers, parse_opencode_go_tiers, parse_zhipu_token_tiers,
-        query_command_code_at, query_zhipu_at, query_zhipu_team_at, volcengine_canonical_query,
-        volcengine_is_auth_error_code, volcengine_region, volcengine_response_error,
-        volcengine_sign, zhipu_outcome_from_body, zhipu_quota_base, CodingPlanOutcome,
-        CodingPlanProvider, CredentialStatus, TIER_CREDITS, TIER_FIVE_HOUR, TIER_MONTHLY,
-        TIER_WEEKLY_LIMIT,
+        detect_provider, detect_provider_id, kimi_quota_base, parse_afp_tiers,
+        parse_coding_plan_tiers, parse_command_code_quota, parse_mimo_token_plan_tiers,
+        parse_minimax_tiers, parse_ollama_cloud_tiers, parse_opencode_go_tiers,
+        parse_zhipu_token_tiers, query_command_code_at, query_kimi_at, query_zhipu_at,
+        query_zhipu_team_at, volcengine_canonical_query, volcengine_is_auth_error_code,
+        volcengine_region, volcengine_response_error, volcengine_sign, zhipu_outcome_from_body,
+        zhipu_quota_base, CodingPlanOutcome, CodingPlanProvider, CredentialStatus, TIER_CREDITS,
+        TIER_FIVE_HOUR, TIER_MONTHLY, TIER_WEEKLY_LIMIT,
     };
     use serde_json::json;
+
+    #[tokio::test]
+    async fn kimi_global_monthly_tiers_do_not_invent_weekly_quota() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({
+            "limits": [{"detail": {"limit": "100", "remaining": "77",
+                "resetTime": "2030-01-01T05:00:00Z"}}],
+            "usages": {
+                "limit_5h": {"used_ratio": 0.23, "reset_time": "2030-01-01T05:00:00Z"},
+                "limit_month_total": {"used_ratio": 0.4, "reset_time": "2030-02-01T00:00:00Z"},
+                "limit_month_code": {"used_ratio": 0.35, "reset_time": "2030-02-01T00:00:00Z"}
+            }
+        });
+        let (base, paths, handle) =
+            spawn_sequence_server(vec![Some(http_response("200 OK", &body.to_string()))]);
+        let quota = query_kimi_at(&format!("{base}/coding/v1/"), "test-key")
+            .await
+            .unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(*paths.lock().unwrap(), ["/coding/v1/usages"]);
+        assert!(quota.success);
+        assert_eq!(quota.tiers.len(), 3);
+        for (tier, (name, used, reset)) in quota.tiers.iter().zip([
+            (TIER_FIVE_HOUR, 23.0, "2030-01-01T05:00:00Z"),
+            ("kimi_monthly_total", 40.0, "2030-02-01T00:00:00Z"),
+            ("kimi_monthly_code", 35.0, "2030-02-01T00:00:00Z"),
+        ]) {
+            assert_eq!(tier.name, name);
+            assert!((tier.utilization - used).abs() < 1e-9);
+            assert_eq!(tier.resets_at.as_deref(), Some(reset));
+        }
+    }
+
+    #[tokio::test]
+    async fn kimi_ratio_only_tiers_support_weekly_and_zero_usage() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({"usages": {
+            "limit_5h": {"used_ratio": 0, "reset_time": "2030-01-01T05:00:00Z"},
+            "limit_7d": {"used_ratio": "0.6", "reset_time": "2030-01-08T00:00:00Z"}
+        }});
+        let (base, handle) = spawn_once_server(Some(http_response("200 OK", &body.to_string())));
+        let quota = query_kimi_at(&base, "test-key").await.unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 0.0);
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 60.0);
+        assert_eq!(
+            quota.tiers[1].resets_at.as_deref(),
+            Some("2030-01-08T00:00:00Z")
+        );
+    }
+
+    #[tokio::test]
+    async fn kimi_legacy_counters_take_precedence_without_duplicate_tiers() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({
+            "limits": [{"detail": {"limit": "100", "remaining": "75"}}],
+            "usage": {"limit": "100", "remaining": "40"},
+            "usages": {"limit_5h": {"used_ratio": 0}, "limit_7d": {"used_ratio": 0}}
+        });
+        let (base, handle) = spawn_once_server(Some(http_response("200 OK", &body.to_string())));
+        let quota = query_kimi_at(&base, "test-key").await.unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(quota.tiers.len(), 2);
+        assert_eq!(quota.tiers[0].name, TIER_FIVE_HOUR);
+        assert_eq!(quota.tiers[0].utilization, 25.0);
+        assert_eq!(quota.tiers[1].name, TIER_WEEKLY_LIMIT);
+        assert_eq!(quota.tiers[1].utilization, 60.0);
+    }
+
+    #[tokio::test]
+    async fn kimi_invalid_ratio_fields_do_not_create_quota_tiers() {
+        ensure_no_proxy_for_loopback();
+        let body = json!({"usages": {
+            "limit_5h": null,
+            "limit_7d": {"reset_time": "2030-01-08T00:00:00Z"},
+            "limit_month_total": {"used_ratio": "NaN"},
+            "limit_month_code": {"used_ratio": -0.1}
+        }});
+        let (base, handle) = spawn_once_server(Some(http_response("200 OK", &body.to_string())));
+        let quota = query_kimi_at(&base, "test-key").await.unwrap();
+        handle.join().unwrap();
+
+        assert!(quota.success);
+        assert!(quota.tiers.is_empty());
+    }
+
+    #[test]
+    fn kimi_detects_cn_and_global_hosts() {
+        // 国内站（kimi.com）与海外站（kimi.ai，「Kimi For Coding Global」）都命中；
+        // 大小写不敏感；各 app 的 base_url 形态（带不带 /v1、尾斜杠）都要认
+        for base_url in [
+            "https://api.kimi.com/coding/",
+            "https://api.kimi.com/coding/v1",
+            "https://api.kimi.ai/coding",
+            "https://api.kimi.ai/coding/",
+            "https://api.kimi.ai/coding/v1",
+            "HTTPS://API.KIMI.AI/CODING/v1",
+        ] {
+            assert!(
+                matches!(detect_provider(base_url), Some(CodingPlanProvider::Kimi)),
+                "{base_url} must detect as Kimi"
+            );
+        }
+        // 近似 host 不命中（与前端 regex 一致）
+        assert!(detect_provider("https://api.kimi.ai.evil.example/coding").is_none());
+        assert!(detect_provider("https://api.kimi.com.evil.example/coding").is_none());
+    }
+
+    #[test]
+    fn kimi_quota_base_follows_region_and_normalizes_path() {
+        // 海外 base_url（含 Claude Code 式 `…/coding/` 尾斜杠写法）归一到全球根
+        for base_url in [
+            "https://api.kimi.ai/coding",
+            "https://api.kimi.ai/coding/",
+            "HTTPS://API.KIMI.AI.:443/CODING/v1",
+        ] {
+            assert_eq!(kimi_quota_base(base_url), "https://api.kimi.ai/coding/v1");
+        }
+        // 国内 base_url 归一到国内根
+        for base_url in [
+            "https://api.kimi.com/coding",
+            "https://api.kimi.com/coding/",
+            "https://api.kimi.com/coding/v1",
+            "https://api.kimi.com/coding/v1?region=api.kimi.ai",
+        ] {
+            assert_eq!(kimi_quota_base(base_url), "https://api.kimi.com/coding/v1");
+        }
+    }
 
     #[test]
     fn minimax_cn_detects_current_and_legacy_hosts() {

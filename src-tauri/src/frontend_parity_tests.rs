@@ -11,6 +11,12 @@ use serde_json::{json, Map, Value};
 const CODING_PLAN_URLS: &[&str] = &[
     "https://api.kimi.com/coding/",
     "HTTPS://API.KIMI.COM/CODING/v1",
+    // 海外/Global 变体（api.kimi.ai）：Kimi For Coding Global 预设，形态同国内
+    "https://api.kimi.ai/coding",
+    "https://api.kimi.ai/coding/",
+    "HTTPS://API.KIMI.AI/CODING/v1",
+    // 近似 host 出现在路径或子域里不算数（前端 regex 同样不命中）
+    "https://api.kimi.ai.evil.example/coding",
     "https://open.bigmodel.cn/api/anthropic",
     "https://api.z.ai/api/anthropic",
     "https://api.minimaxi.com/anthropic",
@@ -201,6 +207,10 @@ fn backend_constants_match_shared_fixture() {
         },
         "codingPlanProviderByUrl": coding_plan,
         "balanceProviderByUrl": balance,
+        "kimiMonthlyTiers": [
+            crate::services::subscription::TIER_KIMI_MONTHLY_TOTAL,
+            crate::services::subscription::TIER_KIMI_MONTHLY_CODE,
+        ],
         "quotaWarnBelowPercent": crate::tray::WARN_BELOW_PERCENT,
         "exchangeRateCurrencies": crate::services::exchange_rates::TARGET_CURRENCIES,
         "customIcon": {

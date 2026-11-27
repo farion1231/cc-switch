@@ -4351,6 +4351,8 @@
       "agyThirdPartyFiveHour": "Claude 5 小時",
       "agyThirdPartyWeekly": "Claude 每週",
       "monthly": "每月",
+      "kimiMonthlyTotal": "月總",
+      "kimiMonthlyCode": "月程式",
       "credits": "額度",
       "copilotPremium": "Credits"
     },
@@ -4372,6 +4374,8 @@
     "agyThirdPartyWeekly": "Claude/GPT 每週",
     "weeklyLimit": "每週",
     "monthly": "每月",
+    "kimiMonthlyTotal": "月總額度",
+    "kimiMonthlyCode": "月程式設計額度",
     "credits": "額度",
     "copilotPremium": "Credits",
     "copilotCompletions": "程式碼補全",
