@@ -39,6 +39,12 @@
     "active": true,
     "targets": "all",
     "createUpdaterArtifacts": true,
+    "publisher": "CC Switch",
+    "homepage": "https://ccswitch.io",
+    "copyright": "Copyright (c) 2025 Jason Young",
+    "category": "DeveloperTool",
+    "shortDescription": "All-in-One Assistant for Claude Code, Codex & Gemini CLI",
+    "longDescription": "CC Switch is an All-in-One Assistant for Claude Code, Codex & Gemini CLI.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
