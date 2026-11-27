@@ -155,6 +155,9 @@ pub async fn set_auto_failover_enabled(
     log::info!(
         "[Failover] Setting auto_failover_enabled: app_type='{app_type}', enabled={enabled}"
     );
+    let guard = crate::mode::controller::lock_settled(state.inner(), &app_enum)
+        .await
+        .map_err(|e| e.to_string())?;
 
     // 读取当前配置
     let mut config = state.db.get_proxy_config_for_app(&app_enum).await?;
@@ -227,9 +230,9 @@ pub async fn set_auto_failover_enabled(
 
     // 开启前先切到 P1。只有切换成功后才写入 auto_failover_enabled=true，
     // 避免 P1 不可切换（例如 official provider）时留下“开关已开但目标未切”的脏状态。
-    // Stack 模式不做故障转移，切换在锁内拒绝（见 `switch_route_for_failover`）。
+    // Stack 模式不做故障转移，切换在锁内拒绝。
     if enabled {
-        if let Err(e) = crate::mode::controller::switch_route_for_failover(
+        if let Err(e) = crate::mode::controller::switch_route_for_failover_locked(
             state.inner(),
             &app_enum,
             &p1_provider_id,
@@ -252,6 +255,7 @@ pub async fn set_auto_failover_enabled(
 
     // 写回数据库
     state.db.update_proxy_config_for_app(config).await?;
+    drop(guard);
 
     if enabled {
         // 发射 provider-switched 事件（让前端刷新当前供应商）

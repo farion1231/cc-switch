@@ -39,6 +39,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Mcode => crate::mcode_config::data_dir(),
         AppType::Dsh => crate::dsh_config::data_dir(),
         AppType::Kimi => crate::kimi_config::data_dir(),
+        AppType::Codebuddy => crate::codebuddy_config::data_dir(),
         // agy 只从各「定制根目录」读独立的 AGENTS.md；全局那一个是 ~/.gemini/config，Key 模式的
         // 私有 --gemini_dir 也经软链共享它。别用 ~/.gemini/GEMINI.md：那是 Gemini CLI 的。
         AppType::Agy => crate::agy_config::customizations_dir(),
@@ -50,6 +51,8 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         // 用户级说明是当前账号目录下的 MEMORY.md（MemoryCollector 以 <user_instructions> 注入，
         // 每次最多 4000 字）。目录随登录的账号变，没登录时是数据目录本身。
         AppType::WorkBuddy => crate::services::workbuddy_account::user_data_dir(),
+        // ZCode 的全局指令是 `$ZCODE_HOME/AGENTS.md`（cli/ 上一级）。
+        AppType::ZCode => crate::zcode_config::get_zcode_dir(),
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 
@@ -59,6 +62,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         AppType::Gemini => "GEMINI.md",
         AppType::GrokBuild | AppType::OpenCode | AppType::OpenClaw => "AGENTS.md",
         AppType::Hermes => "SOUL.md",
+        AppType::Codebuddy => "CODEBUDDY.md",
         AppType::Pi
         | AppType::Mcode
         | AppType::Agy
@@ -67,6 +71,7 @@ pub fn prompt_file_path(app: &AppType) -> Result<PathBuf, AppError> {
         | AppType::Omp => "AGENTS.md",
         AppType::Copilot => "copilot-instructions.md",
         AppType::WorkBuddy => "MEMORY.md",
+        AppType::ZCode => "AGENTS.md",
         AppType::ClaudeDesktop => unreachable!("handled above"),
     };
 

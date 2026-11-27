@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { getAppLabel } from "@/config/appConfig";
 import { DeepLinkImportRequest } from "../../lib/api/deeplink";
 import { decodeBase64Utf8 } from "../../lib/utils/base64";
 import {
@@ -151,9 +152,9 @@ export function McpConfirmation({
           {targetApps.map((app) => (
             <span
               key={app}
-              className="px-2 py-1 bg-primary/10 text-primary text-xs rounded capitalize"
+              className="px-2 py-1 bg-primary/10 text-primary text-xs rounded"
             >
-              {app.trim()}
+              {getAppLabel(app.trim())}
             </span>
           ))}
         </div>

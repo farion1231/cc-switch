@@ -8,6 +8,7 @@ mod auto_launch;
 mod claude_desktop_config;
 mod claude_mcp;
 mod claude_plugin;
+mod codebuddy_config;
 mod codex_config;
 mod codex_history_migration;
 mod codex_rollout_file;
@@ -15,6 +16,7 @@ mod codex_state_db;
 mod commands;
 mod config;
 mod copilot_config;
+mod copilot_vscode;
 mod database;
 mod deeplink;
 mod dsh_config;
@@ -67,6 +69,7 @@ mod usage_events;
 mod usage_script;
 mod window_fit;
 mod workbuddy_config;
+mod zcode_config;
 
 use crate::sync_utils::MutexExt;
 pub use app_config::{AppType, InstalledSkill, McpApps, McpServer, MultiAppConfig, SkillApps};
@@ -1046,6 +1049,13 @@ pub fn run() {
                 Ok(_) => log::debug!("○ No Oh My Pi provider changes from native config"),
                 Err(e) => log::warn!("✗ Failed to import Oh My Pi providers: {e}"),
             }
+            match crate::services::provider::import_zcode_providers_from_live(&app_state) {
+                Ok(count) if count > 0 => {
+                    log::info!("✓ Synced {count} ZCode provider(s) from live config");
+                }
+                Ok(_) => log::debug!("○ No ZCode provider changes from live config"),
+                Err(e) => log::warn!("✗ Failed to import ZCode providers: {e}"),
+            }
 
             // 2. OMO 配置导入（当数据库中无 OMO provider 时，从本地文件导入）
             {
@@ -1137,6 +1147,7 @@ pub fn run() {
                     crate::app_config::AppType::Pi,
                     crate::app_config::AppType::Mcode,
                     crate::app_config::AppType::WorkBuddy,
+                    crate::app_config::AppType::Codebuddy,
                 ] {
                     match crate::services::prompt::PromptService::import_from_file_on_first_launch(
                         &app_state,
@@ -1332,6 +1343,22 @@ pub fn run() {
                 use crate::services::workbuddy_account::WorkBuddyAccountManager;
                 let manager = WorkBuddyAccountManager::new(crate::config::get_app_config_dir());
                 app.manage(commands::WorkBuddyAccountState(Arc::new(manager)));
+            }
+            // CodeBuddy 官方账号（授权中心收录、切 CodeBuddy 的全局登录）
+            {
+                use crate::services::codebuddy_account::CodebuddyAccountManager;
+                let manager = Arc::new(CodebuddyAccountManager::new(
+                    crate::config::get_app_config_dir(),
+                ));
+                app.manage(commands::CodebuddyAccountState(manager.clone()));
+                // 上次退出时终端登录还没登完：删掉 CC Switch 写的登出标记，恢复原来的登录
+                tauri::async_runtime::spawn(async move {
+                    match manager.recover_stale_marker().await {
+                        Ok(true) => log::info!("[CodebuddyAccount] 已恢复上次未完成登录前的登录"),
+                        Ok(false) => {}
+                        Err(error) => log::warn!("[CodebuddyAccount] 恢复上次登录前的登出标记失败: {error}"),
+                    }
+                });
             }
 
             // Claude Code 官方订阅账号（授权中心加号；每个账号一个 CLAUDE_CONFIG_DIR）
@@ -1846,6 +1873,9 @@ pub fn run() {
             commands::add_custom_icon,
             commands::rename_custom_icon,
             commands::delete_custom_icon,
+            // ZCode specific
+            commands::import_zcode_providers_from_live,
+            commands::get_zcode_live_provider_ids,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,
@@ -1900,6 +1930,11 @@ pub fn run() {
             commands::workbuddy_account_prepare_new_login,
             commands::workbuddy_account_open_app,
             commands::workbuddy_account_quota,
+            commands::codebuddy_account_live,
+            commands::codebuddy_account_import_current,
+            commands::codebuddy_account_open_login_terminal,
+            commands::codebuddy_account_quota,
+            commands::codebuddy_account_switch_provider,
             commands::claude_account_submit_paste,
             commands::get_claude_account_quota,
             commands::get_claude_default_plan,
@@ -1923,6 +1958,10 @@ pub fn run() {
             commands::copilot_get_usage,
             commands::copilot_get_usage_for_account,
             commands::copilot_cli_signed_in_account,
+            // Copilot CLI model sync to VS Code
+            commands::get_copilot_vscode_targets,
+            commands::get_copilot_vscode_sync_status,
+            commands::sync_copilot_vscode,
             // OMO commands
             commands::read_omo_local_file,
             commands::get_current_omo_provider_id,
@@ -1995,6 +2034,7 @@ pub fn run() {
                 // 进程直接退出时 Tauri 运行时不走正常 Drop 流程，
                 // 不会向 Windows Shell 发送 NIM_DELETE，导致已退出的进程
                 // 注册的图标仍残留在系统托盘（鼠标悬停 Shell 才会重绘发现进程已死）。
+                // macOS 上不移除（会删掉菜单栏位置），见函数注释。
                 remove_tray_icon_before_exit(&app_handle);
                 log::info!("清理完成，退出应用");
 
@@ -2097,9 +2137,19 @@ fn cleanup_before_system_exit(app_handle: &tauri::AppHandle) {
 ///
 /// 通过 `set_visible(false)` 走 `WM_USER_HIDE_TRAYICON` 消息路径，
 /// 触发 tray-icon 内部的 `remove_tray_icon` → `Shell_NotifyIconW(NIM_DELETE)`，
-/// 在进程结束前干净地把图标摘掉。其它平台 `set_visible(false)` 也是
-/// 正常的隐藏/移除语义，作为跨平台兜底也安全。
+/// 在进程结束前干净地把图标摘掉。Linux 上 `set_visible(false)` 也是
+/// 正常的隐藏/移除语义，作为兜底也安全。
+///
+/// macOS 上什么都不做：`set_visible(false)` 在那里是 `removeStatusItem`，系统会连带删掉
+/// 用户⌘拖好的菜单栏位置（应用 defaults 里的 `NSStatusItem Preferred Position Item-0`），
+/// 下次启动图标回到默认位置，Hidden Bar 这类整理工具的分组也跟着失效。不移除直接结束进程，
+/// 系统随进程一起收掉图标，位置留着（macOS 27 实测）。⌘Q 那条路本来就不丢位置。
 pub(crate) fn remove_tray_icon_before_exit(app_handle: &tauri::AppHandle) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app_handle;
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(tray) = app_handle.tray_by_id(tray::TRAY_ID) {
         if let Err(e) = tray.set_visible(false) {
             log::warn!("退出时移除托盘图标失败: {e}");
@@ -2405,7 +2455,8 @@ fn checkpoint_before_restart(app_handle: &tauri::AppHandle) {
 ///
 /// 有意不调 `AppHandle::cleanup_before_exit()`：它会在调用线程上 Drop 托盘
 /// 图标，而 macOS 的 NSStatusItem 操作要求主线程；`set_visible(false)` 走
-/// `run_item_main_thread` 代理，跨线程安全（见 `remove_tray_icon_before_exit`）。
+/// `run_item_main_thread` 代理，跨线程安全（见 `remove_tray_icon_before_exit`，
+/// macOS 上它不移除图标，免得重启后菜单栏位置丢失）。
 pub fn restart_process(app_handle: &tauri::AppHandle) -> ! {
     checkpoint_before_restart(app_handle);
     remove_tray_icon_before_exit(app_handle);

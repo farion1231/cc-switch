@@ -115,6 +115,11 @@ Claude Code / Codex / Gemini 官方通道分別低至原價的 38% / 2% / 9%，�
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>感謝 SudoCode 贊助本專案！SudoCode 讓 Claude Code 與 Codex 共用一個 API 入口，一個 Key 即可同時接入兩款工具。主控台依模型列出每次請求的 Token 用量與費用，每一筆花費都一目瞭然。SudoCode 為 CC Switch 使用者提供專屬福利：透過<a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">此連結</a>註冊後加入 QQ 群 1030742788，即可領取價值人民幣 ¥10 的日卡！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>感謝 AIGoCode 贊助本專案！AIGoCode 是一個訂閱制的 AI 程式開發平台，而不只是按 Token 計費。一個帳號、一份月費方案即可使用 Claude Code、Codex 與 Gemini，中國大陸可直連且回應迅速。透過<a href="https://aigocode.net/invite/CC-SWITCH">此連結</a>訂閱，可額外獲得 10% 的額度！</td>
 </tr>
@@ -367,6 +372,7 @@ paru -S cc-switch-bin
 | MiniMax Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | 共存 | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy | 共存 | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **切換**：同一時間只有一個供應商生效；**共存**：多個供應商會同時寫入該工具自己的設定，由你在工具內挑選其中一個。
 - **本地路由**：CC Switch 在你的電腦上轉發請求並轉換 API 格式；詳見下方的[本地路由與故障轉移](#本地路由與故障轉移)。Claude Desktop 的供應商可使用「直連」或「模型映射」；使用「模型映射」時，請求會經過本地路由。
@@ -405,7 +411,7 @@ paru -S cc-switch-bin
 
 ### MCP、提示詞與 Skills
 
-- **統一的 MCP 面板** — 在同一處管理所有 MCP 伺服器，選擇每個伺服器要同步到哪些工具（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi），從各工具匯入現有設定，並可透過 Deep Link 匯入
+- **統一的 MCP 面板** — 在同一處管理所有 MCP 伺服器，選擇每個伺服器要同步到哪些工具（Claude Code、Codex、Gemini CLI、Grok Build、OpenCode、Hermes、Pi、MiniMax Code、Kimi Code、Oh My Pi、CodeBuddy），從各工具匯入現有設定，並可透過 Deep Link 匯入
 - **提示詞** — 依工具分別建立的提示詞庫，附 Markdown 編輯器；啟用提示詞時會將其寫入該工具的提示詞檔案（CLAUDE.md / AGENTS.md / GEMINI.md），並先把檔案現有的內容存回提示詞庫，確保不會遺失任何內容。Pi 還可編輯 SYSTEM.md、APPEND_SYSTEM.md 與提示詞範本
 - **Skills** — 搜尋 skills.sh，或從 GitHub 儲存庫或 ZIP 檔案一鍵安裝；可檢查更新並一鍵全部更新；可自動同步到各工具、僅用符號連結，或僅用複本；也可選擇存放在 `~/.agents/skills`
 - 三個面板都支援搜尋，MCP 與 Skills 還可依工具一次全部啟用或停用；供應商、MCP 伺服器與提示詞都在內容區以整頁方式編輯，離開時若有未儲存的變更會先提醒你

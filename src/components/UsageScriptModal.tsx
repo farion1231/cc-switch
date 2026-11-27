@@ -343,6 +343,17 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
               ?.replace(/\/+$/, "")
               .replace(/\/chat\/completions$/, ""),
           };
+        } else if (appId === "codebuddy") {
+          // CodeBuddy models.json entry: url is the full chat/completions endpoint,
+          // same trim as the backend resolver.
+          const root = config as any;
+          const url: string | undefined = root.url;
+          return {
+            apiKey: root.apiKey,
+            baseUrl: url
+              ?.replace(/\/+$/, "")
+              .replace(/\/chat\/completions$/, ""),
+          };
         } else if (appId === "openclaw") {
           // OpenClaw: settingsConfig 顶层扁平（camelCase，对应 openclaw.json）
           return {
@@ -352,9 +363,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         } else if (
           appId === "opencode" ||
           appId === "dsh" ||
-          appId === "mcode"
+          appId === "mcode" ||
+          appId === "zcode"
         ) {
-          // OpenCode / DeepSeek Harness / MiniMax Code: 凭据嵌在 options.{baseURL, apiKey}。
+          // OpenCode / DeepSeek Harness / MiniMax Code / ZCode: 凭据嵌在 options.{baseURL, apiKey}。
           const options = (config as any).options || {};
           return {
             apiKey: options.apiKey,

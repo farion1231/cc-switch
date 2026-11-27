@@ -329,10 +329,12 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
         mcode: false,
         kimi: false,
         copilot: false,
+        codebuddy: false,
         dsh: false,
         workbuddy: false,
         pi: false,
         omp: false,
+        zcode: false,
     };
 
     for app in apps_str.split(',') {
@@ -351,10 +353,12 @@ pub(crate) fn parse_mcp_apps(apps_str: &str) -> Result<McpApps, AppError> {
             "mcode" => apps.mcode = true,
             "kimi" => apps.kimi = true,
             "copilot" => apps.copilot = true,
+            "codebuddy" => apps.codebuddy = true,
             "dsh" => apps.dsh = true,
             "workbuddy" | "work-buddy" => apps.workbuddy = true,
             "pi" => apps.pi = true,
             "omp" => apps.omp = true,
+            "zcode" => apps.zcode = true,
             other => {
                 return Err(AppError::InvalidInput(format!(
                     "Invalid app in 'apps': {other}"

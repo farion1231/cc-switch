@@ -235,7 +235,7 @@
         "account": "Hesap",
         "accountFollow": "agy'nin mevcut oturum açma hesabını kullan",
         "accountMissing": "Bu bilgisayarda bulunmayan hesap",
-        "accountHelp": "Bir hesap seçildiğinde Terminal Aç, önce agy'nin oturumunu bu hesaba geçirir (bu değişiklik genel olarak geçerlidir: bundan sonra başlatılan agy oturumları bu hesabı kullanır). Hesapları Kimlik Doğrulama Merkezi'ne ekleyin."
+        "accountHelp": "Yeni bir hesap bağlantısı kaydedildiğinde yeni agy oturumları bu hesabı kullanır. Bu karttan terminal açıldığında da bağlı hesaba geçilir. Hesapları Kimlik Doğrulama Merkezi'nden ekleyin."
       },
       "gemini": {
         "model": "Model",
@@ -917,6 +917,14 @@
     "minimizeToTrayDescription": "İşaretlendiğinde kapat düğmesine basıldığında sistem tepsisinde gizlenir, aksi halde uygulama doğrudan çıkar.",
     "useAppWindowControls": "Uygulama düzeyinde pencere kontrollerini etkinleştir",
     "useAppWindowControlsDescription": "Uygulama başlığındaki yerleşik küçültme, büyütme/geri yükleme ve kapatma düğmelerini kullanın.",
+    "copilotVscode": {
+      "enable": "VS Code Copilot uzantısına uygula",
+      "description": "CLI'ye eklenen modelleri ve API anahtarlarını algılanan tüm VS Code profillerine otomatik uygular. Sağlayıcı değişiklikleri de otomatik eşitlenir.",
+      "pending": "VS Code model eşitlemesi bekliyor",
+      "pendingDescription": "VS Code önceki yapılandırmayı kullanıyor olabilir. Son değişiklikleri eşitlemek için yeniden deneyin.",
+      "noTargets": "VS Code yapılandırması bulunamadı. VS Code'u bir kez başlatıp yeniden deneyin.",
+      "failed": "VS Code Copilot eşitlenemedi"
+    },
     "enableClaudePluginIntegration": "Claude Code uzantısına uygula",
     "enableClaudePluginIntegrationDescription": "Etkinleştirildiğinde VS Code Claude Code uzantı sağlayıcısı bu uygulamayla geçiş yapacak",
     "skipClaudeOnboarding": "Claude Code ilk çalıştırma onayını atla",
@@ -1016,6 +1024,7 @@
     "browsePlaceholderPi": "ör. /home/<your-username>/.pi/agent",
     "browsePlaceholderOmp": "ör. /home/<your-username>/.omp/agent",
     "browsePlaceholderDsh": "örn. /home/<kullanıcı-adınız>/.dsh",
+    "browsePlaceholderZcode": "örn. /home/<kullanıcı-adınız>/.zcode",
     "browseDirectory": "Dizine Göz Atın",
     "resetDefault": "Varsayılan dizine sıfırla (kaydettikten sonra etkili olur)",
     "checkForUpdates": "Güncellemeleri Kontrol Et",
@@ -1469,6 +1478,8 @@
     "selectSessionLabel": "{{title}}'yi seçin",
     "agyDeleteHint": "Çalışma zamanı durumunu da kaldırmak için bu oturumu Antigravity'de silin.",
     "mcodeDeleteHint": "MiniMax Code'de silin",
+    "codebuddyDeleteHint": "Bu oturumu CodeBuddy'da yönetin: arka plan işleri, ekip üyeleri ve dosya geçmişi bu kayda başvurur",
+    "zcodeDeleteHint": "Geçmişin ve kullanım kayıtlarının tutarlı kalması için bu oturumu ZCode içinde silin",
     "groupMeta": "{{count}} oturumları · {{time}}",
     "bucketToday": "Bugün",
     "bucketYesterday": "Dün",
@@ -1672,7 +1683,6 @@
       "filterChanges": "Değişiklikler",
       "filterLabel": "Görüntüle",
       "exportMarkdown": "Markdown dosyası olarak dışa aktar",
-      "exportShort": "Dışa aktar",
       "exported": "{{path}}'ye aktarıldı",
       "exportFailed": "Dışa aktarma başarısız oldu: {{error}}",
       "conversationRegion": "Konuşma içeriği",
@@ -1735,7 +1745,7 @@
       "tokenplus": "TokenPlus ile yapay zekâ destekli kodlama daha kararlı, ekonomik ve sorunsuz: tek anahtarla birden çok sağlayıcının modellerine erişin, akıllı geçişle kararlılığı koruyun, uygun fiyat seçimi ve önbellek optimizasyonuyla maliyetleri azaltın; faturalandırma, ekip ve veri güvenliğini tek yerden yönetin.",
       "kimi": "Yeni Kimi kullanıcıları ilk başarılı yüklemelerinin %10'unu 1.000 CNY'ye kadar bonus API kredisi olarak geri alırlar.",
       "a6api": "A6API, piyasadaki en düşük fiyatı otomatik olarak seçen, yerleşik gerçek zamanlı fiyat sıralama tablosuna sahip bir token birleştirme platformudur. Sorunsuz ve istikrarlı, kullanımı basit ve sıkıcı fiyat karşılaştırmalarına son. Ücretsiz deneme kredilerinden yararlanmak için şimdi kaydolun!",
-      "sudocode": "Bir SudoCode anahtarıyla Claude Code ve Claude Desktop, Claude Opus 5'i kullanırken Codex, GPT-5.6'yı kullanır. Kaydolun, 726213516 numaralı QQ grubuna katılın ve 10 CNY tutarında deneme kredisi talep etmek için grup sahibiyle iletişime geçin.",
+      "sudocode": "SudoCode, Claude Code ve Codex'e ortak tek bir API uç noktası sunar; konsol her isteğin token kullanımını ve maliyetini modele göre gösterir. Kaydolun ve 10 CNY değerinde bir günlük kart almak için 1030742788 numaralı QQ grubuna katılın.",
       "packycode": "PackyCode, CC Switch’in resmi ortağıdır. Bu bağlantıyı kullanarak kaydolun ve %10 indirimden yararlanmak için şarj sırasında \"cc-switch\" promosyon kodunu girin",
       "apikeyfun": "APIKEY.FUN, CC Switch kullanıcıları için özel bir fırsat sunuyor. Kalıcı %5'e varan yükleme indirimlerinden yararlanmak için özel bağlantı aracılığıyla kaydolun.",
       "apinebula": "APINEBULA, CC Switch kullanıcılarına özel bir indirim sunuyor: bağlantıyı kullanarak kaydolun ve %10 indirimden yararlanmak için ilk yükleme sırasında \"ccswitch\" promosyon kodunu girin.",
@@ -1938,6 +1948,7 @@
     "directModeFormatSwitch": "Bu biçim doğrudan modda çalışmaz; Bu kartı kullanmak için yönlendirmeye veya Birleştirme'ya geçin."
   },
   "copilot": {
+    "autoModelName": "GitHub Copilot Auto",
     "automaticFormat": "Yönlendirme tarafından otomatik seçilir",
     "automaticFormatHint": "Yönlendirme, her model için Copilot üst akış biçimini seçer; elle belirlenen biçim ayarları yok sayılır.",
     "authSection": "GitHub Copilot Kimlik Doğrulaması",
@@ -2168,7 +2179,8 @@
     "autoReviewModelMainDefault": "Ana model kendini inceler (varsayılan)",
     "autoReviewModelNoList": "Bu kartta model listesi yok: Codex onayları yalnızca ChatGPT hesaplarına yönlendirme yapan bazı aktarım hizmetlerinin kabul ettiği resmî codex-auto-review modeliyle inceler; diğerleri 404 döndürür. Bir model seçmek için yukarıdaki listeye model ekleyin.",
     "officialSpeedTiersLabel": "Resmî Fast katmanını koru",
-    "officialSpeedTiersHint": "Model listesindeki GPT modellerinde resmî Fast hız katmanını korur; böylece Codex'te Fast seçildiğinde service_tier=priority gönderilir. Bunu yalnızca resmî ChatGPT hesaplarına yönlendiren aktarım hizmetleri (CPA gibi) kabul eder ve kota daha hızlı tükenir; diğer yukarı akışlar reddedebilir veya daha yüksek fiyattan faturalandırabilir. Açıldığında, resmî kart altında yaptığınız Fast seçimi bu sağlayıcıda hemen geçerli olur. Birleştirme modunda kullanılmaz. Değiştirdikten sonra Codex'i yeniden başlatın.",
+    "officialSpeedTiersHint": "Model listesindeki GPT modellerinde resmî Fast hız katmanını korur; böylece Codex'te Fast seçildiğinde service_tier=priority gönderilir. Bunu yalnızca resmî ChatGPT hesaplarına yönlendiren aktarım hizmetleri (CPA gibi) kabul eder ve kota daha hızlı tükenir; diğer yukarı akışlar reddedebilir veya daha yüksek fiyattan faturalandırabilir. Codex masaüstü uygulaması Fast'i yalnızca ChatGPT ile oturum açıkken gösterir: uygulamada oturum açıp Ayarlar'daki \"Doğrudan geçişler için resmi giriş bilgilerini koruyun\" seçeneğini açın (veya yönlendirme modunu kullanın); istekler yine bu karta gider. Oturum açılmadan Fast'i yalnızca Codex CLI kullanabilir (/fast). Açıldığında, resmî kart altında yaptığınız Fast seçimi bu sağlayıcıda hemen geçerli olur. Birleştirme modunda kullanılmaz. Değiştirdikten sonra Codex'i yeniden başlatın.",
+    "officialSpeedTiersNoList": "Bu kartta model listesi yok: Fast katmanı yalnızca model listesindeki GPT modellerine eklenir, bu yüzden şu anda açılamaz. Açmak için yukarıdaki listeye GPT modelleri ekleyin.",
     "modelListHint": "Değişikliklerden sonra Codex uygulamasını yeniden başlatın.",
     "modelListDefaultHelp": "Bu modeller Codex'nin /model menüsünde görünür; ilk satır varsayılan modeldir. Adını resmi bir GPT modelinden alan satırlar resmi girişi kullanır, dolayısıyla görünen adları, pencereleri ve akıl yürütme düzeyleri göz ardı edilir.",
     "addCatalogModel": "Manuel olarak ekle",
@@ -2305,6 +2317,7 @@
     "loginWith": {
       "deepseek": "DeepSeek hesabıyla giriş yap",
       "workbuddy": "WorkBuddy hesabıyla giriş yap",
+      "codebuddy": "CodeBuddy hesabıyla giriş yap",
       "kimi": "Kimi hesabıyla oturum aç",
       "claude": "Claude hesabıyla oturum açın",
       "chatgpt": "ChatGPT hesabıyla oturum açın",
@@ -2698,6 +2711,7 @@
       "duration": "Süre",
       "durationEstimated": "Süre (tahmini)",
       "speedTooFew": "100 çıkış tokenunun altında, yani hız yok",
+      "speedBurst": "Arabelleğe alınmış ani aktarım olduğu için hız yok",
       "speedEstimateTooFew": "Çıkış tokenu 200'ün altında olduğundan tahmin yok",
       "noTimingSession": "Oturum günlüklerinde zamanlama verisi yok",
       "noFirstToken": "İlk token zamanlaması yok, dolayısıyla hız yok",
@@ -3977,7 +3991,29 @@
     "reachableSlow": "{{providerName}}'ye ulaşılabilir ancak yavaş ({{responseTimeMs}}ms)",
     "unreachable": "{{providerName}}'ye ulaşılamıyor: {{message}}",
     "unreachableHint": "Bağlantı kurulamadı (DNS / bağlantı / TLS / zaman aşımı). base_url'yi ve ağınızı kontrol edin.",
+    "hint": {
+      "blocked": "Sistem bağlantıyı reddetti. Bu genellikle bir güvenlik duvarının ya da güvenlik yazılımının CC Switch'i engellediği anlamına gelir. Güvenlik duvarında CC Switch'in ağ erişimine izin verin; yerel ağ adreslerine bağlanmak için de gereklidir.",
+      "refused": "Adrese ulaşılabiliyor ama bu bağlantı noktasında çalışan bir hizmet yok. Hizmetin başlatıldığından ve bağlantı noktasının doğru olduğundan emin olun.",
+      "timeout": "Bağlantı zaman aşımına uğradı. Ağınızı ve adresi kontrol edin; bir güvenlik duvarı ya da güvenlik yazılımı bağlantıyı yanıt vermeden engelliyor da olabilir.",
+      "dns": "Alan adı çözümlenemedi. Adresteki alan adında yazım hatası olup olmadığını, ağınızı ve DNS'i kontrol edin.",
+      "tls": "HTTPS bağlantısı başarısız oldu (sertifika ya da el sıkışma hatası). Adresin http mi https mi kullanması gerektiğini ve sunucu sertifikasının geçerli olup olmadığını kontrol edin."
+    },
     "error": "{{providerName}} kontrol hatası: {{error}}"
+  },
+  "backgroundTask": {
+    "updateCheckFailed": {
+      "title": "CC Switch güncellemeleri denetlenemedi",
+      "description": "CC Switch başlangıçta yeni sürüm olup olmadığını dl.ccswitch.io'ya (yedek olarak github.com'a) sorar; bu sefer başarısız oldu: {{detail}}. Diğer özellikler etkilenmez; ağınız ya da güvenlik duvarınız bunu engelliyorsa yok sayabilirsiniz."
+    },
+    "modelsDevSyncFailed": {
+      "title": "Model fiyatları eşitlenemedi",
+      "description": "CC Switch kullanım maliyetlerini hesaplamak için model fiyatlarını düzenli olarak models.dev'den alır; bu sefer başarısız oldu: {{detail}}. Diğer özellikler etkilenmez."
+    },
+    "networkError": "sunucuya ulaşılamadı",
+    "mute": "Bir daha gösterme",
+    "disableModelsDevSync": "Otomatik eşitlemeyi kapat",
+    "modelsDevSyncDisabled": "Model fiyatlarının otomatik eşitlenmesi kapatıldı. Kullanım İstatistikleri → Model Fiyatlandırması bölümünden yeniden açabilirsiniz.",
+    "disableFailed": "Kapatılamadı: {{error}}"
   },
   "proxyConfig": {
     "proxyEnabled": "Yönlendirme Ana Anahtarı",
@@ -4350,7 +4386,8 @@
       "omp": "Resmi komut dosyasıyla yüklenir",
       "copilot": "npm ile kurulur"
     },
-    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır."
+    "workbuddyHelp": "WorkBuddy bir masaüstü uygulamasıdır; buradan kurulamaz veya yükseltilemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.workbuddy/models.json) üzerinden bağlanır.",
+    "zcodeHelp": "ZCode bir masaüstü uygulamasıdır; buradan kurulamaz veya güncellenemez, kendini günceller. CC Switch ona yapılandırma dosyası (~/.zcode/v2/provider_config.json) üzerinden bağlanır."
   },
   "appPage": {
     "moreActions": "{{name}} için diğer işlemler",
@@ -4598,6 +4635,7 @@
     },
     "updatedAt": "{{time}} tarihinde güncellendi",
     "clickToRefresh": "Tekrar kontrol etmek için tıklayın",
+    "manualIdle": "Kotayı sorgulamak için yenile düğmesine tıklayın",
     "resetCredits": {
       "label": "Sıfırlanma",
       "left": "Kalan sıfırlama: {{count}}",
@@ -4725,6 +4763,7 @@
       "failedTitle": "Bazı uygulamalar okunamadı",
       "filesTitle": "Hangi dosyalar okundu",
       "claudeNote": " (üst düzey mcpServers)",
+      "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json içinden ilk mevcut olan)",
       "dshNote": " (başlatılmış her profile yazılır: web, desktop, headless, acp. Ana düzeydeki ~/.dsh/cordis.patch.yml okunmaz ve yazılmaz; içindeki MCP sunucularını o dosyada yönetin)",
       "ok": "Anladım"
     },
@@ -4876,9 +4915,9 @@
       "disableAria": "{{count}}'de seçilen Becerileri kapatın",
       "uninstall": "Kaldır"
     },
-    "piColumnTitle": "Pi, klasörü ~/.pi/agent/skills konumunda mevcut olduğunda bir Beceriyi etkin olarak sayar",
+    "piColumnTitle": "Pi ayrıca ~/.agents/skills konumunu da okur; bu nedenle işaretlenmemiş olsa bile bu yoldaki beceriler doğrudan kullanılabilir",
     "piHelpTitle": "Pi nasıl etkin olarak sayılır?",
-    "piHelp": "Klasörün ~/.pi/agent/skills konumunda olup olmadığı.",
+    "piHelp": "Pi ayrıca ~/.agents/skills konumunu da okur; bu nedenle işaretlenmemiş olsa bile bu yoldaki beceriler doğrudan kullanılabilir.",
     "pop": {
       "onlyApp": "Yalnızca {{app}}'de etkin olanları göster",
       "showAll": "Tüm Becerileri Göster"
@@ -5112,6 +5151,7 @@
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz.",
+      "codebuddyHelp": "CodeBuddy'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için hesabın … menüsünden \"CodeBuddy için bu hesaba geç\" seçeneğini kullanın ya da sağlayıcı listesinde bu hesaba bağlı \"CodeBuddy Resmi Oturum\" kartını ekleyin. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
       "claudeHelp": "Official Claude Code subscription accounts (Pro / Max / Team). Pick an account on a Claude official card: after switching to the card, Claude Code's sign-in changes to it right away. To use several accounts at once, use Open Terminal on the card. Sign-in tokens stay on this computer and are never uploaded, refreshed or signed out. The first switch saves the account Claude Code is signed in to now; switching ends Remote Control and rebuilds the prompt cache.",
@@ -5158,7 +5198,6 @@
       "reauthed": "{{login}} olarak tekrar oturum açıldı."
     },
     "quota": {
-      "updating": "Güncelleniyor…",
       "loading": "Kota kontrol ediliyor…",
       "refresh": "Kotayı yenile",
       "refreshAria": "{{login}} için kotayı yenileyin",
@@ -5172,6 +5211,33 @@
       "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",
       "switched": "Hesap değiştirildi. Yeni agy oturumları bu hesabı kullanacak.",
       "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın."
+    },
+    "codebuddy": {
+      "mainland": "Çin",
+      "global": "Uluslararası",
+      "expiredNote": "Oturumun süresi doldu, yeniden oturum açın",
+      "addedOn": "{{date}} tarihinde eklendi",
+      "imported": "{{login}} eklendi.",
+      "uncollected": "CodeBuddy şu anda {{login}} ile oturum açmış, ancak bu hesap henüz listede yok.",
+      "importCurrent": "Geçerli hesabı ekle",
+      "unrecognized": "CodeBuddy'nin oturum dosyasının biçimi tanınmadı",
+      "unrecognizedNote": "WorkBuddy tarafından şifrelenmiş olabilir. CC Switch dosyaya dokunmaz ve hesap değiştiremez.",
+      "statusLoadFailed": "CodeBuddy hesapları okunamadı. Tekrar deneyin.",
+      "empty": "Henüz CodeBuddy hesabı yok. Oturum açmak için Hesap ekle'ye tıklayın veya CodeBuddy'nin şu anki hesabını ekleyin.",
+      "login": "Yeni hesapla oturum aç",
+      "current": "CodeBuddy kullanıyor",
+      "pendingNote": "codebuddy bir terminalde açıldı. Oturum açmak için yönergeleri izleyin (oturum açma ekranı çıkmazsa /login yazın); bitince hesap buraya eklenir.",
+      "reopenTerminal": "Terminali yeniden aç",
+      "removeNote": "Yalnızca CC Switch'teki kopyayı siler. CodeBuddy oturumu açık kalır.",
+      "localOnly": "Hesap kopyaları yalnızca bu bilgisayarda saklanır ve eşitlenmez. Başka bir bilgisayarda hesapları yeniden ekleyin.",
+      "quota": {
+        "credits": "Kredi",
+        "enterprise": "Kurumsal",
+        "unlimited": "Sınırsız",
+        "detail": "{{total}} kredinin {{remaining}} kadarı kaldı, {{used}} kullanıldı",
+        "usedDetail": "Bu dönemde {{used}} kredi kullanıldı",
+        "refreshPending": "Belirteç CodeBuddy tarafından yenilenmeyi bekliyor. Bu hesaba geçip bir kez kullanın, sonra tekrar kontrol edin."
+      }
     },
     "claude": {
       "pasteSubmitted": "Submitted. Finishing sign-in…",
@@ -5225,6 +5291,10 @@
     "openBrowser": {
       "title": "Oturum açarken tarayıcıyı aç",
       "description": "Yalnızca oturum açma bağlantısını kopyalayıp istediğiniz tarayıcıda açmak için kapatın; hesapları ayrı tarayıcı profillerinde tutuyorsanız kullanışlıdır."
+    },
+    "autoQuota": {
+      "title": "Kotayı otomatik sorgula",
+      "description": "Kapalıyken resmi hesap kotaları yalnızca yenile düğmesine tıkladığınızda sorgulanır: Yetkilendirme Merkezi’ni açmak, kartların zamanlanmış yenilemeleri ve tepsi simgesinin üzerine gelmek kotaları sorgulamaz. DeepSeek hesap bakiyeleri oturum durumuyla birlikte gösterildiğinden bu anahtardan etkilenmez."
     }
   },
   "kimi": {
@@ -5319,6 +5389,49 @@
       "renameProvider": "Oh My Pi sağlayıcı anahtarları yeniden adlandırılamaz.",
       "providerMissing": "Bu Oh My Pi sağlayıcısı artık kayıtlı değil.",
       "legacyModelsJson": "Oh My Pi'de eski biçimde bir models.json dosyası var. omp, sonraki açılışında bunu models.yml biçimine geçirir. omp'yi bir kez çalıştırın, ardından sağlayıcıyı yeniden ekleyin."
+    }
+  },
+  "codebuddy": {
+    "empty": {
+      "title": "Henüz özel model yok",
+      "description": "CodeBuddy'nin resmi modelleri CodeBuddy tarafından yönetilir. Resmi hesaplar arasında geçiş için hesap için bir \"CodeBuddy Resmi Oturum\" kartı oluşturup burada Ekle'ye tıklayın. ~/.codebuddy/models.json içinde zaten bulunan özel modeller burada otomatik olarak görünür. Ön ayar veya özel model eklemek için sağ üst köşedeki + düğmesini kullanın."
+    },
+    "modelsHint": "Model kimliği models.json'a yazılan id ve /model içinde seçtiğiniz addır; genellikle uç noktanın model adıdır ve eklendikten sonra değiştirilemez. Görünen ad, yukarıdaki İsim ile aynı değerdir.",
+    "modelIdDuplicate": "Bu model kimliği zaten kullanılıyor",
+    "modelIdInvalid": "Model kimliği boşlukla başlayamaz veya bitemez.",
+    "vendor": "Sağlayıcı firma",
+    "urlHint": "Tam yolu girin, genellikle /chat/completions ile biter. ${VAR} ortam değişkeni başvuruları desteklenir.",
+    "urlInvalid": "Geçerli bir http(s) adresi girin.",
+    "apiKeyPlaceholder": "API anahtarını girin veya ${MY_API_KEY} ile bir ortam değişkenine başvurun",
+    "maxInputTokens": "Maksimum giriş token",
+    "maxOutputTokens": "Maksimum çıkış token",
+    "jsonHint": "models.json içindeki tek bir model girdisi (id yukarıdaki Model kimliğinden gelir). Kaydettikten sonra CodeBuddy dosyayı kendisi yeniden yükler.",
+    "official": {
+      "presetName": "CodeBuddy Resmi Oturum",
+      "account": "Hesap",
+      "accountHint": "Bu kartın kullanacağı CodeBuddy hesabını seçin. CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir: sağlayıcı listesinde bu karttaki Ekle'ye tıklayınca CodeBuddy bu hesapla oturum açar; çalışan CodeBuddy de otomatik olarak geçiş yapar.",
+      "accountDeleted": "Hesap silindi. Başka bir hesap seçin.",
+      "accountDeletedChip": "Hesap silindi",
+      "unbound": "Henüz hesap seçilmedi. Kartı düzenleyip bir hesap seçin.",
+      "statusLoading": "Hesaplar yükleniyor…",
+      "expired": "Bu hesabın oturumunun süresi doldu. Eklemeden önce Yetkilendirme Merkezi'nde yeniden oturum açın.",
+      "importCurrent": "Geçerli oturumu ekle ({{login}})",
+      "adding": "Ekleniyor…",
+      "added": "{{name}} eklendi. CodeBuddy artık bu hesapla oturum açtı; çalışan CodeBuddy otomatik geçiş yapar, yeni oturumlar da bunu kullanır.",
+      "addFailed": "Eklenemedi: {{error}}",
+      "switched": "CodeBuddy artık {{name}} ile oturum açtı; çalışan CodeBuddy otomatik geçiş yapar, yeni oturumlar da bunu kullanır.",
+      "switchFailed": "Geçiş yapılamadı: {{error}}",
+      "removeHint": "CodeBuddy aynı anda yalnızca bir hesapla oturum açabilir. Geçiş yapmak için başka bir resmi kart ekleyin."
+    },
+    "login": {
+      "confirmTitle": "Başka bir CodeBuddy hesabıyla oturum aç",
+      "confirmMessage": "CodeBuddy şu anda {{login}} ile oturum açmış durumda ve aynı anda yalnızca bir hesap kullanabilir. Devam ederseniz önce bu hesap Yetkilendirme Merkezi'ne eklenir, ardından CodeBuddy'nin oturumu geçici olarak kapatılır (oturum bilgileri silinmez, sunucuya bildirilmez) ve yeni hesapla oturum açmak için bir terminal açılır.\n\nBundan sonra oturum açmayı bitirene kadar çalışan CodeBuddy oturumları oturum kapalı görünür. Vazgeçerseniz özgün oturumu tek tıkla geri yükleyebilirsiniz.",
+      "confirm": "Devam et",
+      "signedInHint": "CodeBuddy oturum açıkken yeni bir hesapla oturum açmak önce mevcut oturumu geçici olarak kapatır: oturum açmayı bitirene kadar çalışan CodeBuddy oturumları oturum kapalı görünür.",
+      "pendingReplacing": "CodeBuddy'nin mevcut oturumu geçici olarak kapatıldı ve codebuddy bir terminalde açıldı. Yeni hesapla oturum açmak için yönergeleri izleyin; bitince hesap buraya eklenir.",
+      "restore": "Özgün oturumu geri yükle",
+      "restored": "Özgün CodeBuddy oturumu geri yüklendi.",
+      "restoreFailed": "Özgün oturum geri yüklenemedi (CodeBuddy oturum dosyasını yazıyor olabilir). Yetkilendirme Merkezi'nden veya bir terminalden yeniden oturum açın."
     }
   },
   "dsh": {
@@ -5442,5 +5555,36 @@
     "hint": "CC Switch'in daha yeni bir sürümüyle kaydedilmiş olabilir. Veriler olduğu gibi korunur, düzenlenemez veya etkinleştirilemez; güncelleme verileri geri getirir ya da kaydı silebilirsiniz.",
     "confirmTitle": "Okunamayan kaydı sil",
     "confirmMessage": "“{{name}}” silinsin mi? Yalnızca bu CC Switch kaydı silinir; uygulamaların kendi yapılandırma dosyaları değişmez."
+  },
+  "zcode": {
+    "addModel": "Model ekle",
+    "apiKeyRequired": "API anahtarı gerekli",
+    "baseUrl": "Temel URL",
+    "baseUrlHint": "Özel API uç noktası URL'si",
+    "baseUrlRequired": "Temel URL gerekli",
+    "kind": "Sağlayıcı türü",
+    "kindHint": "Bu sağlayıcının kullandığı API protokolü",
+    "kindPlaceholder": "Sağlayıcı türünü seçin",
+    "limitContext": "Bağlam",
+    "limitOutput": "Çıktı",
+    "modelId": "Model kimliği",
+    "modelLimits": "Token sınırları",
+    "modelLimitsHint": "ZCode'un önerdiği değerleri kullanmak için boş bırakın.",
+    "models": "Modeller",
+    "modelsHint": "Model kimliği, API isteklerinde gönderilen model adıdır.",
+    "noModels": "Model ayarlanmadı",
+    "providerKey": "Sağlayıcı anahtarı",
+    "providerKeyDuplicate": "Bu anahtar zaten kullanılıyor",
+    "providerKeyHint": "~/.zcode/v2/provider_config.json içindeki benzersiz tanımlayıcı. Yalnızca harf, rakam, iki nokta, alt çizgi ve kısa çizgi kullanılabilir.",
+    "providerKeyInvalid": "Geçersiz biçim. Yalnızca harf, rakam, iki nokta, alt çizgi ve kısa çizgi kullanılabilir.",
+    "providerKeyLockedHint": "Anahtar, provider_config.json içindeki providerId değeridir ve oluşturulduktan sonra değiştirilemez.",
+    "providerKeyPlaceholder": "my-provider",
+    "providerKeyRequired": "Sağlayıcı anahtarı gerekli",
+    "providerKeyStatusLoading": "Sağlayıcı anahtarının durumu yükleniyor, lütfen biraz sonra tekrar deneyin",
+    "providerName": "Sağlayıcı adı",
+    "providerNameHint": "ZCode'da gösterilen ad",
+    "providerNamePlaceholder": "Sağlayıcım",
+    "toggleModelDetails": "Model ayrıntılarını aç/kapat",
+    "activationHint": "ZCode tüm sağlayıcıları aynı anda kayıtlı tutar: kaydettiğinizde bu sağlayıcı ZCode'un listesine eklenir; etkili olması için ZCode'un sağlayıcı seçicisinden ona geçmeniz gerekir."
   }
 }

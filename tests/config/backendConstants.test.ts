@@ -18,7 +18,7 @@ import {
   HERMES_PROVIDER_SOURCE_CUSTOM_LIST,
   HERMES_PROVIDER_SOURCE_DICT,
   HERMES_PROVIDER_SOURCE_FIELD,
-} from "@/config/hermesProviderPresets";
+} from "@/config/hermesProviderMeta";
 import {
   CODEX_ANTHROPIC_WIRE_API_VALUES,
   CODEX_CHAT_WIRE_API_VALUES,

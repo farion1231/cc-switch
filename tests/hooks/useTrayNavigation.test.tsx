@@ -43,12 +43,14 @@ describe("parseTrayNavigation", () => {
     expect(parseTrayNavigation({ section: "routing" })).toEqual({
       section: "routing",
     });
+    expect(parseTrayNavigation({ page: "auth" })).toEqual({ page: "auth" });
   });
 
   it("drops unknown targets and incomplete needs-route requests", () => {
     expect(parseTrayNavigation(null)).toBeNull();
     expect(parseTrayNavigation({ app: "nope" })).toBeNull();
     expect(parseTrayNavigation({ section: "nope" })).toBeNull();
+    expect(parseTrayNavigation({ page: "nope" })).toBeNull();
     expect(parseTrayNavigation({ app: "codex", intent: "needsRoute" })).toEqual(
       { app: "codex" },
     );

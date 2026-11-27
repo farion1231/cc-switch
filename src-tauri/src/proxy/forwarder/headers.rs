@@ -294,6 +294,7 @@ pub(super) fn is_protected_local_proxy_override_header(name: &http::HeaderName) 
             | "x-goog-api-key"
             | "chatgpt-account-id"
             | "session_id"
+            | "copilot-session-token"
             | "x-client-request-id"
             | "x-codex-window-id"
             | "x-forwarded-host"
@@ -402,6 +403,8 @@ pub(super) struct OutboundHeaderPlan<'a> {
     pub(super) anthropic_beta_value: Option<String>,
     pub(super) should_send_anthropic_headers: bool,
     pub(super) codex_oauth_session_headers: Vec<(http::HeaderName, http::HeaderValue)>,
+    /// A session token resolved for this managed Copilot Auto request.
+    pub(super) copilot_auto_session_token: Option<http::HeaderValue>,
 }
 
 impl OutboundHeaderPlan<'_> {
@@ -418,6 +421,10 @@ impl OutboundHeaderPlan<'_> {
 
         for (key, value) in headers {
             let key_str = key.as_str();
+
+            if self.is_copilot && key_str == "copilot-session-token" {
+                continue;
+            }
 
             // --- host — 原位替换为上游 host（保持客户端原始位置） ---
             if key_str.eq_ignore_ascii_case("host") {
@@ -596,6 +603,10 @@ impl OutboundHeaderPlan<'_> {
 
             // --- 默认：透传 ---
             ordered_headers.append(key.clone(), value.clone());
+        }
+
+        if let Some(token) = self.copilot_auto_session_token {
+            ordered_headers.insert("copilot-session-token", token);
         }
 
         // 如果原始请求中没有认证头，在末尾追加

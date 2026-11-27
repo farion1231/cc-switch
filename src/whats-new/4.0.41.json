@@ -1,0 +1,33 @@
+{
+  "version": "4.0.41",
+  "items": [
+    {
+      "type": "new",
+      "zh": "支持 CodeBuddy：模型、MCP、Skills、用量和官方账号切换",
+      "zh-TW": "支援 CodeBuddy：模型、MCP、Skills、用量和官方帳號切換",
+      "en": "CodeBuddy support: models, MCP, Skills, usage and official accounts",
+      "ja": "CodeBuddy に対応：モデル、MCP、Skills、使用量、公式アカウント切替"
+    },
+    {
+      "type": "new",
+      "zh": "Copilot CLI 的供应商可同步到 VS Code Copilot 插件",
+      "zh-TW": "Copilot CLI 的供應商可同步到 VS Code Copilot 外掛",
+      "en": "Sync Copilot CLI providers to the VS Code Copilot extension",
+      "ja": "Copilot CLI のプロバイダーを VS Code の Copilot 拡張機能に同期"
+    },
+    {
+      "type": "new",
+      "zh": "Grok 官方卡显示订阅等级",
+      "zh-TW": "Grok 官方卡顯示訂閱等級",
+      "en": "Grok Official cards show the subscription tier",
+      "ja": "Grok 公式カードにサブスクリプションのプランを表示"
+    },
+    {
+      "type": "improve",
+      "zh": "Claude 原生转发复用上游连接，界面启动更轻",
+      "zh-TW": "Claude 原生轉發重用上游連線，介面啟動更輕",
+      "en": "Claude native forwarding reuses upstream connections; lighter startup",
+      "ja": "Claude のネイティブ転送で上流接続を再利用し、起動を軽量化"
+    }
+  ]
+}

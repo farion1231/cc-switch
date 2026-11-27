@@ -10,6 +10,7 @@
 
 use super::{
     browser_guard,
+    copilot_auto_session::AutoSessionManager,
     failover_switch::FailoverSwitchManager,
     handlers,
     log_codes::srv as log_srv,
@@ -46,6 +47,8 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
+    /// Copilot Auto 会话管理器，跨请求复用 /auto 选模结果与 token
+    pub copilot_auto_sessions: Arc<AutoSessionManager>,
     /// AppHandle，用于发射事件和更新托盘菜单
     pub app_handle: Option<tauri::AppHandle>,
     /// 故障转移切换管理器
@@ -89,6 +92,7 @@ impl ProxyServer {
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            copilot_auto_sessions: Arc::new(AutoSessionManager::default()),
             app_handle,
             failover_manager,
         };

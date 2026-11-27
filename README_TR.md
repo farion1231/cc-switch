@@ -115,6 +115,11 @@ Platform ayrıca kurumsal düzeyde eşzamanlılığı, özel bir yönetim konsol
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>Bu projeye sponsor olduğu için SudoCode'a teşekkürler! SudoCode, Claude Code ve Codex'e ortak tek bir API uç noktası sunar; tek bir anahtar iki araçta da çalışır. Konsol, her isteğin token kullanımını ve maliyetini modele göre ayrıntılı gösterir; böylece harcamalarınızı her zaman takip edebilirsiniz. SudoCode, CC Switch kullanıcılarına özel bir avantaj sunuyor: <a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">Bu bağlantıdan</a> kaydolun ve 1030742788 numaralı QQ grubuna katılarak 10 CNY değerinde bir günlük kart alın!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>Bu projeye sponsor olduğu için AIGoCode'a teşekkürler! AIGoCode yalnızca token başına ödemeli değil, abonelik tabanlı bir yapay zeka kodlama platformudur. Claude Code, Codex ve Gemini için tek hesap, tek aylık plan; anakarada doğrudan bağlantı ve hızlı yanıtlarla. <a href="https://aigocode.net/invite/CC-SWITCH">Bu bağlantıdan</a> abone olarak %10 ek kredi kazanın!</td>
 </tr>
@@ -367,6 +372,7 @@ Sağlayıcı yönetimi, MCP/İstemler/Skills, yerel yönlendirme ve yük devri v
 | MiniMax Code | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Kimi Code | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | ✓ |
 | Oh My Pi | Birlikte | – | – | – | ✓ | ✓ | AGENTS.md | ✓ | – |
+| CodeBuddy | Birlikte | – | – | – | ✓ | ✓ | CODEBUDDY.md | ✓ | ✓ |
 
 - **Geçiş**: aynı anda yalnızca bir sağlayıcı etkindir; **Birlikte**: birden fazla sağlayıcı aynı anda aracın kendi yapılandırmasına yazılır ve birini aracın içinden seçersiniz.
 - **Yerel Yönlendirme**: CC Switch istekleri makinenizde iletir ve API biçimlerini dönüştürür; aşağıdaki [Yerel Yönlendirme ve Yük Devretme](#yerel-yönlendirme-ve-yük-devretme) bölümüne bakın. Claude Desktop sağlayıcıları "Doğrudan" veya "Model Eşleme" kullanabilir; "Model Eşleme" ile istekler yerel yönlendirmeden geçer.
@@ -405,7 +411,7 @@ Sağlayıcı yönetimi, MCP/İstemler/Skills, yerel yönlendirme ve yük devri v
 
 ### MCP, İstemler ve Skills
 
-- **Birleşik MCP paneli** — Tüm MCP sunucularını tek yerden yönetin, her birinin hangi araçlarla eşitleneceğini seçin (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi), her aracın mevcut yapılandırmalarını içe aktarın ve Deep Link ile içe aktarın
+- **Birleşik MCP paneli** — Tüm MCP sunucularını tek yerden yönetin, her birinin hangi araçlarla eşitleneceğini seçin (Claude Code, Codex, Gemini CLI, Grok Build, OpenCode, Hermes, Pi, MiniMax Code, Kimi Code, Oh My Pi, CodeBuddy), her aracın mevcut yapılandırmalarını içe aktarın ve Deep Link ile içe aktarın
 - **İstemler** — Markdown düzenleyicili, araç başına bir istem kitaplığı; bir istemi etkinleştirmek onu aracın istem dosyasına (CLAUDE.md / AGENTS.md / GEMINI.md) yazar ve dosyanın mevcut içeriği önce kitaplığa kaydedilir, böylece hiçbir şey kaybolmaz. Pi ayrıca SYSTEM.md, APPEND_SYSTEM.md ve istem şablonlarını düzenleyebilir
 - **Skills** — skills.sh'de arayın veya GitHub depolarından ya da ZIP dosyalarından tek tıkla kurun; güncellemeleri denetleyin ve tümünü tek tıkla güncelleyin; her araca otomatik olarak, yalnızca sembolik bağlarla veya yalnızca kopyalarla eşitleyin; isteğe bağlı olarak `~/.agents/skills` içinde saklayabilirsiniz
 - Her üç panel de aramayı destekler; MCP ve Skills ayrıca araç başına tek seferde etkinleştirilip devre dışı bırakılabilir; sağlayıcılar, MCP sunucuları ve istemler içerik alanında tam sayfa düzenlenir ve kaydedilmemiş değişikliklerle ayrılmadan önce uyarılırsınız

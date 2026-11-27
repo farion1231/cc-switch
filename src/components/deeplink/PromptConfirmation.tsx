@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { getAppLabel } from "@/config/appConfig";
 import { DeepLinkImportRequest } from "../../lib/api/deeplink";
 import { decodeBase64Utf8 } from "../../lib/utils/base64";
 import { Switch } from "../ui/switch";
@@ -29,7 +30,9 @@ export function PromptConfirmation({
         <label className="block text-sm font-medium text-fg-2">
           {t("deeplink.prompt.app")}
         </label>
-        <div className="mt-1 text-sm capitalize">{request.app}</div>
+        <div className="mt-1 text-sm">
+          {request.app ? getAppLabel(request.app) : null}
+        </div>
       </div>
 
       <div>

@@ -18,7 +18,8 @@ use super::utils::parse_timestamp_to_ms;
 /// 一个 part 在源存储里的位置，用来生成按需取全文的 [`ContentRef`]。
 #[derive(Debug, Clone)]
 pub(super) enum PartLocator {
-    /// SQLite 行：`table` 白名单内（`part` / `session_message`），`base` 是 part 在列 JSON 里的前缀
+    /// SQLite 行：`table` 白名单内（`part` / `session_message` / `session_part`），`base` 是 part 在列 JSON 里的前缀；
+    /// `session_part` 没有 id 列，`id` 写成 `<message_id>:<ordinal>`
     Sqlite {
         table: &'static str,
         id: String,
@@ -353,7 +354,7 @@ fn message_error_event(info: &Value) -> Option<SessionBlock> {
     ))
 }
 
-/// 消息级 `cost/tokens/modelID/providerID/time/finish` → meta（0 视为缺省）。
+/// 消息级 `cost/tokens/modelID(modelId)/providerID(providerId)/time/finish` → meta（0 视为缺省）。
 fn message_meta(info: &Value) -> Option<MessageMeta> {
     let tokens = info.get("tokens");
     let count = |pointer: &str| {
@@ -362,8 +363,14 @@ fn message_meta(info: &Value) -> Option<MessageMeta> {
             .and_then(Value::as_u64)
             .filter(|n| *n > 0)
     };
-    let model_id = info.get("modelID").and_then(Value::as_str);
-    let provider_id = info.get("providerID").and_then(Value::as_str);
+    let model_id = info
+        .get("modelID")
+        .or_else(|| info.get("modelId"))
+        .and_then(Value::as_str);
+    let provider_id = info
+        .get("providerID")
+        .or_else(|| info.get("providerId"))
+        .and_then(Value::as_str);
     let model = match (provider_id, model_id) {
         (Some(p), Some(m)) if !p.is_empty() && !m.is_empty() => Some(format!("{p}/{m}")),
         (_, Some(m)) if !m.is_empty() => Some(m.to_string()),
@@ -743,5 +750,26 @@ mod tests {
             &msg.blocks[1],
             SessionBlock::ToolResult { call_id, status: ToolStatus::Unknown, .. } if call_id == "call_1"
         ));
+    }
+
+    #[test]
+    fn message_meta_supports_camel_case_model_and_provider_ids() {
+        let info = json!({
+            "role": "assistant",
+            "modelId": "GLM-5.4",
+            "providerId": "account:bigmodel-individual-coding-plan",
+            "tokens": {"input": 120, "output": 30, "cache": {"read": 80, "write": 0}},
+            "finish": "tool-calls"
+        });
+        let msg = message_from_parts("assistant", None, Some(1000), &info, &[]);
+        let meta = msg.meta.expect("meta");
+        assert_eq!(
+            meta.model.as_deref(),
+            Some("account:bigmodel-individual-coding-plan/GLM-5.4")
+        );
+        assert_eq!(meta.input_tokens, Some(120));
+        assert_eq!(meta.output_tokens, Some(30));
+        assert_eq!(meta.cache_read_tokens, Some(80));
+        assert_eq!(meta.stop_reason.as_deref(), Some("tool-calls"));
     }
 }

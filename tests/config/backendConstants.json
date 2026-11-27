@@ -128,7 +128,9 @@
     "agy": null,
     "omp": null,
     "copilot": null,
-    "workbuddy": null
+    "workbuddy": null,
+    "codebuddy": null,
+    "zcode": null
   },
   "userAgentValid": {
     "": true,

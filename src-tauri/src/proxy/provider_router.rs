@@ -42,6 +42,10 @@ impl ProviderRouter {
         }
     }
 
+    pub(crate) fn route_revision(&self, app_type: &AppType) -> u64 {
+        self.db.route_revision(app_type)
+    }
+
     /// 选择可用的供应商（支持故障转移）
     ///
     /// 返回按优先级排序的可用供应商列表：

@@ -280,6 +280,12 @@ pub(super) async fn fetch_npm_dist_tags(
 enum PrefetchedLatest {
     /// npm dist-tags：选哪个 tag 要看本地版本，等本地探测结束后由 `resolve_latest` 定。
     Npm(Option<serde_json::Map<String, serde_json::Value>>),
+    /// OpenCode 1.x（`opencode-ai`）与 2.x（`@opencode/cli`）两条线的 dist-tags，并发拉回，
+    /// 等本地版本出来再按主版本挑（见 `misc::OPENCODE_V2_NPM`）。
+    OpenCode {
+        v1: Option<serde_json::Map<String, serde_json::Value>>,
+        v2: Option<serde_json::Map<String, serde_json::Value>>,
+    },
     /// Hermes 的 GitHub Release；取不到时再按本地版本走 PyPI 兜底。
     Hermes(Option<String>),
     Resolved(Option<String>),
@@ -291,6 +297,13 @@ async fn prefetch_latest(client: &reqwest::Client, tool: &str) -> PrefetchedLate
             fetch_github_latest_version(client, "NousResearch/hermes-agent").await,
         ),
         ("agy", _) => PrefetchedLatest::Resolved(fetch_agy_latest_version(client).await),
+        ("opencode", Some(package)) => {
+            let (v1, v2) = tokio::join!(
+                fetch_npm_dist_tags(client, package),
+                fetch_npm_dist_tags(client, OPENCODE_V2_NPM.name),
+            );
+            PrefetchedLatest::OpenCode { v1, v2 }
+        }
         (_, Some(package)) => PrefetchedLatest::Npm(fetch_npm_dist_tags(client, package).await),
         (_, None) => PrefetchedLatest::Resolved(None),
     }
@@ -299,7 +312,8 @@ async fn prefetch_latest(client: &reqwest::Client, tool: &str) -> PrefetchedLate
 /// 结合本地版本得出要展示的"最新版本"。
 ///
 /// npm 工具取 `latest`,本地版本领先时按工具的预发布通道(见 `ToolSpec::npm_prerelease_tags`)
-/// 补选 —— 复用同一次 registry 响应,无额外请求;OpenCode 取不到时退到 GitHub。
+/// 补选 —— 复用同一次 registry 响应,无额外请求;OpenCode 按本地主版本在 1.x / 2.x 两个包里挑,
+/// 1.x 取不到时退到 GitHub。
 /// Hermes 以 GitHub Releases 为主、PyPI 兜底:
 /// cc-switch 安装/升级 Hermes 走的是官方 install.sh（`git clone` main 分支）与
 /// `hermes update`（`git pull`），整条链路与 PyPI 无关；而 PyPI 的 `hermes-agent`
@@ -313,11 +327,13 @@ async fn resolve_latest(
     local_version: Option<&str>,
 ) -> Option<String> {
     match prefetched {
-        PrefetchedLatest::Npm(dist_tags) => {
-            let picked = dist_tags.and_then(|tags| {
-                pick_latest_version(&tags, tool_spec(tool).npm_prerelease_tags, local_version)
-            });
-            if picked.is_none() && tool == "opencode" {
+        PrefetchedLatest::Npm(dist_tags) => dist_tags.and_then(|tags| {
+            pick_latest_version(&tags, tool_spec(tool).npm_prerelease_tags, local_version)
+        }),
+        PrefetchedLatest::OpenCode { v1, v2 } => {
+            let picked = pick_opencode_latest(v1.as_ref(), v2.as_ref(), local_version);
+            // GitHub 的 releases/latest 标在 1.x 上，只能给 1.x 兜底。
+            if picked.is_none() && !local_version.is_some_and(is_opencode_v2_version) {
                 fetch_github_latest_version(client, "anomalyco/opencode").await
             } else {
                 picked
@@ -330,6 +346,25 @@ async fn resolve_latest(
         ),
         PrefetchedLatest::Resolved(version) => version,
     }
+}
+
+/// OpenCode 的「最新版本」跟着本地那条线走：装的是 2.x 看 `@opencode/cli`，否则（含没装、
+/// 版本认不出）看 1.x 的 `opencode-ai`。2.x 用户若拿 1.x 的 latest 比，永远「已是最新」。
+fn pick_opencode_latest(
+    v1: Option<&serde_json::Map<String, serde_json::Value>>,
+    v2: Option<&serde_json::Map<String, serde_json::Value>>,
+    local_version: Option<&str>,
+) -> Option<String> {
+    if local_version.is_some_and(is_opencode_v2_version) {
+        return v2.and_then(|tags| pick_latest_version(tags, &[], local_version));
+    }
+    v1.and_then(|tags| {
+        pick_latest_version(
+            tags,
+            tool_spec("opencode").npm_prerelease_tags,
+            local_version,
+        )
+    })
 }
 
 /// 版本探测请求的请求级超时。全局客户端是给代理转发用的（总超时 600s / 连接 30s），
@@ -855,6 +890,36 @@ mod tests {
             pick_latest_version(dirty.as_object().unwrap(), &["beta"], Some("0.200.0")).as_deref(),
             Some("0.135.0")
         );
+    }
+
+    /// 2.x 是另一个 npm 包：拿 1.x 的 latest 比，2.x 用户永远「已是最新」、收不到 2.x 的更新。
+    #[test]
+    fn opencode_latest_follows_the_installed_release_line() {
+        // 2026-11-25 两个包的真实 dist-tags（节选）。
+        let v1 = serde_json::json!({ "latest": "1.19.6", "beta": "0.0.0-beta-202608110357" });
+        let v2 = serde_json::json!({ "latest": "2.4.2", "beta": "0.0.0-beta-19507" });
+        let (v1, v2) = (v1.as_object(), v2.as_object());
+        assert_eq!(extract_version("opencode v2.4.1"), "2.4.1");
+
+        assert_eq!(
+            pick_opencode_latest(v1, v2, Some("2.4.1")).as_deref(),
+            Some("2.4.2")
+        );
+        assert_eq!(
+            pick_opencode_latest(v1, v2, Some("1.19.5")).as_deref(),
+            Some("1.19.6")
+        );
+        // 没装、版本认不出：安装按钮装的是 1.x，就按 1.x 看。
+        assert_eq!(
+            pick_opencode_latest(v1, v2, None).as_deref(),
+            Some("1.19.6")
+        );
+        assert_eq!(
+            pick_opencode_latest(v1, v2, Some("dev")).as_deref(),
+            Some("1.19.6")
+        );
+        // 2.x 那条线取不到时不回退 1.x 的版本。
+        assert_eq!(pick_opencode_latest(v1, None, Some("2.4.1")), None);
     }
 
     #[cfg(not(target_os = "windows"))]

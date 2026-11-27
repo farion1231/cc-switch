@@ -196,6 +196,7 @@ fn test_forwarder(
         failover_manager: Arc::new(FailoverSwitchManager::new()),
         app_handle: None,
         current_provider_id_at_start: String::new(),
+        route_revision: None,
         session_id: String::new(),
         session_client_provided: false,
         rectifier_config: RectifierConfig::default(),
@@ -208,7 +209,250 @@ fn test_forwarder(
         failover_chain: false,
         last_outbound_model: std::sync::Mutex::new(None),
         privacy_filter: PrivacyFilterConfig::default(),
+        test_copilot_auth: None,
+        copilot_auto_sessions: Arc::new(
+            super::super::copilot_auto_session::AutoSessionManager::default(),
+        ),
     }
+}
+
+#[tokio::test]
+async fn copilot_auto_forwarding_pairs_model_and_session_and_recovers_from_401s() {
+    use crate::proxy::response_processor::create_logged_passthrough_stream_with_terminal_hook;
+    use axum::{body::to_bytes, extract::Request, response::IntoResponse, Json};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // nextest starts a fresh process, so the app's Rustls setup has not run.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+        .await
+        .unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let requests = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+    let tokens = Arc::new(AtomicUsize::new(0));
+    let server = tokio::spawn({
+        let requests = requests.clone();
+        let tokens = tokens.clone();
+        async move {
+            let app = axum::Router::new().fallback(move |request: Request| {
+                let requests = requests.clone();
+                let tokens = tokens.clone();
+                async move {
+                    let (parts, body) = request.into_parts();
+                    let path = parts.uri.path();
+                    let body: Value = serde_json::from_slice(&to_bytes(body, 64 * 1024).await.unwrap())
+                        .unwrap_or(Value::Null);
+                    let bearer = parts.headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+                    let session = parts.headers.get("copilot-session-token").and_then(|v| v.to_str().ok());
+                    let expires_at = chrono::Utc::now().timestamp() + 3600;
+                    requests.lock().await.push((path.to_owned(), parts.headers.clone(), body.clone()));
+                    match path {
+                        "/copilot_internal/v2/token" => {
+                            let n = tokens.fetch_add(1, Ordering::Relaxed) + 1;
+                            Json(json!({"token": format!("bearer-{n}"), "expires_at": expires_at})).into_response()
+                        }
+                        "/models" if bearer == "Bearer bearer-1" && parts.headers["x-github-api-version"] == "2026-08-01" =>
+                            StatusCode::UNAUTHORIZED.into_response(),
+                        "/models" => {
+                            let auto_contract = parts.headers["x-github-api-version"] == "2026-08-01";
+                            let mut models = vec![json!({
+                                "id": "claude-haiku-4.5", "name": "Haiku", "vendor": "Anthropic",
+                                "supported_endpoints": ["/v1/messages"], "model_picker_enabled": true,
+                                "capabilities": { "limits": { "max_context_window_tokens": 200000 } }
+                            })];
+                            if auto_contract {
+                                models.push(json!({"id":"kimi-k3", "name":"Kimi K3", "vendor":"Moonshot", "supported_endpoints":["/v1/messages"]}));
+                                models.push(json!({"id":"embed", "name":"Embeddings", "vendor":"Example", "supported_endpoints":["/embeddings"]}));
+                                models.push(json!({
+                                    "id": "claude-haiku-4.6", "name": "Hidden", "vendor": "Anthropic",
+                                    "supported_endpoints": ["/v1/messages"], "model_picker_enabled": false,
+                                    "billing": { "auto_discount": 0 }
+                                }));
+                            }
+                            Json(json!({"data": models})).into_response()
+                        }
+                        "/auto" if bearer == "Bearer bearer-2" && body["prompt"] != "unsupported" => StatusCode::UNAUTHORIZED.into_response(),
+                        "/auto" => {
+                            let count = requests.lock().await.iter().filter(|(path, _, _)| path == "/auto").count();
+                            let selected = match body["prompt"].as_str() {
+                                Some("unsupported") => "embed",
+                                Some("after") => "kimi-k3",
+                                _ => "claude-haiku-4.6",
+                            };
+                            Json(json!({"selected_model": selected, "session_token": format!("session-{count}"), "expires_at": expires_at})).into_response()
+                        }
+                        "/v1/messages" if session == Some("session-3") && body["messages"][0]["content"] == "retry" =>
+                            StatusCode::UNAUTHORIZED.into_response(),
+                        "/v1/messages" if body["stream"] == true => {
+                            let text = body["messages"][0]["content"].as_str().filter(|text| *text != "empty").unwrap_or("");
+                            let events = [
+                                json!({"type": "message_start", "message": {"model": body["model"]}}),
+                                json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}}),
+                                json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}}),
+                                json!({"type": "message_stop"})
+                            ].map(|event| format!("data: {event}\n\n")).concat();
+                            ([("content-type", "text/event-stream")], events).into_response()
+                        }
+                        "/v1/messages" => Json(json!({"type": "message", "content": []})).into_response(),
+                        _ => StatusCode::NOT_FOUND.into_response(),
+                    }
+                }
+            });
+            axum::serve(listener, app).await.unwrap();
+        }
+    });
+
+    let tmp = tempfile::tempdir().unwrap();
+    let auth = CopilotAuthManager::with_mock_server(tmp.path().to_path_buf(), &base).await;
+    let mut forwarder = test_forwarder(Duration::from_secs(5), Duration::from_secs(5));
+    forwarder.test_copilot_auth = Some(Arc::new(RwLock::new(auth)));
+    forwarder.session_id = "client-session".into();
+    forwarder.session_client_provided = true;
+    forwarder.copilot_optimizer_config.enabled = true;
+    forwarder.copilot_optimizer_config.warmup_downgrade = true;
+    forwarder.copilot_optimizer_config.warmup_model = "claude-haiku-4.5".into();
+    let mut provider = test_provider_with_type(Some("github_copilot"));
+    provider.settings_config = json!({"env": {
+        "ANTHROPIC_BASE_URL": base,
+        "ANTHROPIC_MODEL": "copilot-fusion-auto"
+    }});
+    forwarder
+        .current_provider_id_at_start
+        .clone_from(&provider.id);
+
+    for (text, warmup, stream, expected_model) in [
+        ("warmup", true, false, "claude-haiku-4.5"),
+        ("unsupported", false, false, "embed"),
+        ("ordinary", false, false, "claude-haiku-4.6"),
+        ("retry", false, false, "claude-haiku-4.6"),
+        ("empty", false, true, "claude-haiku-4.6"),
+        ("summary", false, true, "claude-haiku-4.6"),
+        ("after", false, false, "kimi-k3"),
+    ] {
+        let mut headers = HeaderMap::new();
+        headers.insert("session-token", HeaderValue::from_static("client-alias"));
+        headers.insert(
+            "copilot-session-token",
+            HeaderValue::from_static("client-canonical"),
+        );
+        if warmup {
+            headers.insert("anthropic-beta", HeaderValue::from_static("warmup"));
+        }
+        let mut body = json!({"model": "claude-haiku-4-5", "max_tokens": 128, "stream": stream,
+            "messages": [{"role": "user", "content": text}]});
+        if stream {
+            body["system"] =
+                json!("You are a helpful AI assistant tasked with summarizing conversations");
+        }
+        let body = wire_body(body);
+        let replay_count = body.replay_count.clone();
+        let result = forwarder
+            .forward_with_retry(
+                &AppType::Claude,
+                http::Method::POST,
+                "/v1/messages",
+                body,
+                headers,
+                Extensions::new(),
+                std::slice::from_ref(&provider),
+            )
+            .await;
+        if text == "unsupported" {
+            assert!(
+                matches!(result, Err(failure) if matches!(failure.error, ProxyError::ConfigError(ref msg) if msg.contains("embed")))
+            );
+            continue;
+        }
+        let result = result.unwrap_or_else(|failure| panic!("{text}: {}", failure.error));
+        assert_eq!(
+            replay_count.load(Ordering::Relaxed),
+            usize::from(matches!(text, "ordinary" | "retry")),
+            "{text}"
+        );
+        assert_eq!(
+            result.outbound_model.as_deref(),
+            Some(expected_model),
+            "{text}"
+        );
+        if stream {
+            let (response, hook) = result.response.take_success_terminal_hook();
+            assert!(hook.is_some());
+            let chunks: Vec<_> = create_logged_passthrough_stream_with_terminal_hook(
+                response.bytes_stream(),
+                "test",
+                None,
+                crate::proxy::handler_context::StreamingTimeoutConfig {
+                    first_byte_timeout: 5,
+                    idle_timeout: 5,
+                },
+                None,
+                hook,
+            )
+            .collect()
+            .await;
+            assert!(chunks.into_iter().all(|chunk| chunk.is_ok()));
+        }
+    }
+
+    let mut plain = provider.clone();
+    plain.meta = None;
+    plain.settings_config["env"]["ANTHROPIC_MODEL"] = json!("plain-model");
+    let mut headers = HeaderMap::new();
+    headers.insert("session-token", HeaderValue::from_static("hyphen"));
+    headers.insert("session_token", HeaderValue::from_static("underscore"));
+    forwarder
+        .forward_with_retry(
+            &AppType::Claude,
+            http::Method::POST,
+            "/v1/messages",
+            wire_body(
+                json!({"model":"plain-model", "messages":[{"role":"user","content":"plain"}]}),
+            ),
+            headers,
+            Extensions::new(),
+            &[plain],
+        )
+        .await
+        .unwrap_or_else(|failure| panic!("plain provider: {}", failure.error));
+
+    let requests = requests.lock().await;
+    let sent: Vec<_> = requests
+        .iter()
+        .filter(|(p, _, _)| p == "/v1/messages")
+        .map(|(_, headers, _)| {
+            headers
+                .get("copilot-session-token")
+                .map(|v| v.to_str().unwrap())
+        })
+        .collect();
+    assert_eq!(
+        sent,
+        [
+            None,
+            Some("session-3"),
+            Some("session-3"),
+            Some("session-4"),
+            Some("session-4"),
+            Some("session-4"),
+            Some("session-5"),
+            None,
+        ]
+    );
+    let (_, headers, _) = requests.last().unwrap();
+    assert_eq!(headers["session-token"], "hyphen");
+    assert_eq!(headers["session_token"], "underscore");
+    assert_eq!(tokens.load(Ordering::Relaxed), 4);
+    let paths: Vec<_> = requests.iter().map(|(path, _, _)| path.as_str()).collect();
+    assert_eq!(
+        &paths[..3],
+        ["/copilot_internal/v2/token", "/models", "/v1/messages"]
+    );
+    assert_eq!(paths.iter().filter(|&&path| path == "/auto").count(), 5);
+    assert!(!is_copilot_auto_messages_endpoint(
+        "/v1/messages/count_tokens"
+    ));
+    server.abort();
 }
 
 /// 流式请求在 hyper 路径上必须用 `streaming_first_byte_timeout` 等响应头，
@@ -245,6 +489,7 @@ async fn streaming_header_wait_uses_first_byte_timeout_on_hyper_path() {
             b"{}".to_vec(),
             true, // streaming
             true, // preserve_exact_header_case → hyper path
+            None,
         ),
     )
     .await
@@ -611,7 +856,7 @@ async fn non_streaming_success_is_buffered_before_marking_provider_successful() 
     );
 
     let prepared = forwarder
-        .prepare_success_response_for_failover(response, false)
+        .prepare_success_response_for_failover(response, false, None)
         .await
         .expect("response should be buffered");
 
@@ -636,7 +881,7 @@ async fn non_streaming_body_read_error_is_retryable_before_success_record() {
     );
 
     let err = match forwarder
-        .prepare_success_response_for_failover(response, false)
+        .prepare_success_response_for_failover(response, false, None)
         .await
     {
         Ok(_) => panic!("body read errors should fail the attempt"),
@@ -659,7 +904,7 @@ async fn streaming_success_primes_first_chunk_and_replays_it() {
     );
 
     let prepared = forwarder
-        .prepare_success_response_for_failover(response, true)
+        .prepare_success_response_for_failover(response, true, None)
         .await
         .expect("stream should be primed");
 
@@ -684,7 +929,7 @@ async fn streaming_first_chunk_error_is_retryable_before_success_record() {
     );
 
     let err = match forwarder
-        .prepare_success_response_for_failover(response, true)
+        .prepare_success_response_for_failover(response, true, None)
         .await
     {
         Ok(_) => panic!("first chunk errors should fail the attempt"),
@@ -1826,6 +2071,33 @@ fn anthropic_rectifiers_cover_copilot_native_messages() {
 }
 
 #[test]
+fn copilot_auto_prefers_responses_for_non_anthropic_models() {
+    use crate::proxy::providers::copilot_model_map::CopilotProtocol;
+    let protocol = |vendor: &str, endpoints: &[&str]| {
+        let endpoints: Vec<String> = endpoints.iter().map(|e| e.to_string()).collect();
+        copilot_auto_claude_transport(vendor, &endpoints).map(|t| t.protocol)
+    };
+    // Free 账号的 Auto 会话只在 /responses 上有效，两个都支持时不能选 chat。
+    assert_eq!(
+        protocol("Microsoft", &["/chat/completions", "/responses"]),
+        Some(CopilotProtocol::Responses)
+    );
+    assert_eq!(
+        protocol("OpenAI", &["/responses", "ws:/responses"]),
+        Some(CopilotProtocol::Responses)
+    );
+    assert_eq!(
+        protocol("Moonshot", &["/chat/completions"]),
+        Some(CopilotProtocol::Chat)
+    );
+    assert_eq!(
+        protocol("Anthropic", &["/chat/completions", "/v1/messages"]),
+        Some(CopilotProtocol::Messages)
+    );
+    assert_eq!(protocol("Example", &["/embeddings"]), None);
+}
+
+#[test]
 fn copilot_transport_selects_protocol_by_vendor_and_endpoints() {
     let messages = vec!["/v1/messages".to_string(), "/chat/completions".to_string()];
     let chat_only = vec!["/chat/completions".to_string()];
@@ -1956,6 +2228,7 @@ async fn codex_copilot_validates_client_model_before_runtime_lookup() {
                     adapter: adapter.as_ref(),
                 },
                 body.clone(),
+                None,
                 &mut codex_upstream_format,
             )
             .await
@@ -2343,6 +2616,7 @@ fn codex_copilot_metadata_selects_advertised_transport_at_forwarding_seam() {
             supports_parallel_tool_calls: None,
             supports_vision: None,
             reasoning_effort: None,
+            billing: None,
         }];
         let mut body = json!({"model": "GPT-5.6", "input": "Hello"});
         let resolved = resolve_model_with_format("GPT-5.6", &models, api_format);
@@ -4351,69 +4625,46 @@ mod codex_stack {
     }
 
     /// 缓冲阶段只有一个截止时间：上游在输出前一直发心跳，也不能无限期压着流不交给客户端。
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn sub_agent_hold_has_one_deadline_despite_heartbeats() {
         const HEARTBEATS: u32 = 40;
+        const HOLD_WINDOW: Duration = Duration::from_millis(100);
         let created = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r1\"}}\n\n";
         let completed = "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"r1\",\"status\":\"completed\",\"output\":[]}}\n\n";
-        let app = axum::Router::new().fallback(move || async move {
-            let stream = futures::stream::unfold(0u32, move |n| async move {
-                if n > HEARTBEATS {
-                    return None;
-                }
-                if n > 0 {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                }
-                let chunk = match n {
-                    0 => created,
-                    HEARTBEATS => completed,
-                    _ => ": keepalive\n\n",
-                };
-                Some((
-                    Ok::<_, std::io::Error>(Bytes::from_static(chunk.as_bytes())),
-                    n + 1,
-                ))
-            });
-            (
-                [(http::header::CONTENT_TYPE, "text/event-stream")],
-                axum::body::Body::from_stream(stream),
-            )
+        let stream = futures::stream::unfold(0, move |n| async move {
+            if n > HEARTBEATS {
+                return None;
+            }
+            if n > 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let chunk = match n {
+                0 => created,
+                HEARTBEATS => completed,
+                _ => ": keepalive\n\n",
+            };
+            Some((Ok(Bytes::from_static(chunk.as_bytes())), n + 1))
         });
-        let upstream = Upstream {
-            base_url: serve_upstream(app).await,
-            seen: Arc::new(Mutex::new(Vec::new())),
-        };
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        let forwarder =
-            test_forwarder(Duration::from_secs(5), Duration::from_millis(100)).stack_request(true);
+        let response = ProxyResponse::streamed(StatusCode::OK, HeaderMap::new(), stream);
+        let forwarder = test_forwarder(Duration::from_secs(5), HOLD_WINDOW);
 
-        let started = std::time::Instant::now();
-        let result = forwarder
-            .forward_with_retry(
-                &AppType::Codex,
-                http::Method::POST,
-                "/responses",
-                wire_body(sub_agent_request(Vec::new())),
-                chatgpt_headers(),
-                Extensions::new(),
-                &[provider(&upstream, "openai_responses")],
-            )
+        let started = tokio::time::Instant::now();
+        let response = forwarder
+            .hold_opaque_state_stream(response, &sub_agent_request(Vec::new()))
             .await
-            .map_err(|error| error.error)
             .expect("committed");
         let handed_over = started.elapsed();
-        // 心跳要发 800ms；截止时间 100ms，交出流不该等到心跳发完。
+        // 截止时间一到就交出流，允许计时器向上取整到下一毫秒。
         assert!(
-            handed_over < Duration::from_millis(500),
+            (HOLD_WINDOW..=HOLD_WINDOW + Duration::from_millis(1)).contains(&handed_over),
             "held for {handed_over:?}"
         );
-        let text = body_text(result).await;
-        assert!(text.starts_with(created), "{text}");
-        assert!(text.ends_with(completed), "{text}");
-        assert_eq!(
-            text.matches(": keepalive").count(),
-            (HEARTBEATS - 1) as usize
+        let expected = format!(
+            "{created}{}{completed}",
+            ": keepalive\n\n".repeat((HEARTBEATS - 1) as usize)
         );
+        let bytes = response.bytes_with_limit(expected.len()).await.unwrap();
+        assert_eq!(bytes.as_ref(), expected.as_bytes());
     }
 
     /// 上游解得开（同一家）或者是别的失败：客户端收到的流和上游发的逐字节一样。

@@ -23,6 +23,7 @@ pub mod codex_oauth_auth;
 pub(crate) mod codex_responses_arguments;
 pub(crate) mod codex_responses_sse;
 pub mod copilot_auth;
+pub mod copilot_auto;
 pub mod copilot_model_map;
 pub(crate) mod copilot_responses;
 mod gemini;
@@ -39,6 +40,7 @@ pub mod streaming_responses;
 pub mod transform;
 pub mod transform_codex_anthropic;
 pub mod transform_codex_chat;
+pub mod transform_codex_chat_gemini_schema;
 pub mod transform_codex_chat_moonshot_schema;
 pub mod transform_codex_responses_kimi_history;
 pub mod transform_codex_responses_namespace;
@@ -136,7 +138,9 @@ pub fn get_adapter(app_type: &AppType) -> Option<Box<dyn ProviderAdapter>> {
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => return None,
+        | AppType::WorkBuddy
+        | AppType::Codebuddy => return None,
+        AppType::ZCode => return None,
     })
 }
 

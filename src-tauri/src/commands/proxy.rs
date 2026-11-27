@@ -292,11 +292,15 @@ pub async fn update_proxy_config_for_app(
     let db = &state.db;
     let app = require_proxy_app(&config.app_type)?;
     let circuit_config = CircuitBreakerConfig::from(&config);
+    let guard = crate::mode::controller::lock_settled(state.inner(), &app)
+        .await
+        .map_err(|e| e.to_string())?;
     // `enabled` 是模式的镜像，只由进入 / 退出代理改写。
     let mut config = config;
     config.enabled = crate::mode::current::is_proxy(&app);
 
     db.update_proxy_config_for_app(config).await?;
+    drop(guard);
 
     state
         .proxy_service

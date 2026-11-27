@@ -1,11 +1,31 @@
 import { useState, useCallback } from "react";
 import { toast } from "@/lib/toast";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   streamCheckProvider,
+  type NetworkErrorKind,
   type StreamCheckResult,
 } from "@/lib/api/connectivity-check";
 import type { AppId } from "@/lib/api";
+
+/** 按连不上的原因挑一句能照着做的提示；认不出原因时退回通用提示。 */
+function unreachableHint(t: TFunction, kind?: NetworkErrorKind): string {
+  switch (kind) {
+    case "blocked":
+      return t("streamCheck.hint.blocked");
+    case "refused":
+      return t("streamCheck.hint.refused");
+    case "timeout":
+      return t("streamCheck.hint.timeout");
+    case "dns":
+      return t("streamCheck.hint.dns");
+    case "tls":
+      return t("streamCheck.hint.tls");
+    default:
+      return t("streamCheck.unreachableHint");
+  }
+}
 
 /**
  * 供应商连通性检查。
@@ -54,10 +74,7 @@ export function useStreamCheck(appId: AppId) {
               defaultValue: `${providerName} 无法连通: ${result.message}`,
             }),
             {
-              description: t("streamCheck.unreachableHint", {
-                defaultValue:
-                  "无法建立连接（DNS / 连接 / TLS / 超时）。请检查 base_url 与网络。",
-              }),
+              description: unreachableHint(t, result.errorKind),
               duration: 8000,
               closeButton: true,
             },

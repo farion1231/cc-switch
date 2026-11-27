@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { normalizeModelsDevModelId } from "@/lib/modelsDev";
 import {
   flattenModels,
   formatPrice,
-} from "@/components/usage/ModelsDevPickerDialog";
-import { normalizeModelsDevModelId } from "@/lib/modelsDev";
-import {
   getCommonModelKeys,
   resolveModelsDevSelection,
   toModelPricing,
