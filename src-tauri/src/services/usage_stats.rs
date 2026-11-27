@@ -2741,6 +2741,13 @@ impl PricingLookup for Connection {
     }
 }
 
+const TIER_PRICING_VARIANT_SUFFIXES: [&str; 5] =
+    ["-fast", "-flex", "-long", "-fast-long", "-flex-long"];
+
+fn is_tier_pricing_variant_suffix(suffix: &str) -> bool {
+    TIER_PRICING_VARIANT_SUFFIXES.contains(&suffix)
+}
+
 /// A statistics request owns one immutable pricing snapshot. Every reasoning
 /// suffix lookup is then a hash lookup, and subsequent requests see all edits,
 /// imports and transaction rollbacks without a second invalidation protocol.
@@ -2775,6 +2782,12 @@ impl PricingCatalog {
             let (model, pricing) = row?;
             let model = model.to_ascii_lowercase();
             for (at, _) in model.match_indices('-') {
+                // 排除档位变体后缀，与 query_model_pricing_prefix 保持一致：
+                // 基础行缺失时前缀回退不得借用 -fast/-flex/-long 等变体价，
+                // -fast 行缺失时也不得落到 -fast-long。
+                if is_tier_pricing_variant_suffix(&model[at..]) {
+                    continue;
+                }
                 catalog
                     .prefixes
                     .entry(model[..at].to_string())
@@ -2827,14 +2840,29 @@ fn query_model_pricing_prefix(
         .replace('%', "\\%")
         .replace('_', "\\_");
     let pattern = format!("{escaped}-%");
+    // 排除候选 id 自身的档位变体行（GPT-6.x 的 fast/flex/长上下文，见
+    // session_usage_codex::pricing_model_id 与 seed_model_pricing 的档位播种）：
+    // 基础行缺失时前缀回退会在这些变体里任取一条，把标准价请求按 0.5×~4× 的
+    // 档位价错算。`-fast` 的候选同时排除 `-long`（candidate+"-long"），避免
+    // fast 行被删后请求落到 fast-long 的价上。COLLATE NOCASE 保证与 LIKE 以及
+    // PricingCatalog 的大小写无关语义一致。
+    let exclusions = TIER_PRICING_VARIANT_SUFFIXES.map(|suffix| format!("{model_id}{suffix}"));
     conn.query_row(
         "SELECT input_cost_per_million, output_cost_per_million,
                 cache_read_cost_per_million, cache_creation_cost_per_million
          FROM model_pricing
          WHERE model_id LIKE ?1 ESCAPE '\\'
+           AND model_id COLLATE NOCASE NOT IN (?2, ?3, ?4, ?5, ?6)
          ORDER BY LENGTH(model_id) ASC, rowid
          LIMIT 1",
-        [pattern],
+        rusqlite::params![
+            pattern,
+            exclusions[0],
+            exclusions[1],
+            exclusions[2],
+            exclusions[3],
+            exclusions[4]
+        ],
         |row| {
             Ok((
                 row.get::<_, String>(0)?,

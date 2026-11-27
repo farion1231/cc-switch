@@ -5192,3 +5192,63 @@ fn pricing_snapshot_matches_sql_and_refreshes_after_mutations() -> Result<(), Ap
     );
     Ok(())
 }
+
+#[test]
+fn prefix_pricing_excludes_tier_variants_in_sql_and_catalog() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let conn = lock_conn!(db.conn);
+
+    // 删除基础行但保留 5 个档位变体：无论 SQL 还是 PricingCatalog，
+    // 大小写任意的前缀回退都不能借用 -fast/-flex/-long/-fast-long/-flex-long。
+    conn.execute(
+        "DELETE FROM model_pricing WHERE model_id = 'gpt-6.1-sol'",
+        [],
+    )?;
+    let catalog = PricingCatalog::load(&conn)?;
+    for query in ["gpt-6.1-sol", "GPT-6.1-SOL", "gpt-6.1-sol-high"] {
+        assert_eq!(
+            find_model_pricing_row(&conn, query)?,
+            None,
+            "SQL 不应将 {query} 回退到档位变体"
+        );
+        assert_eq!(
+            lookup_model_pricing(&catalog, query)?,
+            None,
+            "PricingCatalog 不应将 {query} 回退到档位变体"
+        );
+    }
+    assert_eq!(query_model_pricing_prefix(&conn, "GPT-6.1-SOL")?, None);
+    assert_eq!(catalog.prefix("GPT-6.1-SOL")?, None);
+
+    // 删除 -fast 行但保留 -fast-long：-fast 也不应借用 -fast-long（含大小写混合变体行）
+    conn.execute(
+        "DELETE FROM model_pricing WHERE model_id = 'gpt-6.1-sol-fast'",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO model_pricing (model_id, display_name, input_cost_per_million, output_cost_per_million)
+         VALUES ('GPT-6.1-SOL-FLEX', 'Mixed Case Flex', '1', '5')",
+        [],
+    )?;
+    let catalog = PricingCatalog::load(&conn)?;
+    for query in [
+        "gpt-6.1-sol",
+        "GPT-6.1-SOL",
+        "gpt-6.1-sol-fast",
+        "GPT-6.1-SOL-FAST",
+    ] {
+        assert_eq!(
+            query_model_pricing_prefix(&conn, query)?,
+            None,
+            "SQL {query}"
+        );
+        assert_eq!(catalog.prefix(query)?, None, "catalog {query}");
+        assert_eq!(find_model_pricing_row(&conn, query)?, None, "row {query}");
+        assert_eq!(
+            lookup_model_pricing(&catalog, query)?,
+            None,
+            "lookup {query}"
+        );
+    }
+    Ok(())
+}
