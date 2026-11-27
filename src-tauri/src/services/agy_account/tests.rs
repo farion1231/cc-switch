@@ -419,6 +419,17 @@ mod switching {
 
         // 账号尚未收录但钥匙串里正登着它（如冷启动云同步卡片抢在 status() 前查额度）：仍读钥匙串收回
         let mut unimported_bob = credential("bob", "live-bob");
+        unimported_bob["id_token"] = json!(format!(
+            "e30.{}.sig",
+            URL_SAFE_NO_PAD.encode(
+                serde_json::to_vec(&json!({
+                    "sub": "bob",
+                    "email": "bob@example.com",
+                    "picture": "https://lh3.googleusercontent.com/a/bob=s96-c"
+                }))
+                .unwrap()
+            )
+        ));
         unimported_bob["token"]["expiry"] = json!(in_an_hour());
         set_live(&login, &unimported_bob);
         assert_eq!(manager.access_token("bob").await.unwrap(), "live-bob");
@@ -496,6 +507,95 @@ mod switching {
         ));
         assert_eq!(*login.reads.lock().unwrap(), 4);
         assert!(manager.store.lock().await.accounts["charlie"].requires_reauth);
+    }
+
+    #[tokio::test]
+    async fn quota_with_backfill_recovers_reauth_account_from_keychain_and_backfills_picture() {
+        let (_dir, login, manager) = manager();
+        add(&manager, "alice").await;
+        {
+            let mut store = manager.store.lock().await;
+            let alice = store.accounts.get_mut("alice").unwrap();
+            alice.requires_reauth = true;
+            alice.authenticated_at = 100;
+            alice.picture = None;
+        }
+        let mut relogged = agy15_credential("alice", "reauthed-by-agy");
+        relogged["token"]["refresh_token"] = json!("refresh-alice-new");
+        relogged["token"]["expiry"] = json!(in_an_hour());
+        set_live(&login, &relogged);
+
+        let manager_ref = &manager;
+        let result = manager
+            .quota_with_backfill(
+                "alice",
+                |token| async move {
+                    assert_eq!(token, "reauthed-by-agy");
+                    Ok(quota::AccountQuota {
+                        tiers: Vec::new(),
+                        plan: Some("Pro".into()),
+                    })
+                },
+                move |id, token| async move {
+                    assert_eq!(
+                        manager_ref.quota_permits.available_permits(),
+                        MAX_CONCURRENT_QUOTA_QUERIES - 1
+                    );
+                    manager_ref
+                        .backfill_missing_picture_with(&id, || async move {
+                            assert_eq!(token, "reauthed-by-agy");
+                            Some(oauth::IdentityClaims {
+                                sub: Some("alice".into()),
+                                email: None,
+                                name: Some("Alice".into()),
+                                picture: Some(
+                                    "https://lh3.googleusercontent.com/a-/recovered=s96-c".into(),
+                                ),
+                            })
+                        })
+                        .await;
+                },
+            )
+            .await;
+        assert!(result.is_ok());
+        assert_eq!(*login.reads.lock().unwrap(), 1);
+        assert_eq!(
+            manager.quota_permits.available_permits(),
+            MAX_CONCURRENT_QUOTA_QUERIES
+        );
+        {
+            let store = manager.store.lock().await;
+            let alice = &store.accounts["alice"];
+            assert!(!alice.requires_reauth);
+            assert!(alice.authenticated_at > 100);
+            assert_eq!(
+                alice.picture.as_deref(),
+                Some("https://lh3.googleusercontent.com/a-/recovered=s96-c")
+            );
+        }
+
+        // 恢复且已补齐头像后，再次查额度走新鲜副本快路径（0 次钥匙串读取，也不再补查 userinfo）
+        let second = manager
+            .quota_with_backfill(
+                "alice",
+                |token| async move {
+                    assert_eq!(token, "reauthed-by-agy");
+                    Ok(quota::AccountQuota {
+                        tiers: Vec::new(),
+                        plan: Some("Pro".into()),
+                    })
+                },
+                move |id, _token| async move {
+                    manager_ref
+                        .backfill_missing_picture_with(&id, || async {
+                            panic!("userinfo should not be fetched once picture is populated");
+                        })
+                        .await;
+                },
+            )
+            .await;
+        assert!(second.is_ok());
+        assert_eq!(*login.reads.lock().unwrap(), 1);
     }
 
     #[tokio::test]
@@ -760,14 +860,11 @@ async fn quota_limits_concurrent_upstream_requests() {
     let ids: Vec<String> = (0..total).map(|index| format!("acc-{index}")).collect();
     for id in &ids {
         add(&manager, id).await;
-        manager
-            .store
-            .lock()
-            .await
-            .accounts
-            .get_mut(id)
-            .unwrap()
-            .credential["token"]["expiry"] = json!(in_an_hour());
+        let mut store = manager.store.lock().await;
+        let account = store.accounts.get_mut(id).unwrap();
+        account.credential["token"]["expiry"] = json!(in_an_hour());
+        // 已有头像时跳过锁外 OIDC userinfo 补查，避免并发测试触发真实外网请求
+        account.picture = Some("https://lh3.googleusercontent.com/a/public=s96-c".into());
     }
 
     let in_flight = Arc::new(AtomicUsize::new(0));
@@ -891,4 +988,435 @@ async fn an_unreadable_account_file_is_kept_instead_of_overwritten() {
         crate::test_support::dir_holds_file_with(dir.path(), &unreadable),
         "the unreadable account file was overwritten"
     );
+}
+
+#[tokio::test]
+async fn quota_with_backfill_runs_under_permit_only_when_fetch_succeeds() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let (_dir, _login, manager) = manager();
+    add(&manager, "alice").await;
+    manager
+        .store
+        .lock()
+        .await
+        .accounts
+        .get_mut("alice")
+        .unwrap()
+        .credential["token"]["expiry"] = json!(in_an_hour());
+
+    // 额度查询失败时绝不补头像，信号量许可正常归还
+    let backfill_calls = Arc::new(AtomicUsize::new(0));
+    let calls_on_err = Arc::clone(&backfill_calls);
+    let err = manager
+        .quota_with_backfill(
+            "alice",
+            |_token| async { Err(quota::QuotaError::Network("boom".into())) },
+            move |_id, _token| async move {
+                calls_on_err.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .await;
+    assert!(matches!(err, Err(AccountQuotaError::Failed(_))));
+    assert_eq!(backfill_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        manager.quota_permits.available_permits(),
+        MAX_CONCURRENT_QUOTA_QUERIES
+    );
+
+    // 未刚续期且额度查询成功时，在信号量许可内触发补头像，返回后释放许可
+    let observed_permits = Arc::new(AtomicUsize::new(usize::MAX));
+    let observed_permits_ref = Arc::clone(&observed_permits);
+    let calls_on_ok = Arc::clone(&backfill_calls);
+    let manager_ref = &manager;
+    let ok = manager
+        .quota_with_backfill(
+            "alice",
+            |token| async move {
+                assert_eq!(token, "fresh");
+                Ok(quota::AccountQuota {
+                    tiers: Vec::new(),
+                    plan: Some("Pro".into()),
+                })
+            },
+            move |id, token| async move {
+                assert_eq!(id, "alice");
+                assert_eq!(token, "fresh");
+                observed_permits_ref.store(
+                    manager_ref.quota_permits.available_permits(),
+                    Ordering::SeqCst,
+                );
+                calls_on_ok.fetch_add(1, Ordering::SeqCst);
+            },
+        )
+        .await;
+    assert!(ok.is_ok());
+    assert_eq!(backfill_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        observed_permits.load(Ordering::SeqCst),
+        MAX_CONCURRENT_QUOTA_QUERIES - 1
+    );
+    assert_eq!(
+        manager.quota_permits.available_permits(),
+        MAX_CONCURRENT_QUOTA_QUERIES
+    );
+}
+
+#[test]
+fn private_avatar_detection_matches_google_private_paths_only() {
+    assert!(is_private_avatar_url(
+        "https://lh3.googleusercontent.com/a-/ALV-UjX123=s96-c"
+    ));
+    assert!(is_private_avatar_url(
+        "https://LH4.GoogleUserContent.com/a-/ALV-UjX123=s96-c"
+    ));
+    assert!(!is_private_avatar_url(
+        "https://lh3.googleusercontent.com/a/ACg8oc123=s96-c"
+    ));
+    assert!(!is_private_avatar_url(
+        "https://lh3.googleusercontent.com.evil.example/a-/ALV-UjX123=s96-c"
+    ));
+    assert!(!is_private_avatar_url(
+        "ftp://lh3.googleusercontent.com/a-/ALV-UjX123=s96-c"
+    ));
+    assert!(!is_private_avatar_url("not-a-url"));
+
+    assert!(needs_avatar_refresh(None));
+    assert!(needs_avatar_refresh(Some("")));
+    assert!(needs_avatar_refresh(Some("   ")));
+    assert!(needs_avatar_refresh(Some(
+        "https://lh3.googleusercontent.com/a-/ALV-UjX123=s96-c"
+    )));
+    assert!(!needs_avatar_refresh(Some(
+        "https://lh3.googleusercontent.com/a/ACg8oc123=s96-c"
+    )));
+}
+
+#[test]
+fn merge_identity_fills_missing_or_private_avatar_and_guards_sub() {
+    let base = oauth::IdentityClaims {
+        sub: Some("sub-1".into()),
+        email: Some("alice@example.com".into()),
+        name: None,
+        picture: None,
+    };
+    let fetched = oauth::IdentityClaims {
+        sub: Some("sub-1".into()),
+        email: Some("other@example.com".into()),
+        name: Some("Alice".into()),
+        picture: Some("https://lh3.googleusercontent.com/a-/private-1=s96-c".into()),
+    };
+    let merged = merge_identity(base, fetched);
+    assert_eq!(merged.email.as_deref(), Some("alice@example.com"));
+    assert_eq!(merged.name.as_deref(), Some("Alice"));
+    assert_eq!(
+        merged.picture.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/private-1=s96-c")
+    );
+
+    // 私有 /a-/ 头像可以被 userinfo 返回的新地址更新
+    let rotated = merge_identity(
+        merged.clone(),
+        oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: None,
+            name: None,
+            picture: Some("https://lh3.googleusercontent.com/a-/private-2=s96-c".into()),
+        },
+    );
+    assert_eq!(
+        rotated.picture.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/private-2=s96-c")
+    );
+
+    // 已有公开 /a/ 头像时不被 userinfo 覆盖，但空白 name 仍补齐
+    let public_kept = merge_identity(
+        oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: Some("alice@example.com".into()),
+            name: None,
+            picture: Some("https://lh3.googleusercontent.com/a/public-1=s96-c".into()),
+        },
+        oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: None,
+            name: Some("Alice".into()),
+            picture: Some("https://lh3.googleusercontent.com/a/public-2=s96-c".into()),
+        },
+    );
+    assert_eq!(public_kept.name.as_deref(), Some("Alice"));
+    assert_eq!(
+        public_kept.picture.as_deref(),
+        Some("https://lh3.googleusercontent.com/a/public-1=s96-c")
+    );
+
+    // sub 不一致或 fetched.picture 仅空白时不污染原身份
+    let mismatched = merge_identity(
+        oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: Some("alice@example.com".into()),
+            name: None,
+            picture: None,
+        },
+        oauth::IdentityClaims {
+            sub: Some("sub-2".into()),
+            email: Some("bob@example.com".into()),
+            name: Some("Bob".into()),
+            picture: Some("https://lh3.googleusercontent.com/a-/bob=s96-c".into()),
+        },
+    );
+    assert_eq!(mismatched.name, None);
+    assert_eq!(mismatched.picture, None);
+
+    let blank_picture = merge_identity(
+        rotated.clone(),
+        oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: None,
+            name: None,
+            picture: Some("   ".into()),
+        },
+    );
+    assert_eq!(blank_picture.picture, rotated.picture);
+}
+
+#[test]
+fn apply_refreshed_identity_updates_matching_account_only() {
+    let mut account = AccountData {
+        sub: "sub-1".into(),
+        email: Some("alice@example.com".into()),
+        name: None,
+        picture: None,
+        credential: credential("sub-1", "a1"),
+        authenticated_at: 100,
+        requires_reauth: false,
+    };
+
+    assert!(!apply_refreshed_identity(&mut account, None));
+    assert!(!apply_refreshed_identity(
+        &mut account,
+        Some(oauth::IdentityClaims {
+            sub: Some("other".into()),
+            email: Some("other@example.com".into()),
+            name: Some("Other".into()),
+            picture: Some("https://lh3.googleusercontent.com/a-/other=s96-c".into()),
+        })
+    ));
+    assert_eq!(account.picture, None);
+
+    assert!(apply_refreshed_identity(
+        &mut account,
+        Some(oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: None,
+            name: Some("Alice".into()),
+            picture: Some("https://lh3.googleusercontent.com/a-/v1=s96-c".into()),
+        })
+    ));
+    assert_eq!(account.name.as_deref(), Some("Alice"));
+    assert_eq!(
+        account.picture.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/v1=s96-c")
+    );
+
+    // 相同值或空白值不重复标记变更
+    assert!(!apply_refreshed_identity(
+        &mut account,
+        Some(oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: Some("   ".into()),
+            name: Some("Alice".into()),
+            picture: Some("https://lh3.googleusercontent.com/a-/v1=s96-c".into()),
+        })
+    ));
+
+    // 私有头像轮换到新 URL 时更新
+    assert!(apply_refreshed_identity(
+        &mut account,
+        Some(oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: None,
+            name: None,
+            picture: Some("https://lh3.googleusercontent.com/a-/v2=s96-c".into()),
+        })
+    ));
+    assert_eq!(
+        account.picture.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/v2=s96-c")
+    );
+}
+
+#[tokio::test]
+async fn enrich_identity_fetches_only_when_needed_and_handles_missing_base_or_failure() {
+    let base = oauth::IdentityClaims {
+        sub: Some("sub-1".into()),
+        email: Some("alice@example.com".into()),
+        name: Some("Alice".into()),
+        picture: None,
+    };
+
+    // should_fetch = false 时绝不触发 userinfo 请求
+    let skipped = enrich_identity(Some(base.clone()), false, || async {
+        panic!("userinfo should not be fetched");
+    })
+    .await
+    .unwrap();
+    assert_eq!(skipped.picture, None);
+
+    // 缺少 picture 时合并 userinfo 返回的私有头像
+    let enriched = enrich_identity(Some(base.clone()), true, || async {
+        Some(oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: None,
+            name: None,
+            picture: Some("https://lh3.googleusercontent.com/a-/custom=s96-c".into()),
+        })
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        enriched.picture.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/custom=s96-c")
+    );
+
+    // 续期响应不含 id_token（base = None）时直接采用 userinfo 结果
+    let fetched_only = enrich_identity(None, true, || async {
+        Some(oauth::IdentityClaims {
+            sub: Some("sub-1".into()),
+            email: Some("alice@example.com".into()),
+            name: None,
+            picture: Some("https://lh3.googleusercontent.com/a-/custom=s96-c".into()),
+        })
+    })
+    .await
+    .unwrap();
+    assert_eq!(fetched_only.sub.as_deref(), Some("sub-1"));
+    assert_eq!(
+        fetched_only.picture.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/custom=s96-c")
+    );
+
+    // userinfo 请求失败时保留原 id_token 身份，不中断流程
+    let fallback = enrich_identity(Some(base), true, || async { None })
+        .await
+        .unwrap();
+    assert_eq!(fallback.sub.as_deref(), Some("sub-1"));
+    assert_eq!(fallback.picture, None);
+}
+
+#[test]
+fn absorb_bumps_authenticated_at_only_when_recovering_from_requires_reauth() {
+    let mut store = StoreFile::default();
+    let old_cred = credential("alice", "old");
+    let claims = oauth::identity(old_cred["id_token"].as_str().unwrap()).unwrap();
+    upsert(&mut store, old_cred, &claims);
+    store.accounts.get_mut("alice").unwrap().authenticated_at = 100;
+
+    // 正常续期：凭据变化但不处于 requires_reauth，不改 authenticated_at
+    let refreshed_cred = credential("alice", "refreshed");
+    let refreshed_claims = oauth::identity(refreshed_cred["id_token"].as_str().unwrap()).unwrap();
+    let (id, changed) = absorb(
+        &mut store,
+        LiveLogin::Known {
+            credential: refreshed_cred,
+            claims: refreshed_claims,
+        },
+        false,
+    );
+    assert_eq!(id.as_deref(), Some("alice"));
+    assert!(changed);
+    assert_eq!(store.accounts["alice"].authenticated_at, 100);
+
+    // 失效后经 agy 重新登录：清除 requires_reauth 并刷新 authenticated_at（驱动前端刷新缓存头像）
+    store.accounts.get_mut("alice").unwrap().requires_reauth = true;
+    let reauthed_cred = credential("alice", "reauthed");
+    let reauthed_claims = oauth::identity(reauthed_cred["id_token"].as_str().unwrap()).unwrap();
+    let (id, changed) = absorb(
+        &mut store,
+        LiveLogin::Known {
+            credential: reauthed_cred,
+            claims: reauthed_claims,
+        },
+        false,
+    );
+    assert_eq!(id.as_deref(), Some("alice"));
+    assert!(changed);
+    assert!(!store.accounts["alice"].requires_reauth);
+    assert!(store.accounts["alice"].authenticated_at > 100);
+}
+
+#[tokio::test]
+async fn backfill_missing_picture_populates_blank_skips_existing_and_preserves_concurrent_login() {
+    let (dir, login, manager) = manager();
+    add(&manager, "alice").await;
+    assert_eq!(manager.account_picture("alice").await, None);
+
+    // 首次缺失头像时补齐并落盘
+    manager
+        .backfill_missing_picture_with("alice", || async {
+            Some(oauth::IdentityClaims {
+                sub: Some("alice".into()),
+                email: None,
+                name: Some("Alice".into()),
+                picture: Some("https://lh3.googleusercontent.com/a-/backfilled=s96-c".into()),
+            })
+        })
+        .await;
+    assert_eq!(
+        manager.account_picture("alice").await.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/backfilled=s96-c")
+    );
+    let reopened = AgyAccountManager::with_login_store(dir.path().to_path_buf(), login.clone());
+    assert_eq!(
+        reopened.account_picture("alice").await.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/backfilled=s96-c")
+    );
+
+    // 已有头像时绝不再触发 userinfo 请求
+    manager
+        .backfill_missing_picture_with("alice", || async {
+            panic!("userinfo should not be fetched when picture already exists");
+        })
+        .await;
+
+    // 并发保护：锁外请求期间如果其他路径（如重新登录）已经填上新头像，不用旧响应覆盖
+    add(&manager, "bob").await;
+    manager
+        .backfill_missing_picture_with("bob", || async {
+            manager
+                .store
+                .lock()
+                .await
+                .accounts
+                .get_mut("bob")
+                .unwrap()
+                .picture = Some("https://lh3.googleusercontent.com/a-/fresh-login=s96-c".into());
+            Some(oauth::IdentityClaims {
+                sub: Some("bob".into()),
+                email: None,
+                name: Some("Stale".into()),
+                picture: Some("https://lh3.googleusercontent.com/a-/stale-backfill=s96-c".into()),
+            })
+        })
+        .await;
+    assert_eq!(
+        manager.account_picture("bob").await.as_deref(),
+        Some("https://lh3.googleusercontent.com/a-/fresh-login=s96-c")
+    );
+}
+
+#[test]
+fn will_import_account_skips_existing_and_dismissed_unless_unlocking() {
+    let mut store = StoreFile::default();
+    let cred = credential("alice", "a1");
+    let claims = oauth::identity(cred["id_token"].as_str().unwrap()).unwrap();
+    upsert(&mut store, cred, &claims);
+    store.dismissed.push("dismissed".into());
+
+    assert!(!will_import_account(&store, None, false));
+    assert!(!will_import_account(&store, Some("alice"), false));
+    assert!(!will_import_account(&store, Some("alice"), true));
+    assert!(!will_import_account(&store, Some("dismissed"), false));
+    assert!(will_import_account(&store, Some("dismissed"), true));
+    assert!(will_import_account(&store, Some("fresh"), false));
 }

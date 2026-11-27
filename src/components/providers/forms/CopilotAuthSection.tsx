@@ -29,6 +29,7 @@ import { useManagedAccountUsers } from "./hooks/useManagedAccountUsers";
 import type { GitHubAccount } from "@/lib/api";
 import {
   ManagedAccountsGroup,
+  useAvatarImage,
   type GroupAccountRow,
 } from "@/components/settings/auth/ManagedAccountsGroup";
 import { CopilotAccountQuota } from "@/components/settings/auth/AccountQuota";
@@ -487,20 +488,21 @@ export const CopilotAuthSection: React.FC<CopilotAuthSectionProps> = ({
 const CopilotAccountAvatar: React.FC<{ account: GitHubAccount }> = ({
   account,
 }) => {
-  const [failed, setFailed] = React.useState(false);
+  const { src, imageKey, onError } = useAvatarImage(account.avatar_url);
 
-  if (!account.avatar_url || failed) {
+  if (!src) {
     return <User className="h-5 w-5 text-fg-2" />;
   }
 
   return (
     <img
-      src={account.avatar_url}
+      key={imageKey}
+      src={src}
       alt={account.login}
       className="h-5 w-5 rounded-full"
       loading="lazy"
       referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
+      onError={onError}
     />
   );
 };

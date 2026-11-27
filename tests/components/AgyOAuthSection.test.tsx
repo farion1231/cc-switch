@@ -143,4 +143,71 @@ describe("AgyOAuthSection", () => {
     // 不只是 agy 在用的号，其他号也查；登录失效的不查
     expect(quotas).toEqual(["a", "c"]);
   });
+
+  it("versions Antigravity avatar URLs by authenticated_at and requires_reauth", () => {
+    const auth = baseAuth();
+    auth.accounts = [
+      {
+        ...account("ok", "ok@example.com"),
+        avatar_url: "https://lh3.googleusercontent.com/a/public-photo=s96-c",
+        authenticated_at: 1700000001,
+      },
+      {
+        ...account("expired", "expired@example.com"),
+        avatar_url: "https://lh3.googleusercontent.com/a/expired-photo=s96-c",
+        authenticated_at: 1700000002,
+        requires_reauth: true,
+      },
+      {
+        ...account("query", "query@example.com"),
+        avatar_url:
+          "https://lh3.googleusercontent.com/a-/private-photo=s96-c?sz=96&v=stale",
+        authenticated_at: 1700000003,
+      },
+      {
+        ...account("non-finite", "nonfinite@example.com"),
+        avatar_url: "https://lh3.googleusercontent.com/a/no-ts=s96-c",
+        authenticated_at: Number.NaN,
+      },
+      {
+        ...account("blank", "blank@example.com"),
+        avatar_url: "   ",
+        authenticated_at: 1700000004,
+      },
+    ];
+    mocks.useManagedAuth.mockReturnValue(auth);
+    const { container, rerender } = render(<AgyOAuthSection />);
+
+    const srcs = Array.from(
+      container.querySelectorAll(".auth-account-row img"),
+    ).map((img) => img.getAttribute("src"));
+    expect(srcs).toEqual([
+      "https://lh3.googleusercontent.com/a/public-photo=s96-c?v=1700000001",
+      "https://lh3.googleusercontent.com/a/expired-photo=s96-c?v=1700000002-reauth",
+      "https://lh3.googleusercontent.com/a-/private-photo=s96-c?sz=96&v=1700000003",
+      "https://lh3.googleusercontent.com/a/no-ts=s96-c",
+    ]);
+    for (const src of srcs) {
+      expect(src).not.toContain("-ns");
+    }
+
+    // 过期账号重新登录后 authenticated_at 更新且去掉 -reauth，立即切换 URL 绕开旧缓存
+    mocks.useManagedAuth.mockReturnValue({
+      ...auth,
+      accounts: [
+        {
+          ...account("expired", "expired@example.com"),
+          avatar_url: "https://lh3.googleusercontent.com/a/expired-photo=s96-c",
+          authenticated_at: 1700009999,
+          requires_reauth: false,
+        },
+      ],
+    });
+    rerender(<AgyOAuthSection />);
+    expect(
+      container.querySelector(".auth-account-row img")?.getAttribute("src"),
+    ).toBe(
+      "https://lh3.googleusercontent.com/a/expired-photo=s96-c?v=1700009999",
+    );
+  });
 });

@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgyAccountQuota,
   ClaudeAccountPlan,
   ClaudeAccountQuota,
   SubscriptionQuota,
@@ -18,7 +19,7 @@ export const subscriptionApi = {
   /** Claude Code 默认登录的套餐（没绑账号的官方卡显示） */
   getClaudeDefaultPlan: (): Promise<ClaudeAccountPlan | null> =>
     invoke("get_claude_default_plan"),
-  getAgyAccountQuota: (accountId: string): Promise<SubscriptionQuota> =>
+  getAgyAccountQuota: (accountId: string): Promise<AgyAccountQuota> =>
     invoke("agy_account_quota", { accountId }),
   getCodingPlanQuota: (
     baseUrl: string,
