@@ -1604,6 +1604,7 @@ pub fn run() {
             commands::get_skills_migration_result,
             commands::open_app_config_folder,
             commands::reveal_app_log_file,
+            commands::prepare_feedback_report,
             commands::read_live_provider_settings,
             commands::get_settings,
             commands::save_settings,

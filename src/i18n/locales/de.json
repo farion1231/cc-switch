@@ -1047,6 +1047,17 @@
     "github": "GitHub",
     "starPrompt": "Wenn Ihnen CC Switch geholfen hat, geben Sie uns bitte einen Stern auf GitHub – das bedeutet uns sehr viel",
     "starOnGithub": "Auf GitHub mit Stern markieren",
+    "feedback": {
+      "button": "Fehler melden",
+      "title": "Fehler melden",
+      "message": "Die heutigen Einträge aus dem Anwendungsprotokoll sowie Ihre Versions- und Systeminformationen werden in eine GitHub-Issue-Seite vorausgefüllt. Aufgrund von URL-Längenbegrenzungen kann nur der neueste Teil des heutigen Protokolls übernommen werden. E-Mail-Adressen, Telefonnummern, Ausweis- und Bankkartennummern, IP-Adressen und Geheimnisse im Protokoll werden durch Platzhalter ersetzt.\n\nEs wird nichts automatisch übermittelt. Prüfen Sie den Inhalt, beschreiben Sie das Problem in Ihrem Browser und senden Sie es selbst ab.",
+      "confirm": "Issue-Seite öffnen",
+      "opened": "Issue-Seite mit allen {{total}} heutigen Protokollzeilen geöffnet",
+      "openedPartial": "Issue-Seite mit den letzten {{included}} von {{total}} heutigen Protokollzeilen geöffnet",
+      "openedWithoutLog": "Heute noch keine Protokolleinträge. Issue-Seite geöffnet",
+      "reviewHint": "Prüfen Sie den Inhalt und beschreiben Sie das Problem vor dem Absenden",
+      "failed": "Fehlerbericht konnte nicht vorbereitet werden"
+    },
     "manualInstallCommands": "Manuelle Installationsbefehle",
     "manualUninstallCommands": "Manuelle Deinstallationsbefehle",
     "manualUninstallHint": "Die Umgebung jeder App wird standardmäßig automatisch erkannt; Sie können manuell eine andere Umgebung wählen. Wählen Sie die ursprüngliche Installationsmethode, kopieren Sie dann den Befehl für die zu entfernende App und führen Sie ihn in einem Terminal aus. Klicken Sie anschließend auf „Nach Updates suchen“, um den Status zu aktualisieren.",
