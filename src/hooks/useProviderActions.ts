@@ -288,11 +288,10 @@ export function useProviderActions(
             messageKey = "notifications.claudeDesktopRestartRequired";
             defaultMessage = "切换成功，重启 Claude Desktop 后生效";
           } else if (
-            activeApp === "opencode" ||
-            activeApp === "openclaw" ||
-            activeApp === "mcode" ||
-            activeApp === "workbuddy" ||
-            activeApp === "codebuddy"
+            // 共存式应用走到这里是「添加」；Hermes、Kimi 用同一个动作设默认，仍算「切换」
+            appHas(activeApp, "additive") &&
+            activeApp !== "hermes" &&
+            activeApp !== "kimi"
           ) {
             messageKey = "notifications.addToConfigSuccess";
             defaultMessage = "已添加到配置";
