@@ -115,6 +115,11 @@ Kimi K3.1 Pro — самая мощная на сегодня открытая �
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>Благодарим SudoCode за спонсорство этого проекта! SudoCode даёт Claude Code и Codex единую точку доступа к API — один ключ работает в обоих инструментах. В консоли видны расход токенов и стоимость каждого запроса с разбивкой по моделям, так что все траты всегда на виду. SudoCode предлагает пользователям CC Switch особый бонус: зарегистрируйтесь по <a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">этой ссылке</a> и вступите в QQ-группу 1030742788, чтобы получить дневной пропуск стоимостью 10 CNY (¥10)!</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>Благодарим AIGoCode за спонсорство этого проекта! AIGoCode — платформа ИИ-программирования по подписке, а не просто оплата за токены. Один аккаунт, один месячный тариф на Claude Code, Codex и Gemini, прямое подключение на материковом Китае и быстрый отклик. Подпишитесь по <a href="https://aigocode.net/invite/CC-SWITCH">этой ссылке</a>, чтобы получить дополнительные 10% кредитов!</td>
 </tr>

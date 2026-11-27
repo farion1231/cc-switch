@@ -684,6 +684,51 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     },
   },
   {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      name: "sudocode",
+      base_url: "https://api.sudocode.chat/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+    suggestedDefaults: {
+      model: { default: "gpt-6.1-sol", provider: "sudocode" },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      name: "sudocode_us",
+      base_url: "https://sudocode.us/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: sudoCodeUsModels(),
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+    suggestedDefaults: {
+      model: { default: "gpt-6.1-sol", provider: "sudocode_us" },
+    },
+  },
+  {
     name: "AIGoCode",
     websiteUrl: "https://aigocode.net",
     apiKeyUrl: "https://aigocode.net/invite/CC-SWITCH",
@@ -1417,51 +1462,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "gpt-6.1-sol", provider: "dmxapi" },
     },
     icon: "dmxapi",
-  },
-  {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      name: "sudocode",
-      base_url: "https://api.sudocode.chat/v1",
-      api_key: "",
-      api_mode: "codex_responses",
-      models: [
-        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
-        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-    suggestedDefaults: {
-      model: { default: "gpt-6.1-sol", provider: "sudocode" },
-    },
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      name: "sudocode_us",
-      base_url: "https://sudocode.us/v1",
-      api_key: "",
-      api_mode: "codex_responses",
-      models: sudoCodeUsModels(),
-    },
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-    suggestedDefaults: {
-      model: { default: "gpt-6.1-sol", provider: "sudocode_us" },
-    },
   },
   {
     name: "XycAi",

@@ -115,6 +115,11 @@ Claude Code / Codex / Gemini 官方通道分別低至原價的 38% / 2% / 9%，�
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>感謝 SudoCode 贊助本專案！SudoCode 讓 Claude Code 與 Codex 共用一個 API 入口，一個 Key 即可同時接入兩款工具。主控台依模型列出每次請求的 Token 用量與費用，每一筆花費都一目瞭然。SudoCode 為 CC Switch 使用者提供專屬福利：透過<a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">此連結</a>註冊後加入 QQ 群 1030742788，即可領取價值人民幣 ¥10 的日卡！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>感謝 AIGoCode 贊助本專案！AIGoCode 是一個訂閱制的 AI 程式開發平台，而不只是按 Token 計費。一個帳號、一份月費方案即可使用 Claude Code、Codex 與 Gemini，中國大陸可直連且回應迅速。透過<a href="https://aigocode.net/invite/CC-SWITCH">此連結</a>訂閱，可額外獲得 10% 的額度！</td>
 </tr>
