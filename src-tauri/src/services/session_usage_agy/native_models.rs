@@ -1,7 +1,9 @@
 //! Read per-generation model names from Antigravity's native conversation database.
 use prost::Message;
-use rusqlite::{Connection, OpenFlags, OptionalExtension};
-use std::{collections::HashMap, path::Path, time::Duration};
+#[cfg(test)]
+use rusqlite::Connection;
+use rusqlite::OptionalExtension;
+use std::{collections::HashMap, path::Path};
 
 // Only the fields needed for the step -> generation -> model association are decoded.
 #[derive(Clone, PartialEq, Message)]
@@ -121,21 +123,29 @@ fn native_database_path(transcript: &Path) -> Result<Option<std::path::PathBuf>,
     if !path.is_file() {
         return Ok(None);
     }
-    let root = root.canonicalize().map_err(|error| error.to_string())?;
-    let path = path.canonicalize().map_err(|error| error.to_string())?;
-    if !path.starts_with(root) {
+    if !crate::config::path_stays_inside(root, &path)? {
         return Err("Conversation database is outside the Antigravity root".into());
     }
     Ok(Some(path))
 }
 
-/// Fingerprint of the companion `conversations/<id>.db` (and its WAL file when present) so
-/// `session_log_sync` cursors stay valid across steady-state syncs while still re-importing
-/// when the native database is created or updated after the transcript.
-pub(super) fn native_state_fingerprint(transcript: &Path) -> String {
-    let Ok(Some(path)) = native_database_path(transcript) else {
+/// Fingerprint of a single file (`mtime:len`, or `"none"` when absent).
+pub(super) fn file_state_fingerprint(path: &Path) -> String {
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.is_file() => format!(
+            "{}:{}",
+            crate::services::session_usage::metadata_modified_nanos(&meta),
+            meta.len()
+        ),
+        _ => "none".to_string(),
+    }
+}
+
+/// Fingerprint of a SQLite database and its WAL file (`db_mtime:db_len:wal_mtime:wal_len`, or `"none"`).
+pub(super) fn sqlite_state_fingerprint(path: &Path) -> String {
+    if !path.is_file() {
         return "none".to_string();
-    };
+    }
     let file_sig = |target: &Path| -> (i64, u64) {
         std::fs::metadata(target)
             .map(|meta| {
@@ -146,11 +156,21 @@ pub(super) fn native_state_fingerprint(transcript: &Path) -> String {
             })
             .unwrap_or((0, 0))
     };
-    let (db_mtime, db_len) = file_sig(&path);
+    let (db_mtime, db_len) = file_sig(path);
     let mut wal_os = path.as_os_str().to_os_string();
     wal_os.push("-wal");
     let (wal_mtime, wal_len) = file_sig(Path::new(&wal_os));
     format!("{db_mtime}:{db_len}:{wal_mtime}:{wal_len}")
+}
+
+/// Fingerprint of the companion `conversations/<id>.db` (and its WAL file when present) so
+/// `session_log_sync` cursors stay valid across steady-state syncs while still re-importing
+/// when the native database is created or updated after the transcript.
+pub(super) fn native_state_fingerprint(transcript: &Path) -> String {
+    let Ok(Some(path)) = native_database_path(transcript) else {
+        return "none".to_string();
+    };
+    sqlite_state_fingerprint(&path)
 }
 
 pub(super) fn generations_for_transcript(
@@ -160,20 +180,21 @@ pub(super) fn generations_for_transcript(
     let Some(path) = native_database_path(transcript)? else {
         return Ok(HashMap::new());
     };
-    read_generations(&path, steps).map_err(|error| error.to_string())
+    read_generations(&path, steps)
 }
 
-fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, Generation>> {
-    let mut conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    // A busy native writer must not hold up the usage refresh. Normal SQLite reads
-    // include the WAL; immutable mode would miss live generations.
-    conn.busy_timeout(Duration::ZERO)?;
-    let tx = conn.transaction()?;
-    let mut step_query = tx.prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")?;
-    let mut generation_query = tx.prepare("SELECT data FROM gen_metadata WHERE idx=?1")?;
+fn read_generations(path: &Path, steps: &[u64]) -> Result<HashMap<u64, Generation>, String> {
+    let db = crate::agy_sqlite::open_read_only(path)?;
+    // A busy native writer must not hold up the usage refresh. The direct open keeps
+    // a zero timeout; a WSL snapshot is a private copy and uses its own timeout.
+    // Immutable mode would miss live generations, so the WAL is included.
+    let conn = db.conn();
+    let mut step_query = conn
+        .prepare("SELECT metadata FROM steps WHERE idx=?1 AND step_type=15")
+        .map_err(|err| err.to_string())?;
+    let mut generation_query = conn
+        .prepare("SELECT data FROM gen_metadata WHERE idx=?1")
+        .map_err(|err| err.to_string())?;
     let mut generations = HashMap::new();
     for &step in steps {
         let Ok(index) = i64::try_from(step) else {
@@ -181,7 +202,8 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
         };
         let metadata: Option<Vec<u8>> = step_query
             .query_row([index], |row| row.get(0))
-            .optional()?
+            .optional()
+            .map_err(|err| err.to_string())?
             .flatten();
         let Some(reference) = metadata
             .and_then(|bytes| StepMetadata::decode(bytes.as_slice()).ok())
@@ -194,7 +216,8 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
         };
         let data: Option<Vec<u8>> = generation_query
             .query_row([generation], |row| row.get(0))
-            .optional()?;
+            .optional()
+            .map_err(|err| err.to_string())?;
         let Some(bytes) = data else {
             continue;
         };
@@ -240,7 +263,7 @@ fn read_generations(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64,
 }
 
 #[cfg(test)]
-fn read_models(path: &Path, steps: &[u64]) -> rusqlite::Result<HashMap<u64, String>> {
+fn read_models(path: &Path, steps: &[u64]) -> Result<HashMap<u64, String>, String> {
     Ok(read_generations(path, steps)?
         .into_iter()
         .filter_map(|(step, generation)| Some((step, generation.model?)))
@@ -316,6 +339,7 @@ pub(super) fn test_timing(first_token_ms: i64, streaming_ms: i64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn orchestrator_native_aliases_use_generation_role_instead_of_generic_display() {

@@ -702,7 +702,10 @@ impl SkillService {
         }
         for native in native_targets {
             if !native.exists() && !Self::is_symlink(native) {
-                targets.push((native.clone(), Self::get_sync_method() != SyncMethod::Copy));
+                targets.push((
+                    native.clone(),
+                    Self::effective_sync_method(native) != SyncMethod::Copy,
+                ));
             }
         }
 

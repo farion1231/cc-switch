@@ -3,6 +3,33 @@ use crate::test_support::EnvVars;
 use tempfile::tempdir;
 
 #[test]
+fn wsl_unc_skill_target_copies_for_every_app_in_auto_mode() {
+    let unc = PathBuf::from(r"\\wsl.localhost\Ubuntu-26.04\home\alice\.gemini\config\skills\demo");
+    let local = PathBuf::from("/tmp/skills/demo");
+    assert!(crate::config::is_wsl_path(&unc));
+    assert!(!crate::config::is_wsl_path(&local));
+    // Claude, Gemini, Pi, and Antigravity share this decision. The app only
+    // changes the destination directory; a UNC destination is always a copy
+    // in Auto mode so the file exists inside the distro.
+    assert_eq!(
+        SkillService::sync_method_for(SyncMethod::Auto, &unc),
+        SyncMethod::Copy
+    );
+    assert_eq!(
+        SkillService::sync_method_for(SyncMethod::Auto, &local),
+        SyncMethod::Auto
+    );
+    assert_eq!(
+        SkillService::sync_method_for(SyncMethod::Symlink, &unc),
+        SyncMethod::Symlink
+    );
+    assert_eq!(
+        SkillService::sync_method_for(SyncMethod::Copy, &local),
+        SyncMethod::Copy
+    );
+}
+
+#[test]
 fn skill_state_lock_allows_snapshots_but_excludes_writers() {
     let first_reader = skill_state_read_guard();
     let second_reader = skill_state_read_guard();

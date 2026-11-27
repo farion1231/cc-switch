@@ -84,6 +84,13 @@ export const DIRECTORY_APPS = [
     placeholderKey: "settings.browsePlaceholderZcode",
     syncsLive: true,
   },
+  {
+    app: "agy",
+    field: "agyConfigDir",
+    defaultFolder: ".gemini",
+    placeholderKey: "settings.browsePlaceholderAgy",
+    syncsLive: false,
+  },
 ] as const satisfies readonly {
   app: AppId;
   field: keyof Settings;

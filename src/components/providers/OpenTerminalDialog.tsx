@@ -18,6 +18,7 @@ import { authApi, providersApi, settingsApi } from "@/lib/api";
 import {
   agyAuthStatusQuery,
   invalidateAgyLoginCaches,
+  useAgyRuntime,
 } from "@/lib/query/subscription";
 import {
   canSwitchAgyAccount,
@@ -246,12 +247,18 @@ export function OpenTerminalDialog({
   const [agyUseCurrentLogin, setAgyUseCurrentLogin] = useState(false);
   const queryClient = useQueryClient();
 
-  // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
+  // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚。
+  // WSL 模式下启动的是发行版里的 agy，不会切换本机授权中心账号，也不弹切换提示。
+  const agyRuntime = useAgyRuntime(
+    appId === "agy" && provider?.category === "official",
+  );
   const boundAgyAccount =
     appId === "agy" &&
     provider &&
     provider.category === "official" &&
-    canSwitchAgyAccount()
+    canSwitchAgyAccount() &&
+    agyRuntime.resolved &&
+    !agyRuntime.runsInWsl
       ? resolveManagedAccountId(provider.meta, "agy_oauth")
       : null;
   const { data: agyStatus } = useQuery({

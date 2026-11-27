@@ -169,6 +169,7 @@ import {
   canSwitchAgyAccount,
   resolveManagedAccountId,
 } from "@/lib/authBinding";
+import { useAgyRuntime } from "@/lib/query/subscription";
 import { useOpenClawLiveProviderIds } from "@/hooks/useOpenClaw";
 import { useHermesLiveProviderIds } from "@/hooks/useHermes";
 import { useZcodeLiveProviderIds } from "@/hooks/useZcode";
@@ -751,6 +752,7 @@ function ProviderFormFull({
   const [selectedAgyAccountId, setSelectedAgyAccountId] = useState<
     string | null
   >(() => resolveManagedAccountId(initialData?.meta, "agy_oauth"));
+  const agyRuntime = useAgyRuntime(appId === "agy" && category === "official");
   // Claude 官方卡绑定的 Claude 官方账号；null = 默认登录（~/.claude）
   const [selectedClaudeAccountId, setSelectedClaudeAccountId] = useState<
     string | null
@@ -3216,10 +3218,12 @@ function ProviderFormFull({
             />
           )}
 
-          {/* 切号只实现了 macOS、Windows；别的平台上不显示，卡上已有的绑定原样保留 */}
+          {/* 切号仅适用于非 WSL 的本地运行环境；不支持切号或 WSL 模式下不显示，卡上已有的绑定原样保留 */}
           {appId === "agy" &&
             category === "official" &&
-            canSwitchAgyAccount() && (
+            canSwitchAgyAccount() &&
+            agyRuntime.resolved &&
+            !agyRuntime.runsInWsl && (
               <AgyAccountSelect
                 value={selectedAgyAccountId}
                 onChange={setSelectedAgyAccountId}

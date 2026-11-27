@@ -45,8 +45,12 @@ pub(crate) fn save_from_editor(
     let binding = bound_account_id(&provider);
     // Take the sync lock first, as restores may project provider configuration.
     // Snapshots must wait until the login switch has succeeded or the row is restored.
-    let _sync_guard =
-        (binding.is_some() && keychain::supported()).then(|| sync_mutex().blocking_lock());
+    let _sync_guard = (binding.is_some()
+        && should_switch_bound_account(
+            keychain::supported(),
+            crate::commands::tool_runs_in_wsl("agy"),
+        ))
+    .then(|| sync_mutex().blocking_lock());
     let _guard = lock_native_provider_operations(state, &app);
     ProviderService::prepare_new_provider(&app, &mut provider)?;
     let previous = state.db.get_provider_by_id(&provider.id, &app)?;
@@ -61,14 +65,25 @@ pub(crate) fn save_from_editor(
     ProviderService::keep_row_if_written(state, &app, &provider.id, previous.as_ref(), written)
 }
 
+fn should_switch_bound_account(keychain_supported: bool, runs_in_wsl: bool) -> bool {
+    keychain_supported && !runs_in_wsl
+}
+
 /// 用授权中心的同一套切换逻辑，写入并核对 agy 的实际登录。
 pub(crate) async fn switch_to_bound_account(
     accounts: &AgyAccountManager,
     provider: &Provider,
 ) -> Result<(), AppError> {
-    let Some(account_id) = bound_account_id(provider).filter(|_| keychain::supported()) else {
+    let Some(account_id) = bound_account_id(provider) else {
         return Ok(());
     };
+    let runs_in_wsl = crate::commands::tool_runs_in_wsl("agy");
+    if !should_switch_bound_account(keychain::supported(), runs_in_wsl) {
+        if runs_in_wsl {
+            log::info!("[AgyAccount] Antigravity 运行在 WSL 里，忽略卡片绑定的本机账号");
+        }
+        return Ok(());
+    }
     if !accounts
         .list()
         .await
@@ -245,5 +260,13 @@ mod tests {
         let mut row = provider("Relay");
         row.settings_config["env"]["GEMINI_API_KEY"] = json!("bad\nkey");
         assert!(live_settings(&row).is_err());
+    }
+
+    #[test]
+    fn agy_bound_account_switch_skips_when_running_in_wsl() {
+        assert!(should_switch_bound_account(true, false));
+        assert!(!should_switch_bound_account(true, true));
+        assert!(!should_switch_bound_account(false, false));
+        assert!(!should_switch_bound_account(false, true));
     }
 }

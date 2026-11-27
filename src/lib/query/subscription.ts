@@ -7,15 +7,16 @@ import {
 } from "@tanstack/react-query";
 import { subscriptionApi } from "@/lib/api/subscription";
 import { kimiOAuthApi } from "@/lib/api/kimiOAuth";
-import { authApi } from "@/lib/api";
+import { authApi, settingsApi } from "@/lib/api";
 import type { AppId } from "@/lib/api/types";
+import { isWindows } from "@/lib/platform";
 import type { ProviderMeta } from "@/types";
 import type {
   ClaudeAccountPlan,
   SubscriptionQuota,
 } from "@/types/subscription";
 import type { ManagedAuthStatus } from "@/lib/api/auth";
-import { resolveManagedAccountId } from "@/lib/authBinding";
+import { isAgyRunningInWsl, resolveManagedAccountId } from "@/lib/authBinding";
 import { PROVIDER_TYPES } from "@/config/constants";
 import { appHas } from "@/config/appSpecs";
 import {
@@ -34,6 +35,30 @@ export const subscriptionKeys = {
 };
 
 export const agyAuthStatusQuery = managedAuthStatusQuery("agy_oauth");
+
+/**
+ * 判断 Antigravity 是否运行在 WSL 中（仅 Windows 查询 `["settings"]` 缓存，与后端
+ * `commands::tool_runs_in_wsl("agy")` 对齐）。在 Windows 设置尚未就绪前 `resolved`
+ * 为 `false`，避免官方卡在加载瞬间误查本机绑定账号或闪烁切换提示。
+ */
+export function useAgyRuntime(enabled = true): {
+  runsInWsl: boolean;
+  resolved: boolean;
+} {
+  const checkWsl = enabled && isWindows();
+  const { data, isPending } = useQuery({
+    queryKey: ["settings"],
+    queryFn: () => settingsApi.get(),
+    enabled: checkWsl,
+  });
+  if (!checkWsl) {
+    return { runsInWsl: false, resolved: true };
+  }
+  return {
+    runsInWsl: isAgyRunningInWsl(data?.agyConfigDir),
+    resolved: !isPending,
+  };
+}
 
 /**
  * Refresh the actual agy login and every Antigravity quota: only the account agy is

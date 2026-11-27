@@ -76,6 +76,7 @@ describe("useDirectorySettings", () => {
       if (app === "omp") return "/remote/omp";
       if (app === "dsh") return "/remote/dsh";
       if (app === "zcode") return "/remote/zcode";
+      if (app === "agy") return "/remote/agy";
       return "/remote/hermes";
     });
     selectConfigDirectoryMock.mockReset();
@@ -104,6 +105,7 @@ describe("useDirectorySettings", () => {
       omp: "/remote/omp",
       dsh: "/remote/dsh",
       zcode: "/remote/zcode",
+      agy: "/remote/agy",
     });
   });
 
@@ -117,6 +119,7 @@ describe("useDirectorySettings", () => {
     ["hermes", "hermesConfigDir"],
     ["pi", "piConfigDir"],
     ["dsh", "dshConfigDir"],
+    ["agy", "agyConfigDir"],
   ] as const)(
     "syncs the %s display when form drafts are discarded",
     async (app, field) => {
@@ -364,6 +367,7 @@ describe("useDirectorySettings", () => {
     ["pi", "piConfigDir", "/home/mock/.pi/agent"],
     ["omp", "ompConfigDir", "/home/mock/.omp/agent"],
     ["dsh", "dshConfigDir", "/home/mock/.dsh"],
+    ["agy", "agyConfigDir", "/home/mock/.gemini"],
   ] as const)(
     "resets the %s directory to its default under home",
     async (app, field, expected) => {
