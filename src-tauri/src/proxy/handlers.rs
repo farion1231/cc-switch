@@ -22,11 +22,11 @@ use super::{
     providers::{
         codex_chat_common::extract_reasoning_field_text,
         codex_chat_history::record_responses_sse_stream,
+        fable_replay::FableReplay,
         get_adapter, get_claude_api_format,
         streaming::create_anthropic_sse_stream,
         streaming_codex_anthropic::{
-            create_responses_sse_stream_from_anthropic_with_context,
-            responses_sse_events_from_anthropic_message,
+            create_responses_sse_stream_from_anthropic, responses_sse_events_from_anthropic_message,
         },
         streaming_codex_chat::create_responses_sse_stream_from_chat_with_context,
         streaming_gemini::create_anthropic_sse_stream_from_gemini,
@@ -1311,6 +1311,7 @@ async fn handle_responses_for_app(
             is_stream,
             connection_guard,
             codex_tool_context,
+            result.fable_replay,
         )
         .await;
     }
@@ -2071,6 +2072,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     is_stream: bool,
     connection_guard: Option<ActiveConnectionGuard>,
     codex_tool_context: transform_codex_chat::CodexToolContext,
+    fable_replay: Option<FableReplay>,
 ) -> Result<axum::response::Response, ProxyError> {
     let (response, mut terminal_hook) = response.take_success_terminal_hook();
     let status = response.status();
@@ -2085,7 +2087,7 @@ async fn handle_codex_anthropic_to_responses_transform(
     if response.is_sse() || (is_stream && !response.is_json()) {
         let stream = response.bytes_stream();
         let sse_stream =
-            create_responses_sse_stream_from_anthropic_with_context(stream, codex_tool_context);
+            create_responses_sse_stream_from_anthropic(stream, codex_tool_context, fable_replay);
         return build_codex_anthropic_sse_response(
             sse_stream,
             ctx,
@@ -2106,18 +2108,27 @@ async fn handle_codex_anthropic_to_responses_transform(
         read_decoded_body(response, ctx.tag, body_timeout).await?;
     let body_str = String::from_utf8_lossy(&body_bytes);
     let anthropic_response: Value = match serde_json::from_slice(&body_bytes) {
-        Ok(value) => value,
+        Ok(value) => {
+            if let Some(replay) = &fable_replay {
+                replay.record_message(&value, body_bytes.len(), &codex_tool_context)?;
+            }
+            value
+        }
         // Fallback sniffing symmetric to the chat / claude side (#2234): when the
         // upstream returns an Anthropic SSE body with an unmarked Content-Type,
         // aggregate it back into a message before continuing the conversion.
         Err(_) if body_looks_like_sse(&body_str) => {
             log::warn!("[Codex] Upstream returned an unmarked Anthropic SSE body, falling back to aggregation");
-            transform_codex_anthropic::codex_anthropic_sse_to_message_value(&body_str).map_err(
-                |e| {
-                    log::error!("[Codex] Failed to aggregate Anthropic SSE body: {e}");
-                    e
-                },
-            )?
+            transform_codex_anthropic::aggregate_codex_anthropic_sse(
+                &body_str,
+                fable_replay
+                    .as_ref()
+                    .map(|replay| (replay, &codex_tool_context)),
+            )
+            .map_err(|e| {
+                log::error!("[Codex] Failed to aggregate Anthropic SSE body: {e}");
+                e
+            })?
         }
         Err(e) => {
             log::error!(

@@ -12,6 +12,9 @@ use tokio::{net::TcpListener, sync::Mutex};
 
 const ARGUMENT_ENVELOPE: &str = "cc_switch_args";
 
+#[path = "codex_anthropic_fable_replay_tests.rs"]
+mod codex_anthropic_fable_replay_tests;
+
 type MockReply = (StatusCode, [(header::HeaderName, &'static str); 1], String);
 
 #[derive(Clone, Default)]

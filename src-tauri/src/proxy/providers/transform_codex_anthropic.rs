@@ -14,6 +14,7 @@ use super::anthropic_tool_schema::{
     needs_argument_wrapper, wrap_root_composition_schema, ANTHROPIC_TOOL_ARGS_PROPERTY,
 };
 use super::codex_compaction;
+use super::fable_replay::{FableReplay, StreamObservation};
 use super::transform_codex_chat::{
     build_codex_tool_context_from_request, response_message_item_id_indexed,
     response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
@@ -247,6 +248,22 @@ pub fn responses_request_to_anthropic(
     body: Value,
     default_max_tokens: u64,
 ) -> Result<Value, ProxyError> {
+    convert_responses_request(body, default_max_tokens, false)
+}
+
+/// Fable's replay evidence is checked against the finalized outbound request.
+pub(crate) fn prepare_fable_responses_request(
+    body: Value,
+    default_max_tokens: u64,
+) -> Result<Value, ProxyError> {
+    convert_responses_request(body, default_max_tokens, true)
+}
+
+fn convert_responses_request(
+    body: Value,
+    default_max_tokens: u64,
+    check_fable_at_send: bool,
+) -> Result<Value, ProxyError> {
     let mut result = json!({});
     let tool_context = build_codex_tool_context_from_request(&body);
     let model = body
@@ -284,7 +301,9 @@ pub fn responses_request_to_anthropic(
 
     // input → messages
     let mut messages = match body.get("input") {
-        Some(Value::Array(items)) => convert_input_to_messages(items, &tool_context)?,
+        Some(Value::Array(items)) => {
+            convert_input_to_messages(items, &tool_context, check_fable_at_send)?
+        }
         Some(Value::String(text)) if is_meaningful_text(text) => vec![json!({
             "role": "user",
             "content": [{ "type": "text", "text": text }]
@@ -295,7 +314,18 @@ pub fn responses_request_to_anthropic(
     // Normalize the history (compacted/resumed sessions may start with
     // assistant/function_call, or input may be entirely reasoning and thus empty after being dropped).
     // Drop incomplete tool turns first (they would otherwise 400), then guarantee a leading user.
-    drop_incomplete_tool_turns(&mut messages);
+    let is_fable_continuation = check_fable_at_send
+        && body
+            .get("input")
+            .and_then(Value::as_array)
+            .and_then(|items| items.last())
+            .is_some_and(|item| {
+                matches!(
+                    item.get("type").and_then(Value::as_str),
+                    Some("function_call_output" | "custom_tool_call_output" | "tool_search_output")
+                )
+            });
+    drop_incomplete_tool_turns(&mut messages, is_fable_continuation)?;
     drop_empty_messages(&mut messages);
     ensure_leading_user_message(&mut messages);
     if messages.is_empty() {
@@ -323,6 +353,7 @@ pub fn responses_request_to_anthropic(
     // Opus 5.5 / Sonnet 5.5 reject `disabled` but accept a tool turn the model
     // answered without thinking, so unsigned tool history keeps adaptive thinking.
     let thinking_history_is_valid = thinking_history_is_valid
+        || check_fable_at_send
         || crate::proxy::thinking_optimizer::accepts_unsigned_tool_history(model);
 
     // max_output_tokens → max_tokens (required)
@@ -345,8 +376,7 @@ pub fn responses_request_to_anthropic(
     if !thinking_history_is_valid {
         if cannot_disable_thinking {
             return Err(ProxyError::InvalidRequest(
-                "Anthropic model requires thinking, but the tool history has no signed thinking block to replay"
-                    .to_string(),
+                super::fable_replay::MISSING_THINKING.to_string(),
             ));
         }
         if adaptive_should_think {
@@ -584,6 +614,7 @@ fn map_tool_choice_to_anthropic(tool_choice: &Value, tool_context: &CodexToolCon
 fn convert_input_to_messages(
     items: &[Value],
     tool_context: &CodexToolContext,
+    preserve_thinking_order: bool,
 ) -> Result<Vec<Value>, ProxyError> {
     let mut messages: Vec<Value> = Vec::new();
 
@@ -729,7 +760,11 @@ fn convert_input_to_messages(
                     .and_then(|value| value.as_str())
                     .and_then(decode_anthropic_thinking_block)
                 {
-                    push_assistant_thinking_block(&mut messages, block);
+                    if preserve_thinking_order {
+                        push_block(&mut messages, "assistant", block);
+                    } else {
+                        push_assistant_thinking_block(&mut messages, block);
+                    }
                 }
             }
             // Codex 远程压缩：触发条目换成压缩提示词，历史里的压缩条目换成摘要正文，
@@ -1024,10 +1059,15 @@ fn ensure_leading_user_message(messages: &mut Vec<Value>) {
 /// call in an assistant turn to be answered together in the immediately following
 /// user turn. Dropping the whole incomplete assistant turn also avoids modifying a
 /// subset of a signed thinking/tool-use response.
-fn drop_incomplete_tool_turns(messages: &mut Vec<Value>) {
+fn drop_incomplete_tool_turns(
+    messages: &mut Vec<Value>,
+    reject_trailing_tool_results: bool,
+) -> Result<(), ProxyError> {
     let original = std::mem::take(messages);
     let mut sanitized = Vec::with_capacity(original.len());
     let mut index = 0;
+    let invalid_tool_replay =
+        || ProxyError::InvalidRequest(super::fable_replay::UNVERIFIED_REPLAY.to_string());
 
     while index < original.len() {
         let message = &original[index];
@@ -1057,6 +1097,12 @@ fn drop_incomplete_tool_turns(messages: &mut Vec<Value>) {
                 sanitized.push(message.clone());
                 sanitized.push(paired_user.unwrap().clone());
             } else if let Some(user) = paired_user {
+                if reject_trailing_tool_results
+                    && index + 2 == original.len()
+                    && !tool_result_ids.is_empty()
+                {
+                    return Err(invalid_tool_replay());
+                }
                 let mut user = user.clone();
                 drop_tool_result_blocks(&mut user);
                 if message_has_content(&user) {
@@ -1070,6 +1116,12 @@ fn drop_incomplete_tool_turns(messages: &mut Vec<Value>) {
 
         let mut message = message.clone();
         if message.get("role").and_then(Value::as_str) == Some("user") {
+            if reject_trailing_tool_results
+                && index + 1 == original.len()
+                && !message_block_ids(&message, "tool_result", "tool_use_id").is_empty()
+            {
+                return Err(invalid_tool_replay());
+            }
             // A user message not consumed as the adjacent half of a complete tool
             // pair cannot legally retain any tool_result blocks.
             drop_tool_result_blocks(&mut message);
@@ -1081,6 +1133,7 @@ fn drop_incomplete_tool_turns(messages: &mut Vec<Value>) {
     }
 
     *messages = sanitized;
+    Ok(())
 }
 
 fn message_block_ids<'a>(message: &'a Value, block_type: &str, id_field: &str) -> Vec<&'a str> {
@@ -1497,16 +1550,28 @@ impl AggregatedToolInput {
 /// stream): after looping over complete event blocks, it processes the residual
 /// buffer as the last event.
 pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
-    aggregate_anthropic_sse(body, false)
+    aggregate_anthropic_sse(body, false, None)
 }
 
 /// The Codex bridge commits tool arguments only after an explicit block stop.
 /// A closed tool can survive later text truncation in an incomplete response.
+#[cfg(test)]
 pub(crate) fn codex_anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
-    aggregate_anthropic_sse(body, true)
+    aggregate_anthropic_sse(body, true, None)
 }
 
-fn aggregate_anthropic_sse(body: &str, require_tool_stop: bool) -> Result<Value, ProxyError> {
+pub(crate) fn aggregate_codex_anthropic_sse(
+    body: &str,
+    replay: Option<(&FableReplay, &CodexToolContext)>,
+) -> Result<Value, ProxyError> {
+    aggregate_anthropic_sse(body, true, replay)
+}
+
+fn aggregate_anthropic_sse(
+    body: &str,
+    require_tool_stop: bool,
+    replay: Option<(&FableReplay, &CodexToolContext)>,
+) -> Result<Value, ProxyError> {
     let mut message: Option<Value> = None;
     // Collect blocks by index and track tool argument deltas separately from block closure.
     let mut blocks: BTreeMap<u64, Value> = BTreeMap::new();
@@ -1514,6 +1579,7 @@ fn aggregate_anthropic_sse(body: &str, require_tool_stop: bool) -> Result<Value,
     let mut stop_reason: Option<String> = None;
     let mut delta_usage: Option<Value> = None;
     let mut saw_message_stop = false;
+    let mut observation = replay.map(|(replay, _)| StreamObservation::new(replay.clone()));
 
     let mut sse_blocks = SseBlocks::new(body);
     let process_block = |block: &str,
@@ -1522,7 +1588,8 @@ fn aggregate_anthropic_sse(body: &str, require_tool_stop: bool) -> Result<Value,
                          tool_inputs: &mut BTreeMap<u64, AggregatedToolInput>,
                          stop_reason: &mut Option<String>,
                          delta_usage: &mut Option<Value>,
-                         saw_message_stop: &mut bool|
+                         saw_message_stop: &mut bool,
+                         observation: Option<&mut StreamObservation>|
      -> Result<(), ProxyError> {
         let mut data = String::new();
         for line in block.lines() {
@@ -1536,10 +1603,18 @@ fn aggregate_anthropic_sse(body: &str, require_tool_stop: bool) -> Result<Value,
         if data.trim().is_empty() || data.trim() == "[DONE]" {
             return Ok(());
         }
-        let value: Value = match serde_json::from_str(data.trim()) {
-            Ok(v) => v,
-            Err(_) => return Ok(()), // Skip events that cannot be parsed (ping, etc.)
+        let Ok(value) = serde_json::from_str::<Value>(data.trim()) else {
+            if let Some(observation) = observation {
+                observation.mark_damaged();
+            }
+            return Ok(());
         };
+        if let Some(observation) = observation {
+            let event = block
+                .lines()
+                .find_map(|line| strip_sse_field(line, "event"));
+            observation.observe_event(event, &value, block.len());
+        }
         match value.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "message_start" => {
                 // Only accept an object message; a malformed upstream could send a
@@ -1704,11 +1779,15 @@ fn aggregate_anthropic_sse(body: &str, require_tool_stop: bool) -> Result<Value,
             &mut stop_reason,
             &mut delta_usage,
             &mut saw_message_stop,
+            observation.as_mut(),
         )?;
+        if observation.as_ref().is_some_and(StreamObservation::ended) {
+            break;
+        }
     }
     // Tolerate the last event missing a trailing blank line (truncated stream).
     let tail = sse_blocks.remainder();
-    if !tail.trim().is_empty() {
+    if !tail.trim().is_empty() && !observation.as_ref().is_some_and(StreamObservation::ended) {
         process_block(
             tail,
             &mut message,
@@ -1717,7 +1796,11 @@ fn aggregate_anthropic_sse(body: &str, require_tool_stop: bool) -> Result<Value,
             &mut stop_reason,
             &mut delta_usage,
             &mut saw_message_stop,
+            observation.as_mut(),
         )?;
+    }
+    if let (Some(observation), Some((_, tools))) = (&mut observation, replay) {
+        observation.finish(tools)?;
     }
 
     let mut message = message.ok_or_else(|| {

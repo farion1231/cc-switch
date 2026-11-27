@@ -27,8 +27,10 @@ use super::{
     },
     provider_router::ProviderRouter,
     providers::{
-        codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore, get_adapter,
-        AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter, ProviderType,
+        codex_chat_history::CodexChatHistoryStore,
+        fable_replay::{self, FableReplay, FableReplayStore},
+        gemini_shadow::GeminiShadowStore,
+        get_adapter, AuthInfo, AuthStrategy, ClaudeAdapter, ProviderAdapter, ProviderType,
     },
     thinking_budget_rectifier::{
         rectify_thinking_budget, rectify_thinking_disabled, should_rectify_thinking_budget,
@@ -93,10 +95,18 @@ pub struct ForwardResult {
     /// usage 归因不能依赖 ctx.request_model（映射前的客户端别名）：上游响应
     /// 缺失 model 或回显别名时，接管流量会被记成 claude-* 并按其定价计费。
     pub outbound_model: Option<String>,
+    pub(crate) fable_replay: Option<FableReplay>,
     /// 活跃连接 RAII guard：随响应一起流转到 response_processor / handle_claude_transform，
     /// 最终被 move 进流式 body future（或非流式响应作用域），覆盖整个响应生命周期。
     pub(crate) connection_guard: Option<ActiveConnectionGuard>,
 }
+
+type ForwardOutput = (
+    ProxyResponse,
+    Option<String>,
+    Option<String>,
+    Option<FableReplay>,
+);
 
 pub struct ForwardError {
     pub error: ProxyError,
@@ -171,6 +181,7 @@ pub struct RequestForwarder {
     current_providers: Arc<RwLock<std::collections::HashMap<String, (String, String)>>>,
     gemini_shadow: Arc<GeminiShadowStore>,
     codex_chat_history: Arc<CodexChatHistoryStore>,
+    fable_replay: Arc<FableReplayStore>,
     /// 故障转移切换管理器
     failover_manager: Arc<FailoverSwitchManager>,
     /// AppHandle，用于发射事件和更新托盘
@@ -355,6 +366,7 @@ impl RequestForwarder {
             current_providers,
             gemini_shadow,
             codex_chat_history,
+            fable_replay: Arc::new(FableReplayStore::default()),
             failover_manager,
             app_handle,
             current_provider_id_at_start,
@@ -520,6 +532,11 @@ impl RequestForwarder {
         self
     }
 
+    pub(crate) fn with_fable_replay(mut self, store: Arc<FableReplayStore>) -> Self {
+        self.fable_replay = store;
+        self
+    }
+
     /// 故障转移换家时按目标家改 Codex 模型名，只对对话请求。图片、搜索这些独立接口带的是
     /// 图片 / 搜索模型，不在目标家的文本模型目录里，换成它的文本模型就发错了。
     fn maps_codex_failover_model(&self, app_type: &AppType, endpoint: &str) -> bool {
@@ -638,11 +655,7 @@ impl RequestForwarder {
         provider: &Provider,
         app_type: &AppType,
         used_half_open_permit: bool,
-        (response, claude_api_format, outbound_model): (
-            ProxyResponse,
-            Option<String>,
-            Option<String>,
-        ),
+        (response, claude_api_format, outbound_model, fable_replay): ForwardOutput,
         codex_upstream_format: Option<CodexUpstreamFormat>,
     ) -> ForwardResult {
         let result = ForwardResult {
@@ -651,6 +664,7 @@ impl RequestForwarder {
             claude_api_format,
             codex_upstream_format,
             outbound_model,
+            fable_replay,
             connection_guard: None,
         };
         if !self.routing_state_enabled() {
@@ -1453,7 +1467,7 @@ impl RequestForwarder {
         body: Value,
         original_body: Option<&ForwardBody>,
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<ForwardOutput, ProxyError> {
         let started = tokio::time::Instant::now();
         // A rectified body cannot be recovered from the original wire bytes.
         // Keep it only on Copilot paths, which can retry after a 401.
@@ -1506,7 +1520,7 @@ impl RequestForwarder {
         codex_upstream_format_out: &mut Option<CodexUpstreamFormat>,
         attempt_started: tokio::time::Instant,
         retry_auto: &mut bool,
-    ) -> Result<(ProxyResponse, Option<String>, Option<String>), ProxyError> {
+    ) -> Result<ForwardOutput, ProxyError> {
         let Attempt {
             app_type,
             method,
@@ -2027,6 +2041,7 @@ impl RequestForwarder {
 
         // 转换请求体（如果需要）
         privacy_dirty |= codex_responses_to_chat || codex_responses_to_anthropic || needs_transform;
+        let mut prepared_fable_request = false;
         let mut request_body = if codex_responses_to_chat {
             let mut mapped_body = mapped_body;
             let explicit_prompt_cache_key = mapped_body
@@ -2093,6 +2108,34 @@ impl RequestForwarder {
             if !self.keeps_resolved_model() {
                 super::providers::apply_codex_upstream_model(provider, &mut mapped_body);
             }
+            if matches!(app_type, AppType::Codex) {
+                let mapped_model = mapped_body.get("model").and_then(Value::as_str);
+                let override_model = (!is_copilot)
+                    .then(|| {
+                        provider
+                            .meta
+                            .as_ref()?
+                            .local_proxy_request_overrides
+                            .as_ref()?
+                            .body
+                            .as_ref()?
+                            .get("model")?
+                            .as_str()
+                    })
+                    .flatten();
+                // Apply the final model before selecting the Fable-specific conversion.
+                // Other models continue to consume overrides at the normal rewrite stage.
+                if let Some(model) = override_model.filter(|model| {
+                    fable_replay::is_fable_5_2(model)
+                        || mapped_model.is_some_and(fable_replay::is_fable_5_2)
+                }) {
+                    mapped_body["model"] = Value::String(model.to_owned());
+                }
+                prepared_fable_request = mapped_body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .is_some_and(fable_replay::is_fable_5_2);
+            }
             // Per-provider output ceiling override. Codex does not forward its
             // `model_max_output_tokens` in the request body, so honor the value
             // configured on the provider here — it takes precedence over any
@@ -2111,11 +2154,15 @@ impl RequestForwarder {
             }
             // Anthropic requires max_tokens, and Codex never sends max_output_tokens,
             // so this default applies to every request without a provider override.
-            let mut anthropic_body =
-                super::providers::transform_codex_anthropic::responses_request_to_anthropic(
-                    mapped_body,
-                    super::providers::transform_codex_anthropic::DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
-                )?;
+            use super::providers::transform_codex_anthropic::{
+                prepare_fable_responses_request, responses_request_to_anthropic,
+                DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS,
+            };
+            let mut anthropic_body = if prepared_fable_request {
+                prepare_fable_responses_request(mapped_body, DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS)?
+            } else {
+                responses_request_to_anthropic(mapped_body, DEFAULT_CODEX_ANTHROPIC_MAX_TOKENS)?
+            };
             // Handle the 1M-context marker [1m]: strip the model-name suffix (the
             // gateway doesn't recognize it) and set the flag so the beta header is
             // added. apply_codex_upstream_model may have just written back a model
@@ -2580,6 +2627,33 @@ impl RequestForwarder {
 
         reject_proxy_placeholder_for_managed_account_upstream(&url, &ordered_headers)?;
 
+        // Check the real wire body and credentials, after provider overrides and
+        // before sending. This value travels back only with the successful attempt.
+        let fable_replay = if prepared_fable_request {
+            let model = filtered_body
+                .get("model")
+                .and_then(Value::as_str)
+                .filter(|model| fable_replay::is_fable_5_2(model))
+                .ok_or_else(|| {
+                    ProxyError::InvalidRequest(
+                        "The outbound Fable model changed during request preparation".into(),
+                    )
+                })?;
+            let replay = FableReplay::new(
+                self.fable_replay.clone(),
+                self.session_client_provided
+                    .then_some(self.session_id.as_str()),
+                provider,
+                &url,
+                model,
+                &ordered_headers,
+            );
+            fable_replay::validate_request(&filtered_body, Some(&replay))?;
+            Some(replay)
+        } else {
+            None
+        };
+
         // 日志目标 URL 的脱敏分两种情形：
         // - 有已知密钥(log_secrets 非空)：记录脱敏后的完整 URL，剥 userinfo/query
         //   并抹掉已知密钥值，保留 host+path 便于诊断 base_url 配错路径导致的 404。
@@ -2683,7 +2757,12 @@ impl RequestForwarder {
                     }));
                 }
             }
-            Ok((response, resolved_claude_api_format, outbound_model))
+            Ok((
+                response,
+                resolved_claude_api_format,
+                outbound_model,
+                fable_replay,
+            ))
         } else {
             Err(upstream_error(response).await?)
         }

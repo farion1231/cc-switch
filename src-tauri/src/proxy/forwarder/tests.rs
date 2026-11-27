@@ -193,6 +193,7 @@ fn test_forwarder(
         current_providers: Arc::new(RwLock::new(HashMap::new())),
         gemini_shadow: Arc::new(GeminiShadowStore::new()),
         codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+        fable_replay: Arc::new(FableReplayStore::default()),
         failover_manager: Arc::new(FailoverSwitchManager::new()),
         app_handle: None,
         current_provider_id_at_start: String::new(),
@@ -586,7 +587,7 @@ async fn copilot_success_bookkeeping_preserves_actual_upstream_format() {
                 &provider,
                 &AppType::Codex,
                 false,
-                (response, None, Some("resolved-model".to_string())),
+                (response, None, Some("resolved-model".to_string()), None),
                 format,
             )
             .await;

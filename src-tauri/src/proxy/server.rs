@@ -15,7 +15,10 @@ use super::{
     handlers,
     log_codes::srv as log_srv,
     provider_router::ProviderRouter,
-    providers::{codex_chat_history::CodexChatHistoryStore, gemini_shadow::GeminiShadowStore},
+    providers::{
+        codex_chat_history::CodexChatHistoryStore, fable_replay::FableReplayStore,
+        gemini_shadow::GeminiShadowStore,
+    },
     types::*,
     ProxyError,
 };
@@ -47,6 +50,7 @@ pub struct ProxyState {
     pub gemini_shadow: Arc<GeminiShadowStore>,
     /// Codex Chat bridge history，用于恢复 previous_response_id 指向的 tool call
     pub codex_chat_history: Arc<CodexChatHistoryStore>,
+    pub(crate) fable_replay: Arc<FableReplayStore>,
     /// Copilot Auto 会话管理器，跨请求复用 /auto 选模结果与 token
     pub copilot_auto_sessions: Arc<AutoSessionManager>,
     /// AppHandle，用于发射事件和更新托盘菜单
@@ -92,6 +96,7 @@ impl ProxyServer {
             provider_router,
             gemini_shadow: Arc::new(GeminiShadowStore::default()),
             codex_chat_history: Arc::new(CodexChatHistoryStore::default()),
+            fable_replay: Arc::new(FableReplayStore::default()),
             copilot_auto_sessions: Arc::new(AutoSessionManager::default()),
             app_handle,
             failover_manager,

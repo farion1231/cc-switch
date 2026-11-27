@@ -8,6 +8,7 @@
 
 use super::codex_compaction;
 use super::codex_responses_sse as sse;
+use super::fable_replay::{FableReplay, StreamObservation};
 use super::transform_codex_anthropic::{
     anthropic_tool_uses_wrapped_arguments, build_responses_usage_from_anthropic,
     map_anthropic_stop_reason_to_status, responses_reasoning_item_from_anthropic_block,
@@ -636,6 +637,7 @@ fn extract_anthropic_sse_error(value: &Value) -> (String, Option<String>) {
 
 fn process_anthropic_sse_block(
     state: &mut AnthropicToResponsesState,
+    observation: Option<&mut StreamObservation>,
     block: &str,
 ) -> (Vec<Bytes>, bool) {
     if state.completed {
@@ -658,8 +660,25 @@ fn process_anthropic_sse_block(
         return (Vec::new(), false);
     }
     let Ok(data) = serde_json::from_str::<Value>(&data_parts.join("\n")) else {
+        if let Some(observation) = observation {
+            observation.mark_damaged();
+        }
         return (Vec::new(), false);
     };
+    if let Some(observation) = observation {
+        observation.observe_event(event_name.as_deref(), &data, block.len());
+        if observation.ended() {
+            if let Err(error) = observation.finish(&state.tool_context) {
+                return (
+                    state
+                        .failed_event(error.to_string(), Some("invalid_fable_tool_turn".into()))
+                        .into_iter()
+                        .collect(),
+                    true,
+                );
+            }
+        }
+    }
     let msg_type = data
         .get("type")
         .and_then(Value::as_str)
@@ -807,15 +826,25 @@ pub(crate) fn responses_sse_events_from_anthropic_message(
     events
 }
 
+#[cfg(test)]
 pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
     E: std::error::Error + Send + 'static,
 >(
     stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
     tool_context: CodexToolContext,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    create_responses_sse_stream_from_anthropic(stream, tool_context, None)
+}
+
+pub(crate) fn create_responses_sse_stream_from_anthropic<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    tool_context: CodexToolContext,
+    replay: Option<FableReplay>,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
         let mut sse = SseBuffer::new();
         let mut state = AnthropicToResponsesState::with_tool_context(tool_context);
+        let mut observation = replay.clone().map(StreamObservation::new);
         let mut stream_failed = false;
 
         tokio::pin!(stream);
@@ -830,7 +859,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                     // blank lines) until EOF instead of discarding it as SSE blocks.
                     if json_document_candidate(sse.pending()).is_none() {
                         while let Some(block) = sse.next_block() {
-                            let (events, failed) = process_anthropic_sse_block(&mut state, block);
+                            let (events, failed) = process_anthropic_sse_block(&mut state, observation.as_mut(), block);
                             for event in events {
                                 yield Ok(event);
                             }
@@ -846,6 +875,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                     }
                 }
                 Err(e) => {
+                    drop(observation.take());
                     if let Some(event) = state.failed_event(
                         format!("Stream error: {e}"),
                         Some("stream_error".to_string()),
@@ -865,10 +895,11 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
             if !state.response_started {
                 if let Some(candidate) = json_document_candidate(sse.pending()) {
                     if let Ok(body) = serde_json::from_str::<Value>(candidate) {
-                        for event in responses_sse_events_from_anthropic_message(
-                            &body,
-                            state.tool_context.clone(),
-                        ) {
+                        let events = match replay.as_ref().map(|replay| replay.record_message(&body, candidate.len(), &state.tool_context)) {
+                            Some(Err(error)) => state.failed_event(error.to_string(), Some("invalid_fable_tool_turn".into())).into_iter().collect(),
+                            _ => responses_sse_events_from_anthropic_message(&body, state.tool_context.clone()),
+                        };
+                        for event in events {
                             yield Ok(event);
                         }
                         state.completed = true;
@@ -876,7 +907,7 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
                 }
             }
             if !state.completed {
-                let (events, failed) = process_anthropic_sse_block(&mut state, sse.pending());
+                let (events, failed) = process_anthropic_sse_block(&mut state, observation.as_mut(), sse.pending());
                 for event in events {
                     yield Ok(event);
                 }
@@ -885,7 +916,12 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         }
 
         if !stream_failed && !state.completed {
-            if state.stop_reason.is_some() {
+            let malformed_fable = observation.as_mut().and_then(|observation| observation.finish(&state.tool_context).err());
+            if let Some(error) = malformed_fable {
+                if let Some(event) = state.failed_event(error.to_string(), Some("invalid_fable_tool_turn".into())) {
+                    yield Ok(event);
+                }
+            } else if state.stop_reason.is_some() {
                 // message_delta (stop_reason + final usage) arrived but the stream ended
                 // before message_stop; the turn is semantically complete, finalize normally.
                 for event in state.finalize() {

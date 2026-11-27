@@ -27,6 +27,7 @@ pub mod copilot_auth;
 pub mod copilot_auto;
 pub mod copilot_model_map;
 pub(crate) mod copilot_responses;
+pub(crate) mod fable_replay;
 mod gemini;
 pub(crate) mod gemini_schema;
 pub mod gemini_shadow;
