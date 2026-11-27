@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ExternalLink, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -241,7 +241,10 @@ export function RepoManagerPanel({
                         <li key={host}>
                           <button
                             type="button"
-                            className="rounded-control border border-border px-2 py-1 font-mono text-xs text-fg-2 hover:text-danger-text"
+                            className="inline-flex items-center gap-1 rounded-control border border-border px-2 py-1 font-mono text-xs text-fg-2 hover:text-danger-text"
+                            title={t("skills.repo.insecureHttpRemoveHost", {
+                              host,
+                            })}
                             aria-label={t(
                               "skills.repo.insecureHttpRemoveHost",
                               {
@@ -251,6 +254,11 @@ export function RepoManagerPanel({
                             onClick={() => insecureHttp.onRemoveHost(host)}
                           >
                             {host}
+                            <X
+                              className="h-3 w-3"
+                              strokeWidth={2}
+                              aria-hidden
+                            />
                           </button>
                         </li>
                       ))}
