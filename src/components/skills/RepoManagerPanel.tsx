@@ -41,7 +41,8 @@ export interface InsecureRepoHttpSettings {
   enabled: boolean;
   hosts: string[];
   onChange: (enabled: boolean) => void | Promise<void>;
-  onAllowHost: (host: string) => void | Promise<void>;
+  /** 必须返回 Promise：addRepo 会立刻下载，只有放行记录保存完成才能继续 */
+  onAllowHost: (host: string) => Promise<void>;
   onRemoveHost: (host: string) => void | Promise<void>;
 }
 

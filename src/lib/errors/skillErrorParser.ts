@@ -73,7 +73,8 @@ function getSuggestionI18nKey(suggestion: string): string {
     http403Token: "skills.error.http403Token",
     http404Token: "skills.error.http404Token",
     httpAuthRequired: "skills.error.httpAuthRequired",
-    useHttpsOrRemoveToken: "skills.error.suggestion.useHttpsOrRemoveToken",
+    removeHttpAllowlistOrToken:
+      "skills.error.suggestion.removeHttpAllowlistOrToken",
   };
 
   return mapping[suggestion] || suggestion;

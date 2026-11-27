@@ -228,7 +228,7 @@ impl SkillService {
             return Err(anyhow!(format_skill_error(
                 "INSECURE_HTTP_WITH_TOKEN",
                 &[("host", &repo.host)],
-                Some("useHttpsOrRemoveToken")
+                Some("removeHttpAllowlistOrToken")
             )));
         }
         let token = token.as_deref();

@@ -3576,7 +3576,7 @@
         "checkPermission": "請檢查目錄權限",
         "uninstallFirst": "請先解除安裝已安裝的同名技能",
         "checkZipContent": "請確認 ZIP 檔案包含有效的技能目錄（含 SKILL.md 檔案）",
-        "useHttpsOrRemoveToken": "請改用 HTTPS 儲存庫位址，或刪除該站點的存取權杖"
+        "removeHttpAllowlistOrToken": "請在「管理技能儲存庫」中把該主機從 HTTP 放行清單移除，或刪除該站點的存取權杖"
       }
     },
     "repo": {
@@ -3593,7 +3593,7 @@
       "invalidUrl": "無效的儲存庫 URL 格式",
       "httpsOnly": "GitLab / Gitea 儲存庫僅支援 https 位址",
       "allowInsecureHttp": "允許不安全的 HTTP 連線（僅限可信內網／自建實例）",
-      "insecureHttpWarning": "HTTP 傳輸未加密，技能內容與憑證可能在網路上被攔截或竄改。請僅在完全可信的區域網路中啟用；附帶存取令牌的要求仍只使用 HTTPS。",
+      "insecureHttpWarning": "HTTP 傳輸未加密，技能內容與憑證可能在網路上被攔截或竄改。請僅在完全可信的區域網路中啟用；附帶存取令牌的要求仍只使用 HTTPS。開關與放行清單只儲存在本機，不會隨雲端同步。",
       "token": {
         "title": "存取權杖",
         "description": "讀取私有儲存庫時使用。權杖按站點儲存在系統的憑證儲存區中（macOS 鑰匙圈、Windows 認證管理員），不隨雲端同步，只需要唯讀權限。",

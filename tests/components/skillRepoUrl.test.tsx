@@ -177,9 +177,9 @@ describe("RepoManagerPanel add form", () => {
     insecureHttp?: {
       enabled: boolean;
       hosts: string[];
-      onChange: (enabled: boolean) => void;
-      onAllowHost: (host: string) => void;
-      onRemoveHost: (host: string) => void;
+      onChange: (enabled: boolean) => void | Promise<void>;
+      onAllowHost: (host: string) => Promise<void>;
+      onRemoveHost: (host: string) => void | Promise<void>;
     },
   ) => {
     render(
@@ -238,7 +238,7 @@ describe("RepoManagerPanel add form", () => {
 
   it("accepts a plain-http repository and records its host only after opt-in", async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined);
-    const onAllowHost = vi.fn();
+    const onAllowHost = vi.fn().mockResolvedValue(undefined);
     renderPanel(onAdd, {
       enabled: true,
       hosts: [],
@@ -260,6 +260,39 @@ describe("RepoManagerPanel add form", () => {
     expect(screen.queryByText("skills.repo.httpsOnly")).not.toBeInTheDocument();
   });
 
+  it("does not add the repo until the host allowlist has been saved", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    let resolveAllowHost!: () => void;
+    const allowHostSaved = new Promise<void>((resolve) => {
+      resolveAllowHost = resolve;
+    });
+    const onAllowHost = vi.fn(() => allowHostSaved);
+    renderPanel(onAdd, {
+      enabled: true,
+      hosts: [],
+      onChange: vi.fn(),
+      onAllowHost,
+      onRemoveHost: vi.fn(),
+    });
+
+    submit("http://10.22.36.105:3000/owner/repo");
+    await waitFor(() =>
+      expect(onAllowHost).toHaveBeenCalledWith("10.22.36.105:3000"),
+    );
+    // 后端下载紧跟 addRepo，放行记录落盘前不能开始发现
+    expect(onAdd).not.toHaveBeenCalled();
+
+    resolveAllowHost();
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
+    expect(onAdd).toHaveBeenCalledWith({
+      host: "10.22.36.105:3000",
+      owner: "owner",
+      name: "repo",
+      branch: "main",
+      enabled: true,
+    });
+  });
+
   it("warns about plaintext transfer and lists hosts explicitly allowed", () => {
     const onChange = vi.fn();
     const onRemoveHost = vi.fn();
@@ -267,7 +300,7 @@ describe("RepoManagerPanel add form", () => {
       enabled: true,
       hosts: ["git.internal:3000"],
       onChange,
-      onAllowHost: vi.fn(),
+      onAllowHost: vi.fn().mockResolvedValue(undefined),
       onRemoveHost,
     });
     expect(screen.getByText("skills.repo.insecureHttpWarning")).toBeVisible();

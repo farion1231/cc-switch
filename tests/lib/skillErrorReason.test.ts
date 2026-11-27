@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { TFunction } from "i18next";
-import { skillErrorReason } from "@/lib/errors/skillErrorParser";
+import {
+  formatSkillError,
+  skillErrorReason,
+} from "@/lib/errors/skillErrorParser";
 
 const t = ((key: string, options?: Record<string, unknown>) =>
   options && Object.keys(options).length
@@ -60,5 +63,22 @@ describe("skillErrorReason", () => {
       "connection reset",
     );
     expect(skillErrorReason("", t)).toBe("common.error");
+  });
+});
+
+describe("formatSkillError", () => {
+  it("points an HTTP-allowlisted host with a token at the allowlist, not an unusable HTTPS URL (#9947)", () => {
+    const error = JSON.stringify({
+      code: "INSECURE_HTTP_WITH_TOKEN",
+      context: { host: "gitea.home.lan:3000" },
+      suggestion: "removeHttpAllowlistOrToken",
+    });
+    const { description } = formatSkillError(error, t);
+    expect(description).toContain(
+      'skills.error.insecureHttpWithToken:{"host":"gitea.home.lan:3000"}',
+    );
+    expect(description).toContain(
+      "skills.error.suggestion.removeHttpAllowlistOrToken",
+    );
   });
 });

@@ -3576,7 +3576,7 @@
         "checkPermission": "Bitte Verzeichnisberechtigungen prüfen",
         "uninstallFirst": "Bitte zuerst den vorhandenen Skill mit demselben Namen deinstallieren",
         "checkZipContent": "Bitte prüfen, ob die ZIP-Datei gültige Skill-Verzeichnisse (mit SKILL.md-Dateien) enthält",
-        "useHttpsOrRemoveToken": "Verwenden Sie eine HTTPS-Repository-URL oder entfernen Sie das Zugriffstoken für diesen Host"
+        "removeHttpAllowlistOrToken": "Entfernen Sie diesen Host unter „Skill-Repositories verwalten“ aus der HTTP-Zulassungsliste, oder löschen Sie sein Zugriffstoken"
       }
     },
     "repo": {
@@ -3593,7 +3593,7 @@
       "invalidUrl": "Ungültiges Format der Repository-URL",
       "httpsOnly": "GitLab- und Gitea-Repositories müssen eine https-Adresse verwenden",
       "allowInsecureHttp": "Unsichere HTTP-Verbindungen erlauben (nur für vertrauenswürdige LANs / Self-Hosting)",
-      "insecureHttpWarning": "HTTP überträgt unverschlüsselt: Skills und Tokens können im Netzwerk abgefangen oder ersetzt werden. Nur in einem vollständig vertrauenswürdigen lokalen Netzwerk aktivieren. Anfragen mit Zugriffstoken nutzen weiterhin HTTPS.",
+      "insecureHttpWarning": "HTTP überträgt unverschlüsselt: Skills und Tokens können im Netzwerk abgefangen oder ersetzt werden. Nur in einem vollständig vertrauenswürdigen lokalen Netzwerk aktivieren. Anfragen mit Zugriffstoken nutzen weiterhin HTTPS. Schalter und Zulassungsliste werden nur auf diesem Gerät gespeichert und nicht synchronisiert.",
       "token": {
         "title": "Zugriffstokens",
         "description": "Werden zum Lesen privater Repositories verwendet. Tokens werden pro Seite im Anmeldedatenspeicher des Systems gespeichert (macOS-Schlüsselbund, Windows-Anmeldeinformationsverwaltung) und nie synchronisiert. Lesezugriff genügt.",

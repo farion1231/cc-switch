@@ -3505,7 +3505,7 @@
         "checkPermission": "Lütfen dizin izinlerini kontrol edin",
         "uninstallFirst": "Lütfen önce aynı ada sahip mevcut beceriyi kaldırın",
         "checkZipContent": "Lütfen ZIP dosyasının geçerli beceri dizinleri içerdiğini doğrulayın (SKILL.md dosyalarıyla birlikte)",
-        "useHttpsOrRemoveToken": "HTTPS depo URL'si kullanın veya bu ana makinenin erişim belirtecini kaldırın"
+        "removeHttpAllowlistOrToken": "Beceri Depolarını Yönet bölümünde bu ana makineyi HTTP izin listesinden kaldırın veya erişim belirtecini silin"
       }
     },
     "repo": {
@@ -3522,7 +3522,7 @@
       "invalidUrl": "Geçersiz kod deposu URL biçimi",
       "httpsOnly": "GitLab ve Gitea depoları yalnızca https adresiyle desteklenir",
       "allowInsecureHttp": "Güvensiz HTTP bağlantılarına izin ver (yalnızca güvenilir LAN / kendi sunucunuz)",
-      "insecureHttpWarning": "HTTP şifrelenmemiş veri aktarır: beceriler ve tokenlar ağda ele geçirilebilir veya değiştirilebilir. Yalnızca tamamen güvenilir bir yerel ağda etkinleştirin. Erişim tokenlı istekler yine HTTPS kullanır.",
+      "insecureHttpWarning": "HTTP şifrelenmemiş veri aktarır: beceriler ve tokenlar ağda ele geçirilebilir veya değiştirilebilir. Yalnızca tamamen güvenilir bir yerel ağda etkinleştirin. Erişim tokenlı istekler yine HTTPS kullanır. Bu anahtar ve izin listesi yalnızca bu cihazda saklanır ve senkronize edilmez.",
       "token": {
         "title": "Erişim belirteçleri",
         "description": "Özel depoları okumak için kullanılır. Belirteçler site başına sistemin kimlik bilgisi deposunda (macOS Anahtar Zinciri, Windows Kimlik Bilgileri Yöneticisi) saklanır ve asla eşitlenmez. Salt okuma izni yeterlidir.",

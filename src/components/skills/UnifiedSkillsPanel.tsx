@@ -2154,7 +2154,7 @@ function RepoManagerContainer({ onClose }: { onClose: () => void }) {
         enabled: insecureHttpEnabled,
         hosts: insecureHttpHosts,
         onChange: (enabled) => void setInsecureHttpEnabled(enabled),
-        onAllowHost: (host) => void allowInsecureHttpHost(host),
+        onAllowHost: allowInsecureHttpHost,
         onRemoveHost: (host) => void removeInsecureHttpHost(host),
       }}
       tokens={{
