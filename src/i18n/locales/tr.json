@@ -1682,7 +1682,6 @@
       "filterChanges": "Değişiklikler",
       "filterLabel": "Görüntüle",
       "exportMarkdown": "Markdown dosyası olarak dışa aktar",
-      "exportShort": "Dışa aktar",
       "exported": "{{path}}'ye aktarıldı",
       "exportFailed": "Dışa aktarma başarısız oldu: {{error}}",
       "conversationRegion": "Konuşma içeriği",

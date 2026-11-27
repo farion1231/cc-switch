@@ -6,12 +6,6 @@ import type { ProviderCategory } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 
-export {
-  HERMES_PROVIDER_SOURCE_CUSTOM_LIST,
-  HERMES_PROVIDER_SOURCE_DICT,
-  HERMES_PROVIDER_SOURCE_FIELD,
-} from "./hermesProviderMeta";
-
 /**
  * A model entry under a Hermes custom_provider.
  *

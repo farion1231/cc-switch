@@ -1752,7 +1752,6 @@
       "filterChanges": "변경 사항",
       "filterLabel": "보기",
       "exportMarkdown": "마크다운 파일로 내보내기",
-      "exportShort": "내보내기",
       "exported": "내보내기를 완료했습니다: {{path}}",
       "exportFailed": "내보내기 실패: {{error}}",
       "conversationRegion": "대화 내용",

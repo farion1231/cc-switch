@@ -51,11 +51,6 @@ export const shortenPath = (path: string, projectDir?: string) => {
   return segments.length > 3 ? `…/${segments.slice(-3).join("/")}` : display;
 };
 
-/** 默认的「在 Finder 中显示」：调用后端 `reveal_session_path` 命令 */
-export const revealSessionPath = async (path: string) => {
-  await invoke("reveal_session_path", { path });
-};
-
 export interface PathChipProps {
   /** 本地绝对路径（`file://` URL 也可，会自动转换） */
   path: string;
@@ -64,8 +59,6 @@ export interface PathChipProps {
   /** 自定义显示内容；不传时显示缩短后的路径 */
   label?: ReactNode;
   searchQuery?: string;
-  /** 自定义「在 Finder 中显示」；不传时调用 `reveal_session_path` */
-  onReveal?: (path: string) => void;
   className?: string;
 }
 
@@ -78,7 +71,6 @@ export const PathChip = memo(function PathChip({
   projectDir,
   label,
   searchQuery,
-  onReveal,
   className,
 }: PathChipProps) {
   const { t } = useTranslation();
@@ -99,13 +91,10 @@ export const PathChip = memo(function PathChip({
     }
   }, [localPath, t]);
 
+  // 「在 Finder 中显示」
   const handleReveal = useCallback(async () => {
-    if (onReveal) {
-      onReveal(localPath);
-      return;
-    }
     try {
-      await revealSessionPath(localPath);
+      await invoke("reveal_session_path", { path: localPath });
     } catch (error) {
       toast.error(
         error instanceof Error && error.message
@@ -113,7 +102,7 @@ export const PathChip = memo(function PathChip({
           : t("common.error", { defaultValue: "操作失败" }),
       );
     }
-  }, [localPath, onReveal, t]);
+  }, [localPath, t]);
 
   const copyLabel = t("sessionManager.reader.path.copy", {
     defaultValue: "复制路径",

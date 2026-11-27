@@ -1753,7 +1753,6 @@
       "filterChanges": "Changes",
       "filterLabel": "View",
       "exportMarkdown": "Export as Markdown file",
-      "exportShort": "Export",
       "exported": "Exported to {{path}}",
       "exportFailed": "Export failed: {{error}}",
       "conversationRegion": "Conversation content",

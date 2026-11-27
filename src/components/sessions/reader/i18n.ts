@@ -110,7 +110,6 @@ export const READER_DEFAULTS: Record<string, string> = {
   filterChanges: "改动",
   filterLabel: "视图",
   exportMarkdown: "导出为 Markdown 文件",
-  exportShort: "导出",
   exported: "已导出到 {{path}}",
   exportFailed: "导出失败：{{error}}",
   conversationRegion: "对话内容",

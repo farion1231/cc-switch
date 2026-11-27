@@ -1753,7 +1753,6 @@
       "filterChanges": "変更",
       "filterLabel": "表示",
       "exportMarkdown": "Markdown ファイルにエクスポート",
-      "exportShort": "エクスポート",
       "exported": "{{path}} にエクスポートしました",
       "exportFailed": "エクスポートに失敗しました：{{error}}",
       "conversationRegion": "会話の内容",
