@@ -1160,6 +1160,7 @@ pub fn set_opencode_default_model(model: String) -> Result<(), AppError> {
 mod import_claude_desktop_tests {
     use super::suggested_claude_desktop_routes;
     use crate::provider::{Provider, ProviderMeta};
+    use crate::AppType;
     use serde_json::json;
 
     fn make_provider(env: serde_json::Value, provider_type: Option<&str>) -> Provider {
