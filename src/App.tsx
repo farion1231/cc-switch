@@ -104,6 +104,7 @@ import {
 import { EnvWarningBanner } from "@/components/env/EnvWarningBanner";
 import { SwitchModePanel } from "@/components/providers/mode/SwitchModePanel";
 import { proxyApi } from "@/lib/api/proxy";
+import { subagentKeys } from "@/hooks/useSubagents";
 import type { AppMode, StartupAttachFailure } from "@/types/proxy";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
@@ -1435,6 +1436,7 @@ function App() {
         queryKey: ["providers"],
         type: "all",
       });
+      await queryClient.invalidateQueries({ queryKey: subagentKeys.all });
     } catch (error) {
       console.error("[App] Failed to refresh providers after import", error);
       await refetch();

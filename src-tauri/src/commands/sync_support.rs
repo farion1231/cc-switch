@@ -5,9 +5,27 @@ use serde_json::{json, Value};
 use crate::database::Database;
 use crate::error::AppError;
 use crate::services::sync_protocol::run_with_sync_lock;
-use crate::services::{model_pricing, PromptService, ProviderService};
+use crate::services::{
+    model_pricing, PromptService, ProviderService, SubagentOwnership, SubagentService,
+};
 use crate::settings::{self, WebDavSyncStatus};
 use crate::store::AppState;
+
+/// 导入（备份恢复、云同步下载）替换数据库之前留存的本机状态，供导入后的同步使用
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PreImportState {
+    subagents: SubagentOwnership,
+}
+
+/// 在替换数据库之前调用。读失败只记日志：子代理按“本机一个文件都不归我们”保守处理，
+/// 只补写缺失文件，不删不改已有文件。
+pub(crate) fn capture_pre_import_state(db: &Database) -> PreImportState {
+    let subagents = SubagentService::capture_local_ownership(db).unwrap_or_else(|error| {
+        log::warn!("[Import] failed to capture local subagent ownership: {error}");
+        SubagentOwnership::default()
+    });
+    PreImportState { subagents }
+}
 
 /// A remote sync backend (WebDAV or S3). Both backends' Tauri commands run
 /// the shared logic below; a backend only supplies its settings, service
@@ -90,10 +108,11 @@ where
     ProjectFut: Future<Output = Result<U, AppError>>,
 {
     run_with_sync_lock(async {
-        let result = {
-            let _auto_sync_suppression = B::suppress_auto_sync();
-            download.await?
-        };
+        // Keep auto-sync suppressed through post-download projection too:
+        // reconciling device-local state (e.g. `subagents.written_hash`) writes
+        // to synced tables and must not trigger a reverse auto-upload.
+        let _auto_sync_suppression = B::suppress_auto_sync();
+        let result = download.await?;
         project(result).await
     })
     .await
@@ -144,10 +163,15 @@ pub(crate) async fn sync_download<B: SyncBackend>(state: &AppState) -> Result<Va
     // operation. Otherwise another WebDAV/S3 restore can start after the DB
     // apply but before this snapshot has finished projecting its live files.
     let sync_result = run_download_with_lock::<B, _, _, _, _, _>(
-        B::download(&db, &mut settings),
-        |result| async move {
+        async {
+            // 替换数据库前留存本机子代理文件的归属，导入后据此收敛磁盘
+            let pre_import = capture_pre_import_state(&db);
+            let result = B::download(&db, &mut settings).await?;
+            Ok((result, pre_import))
+        },
+        |(result, pre_import)| async move {
             let post_sync_result = tauri::async_runtime::spawn_blocking(move || {
-                run_post_import_sync(&app_state_for_sync)
+                run_post_import_sync(&app_state_for_sync, &pre_import)
             })
             .await
             .map_err(|e| e.to_string());
@@ -200,7 +224,10 @@ pub(crate) async fn sync_fetch_remote_info<B: SyncBackend>() -> Result<Value, St
     Ok(info.unwrap_or(json!({ "empty": true })))
 }
 
-pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError> {
+pub(crate) fn run_post_import_sync(
+    app_state: &AppState,
+    pre_import: &PreImportState,
+) -> Result<(), AppError> {
     let mut failures = Vec::new();
 
     if let Err(error) = ProviderService::sync_current_to_live(app_state) {
@@ -208,6 +235,14 @@ pub(crate) fn run_post_import_sync(app_state: &AppState) -> Result<(), AppError>
     }
     if let Err(error) = PromptService::sync_all_to_live(app_state) {
         failures.push(format!("prompts: {error}"));
+    }
+    // 按导入前留存的本机归属收敛子代理文件；外部改过的文件不碰
+    if let Err(error) = SubagentService::sync_after_restore(
+        &app_state.db,
+        &SubagentService::agents_dir(),
+        &pre_import.subagents,
+    ) {
+        failures.push(format!("subagents: {error}"));
     }
     if let Err(error) = model_pricing::sync_local_model_pricing(&app_state.db) {
         failures.push(format!("model pricing: {error}"));
@@ -350,7 +385,7 @@ mod tests {
             },
             |_| async {
                 projection_entered.store(true, Ordering::SeqCst);
-                assert!(!is_suppressed());
+                assert!(is_suppressed());
                 Ok::<(), AppError>(())
             },
         );

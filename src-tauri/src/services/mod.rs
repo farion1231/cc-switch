@@ -41,6 +41,8 @@ pub mod skill_repo_tokens;
 pub mod speedtest;
 pub mod sql_helpers;
 pub mod stream_check;
+pub mod subagent;
+pub mod subagent_models;
 pub mod subscription;
 pub mod subscription_agy;
 pub mod subscription_grok;
@@ -60,6 +62,7 @@ pub use provider::{ProviderService, ProviderSortUpdate, SwitchResult};
 pub use proxy::ProxyService;
 pub use skill::SkillService;
 pub use speedtest::{EndpointLatency, SpeedtestService};
+pub use subagent::{SubagentOwnership, SubagentService};
 pub use usage_cache::UsageCache;
 
 pub mod session_usage_codebuddy;

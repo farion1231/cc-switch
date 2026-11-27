@@ -163,6 +163,17 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "session_usage_dedup",
 ];
 
+/// Tables added after the first release whose local rows are kept when an
+/// imported snapshot does not contain them at all.
+///
+/// A snapshot without such a table comes from a version that predates the
+/// feature (a cloud snapshot uploaded by an older install, a pre-feature
+/// backup or SQL export), so it carries no opinion about that data. Letting
+/// `create_tables_on_conn` fill in an empty table would wipe the local rows —
+/// for `subagents` the post-import reconciliation would then also delete every
+/// CC Switch-managed file under `~/.claude/agents`.
+const KEEP_LOCAL_WHEN_ABSENT_TABLES: &[&str] = &["subagents"];
+
 /// A database backup entry for the UI
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -347,6 +358,8 @@ impl Database {
         // Validate the schema produced by the input itself before migrations
         // can create missing tables and accidentally make a truncated file look valid.
         Self::validate_imported_schema(&temp_conn)?;
+        // 必须在补表之前判断：补表后就分不清“快照里本来就是空表”还是“快照没有这张表”
+        let keep_local_tables = Self::tables_absent_from_import(&temp_conn)?;
 
         // 补齐缺失表/索引并执行迁移
         Self::create_tables_on_conn(&temp_conn)?;
@@ -363,8 +376,13 @@ impl Database {
             let mut main_conn = lock_conn!(self.conn);
             let backup_path =
                 Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
-            if !preserve_tables.is_empty() {
-                Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
+            let tables_to_restore: Vec<&str> = preserve_tables
+                .iter()
+                .chain(keep_local_tables.iter())
+                .copied()
+                .collect();
+            if !tables_to_restore.is_empty() {
+                Self::restore_tables(&main_conn, &temp_conn, &tables_to_restore)?;
             }
             self.replace_from_staging(&temp_conn, &mut main_conn, "替换主数据库")?;
             backup_path
@@ -418,6 +436,18 @@ impl Database {
             "仅支持导入由 CC Switch 导出的 SQL 备份文件。",
             "Only SQL backups exported by CC Switch are supported.",
         ))
+    }
+
+    /// [`KEEP_LOCAL_WHEN_ABSENT_TABLES`] 中导入内容里没有的表。必须在
+    /// `create_tables_on_conn` 补表之前调用。
+    fn tables_absent_from_import(conn: &Connection) -> Result<Vec<&'static str>, AppError> {
+        let mut absent = Vec::new();
+        for table in KEEP_LOCAL_WHEN_ABSENT_TABLES {
+            if !Self::table_exists(conn, table)? {
+                absent.push(*table);
+            }
+        }
+        Ok(absent)
     }
 
     fn restore_tables(
@@ -1311,6 +1341,7 @@ impl Database {
 
         Self::validate_sqlite_integrity(&staging_conn)?;
         Self::validate_imported_schema(&staging_conn)?;
+        let keep_local_tables = Self::tables_absent_from_import(&staging_conn)?;
         Self::ensure_incremental_auto_vacuum_on_conn(&staging_conn)?;
         Self::create_tables_on_conn(&staging_conn)?;
         Self::apply_schema_migrations_on_conn(&staging_conn)?;
@@ -1327,6 +1358,9 @@ impl Database {
                 &[backup_path.as_path()],
             )?;
             before_replace(safety_backup.as_deref())?;
+            if !keep_local_tables.is_empty() {
+                Self::restore_tables(&main_conn, &staging_conn, &keep_local_tables)?;
+            }
             self.replace_from_staging(&staging_conn, &mut main_conn, "恢复主数据库")?;
             safety_backup
         };

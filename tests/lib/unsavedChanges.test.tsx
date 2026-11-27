@@ -1,7 +1,15 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FullScreenPanel } from "@/components/common/FullScreenPanel";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Sheet, SheetPageContent } from "@/components/ui/sheet";
 import {
   discardUnsavedChanges,
@@ -113,5 +121,98 @@ describe("unsaved changes tracker", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "clear-icon" }));
     expect(hasUnsavedChanges()).toBe(true);
+  });
+
+  it("gives edits in a nested sheet editor to that editor only", () => {
+    function Outer({ showInner }: { showInner: boolean }) {
+      return (
+        <div {...useUnsavedChangesTracker()}>
+          <input aria-label="provider" />
+          {/* 外层豁免的即时操作区里打开的整页编辑器（portal 出去） */}
+          <div data-unsaved-ignore>
+            {showInner ? (
+              <Sheet open modal={false}>
+                <SheetPageContent title="Edit agent" closeLabel="back">
+                  <textarea aria-label="prompt" />
+                  <div data-unsaved-ignore>
+                    <button type="button" aria-pressed="false">
+                      view
+                    </button>
+                  </div>
+                </SheetPageContent>
+              </Sheet>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    const view = render(<Outer showInner />);
+    fireEvent.click(screen.getByRole("button", { name: "view" }));
+    expect(hasUnsavedChanges()).toBe(false);
+
+    fireEvent.input(screen.getByRole("textbox", { name: "prompt" }), {
+      target: { value: "draft" },
+    });
+    fireEvent.change(screen.getByRole("textbox", { name: "prompt" }), {
+      target: { value: "draft 2" },
+    });
+    expect(hasUnsavedChanges()).toBe(true);
+    // 关掉子编辑器后草稿随之撤销，外层没有被算成有改动
+    view.rerender(<Outer showInner={false} />);
+    expect(hasUnsavedChanges()).toBe(false);
+
+    // 外层本来就有的改动不会被内层撤掉
+    fireEvent.input(screen.getByRole("textbox", { name: "provider" }));
+    view.rerender(<Outer showInner />);
+    fireEvent.input(screen.getByRole("textbox", { name: "prompt" }));
+    view.rerender(<Outer showInner={false} />);
+    expect(hasUnsavedChanges()).toBe(true);
+  });
+
+  it("tracks Radix Select picks in a nested sheet without dirtying the outer editor", async () => {
+    Element.prototype.scrollIntoView ??= vi.fn();
+    const user = userEvent.setup();
+
+    function Outer({ showInner }: { showInner: boolean }) {
+      return (
+        <div {...useUnsavedChangesTracker()}>
+          <input aria-label="provider" />
+          <div data-unsaved-ignore>
+            {showInner ? (
+              <Sheet open modal={false}>
+                <SheetPageContent title="Edit agent" closeLabel="back">
+                  <Select defaultValue="low">
+                    <SelectTrigger aria-label="effort">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="low">low</SelectItem>
+                      <SelectItem value="high">high</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </SheetPageContent>
+              </Sheet>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
+
+    const view = render(<Outer showInner />);
+    const trigger = screen.getByRole("combobox", { name: "effort" });
+
+    // Re-picking the currently selected option does not mark dirty
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "low" }));
+    expect(hasUnsavedChanges()).toBe(false);
+
+    // Picking a different option marks only the inner sheet dirty
+    await user.click(trigger);
+    await user.click(screen.getByRole("option", { name: "high" }));
+    expect(hasUnsavedChanges()).toBe(true);
+
+    view.rerender(<Outer showInner={false} />);
+    expect(hasUnsavedChanges()).toBe(false);
   });
 });

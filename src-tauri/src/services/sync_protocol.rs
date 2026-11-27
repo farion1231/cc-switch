@@ -115,6 +115,7 @@ pub(crate) fn should_trigger_auto_sync_for_table(table: &str) -> bool {
             | "prompts"
             | "skills"
             | "skill_repos"
+            | "subagents"
             | "profiles"
             | "settings"
             | "proxy_config"
@@ -580,6 +581,7 @@ mod tests {
             "prompts",
             "skills",
             "skill_repos",
+            "subagents",
             "profiles",
             "settings",
             "proxy_config",

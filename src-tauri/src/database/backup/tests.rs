@@ -2623,3 +2623,98 @@ fn maintenance_prunes_logs_even_when_backup_destination_is_invalid() -> Result<(
     assert_eq!((logs, rollups), (0, 1));
     Ok(())
 }
+
+/// 还没有子代理功能的版本：库里没有 subagents 表
+fn pre_subagents_database() -> Result<Database, AppError> {
+    let db = Database::memory()?;
+    {
+        let conn = crate::database::lock_conn!(db.conn);
+        conn.execute("DROP TABLE subagents", [])?;
+    }
+    Ok(db)
+}
+
+fn create_subagent(db: &Database, dir: &std::path::Path, name: &str) -> Result<String, AppError> {
+    let input = crate::services::subagent::SubagentInput {
+        id: None,
+        file_name: None,
+        content: format!("---\nname: {name}\ndescription: Reviews code\n---\nbody\n"),
+        enabled: true,
+    };
+    Ok(crate::services::SubagentService::upsert(db, dir, input, false)?.id)
+}
+
+#[test]
+#[serial]
+fn sync_import_of_pre_subagents_snapshot_keeps_local_subagents() -> Result<(), AppError> {
+    use crate::services::SubagentService;
+
+    let test_home = TestHomeGuard::new();
+    let agents_dir = test_home.path().join(".claude").join("agents");
+    let remote_sql = pre_subagents_database()?.export_sql_string_for_sync()?;
+    let local_db = Database::memory()?;
+    let id = create_subagent(&local_db, &agents_dir, "reviewer")?;
+
+    let before = SubagentService::capture_local_ownership(&local_db)?;
+    local_db.import_sql_string_for_sync(&remote_sql)?;
+    SubagentService::sync_after_restore(&local_db, &agents_dir, &before)?;
+
+    let records = local_db.list_subagents()?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, id);
+    assert!(agents_dir.join("reviewer.md").exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn sync_import_of_snapshot_with_empty_subagents_table_removes_local_ones() -> Result<(), AppError> {
+    use crate::services::SubagentService;
+
+    let test_home = TestHomeGuard::new();
+    let agents_dir = test_home.path().join(".claude").join("agents");
+    // 远端认识子代理功能，只是全删了：这是明确的意见，照常收敛
+    let remote_sql = Database::memory()?.export_sql_string_for_sync()?;
+    let local_db = Database::memory()?;
+    create_subagent(&local_db, &agents_dir, "reviewer")?;
+
+    let before = SubagentService::capture_local_ownership(&local_db)?;
+    local_db.import_sql_string_for_sync(&remote_sql)?;
+    SubagentService::sync_after_restore(&local_db, &agents_dir, &before)?;
+
+    assert!(local_db.list_subagents()?.is_empty());
+    assert!(!agents_dir.join("reviewer.md").exists());
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn restore_of_pre_subagents_backup_keeps_local_subagents() -> Result<(), AppError> {
+    use crate::services::SubagentService;
+
+    let test_home = TestHomeGuard::new();
+    let agents_dir = test_home.path().join(".claude").join("agents");
+    let backup_dir = crate::config::get_app_config_dir().join("backups");
+    std::fs::create_dir_all(&backup_dir).map_err(|e| AppError::io(&backup_dir, e))?;
+    let legacy_path = backup_dir.join("legacy.db");
+    {
+        let legacy = pre_subagents_database()?;
+        let conn = crate::database::lock_conn!(legacy.conn);
+        conn.execute(
+            "VACUUM INTO ?1",
+            [legacy_path.to_string_lossy().into_owned()],
+        )?;
+    }
+
+    let db = Database::init()?;
+    let id = create_subagent(&db, &agents_dir, "reviewer")?;
+    let before = SubagentService::capture_local_ownership(&db)?;
+    db.restore_from_backup("legacy.db")?;
+    SubagentService::sync_after_restore(&db, &agents_dir, &before)?;
+
+    let records = db.list_subagents()?;
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, id);
+    assert!(agents_dir.join("reviewer.md").exists());
+    Ok(())
+}
