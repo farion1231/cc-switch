@@ -91,6 +91,8 @@ pub async fn save_settings(
             != existing.codex_stack_subagent_reasoning_effort
         || merged.codex_stack_auto_review_model != existing.codex_stack_auto_review_model;
     let tray_style_changed = merged.native_tray_menu != existing.native_tray_menu;
+    let visible_apps_changed = merged.visible_apps.clone().unwrap_or_default()
+        != existing.visible_apps.clone().unwrap_or_default();
     let auto_update_disabled = existing.auto_update_enabled && !merged.auto_update_enabled;
     let without_login_changed =
         merged.codex_proxy_without_official_login != existing.codex_proxy_without_official_login;
@@ -111,6 +113,10 @@ pub async fn save_settings(
     // 原生托盘菜单 / 托盘面板当场切换，不用重启。
     if tray_style_changed {
         crate::tray::apply_tray_style(&app);
+    } else if visible_apps_changed {
+        // 托盘只列应用页里开着的应用：不管从哪条路径保存（侧栏「从侧栏隐藏」不会再调
+        // update_tray_menu），开关一变就重建托盘。
+        crate::tray::refresh_tray_menu(&app);
     }
 
     // 关闭自动更新时立即释放内存里已下载的安装包字节，避免几十 MB 常驻进程。

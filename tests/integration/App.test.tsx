@@ -374,6 +374,32 @@ describe("App integration with MSW", () => {
     });
   });
 
+  it("invalidates OpenCode membership and both OMO selections after a tray add", async () => {
+    const { default: App } = await import("@/App");
+    const { client } = renderApp(App);
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "claude-1",
+      ),
+    );
+    const keys = [
+      ["opencodeLiveProviderIds"],
+      ["opencodeDefaultModel"],
+      ["omo", "current-provider-id"],
+      ["omo-slim", "current-provider-id"],
+    ];
+    for (const key of keys) client.setQueryData(key, "old-value");
+    emitTauriEvent("provider-switched", {
+      appType: "opencode",
+      providerId: "new-provider",
+    });
+    await waitFor(() => {
+      for (const key of keys) {
+        expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+      }
+    });
+  });
+
   it("resets provider view scroll when switching apps", async () => {
     const { default: App } = await import("@/App");
     const { container } = renderApp(App);

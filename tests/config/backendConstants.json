@@ -160,7 +160,20 @@
         "claude-desktop": false,
         "codex": false,
         "gemini": false,
-        "grokbuild": false
+        "grokbuild": false,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     },
     {
@@ -178,7 +191,20 @@
         "claude-desktop": true,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     },
     {
@@ -196,7 +222,20 @@
         "claude-desktop": false,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     },
     {
@@ -214,7 +253,20 @@
         "claude-desktop": false,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     },
     {
@@ -232,7 +284,20 @@
         "claude-desktop": false,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     },
     {
@@ -253,7 +318,20 @@
         "claude-desktop": false,
         "codex": true,
         "gemini": false,
-        "grokbuild": true
+        "grokbuild": true,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     },
     {
@@ -274,7 +352,20 @@
         "claude-desktop": false,
         "codex": false,
         "gemini": false,
-        "grokbuild": false
+        "grokbuild": false,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     },
     {
@@ -292,7 +383,20 @@
         "claude-desktop": true,
         "codex": false,
         "gemini": false,
-        "grokbuild": false
+        "grokbuild": false,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     },
     {
@@ -311,7 +415,20 @@
         "claude-desktop": false,
         "codex": false,
         "gemini": false,
-        "grokbuild": false
+        "grokbuild": false,
+        "opencode": false,
+        "openclaw": false,
+        "hermes": false,
+        "pi": false,
+        "mcode": false,
+        "kimi": false,
+        "dsh": false,
+        "agy": false,
+        "omp": false,
+        "copilot": false,
+        "workbuddy": false,
+        "codebuddy": false,
+        "zcode": false
       }
     }
   ]

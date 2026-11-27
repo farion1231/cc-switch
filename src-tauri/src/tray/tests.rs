@@ -127,7 +127,7 @@ fn tray_id_is_unique_to_app() {
 }
 
 #[test]
-fn tray_lists_switch_apps_in_sidebar_order_without_additive_apps() {
+fn tray_lists_every_app_in_sidebar_order() {
     let names: Vec<&str> = TRAY_APPS.iter().map(app_display_name).collect();
     assert_eq!(
         names,
@@ -136,12 +136,32 @@ fn tray_lists_switch_apps_in_sidebar_order_without_additive_apps() {
             "Claude Desktop",
             "Codex",
             "Gemini CLI",
-            "Grok Build"
+            "Grok Build",
+            "OpenCode",
+            "OpenClaw",
+            "Hermes",
+            "Pi",
+            "MiniMax Code",
+            "Kimi Code",
+            "DeepSeek Harness",
+            "Antigravity",
+            "Oh My Pi",
+            "Copilot CLI",
+            "WorkBuddy",
+            "CodeBuddy",
+            "ZCode",
         ]
     );
-    for app in TRAY_APPS {
-        assert!(!app.spec().additive, "{app:?} 是累加式应用，不进托盘");
-    }
+    // 新应用接进来时别再漏掉托盘。
+    let all: Vec<AppType> = AppType::all().collect();
+    assert!(all.iter().all(|app| TRAY_APPS.contains(app)));
+}
+
+#[test]
+fn apps_without_a_current_provider_are_additive_or_antigravity() {
+    assert!(has_current_provider(&AppType::Claude));
+    assert!(!has_current_provider(&AppType::OpenCode));
+    assert!(!has_current_provider(&AppType::Agy));
 }
 
 /// 前端 `src/i18n/languages.ts` 的语言表和系统区域识别对照
@@ -1650,6 +1670,7 @@ fn entry(id: &str, name: &str) -> ProviderEntry {
         needs_routing: false,
         official: false,
         blocked_from_routing: false,
+        opens_app: false,
     }
 }
 
@@ -1661,6 +1682,7 @@ fn snapshot(app: AppType, mode: TrayMode, providers: Vec<ProviderEntry>) -> AppS
         providers,
         queue: Vec::new(),
         stack_members: Vec::new(),
+        added: None,
         quota: None,
         service_down: false,
         needs_attention: false,
@@ -2375,6 +2397,376 @@ fn problems_drop_attach_failures_once_the_app_routes_again() {
     assert!(clear_app_problems(&AppType::Codex));
     assert!(!clear_app_problems(&AppType::Codex));
     assert!(collect_problems(None, &rerouted).is_empty());
+}
+
+fn additive(added: Option<Vec<&str>>) -> AppSnapshot {
+    let mut snapshot = snapshot(
+        AppType::OpenCode,
+        TrayMode::Additive,
+        vec![entry("a", "Alpha"), entry("b", "Beta")],
+    );
+    snapshot.current_id = None;
+    snapshot.added = added.map(|ids| ids.into_iter().map(str::to_string).collect());
+    snapshot
+}
+
+fn provider(meta: serde_json::Value, settings: serde_json::Value) -> Provider {
+    let mut provider = Provider::with_id("test".into(), "Test".into(), settings, None);
+    provider.meta = Some(serde_json::from_value(meta).unwrap());
+    provider
+}
+
+#[test]
+fn managed_flag_decides_what_is_added_for_apps_without_a_live_read() {
+    let db = crate::database::Database::memory().unwrap();
+    let row = |id: &str, managed: serde_json::Value| {
+        let mut row = provider(
+            serde_json::json!({ "liveConfigManaged": managed }),
+            serde_json::json!({}),
+        );
+        row.id = id.to_string();
+        (id.to_string(), row)
+    };
+    let rows: indexmap::IndexMap<String, Provider> = [
+        row("in", serde_json::json!(true)),
+        row("out", serde_json::json!(false)),
+    ]
+    .into_iter()
+    .collect();
+
+    for app in [
+        AppType::Mcode,
+        AppType::Kimi,
+        AppType::Dsh,
+        AppType::WorkBuddy,
+        AppType::Codebuddy,
+    ] {
+        assert_eq!(
+            added_provider_ids(&db, &app, &rows),
+            Some(vec!["in".to_string()]),
+            "{app:?}"
+        );
+    }
+}
+
+#[test]
+fn additive_rows_check_what_is_added_and_click_to_add() {
+    let snapshot = additive(Some(vec!["a"]));
+    assert_eq!(app_row_title(&zh(), &snapshot), "OpenCode · 已添加 1 家");
+    assert_eq!(
+        provider_rows(&zh(), &snapshot),
+        vec![
+            TrayEntry::check("prov:opencode:a", "Alpha", true, true),
+            TrayEntry::check("prov:opencode:b", "Beta", true, false),
+        ]
+    );
+    assert_eq!(
+        switch_feedback(&AppType::OpenCode, TrayMode::Additive, "Beta".into()),
+        Some(TrayFeedback::Added {
+            app: AppType::OpenCode,
+            name: "Beta".into()
+        })
+    );
+}
+
+#[test]
+fn additive_rows_cannot_be_clicked_when_the_config_is_unreadable() {
+    let snapshot = additive(None);
+    assert_eq!(app_row_title(&zh(), &snapshot), "OpenCode · 读不到配置文件");
+    assert_eq!(
+        provider_rows(&zh(), &snapshot),
+        vec![
+            TrayEntry::label("info:opencode:blocked:a", "Alpha"),
+            TrayEntry::label("info:opencode:blocked:b", "Beta"),
+        ]
+    );
+}
+
+#[test]
+fn official_cards_in_additive_apps_open_the_app_and_are_not_counted_as_models() {
+    let db = crate::database::Database::memory().unwrap();
+    for app in [AppType::Copilot, AppType::WorkBuddy, AppType::Codebuddy] {
+        let mut official = provider(
+            serde_json::json!({"liveConfigManaged": true}),
+            serde_json::json!({}),
+        );
+        official.id = "login".into();
+        official.name = "Official".into();
+        official.category = Some("official".into());
+        let rows = [(official.id.clone(), official.clone())]
+            .into_iter()
+            .collect();
+        assert_eq!(added_provider_ids(&db, &app, &rows), Some(vec![]));
+        let login = provider_entry(&app, &official, &TrayAccountLabels::default());
+        let mut snapshot = snapshot(
+            app.clone(),
+            TrayMode::Additive,
+            vec![login, entry("custom", "Custom")],
+        );
+        snapshot.added = Some(vec!["custom".into()]);
+        let rows = provider_rows(&en(), &snapshot);
+        let card_id = format!("nav:app:{app}:card:login");
+        assert_eq!(rows[0], TrayEntry::item(card_id.clone(), "Official"));
+        assert_eq!(
+            parse_nav_id(&card_id),
+            Some(TrayNavigation {
+                app: Some(app.as_str().to_string()),
+                ..Default::default()
+            })
+        );
+        assert_eq!(row_provider_id(&card_id, app.as_str()), Some("login"));
+        assert_eq!(
+            rows[1],
+            TrayEntry::check(format!("prov:{app}:custom"), "Custom", true, true)
+        );
+        snapshot.added = None;
+        assert_eq!(provider_rows(&en(), &snapshot)[0], rows[0]);
+    }
+    // Legacy Copilot login cards need no explicit official category.
+    assert!(provider_opens_app(
+        &AppType::Copilot,
+        &provider(serde_json::json!({}), serde_json::json!({}))
+    ));
+    assert!(!provider_opens_app(
+        &AppType::Copilot,
+        &provider(
+            serde_json::json!({}),
+            serde_json::json!({"provider": {"type": "openai", "baseUrl": "https://example.com"}, "models": []}),
+        )
+    ));
+}
+
+struct AdditiveTrayFixture {
+    previous_settings: crate::settings::AppSettings,
+    _env: crate::test_support::EnvVars,
+    state: AppState,
+    config: std::path::PathBuf,
+    _home: tempfile::TempDir,
+}
+
+impl AdditiveTrayFixture {
+    fn new() -> Self {
+        let home = tempfile::tempdir().unwrap();
+        let env = crate::test_support::EnvVars::new().set("CC_SWITCH_TEST_HOME", home.path());
+        let previous_settings = crate::settings::get_settings();
+        let directory = home.path().join("opencode");
+        std::fs::create_dir_all(&directory).unwrap();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            opencode_config_dir: Some(directory.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+        Self {
+            previous_settings,
+            _env: env,
+            state: AppState::new(std::sync::Arc::new(
+                crate::database::Database::memory().unwrap(),
+            )),
+            config: directory.join("opencode.json"),
+            _home: home,
+        }
+    }
+
+    fn save(&self, id: &str, category: Option<&str>) {
+        let mut row = Provider::with_id(
+            id.into(),
+            id.into(),
+            serde_json::json!({
+                "npm": "@ai-sdk/openai-compatible", "models": {"test": {"name": "Test"}}
+            }),
+            None,
+        );
+        row.category = category.map(str::to_string);
+        self.state
+            .db
+            .save_provider(&AppType::OpenCode, &row)
+            .unwrap();
+    }
+
+    fn break_row(&self, id: &str) {
+        self.state
+            .db
+            .conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE providers SET meta = '{' WHERE app_type = 'opencode' AND id = ?1",
+                [id],
+            )
+            .unwrap();
+    }
+}
+
+impl Drop for AdditiveTrayFixture {
+    fn drop(&mut self) {
+        crate::settings::update_settings(self.previous_settings.clone()).unwrap();
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn tray_adds_readable_providers_even_when_another_row_is_broken_and_never_removes() {
+    let fixture = AdditiveTrayFixture::new();
+    fixture.save("good", None);
+    fixture.save("broken", None);
+    fixture.break_row("broken");
+    assert!(matches!(
+        add_provider_from_tray(&fixture.state, &AppType::OpenCode, "good").unwrap(),
+        ClickOutcome::Switched {
+            mode: TrayMode::Additive,
+            ..
+        }
+    ));
+    assert!(crate::opencode_config::get_providers()
+        .unwrap()
+        .contains_key("good"));
+    let saved = std::fs::read(&fixture.config).unwrap();
+    assert!(matches!(
+        add_provider_from_tray(&fixture.state, &AppType::OpenCode, "good").unwrap(),
+        ClickOutcome::Unchanged
+    ));
+    assert_eq!(std::fs::read(&fixture.config).unwrap(), saved);
+    assert!(add_provider_from_tray(&fixture.state, &AppType::OpenCode, "broken").is_err());
+}
+
+#[test]
+#[serial_test::serial]
+fn tray_add_does_not_overwrite_an_unreadable_live_config() {
+    let fixture = AdditiveTrayFixture::new();
+    fixture.save("good", None);
+    std::fs::write(&fixture.config, "{broken").unwrap();
+    assert!(matches!(
+        add_provider_from_tray(&fixture.state, &AppType::OpenCode, "good").unwrap(),
+        ClickOutcome::Unchanged
+    ));
+    assert_eq!(std::fs::read_to_string(&fixture.config).unwrap(), "{broken");
+}
+
+#[test]
+#[serial_test::serial]
+fn omo_membership_uses_its_category_and_ignores_unreadable_rows() {
+    let fixture = AdditiveTrayFixture::new();
+    fixture.save("model", None);
+    fixture.save("omo", Some("omo"));
+    fixture.save("broken", Some("omo-slim"));
+    fixture
+        .state
+        .db
+        .set_omo_provider_current(&AppType::OpenCode, "broken", "omo-slim")
+        .unwrap();
+    fixture.break_row("broken");
+    std::fs::write(&fixture.config, r#"{"provider":{"model":{},"omo":{}}}"#).unwrap();
+    let rows = fixture
+        .state
+        .db
+        .get_provider_rows(&AppType::OpenCode)
+        .unwrap()
+        .readable;
+    assert_eq!(
+        added_provider_ids(&fixture.state.db, &AppType::OpenCode, &rows),
+        Some(vec!["model".into()])
+    );
+    fixture
+        .state
+        .db
+        .set_omo_provider_current(&AppType::OpenCode, "omo", "omo")
+        .unwrap();
+    let ids = added_provider_ids(&fixture.state.db, &AppType::OpenCode, &rows).unwrap();
+    assert_eq!(ids.len(), 2);
+    assert!(ids.contains(&"model".into()));
+    assert!(ids.contains(&"omo".into()));
+}
+
+#[test]
+#[serial_test::serial]
+fn external_membership_changes_invalidate_the_native_menu_status() {
+    let fixture = AdditiveTrayFixture::new();
+    fixture.save("model", None);
+    std::fs::write(&fixture.config, r#"{"provider":{"model":{}}}"#).unwrap();
+    let (_, before) = collect_status(&fixture.state, &en()).unwrap();
+    assert_eq!(
+        collect_status(&fixture.state, &en()).unwrap().1,
+        before,
+        "unchanged configs must not keep rebuilding an open menu"
+    );
+    std::fs::write(&fixture.config, "{}").unwrap();
+    let (_, removed) = collect_status(&fixture.state, &en()).unwrap();
+    assert_ne!(before, removed);
+    std::fs::write(&fixture.config, "{broken").unwrap();
+    let (_, unreadable) = collect_status(&fixture.state, &en()).unwrap();
+    assert_ne!(removed, unreadable);
+    std::fs::write(&fixture.config, "{}").unwrap();
+    assert_eq!(collect_status(&fixture.state, &en()).unwrap().1, removed);
+}
+
+struct ZCodeTrayFixture {
+    previous_settings: crate::settings::AppSettings,
+    _env: crate::test_support::EnvVars,
+    db: crate::database::Database,
+    config: std::path::PathBuf,
+    _home: tempfile::TempDir,
+}
+
+impl ZCodeTrayFixture {
+    fn new() -> Self {
+        let home = tempfile::tempdir().unwrap();
+        let env = crate::test_support::EnvVars::new().set("CC_SWITCH_TEST_HOME", home.path());
+        let previous_settings = crate::settings::get_settings();
+        let zcode_dir = home.path().join("zcode");
+        let v2_dir = zcode_dir.join("v2");
+        std::fs::create_dir_all(&v2_dir).unwrap();
+        crate::settings::update_settings(crate::settings::AppSettings {
+            zcode_config_dir: Some(zcode_dir.to_string_lossy().into_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+        Self {
+            previous_settings,
+            _env: env,
+            db: crate::database::Database::memory().unwrap(),
+            config: v2_dir.join("provider_config.json"),
+            _home: home,
+        }
+    }
+}
+
+impl Drop for ZCodeTrayFixture {
+    fn drop(&mut self) {
+        crate::settings::update_settings(self.previous_settings.clone()).unwrap();
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn zcode_membership_reads_live_config_and_disables_when_unreadable() {
+    let fixture = ZCodeTrayFixture::new();
+    let mut rows = indexmap::IndexMap::new();
+    for id in ["z1", "z2"] {
+        let mut row = provider(serde_json::json!({}), serde_json::json!({}));
+        row.id = id.to_string();
+        rows.insert(id.to_string(), row);
+    }
+
+    assert_eq!(
+        added_provider_ids(&fixture.db, &AppType::ZCode, &rows),
+        Some(vec![])
+    );
+
+    std::fs::write(
+        &fixture.config,
+        r#"{"config":{"providerConfigRules":{"providerRules":[{"providerId":"z1","config":{}},{"providerId":"external","config":{}}]}}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        added_provider_ids(&fixture.db, &AppType::ZCode, &rows),
+        Some(vec!["z1".to_string()])
+    );
+
+    std::fs::write(&fixture.config, "{broken").unwrap();
+    assert_eq!(
+        added_provider_ids(&fixture.db, &AppType::ZCode, &rows),
+        None
+    );
 }
 
 // ─── Antigravity 官方账号区 ───
