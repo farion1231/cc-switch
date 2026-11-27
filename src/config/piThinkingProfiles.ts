@@ -28,6 +28,17 @@ interface PiThinkingProfile {
  * defaults" choice.
  */
 export const piThinkingProfiles = {
+  offHighOnly: {
+    map: {
+      off: "none",
+      minimal: null,
+      low: null,
+      medium: null,
+      high: "high",
+      xhigh: null,
+      max: null,
+    },
+  },
   xhighAndMax: {
     map: {
       xhigh: "xhigh",
