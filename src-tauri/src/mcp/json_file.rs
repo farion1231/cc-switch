@@ -29,6 +29,7 @@ impl JsonMcpFile {
                 "command",
                 "args",
                 "env",
+                "cwd",
                 "url",
                 "headers",
                 "type",
@@ -166,7 +167,7 @@ impl JsonMcpFile {
         }
     }
 
-    fn transport_spec(&self, spec: &Value) -> Value {
+    pub(crate) fn transport_spec(&self, spec: &Value) -> Value {
         let mut spec = self.unified_spec(spec);
         if let Some(object) = spec.as_object_mut() {
             object.retain(|key, _| self.transport_fields().contains(&key.as_str()));
