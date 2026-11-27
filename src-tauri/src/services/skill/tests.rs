@@ -3872,6 +3872,57 @@ fn resolve_skill_source_dir_finds_two_level_catalog_skill() {
 }
 
 #[test]
+fn resolve_skill_source_dir_finds_skill_under_hidden_client_dir() {
+    // #10040：nextlevelbuilder/ui-ux-pro-max-skill 只把技能放在
+    // .claude/skills/ui-ux-pro-max，skills.sh 只给 skillId。
+    let temp = tempdir().expect("tempdir");
+    let hidden_skill = temp
+        .path()
+        .join(".claude")
+        .join("skills")
+        .join("ui-ux-pro-max");
+    write_skill(&hidden_skill, "ui-ux-pro-max");
+    write_skill(
+        &temp
+            .path()
+            .join("cli")
+            .join("assets")
+            .join("skills")
+            .join("brand"),
+        "brand",
+    );
+
+    let resolved = SkillService::resolve_skill_source_dir(temp.path(), "ui-ux-pro-max")
+        .expect("skill stored only under .claude/skills should resolve");
+
+    assert_eq!(resolved, hidden_skill);
+}
+
+#[test]
+fn resolve_skill_source_dir_prefers_visible_copy_over_hidden_dir() {
+    let temp = tempdir().expect("tempdir");
+    write_skill(
+        &temp.path().join(".agents").join("skills").join("foo"),
+        "foo",
+    );
+    let visible = temp.path().join("skills").join("foo");
+    write_skill(&visible, "foo");
+
+    let resolved =
+        SkillService::resolve_skill_source_dir(temp.path(), "foo").expect("should resolve foo");
+
+    assert_eq!(resolved, visible);
+}
+
+#[test]
+fn find_skill_dir_by_name_never_enters_git_dir() {
+    let temp = tempdir().expect("tempdir");
+    write_skill(&temp.path().join(".git").join("foo"), "foo");
+
+    assert!(SkillService::find_skill_dir_by_name(temp.path(), "foo").is_none());
+}
+
+#[test]
 fn resolve_skill_source_dir_returns_none_for_wrapper_without_inner_skill() {
     // 同名 wrapper 存在、无 SKILL.md，且无 inner skill / root SKILL.md 可兜底时，
     // 必须返回 None——守住 #4141 这个 bug class 的负例（不能把空壳目录当源目录）。
