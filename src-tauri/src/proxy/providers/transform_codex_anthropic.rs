@@ -1477,6 +1477,14 @@ struct AggregatedToolInput {
     closed: bool,
 }
 
+impl AggregatedToolInput {
+    fn append(&mut self, partial: &str) {
+        self.partial_json
+            .get_or_insert_with(String::new)
+            .push_str(partial);
+    }
+}
+
 /// Aggregates an Anthropic Messages **SSE stream** (with no Content-Type marker)
 /// back into a single Anthropic non-streaming message JSON.
 ///
@@ -1487,10 +1495,18 @@ struct AggregatedToolInput {
 ///
 /// It also tolerates the last event missing a trailing blank line (truncated
 /// stream): after looping over complete event blocks, it processes the residual
-/// buffer as the last event. Tool arguments are committed only by an explicit
-/// content_block_stop; an unclosed tool rejects the aggregated response. A closed
-/// tool can survive later text truncation, with the response marked incomplete.
+/// buffer as the last event.
 pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
+    aggregate_anthropic_sse(body, false)
+}
+
+/// The Codex bridge commits tool arguments only after an explicit block stop.
+/// A closed tool can survive later text truncation in an incomplete response.
+pub(crate) fn codex_anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
+    aggregate_anthropic_sse(body, true)
+}
+
+fn aggregate_anthropic_sse(body: &str, require_tool_stop: bool) -> Result<Value, ProxyError> {
     let mut message: Option<Value> = None;
     // Collect blocks by index and track tool argument deltas separately from block closure.
     let mut blocks: BTreeMap<u64, Value> = BTreeMap::new();
@@ -1559,9 +1575,11 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
                             json!({ "type": "text" })
                         }
                     };
-                    tool_inputs.remove(&index);
-                    if block.get("type").and_then(Value::as_str) == Some("tool_use") {
-                        tool_inputs.insert(index, AggregatedToolInput::default());
+                    if require_tool_stop {
+                        tool_inputs.remove(&index);
+                        if block.get("type").and_then(Value::as_str) == Some("tool_use") {
+                            tool_inputs.insert(index, AggregatedToolInput::default());
+                        }
                     }
                     blocks.insert(index, block);
                 }
@@ -1594,24 +1612,23 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
                             }
                         }
                         "input_json_delta" => {
-                            if let Some(input) = tool_inputs.get_mut(&index) {
-                                if input.closed {
-                                    return Err(ProxyError::TransformError(format!(
-                                        "anthropic SSE aggregation: tool arguments arrived after content_block_stop at index {index}"
-                                    )));
-                                }
-                                let partial = delta
-                                    .get("partial_json")
-                                    .and_then(Value::as_str)
-                                    .ok_or_else(|| {
+                            let partial = delta.get("partial_json").and_then(Value::as_str);
+                            if require_tool_stop {
+                                if let Some(input) = tool_inputs.get_mut(&index) {
+                                    if input.closed {
+                                        return Err(ProxyError::TransformError(format!(
+                                            "anthropic SSE aggregation: tool arguments arrived after content_block_stop at index {index}"
+                                        )));
+                                    }
+                                    let partial = partial.ok_or_else(|| {
                                         ProxyError::TransformError(format!(
                                             "anthropic SSE aggregation: invalid tool argument delta at index {index}"
                                         ))
                                     })?;
-                                input
-                                    .partial_json
-                                    .get_or_insert_with(String::new)
-                                    .push_str(partial);
+                                    input.append(partial);
+                                }
+                            } else if let Some(partial) = partial {
+                                tool_inputs.entry(index).or_default().append(partial);
                             }
                         }
                         _ => {}
@@ -1621,12 +1638,20 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
             "content_block_stop" => {
                 if let Some(index) = value.get("index").and_then(|v| v.as_u64()) {
                     if let Some(input) = tool_inputs.get_mut(&index) {
-                        if let Some(accum) = &input.partial_json {
-                            let parsed: Value = serde_json::from_str(accum).map_err(|_| {
-                                ProxyError::TransformError(format!(
-                                    "anthropic SSE aggregation: invalid tool arguments at index {index}"
-                                ))
-                            })?;
+                        if let Some(accum) = input
+                            .partial_json
+                            .as_deref()
+                            .filter(|accum| require_tool_stop || !accum.trim().is_empty())
+                        {
+                            let parsed: Value = match serde_json::from_str(accum) {
+                                Ok(value) => value,
+                                Err(_) if !require_tool_stop => json!({}),
+                                Err(_) => {
+                                    return Err(ProxyError::TransformError(format!(
+                                        "anthropic SSE aggregation: invalid tool arguments at index {index}"
+                                    )));
+                                }
+                            };
                             if let Some(block) = blocks.get_mut(&index) {
                                 block["input"] = parsed;
                             }
@@ -1694,7 +1719,10 @@ pub fn anthropic_sse_to_message_value(body: &str) -> Result<Value, ProxyError> {
         )
     })?;
 
-    if let Some((index, _)) = tool_inputs.iter().find(|(_, input)| !input.closed) {
+    if let Some((index, _)) = tool_inputs
+        .iter()
+        .find(|(_, input)| require_tool_stop && !input.closed)
+    {
         return Err(ProxyError::TransformError(format!(
             "anthropic SSE aggregation: tool block at index {index} ended before content_block_stop"
         )));
@@ -2039,7 +2067,7 @@ mod tests {
                 )
             })
             .collect();
-        let message = anthropic_sse_to_message_value(&wire).unwrap();
+        let message = codex_anthropic_sse_to_message_value(&wire).unwrap();
         let response = anthropic_response_to_responses_with_context(message, &context).unwrap();
         assert_eq!(
             serde_json::from_str::<Value>(response["output"][0]["arguments"].as_str().unwrap())
@@ -2073,7 +2101,7 @@ mod tests {
             .iter()
             .map(|event| format!("data: {event}\n\n"))
             .collect();
-        anthropic_sse_to_message_value(&wire)
+        codex_anthropic_sse_to_message_value(&wire)
     }
 
     #[test]

@@ -2112,10 +2112,12 @@ async fn handle_codex_anthropic_to_responses_transform(
         // aggregate it back into a message before continuing the conversion.
         Err(_) if body_looks_like_sse(&body_str) => {
             log::warn!("[Codex] Upstream returned an unmarked Anthropic SSE body, falling back to aggregation");
-            transform_codex_anthropic::anthropic_sse_to_message_value(&body_str).map_err(|e| {
-                log::error!("[Codex] Failed to aggregate Anthropic SSE body: {e}");
-                e
-            })?
+            transform_codex_anthropic::codex_anthropic_sse_to_message_value(&body_str).map_err(
+                |e| {
+                    log::error!("[Codex] Failed to aggregate Anthropic SSE body: {e}");
+                    e
+                },
+            )?
         }
         Err(e) => {
             log::error!(

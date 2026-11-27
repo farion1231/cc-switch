@@ -1698,3 +1698,6 @@ data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\
         );
     }
 }
+
+#[cfg(test)]
+mod codex_anthropic_schema_tests;
