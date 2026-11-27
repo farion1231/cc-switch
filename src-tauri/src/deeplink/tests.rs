@@ -183,6 +183,20 @@ fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
 
 /// DeepSeek Harness 的 MCP 链接写进 DSH 的标记（Web 与 Desktop 共用）
 #[test]
+fn test_parse_mcp_deeplink_accepts_zcode() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+    for apps in ["zcode", "claude,zcode"] {
+        let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
+        let request = parse_deeplink_url(&url).expect("zcode is a valid MCP target");
+        assert!(
+            parse_mcp_apps(request.apps.as_deref().unwrap())
+                .unwrap()
+                .zcode
+        );
+    }
+}
+
+#[test]
 fn test_parse_mcp_deeplink_accepts_dsh() {
     let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
     for apps in ["dsh", "claude,dsh"] {
@@ -199,7 +213,7 @@ fn test_parse_mcp_deeplink_accepts_dsh() {
 /// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
 #[test]
 fn test_parse_provider_deeplink_accepts_the_pi_family_apps_with_a_model() {
-    for app in ["mcode", "kimi", "dsh", "omp", "workbuddy"] {
+    for app in ["mcode", "kimi", "dsh", "omp", "workbuddy", "zcode"] {
         let request = parse_deeplink_url(&provider_link(app, None))
             .unwrap_or_else(|err| panic!("{app} link should parse: {err}"));
         assert_eq!(request.app.as_deref(), Some(app));
@@ -2497,6 +2511,28 @@ fn test_dsh_link_is_added_to_every_profile() {
             "{profile}: {patch}"
         );
     }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_zcode_link_is_added_to_provider_config() {
+    let home = TempUserHome::new();
+    std::fs::create_dir_all(home.path().join(".zcode")).unwrap();
+
+    let (state, id) = import_pi_family_link("zcode", Some("anthropic"));
+
+    // ZCode 的 providerId 只认 `[A-Za-z0-9:_-]`，中文名要换成 slug
+    assert_slug_id(&id);
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::ZCode)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.settings_config["kind"], "anthropic");
+    let live = &crate::zcode_config::get_providers().unwrap()[&id];
+    assert_eq!(live["kind"], "anthropic");
+    assert_eq!(live["options"]["baseURL"], "https://api.example.com/v1");
+    assert!(live["models"].get("example-model").is_some(), "{live}");
 }
 
 #[test]

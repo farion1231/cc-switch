@@ -878,6 +878,7 @@ command = "echo"
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1033,6 +1034,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1108,6 +1110,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1163,6 +1166,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1207,6 +1211,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1398,6 +1403,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1463,6 +1469,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1528,6 +1535,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1594,6 +1602,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1683,6 +1692,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1777,6 +1787,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1809,6 +1820,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1864,7 +1876,8 @@ fn resync_targets_default_to_managed_apps_and_reject_unsupported() {
             "omp",
             "copilot",
             "workbuddy",
-            "codebuddy"
+            "codebuddy",
+            "zcode"
         ]
     );
     assert_eq!(McpService::resync_targets(Some(&[])).unwrap(), all);
@@ -2076,4 +2089,53 @@ fn concurrent_toggles_keep_every_server_in_live_config() {
     let written = live["mcpServers"].as_object().expect("mcpServers object");
     let missing: Vec<&String> = ids.iter().filter(|id| !written.contains_key(*id)).collect();
     assert!(missing.is_empty(), "lost concurrent toggles: {missing:?}");
+}
+
+/// ZCode 和 Kimi Code 等应用一样先写 `cli/config.json`、成功才入库：文件坏了时
+/// 开关和删除都报错，库里保持原样，界面才能按原值重试。
+#[test]
+fn zcode_mcp_writes_file_before_db_and_write_failure_keeps_db() {
+    let _guard = test_mutex().lock().unwrap();
+    reset_test_fs();
+    let path = ensure_test_home().join(".zcode/cli/config.json");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, json!({"hooks": {"keep": true}}).to_string()).unwrap();
+    let state = create_test_state().unwrap();
+
+    let server: McpServer = serde_json::from_value(
+        json!({"id":"demo","name":"Demo","server":{"type":"stdio","command":"node"},"apps":{"zcode":true}}),
+    )
+    .unwrap();
+    McpService::upsert_server(&state, server.clone()).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(written["mcp"]["servers"]["demo"]["command"], "node");
+    assert_eq!(written["mcp"]["servers"]["demo"]["enabled"], true);
+    assert_eq!(written["hooks"]["keep"], true);
+
+    fs::write(&path, "invalid json").unwrap();
+    assert!(McpService::toggle_app(&state, &server.id, AppType::ZCode, false).is_err());
+    assert!(
+        state.db.get_all_mcp_servers().unwrap()[&server.id]
+            .apps
+            .zcode
+    );
+    assert!(McpService::delete_server(&state, &server.id).is_err());
+    assert!(state
+        .db
+        .get_all_mcp_servers()
+        .unwrap()
+        .contains_key(&server.id));
+
+    fs::write(
+        &path,
+        json!({"hooks": {"keep": true}, "mcp": {"servers": {"demo": {"type": "stdio", "command": "node", "enabled": true}}}})
+            .to_string(),
+    )
+    .unwrap();
+    assert!(McpService::delete_server(&state, &server.id).unwrap());
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(written["mcp"]["servers"].get("demo").is_none());
+    assert_eq!(written["hooks"]["keep"], true);
 }

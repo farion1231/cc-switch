@@ -107,6 +107,7 @@ fn parse_provider_deeplink(
             | "dsh"
             | "omp"
             | "workbuddy"
+            | "zcode"
     ) {
         return Err(AppError::InvalidInput(format!(
             "Invalid provider app type: '{app}'"
@@ -142,10 +143,10 @@ fn parse_provider_deeplink(
     // Extract optional fields
     let model = params.get("model").cloned();
     // 这几家的节点没有模型就选不到任何模型（见 `provider::build_pi_family_settings`）；
-    // WorkBuddy 的卡至少要一个模型才能保存
+    // WorkBuddy 的卡至少要一个模型才能保存，ZCode 的自定义地址没有内置模型可回落
     if matches!(
         app.as_str(),
-        "pi" | "mcode" | "kimi" | "dsh" | "omp" | "workbuddy"
+        "pi" | "mcode" | "kimi" | "dsh" | "omp" | "workbuddy" | "zcode"
     ) && model.as_deref().is_none_or(|model| model.trim().is_empty())
     {
         return Err(AppError::InvalidInput(format!(
@@ -368,9 +369,10 @@ fn parse_mcp_deeplink(
                 | "workbuddy"
                 | "work-buddy"
                 | "codebuddy"
+                | "zcode"
         ) {
             return Err(AppError::InvalidInput(format!(
-                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', 'omp', 'copilot', 'workbuddy', or 'codebuddy', got '{trimmed}'"
+                "Invalid app in 'apps': must be 'claude', 'codex', 'gemini', 'agy', 'grokbuild', 'opencode', 'openclaw', 'hermes', 'pi', 'kimi', 'dsh', 'mcode', 'omp', 'copilot', 'workbuddy', 'codebuddy', or 'zcode', got '{trimmed}'"
             )));
         }
     }

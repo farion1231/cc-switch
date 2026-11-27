@@ -6,12 +6,6 @@ import type { ProviderCategory } from "../types";
 import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 
-export {
-  HERMES_PROVIDER_SOURCE_CUSTOM_LIST,
-  HERMES_PROVIDER_SOURCE_DICT,
-  HERMES_PROVIDER_SOURCE_FIELD,
-} from "./hermesProviderMeta";
-
 /**
  * A model entry under a Hermes custom_provider.
  *
@@ -687,6 +681,51 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "fluxa",
     suggestedDefaults: {
       model: { default: "deepseek-v4.1-flash", provider: "fluxa_tokenplan" },
+    },
+  },
+  {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      name: "sudocode",
+      base_url: "https://api.sudocode.chat/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+    suggestedDefaults: {
+      model: { default: "gpt-6.1-sol", provider: "sudocode" },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      name: "sudocode_us",
+      base_url: "https://sudocode.us/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: sudoCodeUsModels(),
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+    suggestedDefaults: {
+      model: { default: "gpt-6.1-sol", provider: "sudocode_us" },
     },
   },
   {
@@ -1423,51 +1462,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       model: { default: "gpt-6.1-sol", provider: "dmxapi" },
     },
     icon: "dmxapi",
-  },
-  {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      name: "sudocode",
-      base_url: "https://api.sudocode.chat/v1",
-      api_key: "",
-      api_mode: "codex_responses",
-      models: [
-        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
-        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-    suggestedDefaults: {
-      model: { default: "gpt-6.1-sol", provider: "sudocode" },
-    },
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      name: "sudocode_us",
-      base_url: "https://sudocode.us/v1",
-      api_key: "",
-      api_mode: "codex_responses",
-      models: sudoCodeUsModels(),
-    },
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-    suggestedDefaults: {
-      model: { default: "gpt-6.1-sol", provider: "sudocode_us" },
-    },
   },
   {
     name: "XycAi",
@@ -2338,6 +2332,30 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#29E154",
     suggestedDefaults: {
       model: { default: "LongCat-2.0", provider: "longcat" },
+    },
+  },
+  {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      name: "teleai",
+      base_url: "https://api-maas.teleai.com.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "Xing4.1-Preview",
+          name: "Xing4.1-Preview",
+          context_length: 1024000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
+    suggestedDefaults: {
+      model: { default: "Xing4.1-Preview", provider: "teleai" },
     },
   },
   {

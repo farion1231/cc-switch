@@ -241,8 +241,25 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
     session_id: Option<String>,
     tool_schema_hints: Option<AnthropicToolSchemaHints>,
 ) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
+    convert_gemini_stream(
+        stream,
+        shadow_store,
+        provider_id,
+        session_id,
+        tool_schema_hints,
+        SseBuffer::new(),
+    )
+}
+
+fn convert_gemini_stream<E: std::error::Error + Send + 'static>(
+    stream: impl Stream<Item = Result<Bytes, E>> + Send + 'static,
+    shadow_store: Option<Arc<GeminiShadowStore>>,
+    provider_id: Option<String>,
+    session_id: Option<String>,
+    tool_schema_hints: Option<AnthropicToolSchemaHints>,
+    mut sse: SseBuffer,
+) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send {
     async_stream::stream! {
-        let mut sse = SseBuffer::new();
         let mut message_id: Option<String> = None;
         let mut current_model: Option<String> = None;
         let mut has_sent_message_start = false;
@@ -260,7 +277,10 @@ pub fn create_anthropic_sse_stream_from_gemini<E: std::error::Error + Send + 'st
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    if let Err(error) = sse.try_push_bytes(&bytes) {
+                        yield Err(error);
+                        return;
+                    }
 
                     while let Some(block) = sse.next_block() {
                         if block.trim().is_empty() {
@@ -628,6 +648,33 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join("")
         })
+    }
+
+    #[test]
+    fn stops_on_oversized_sse_before_polling_upstream_again() {
+        let prefix = [b'x'; 32];
+        let stream = futures::stream::iter([
+            Bytes::from_static(b"data: "),
+            Bytes::copy_from_slice(&prefix),
+        ])
+        .map(Ok::<_, std::io::Error>)
+        .chain(futures::stream::poll_fn(|_| {
+            panic!("polled past the event limit")
+        }));
+        let converted = convert_gemini_stream(
+            stream,
+            None,
+            None,
+            None,
+            None,
+            SseBuffer::with_max_pending_bytes(32),
+        );
+        futures::executor::block_on(async {
+            futures::pin_mut!(converted);
+            let error = converted.next().await.unwrap().unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+            assert!(converted.next().await.is_none());
+        });
     }
 
     #[test]

@@ -271,7 +271,7 @@ describe("AppsPage layout, grouping and diagnostics", () => {
     ).toBeEnabled();
   });
 
-  it("lists CodeBuddy last, like the sidebar, and upgrades it on its own", async () => {
+  it("lists CodeBuddy after WorkBuddy, like the sidebar, and upgrades it on its own", async () => {
     outdated.add("codebuddy");
     const view = await renderApps();
     const names = Array.from(
@@ -279,8 +279,9 @@ describe("AppsPage layout, grouping and diagnostics", () => {
       (row) => row.textContent ?? "",
     );
     const codebuddy = names.findIndex((name) => name.includes("CodeBuddy"));
-    expect(codebuddy).toBe(names.length - 1);
     expect(names[codebuddy - 1]).toContain("WorkBuddy");
+    expect(names[codebuddy + 1]).toContain("ZCode");
+    expect(codebuddy + 1).toBe(names.length - 1);
     expect(card("CodeBuddy").getByText("1.0.0")).toBeInTheDocument();
 
     fireEvent.click(updateButton("CodeBuddy"));
@@ -650,6 +651,7 @@ describe("AppsPage visibility column", () => {
           "omp",
           "copilot",
           "workbuddy",
+          "zcode",
         ].map((app) => [app, false]),
       ),
     };

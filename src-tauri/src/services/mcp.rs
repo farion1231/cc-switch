@@ -33,6 +33,7 @@ fn commits_with_db(app: &AppType) -> bool {
             | AppType::Copilot
             | AppType::Codebuddy
             | AppType::WorkBuddy
+            | AppType::ZCode
     )
 }
 
@@ -162,14 +163,25 @@ impl McpService {
                 save_with_agy()
             }
         };
+        let save_with_zcode = || {
+            if server.apps.zcode || prev_apps.zcode {
+                mcp::zcode::sync_and_commit(
+                    &server.id,
+                    server.apps.zcode.then_some(&server.server),
+                    save_with_pi,
+                )
+            } else {
+                save_with_pi()
+            }
+        };
         if server.apps.mcode || prev_apps.mcode {
             mcp::mcode::sync_and_commit(
                 &server.id,
                 server.apps.mcode.then_some(&server.server),
-                save_with_pi,
+                save_with_zcode,
             )?;
         } else {
-            save_with_pi()?;
+            save_with_zcode()?;
         }
 
         // 处理禁用：若旧版本启用但新版本取消，则需要从该应用的 live 配置移除
@@ -260,10 +272,17 @@ impl McpService {
                     delete_with_agy()
                 }
             };
+            let delete_with_zcode = || {
+                if server.apps.zcode {
+                    mcp::zcode::sync_and_commit(id, None, delete_with_pi)
+                } else {
+                    delete_with_pi()
+                }
+            };
             if server.apps.mcode {
-                mcp::mcode::sync_and_commit(id, None, delete_with_pi)?;
+                mcp::mcode::sync_and_commit(id, None, delete_with_zcode)?;
             } else {
-                delete_with_pi()?;
+                delete_with_zcode()?;
             }
             // A false agy flag carries no ownership history. Even an identical disabled
             // native entry may belong to the user; leave it intact without proof of ownership.
@@ -335,6 +354,8 @@ impl McpService {
                     mcp::codebuddy::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Mcode {
                     mcp::mcode::sync_and_commit(server_id, spec, commit)?;
+                } else if app == AppType::ZCode {
+                    mcp::zcode::sync_and_commit(server_id, spec, commit)?;
                 } else if app == AppType::Omp {
                     mcp::omp::sync_and_commit(
                         server_id,
@@ -422,6 +443,7 @@ impl McpService {
             AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
             AppType::Codebuddy => mcp::codebuddy::sync(&server.id, Some(&server.server))?,
+            AppType::ZCode => mcp::sync_single_server_to_zcode(&server.id, &server.server)?,
         }
         Ok(())
     }
@@ -471,6 +493,7 @@ impl McpService {
             AppType::Omp => mcp::remove_server_from_omp(id)?,
             AppType::WorkBuddy => mcp::workbuddy::sync(id, None)?,
             AppType::Codebuddy => mcp::codebuddy::sync(id, None)?,
+            AppType::ZCode => mcp::remove_server_from_zcode(id)?,
         }
         Ok(())
     }
@@ -617,6 +640,7 @@ impl McpService {
             AppType::GrokBuild => mcp::import_from_grokbuild,
             AppType::OpenCode => mcp::import_from_opencode,
             AppType::Hermes => mcp::import_from_hermes,
+            AppType::ZCode => mcp::import_from_zcode,
             AppType::Mcode => return mcp::mcode::import(state),
             AppType::Kimi => return mcp::kimi::import(state),
             AppType::Dsh => return mcp::dsh::import(state),
@@ -690,6 +714,7 @@ impl McpService {
             AppType::Pi,
             AppType::Omp,
             AppType::Copilot,
+            AppType::ZCode,
         ] {
             match Self::import_from_app(state, &app) {
                 Ok(count) => total += count,

@@ -22,6 +22,7 @@ const SESSION_PROVIDER_APPS: Record<string, AppId> = {
   "Antigravity (Session)": "agy",
   "Copilot CLI (Session)": "copilot",
   "DeepSeek Harness (Session)": "dsh",
+  "ZCode (Session)": "zcode",
 };
 
 /**

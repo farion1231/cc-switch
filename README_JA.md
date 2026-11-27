@@ -115,6 +115,11 @@ Claude Code / Codex / Gemini 公式チャンネルが最安で元価格の 38% /
 </tr>
 
 <tr>
+<td width="180"><a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch"><img src="assets/partners/logos/sudocode-banner.png" alt="SudoCode" width="150"></a></td>
+<td>本プロジェクトは SudoCode のスポンサー提供でお届けしています。SudoCode は Claude Code と Codex で共通の API エンドポイントを提供し、1 つのキーで両方のツールを利用できます。コンソールではリクエストごとのトークン使用量と料金をモデル別に確認でき、支出がひと目でわかります。CC Switch ユーザー向けの特典として、<a href="https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch">このリンク</a>から登録して QQ グループ 1030742788 に参加すると、CNY ¥10 相当の1日パスを受け取れます！</td>
+</tr>
+
+<tr>
 <td width="180"><a href="https://aigocode.net/invite/CC-SWITCH"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/partners/logos/aigocode-dark.png"><img src="assets/partners/logos/aigocode-light.png" alt="AIGoCode" width="150"></picture></a></td>
 <td>本プロジェクトは AIGoCode のスポンサー提供でお届けしています。AIGoCode はトークン従量課金だけではない、サブスクリプション型の AI コーディングプラットフォームです。1 つのアカウント・月額プランで Claude Code、Codex、Gemini を使い放題、中国本土から直接接続でき、レスポンスも高速です。<a href="https://aigocode.net/invite/CC-SWITCH">このリンク</a>からサブスクリプションすると 10% のクレジットが追加でもらえます！</td>
 </tr>

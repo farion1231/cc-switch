@@ -43,6 +43,8 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
+        AppType::ZCode => crate::zcode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
         // 切换式应用的 live 只有当前那一家，没有按标识存的条目。
         AppType::Claude
         | AppType::ClaudeDesktop
@@ -68,6 +70,7 @@ pub(crate) fn remove_provider_from_live(
         AppType::Mcode => crate::mcode_config::remove_provider(provider_id),
         AppType::Codebuddy => crate::codebuddy_config::remove_provider(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::remove_provider(provider_id),
+        AppType::ZCode => crate::zcode_config::remove_provider(provider_id),
         AppType::Claude
         | AppType::ClaudeDesktop
         | AppType::Codex
@@ -357,6 +360,7 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Copilot
         | AppType::WorkBuddy
         | AppType::Codebuddy
+        | AppType::ZCode
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -440,7 +444,8 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
-        | AppType::Codebuddy => Ok(settings.clone()),
+        | AppType::Codebuddy
+        | AppType::ZCode => Ok(settings.clone()),
     }
 }
 
@@ -773,6 +778,25 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         }
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
+        }
+        AppType::ZCode => {
+            use crate::provider::ZCodeProviderConfig;
+            match serde_json::from_value::<ZCodeProviderConfig>(provider.settings_config.clone()) {
+                Ok(config) => crate::zcode_config::set_typed_provider(&provider.id, &config)?,
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse ZCode provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    // 结构不完整时按原样写入：ZCode 侧仍是合法的个人规则片段，
+                    // 用户可以在原生界面里继续编辑。
+                    crate::zcode_config::set_provider(
+                        &provider.id,
+                        provider.settings_config.clone(),
+                    )?;
+                }
+            }
         }
         AppType::WorkBuddy => {
             // 官方登录卡只绑定账号，没有模型条目：任何写 live 的路径（全量同步等）都跳过它
@@ -1167,6 +1191,7 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
+        AppType::ZCode => Ok(json!(crate::zcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
@@ -1316,7 +1341,8 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Dsh
         | AppType::Omp
         | AppType::WorkBuddy
-        | AppType::Codebuddy => {
+        | AppType::Codebuddy
+        | AppType::ZCode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1525,6 +1551,131 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     Ok(imported + updated)
 }
 
+/// 从 ZCode 的个人规则文件导入供应商到数据库。
+///
+/// 用户在 ZCode 里自己建的规则（内置 / 账号连接、从模板新建的、新建空白的）归 ZCode 管，
+/// 导入时跳过（见 [`crate::zcode_config::is_zcode_user_owned_rule`]）：CC Switch 表达不全
+/// 它们的模板和端点，导入后一回写就会丢字段。
+pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    let providers = crate::zcode_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids(&AppType::ZCode)?;
+    let zcode_owned = crate::zcode_config::zcode_user_owned_provider_ids()?;
+
+    for (id, settings_config) in providers {
+        if zcode_owned.contains(&id) {
+            continue;
+        }
+
+        let name = settings_config
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| id.clone());
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, &AppType::ZCode) {
+                Ok(Some(existing)) => {
+                    // 字段级合并：只覆盖 ZCode 原生配置里真正存在的字段，
+                    // 保留用户在 CC Switch 里改过的其余内容（如 notes、category）。
+                    let merged = merge_zcode_settings(&existing.settings_config, &settings_config);
+                    if existing.settings_config != merged || existing.name != name {
+                        let mut provider = existing;
+                        provider.name = name;
+                        provider.settings_config = merged;
+                        if let Err(e) = state.db.save_provider(&AppType::ZCode, &provider) {
+                            log::warn!(
+                                "Failed to update ZCode provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated ZCode provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("ZCode provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up ZCode provider '{id}': {e}"),
+            }
+            continue;
+        }
+
+        let mut provider = Provider::with_id(id.clone(), name, settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider(&AppType::ZCode, &provider) {
+            log::warn!("Failed to import ZCode provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported ZCode provider '{id}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// 把 live 里的字段合并进已有配置：live 有的一律以 live 为准，
+/// live 没有的保留数据库里的原值。顶层做浅合并即可——ZCode 的
+/// 一条规则就是一层已知字段加一层 `extra`。
+fn merge_zcode_settings(current: &Value, live: &Value) -> Value {
+    let (Some(current_obj), Some(live_obj)) = (current.as_object(), live.as_object()) else {
+        return live.clone();
+    };
+    let mut merged = current_obj.clone();
+    for (key, value) in live_obj {
+        let merged_value = match (key.as_str(), current_obj.get(key)) {
+            // options：live 只还原得出 baseURL / apiKey，其余键（请求头、超时等）留 DB 的
+            ("options", Some(Value::Object(db_options))) => match value.as_object() {
+                Some(live_options) => {
+                    let mut options = db_options.clone();
+                    for (k, v) in live_options {
+                        options.insert(k.clone(), v.clone());
+                    }
+                    Value::Object(options)
+                }
+                None => value.clone(),
+            },
+            // models：哪些模型、什么顺序以 live 为准；同 id 的模型逐键合并，live 带的键
+            // （上下文 / 输出上限 `limit`，读回时总会带上）以 live 为准，名称等 live 表达不了的留 DB 的
+            ("models", Some(Value::Object(db_models))) => match value.as_object() {
+                Some(live_models) => Value::Object(
+                    live_models
+                        .iter()
+                        .map(|(id, live_model)| {
+                            let model = match (db_models.get(id), live_model) {
+                                (Some(Value::Object(db_model)), Value::Object(lm)) => {
+                                    let mut m = db_model.clone();
+                                    for (k, v) in lm {
+                                        m.insert(k.clone(), v.clone());
+                                    }
+                                    Value::Object(m)
+                                }
+                                (Some(db_model), _) => db_model.clone(),
+                                (None, _) => live_model.clone(),
+                            };
+                            (id.clone(), model)
+                        })
+                        .collect(),
+                ),
+                None => value.clone(),
+            },
+            _ => value.clone(),
+        };
+        merged.insert(key.clone(), merged_value);
+    }
+    Value::Object(merged)
+}
+
 /// Import all providers from OpenClaw live config to database
 ///
 /// This imports existing providers from ~/.openclaw/openclaw.json
@@ -1723,6 +1874,57 @@ fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError>
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn zcode_import_merge_keeps_what_live_cannot_express() {
+        let db = json!({
+            "kind": "anthropic",
+            "options": {"baseURL": "https://old", "apiKey": "old", "timeout": 30},
+            "models": {
+                "glm-5.2": {"name": "GLM 5.2", "limit": {"context": 200000}},
+                "dropped": {"name": "Dropped"}
+            },
+            "notes": "mine"
+        });
+        let live = json!({
+            "kind": "anthropic",
+            "options": {"baseURL": "https://new", "apiKey": "new"},
+            "models": {"glm-5.2": {}, "glm-5.2-air": {}}
+        });
+        let merged = merge_zcode_settings(&db, &live);
+        assert_eq!(merged["options"]["baseURL"], json!("https://new"));
+        assert_eq!(merged["options"]["timeout"], json!(30));
+        assert_eq!(merged["models"]["glm-5.2"]["name"], json!("GLM 5.2"));
+        assert_eq!(
+            merged["models"]["glm-5.2"]["limit"]["context"],
+            json!(200000)
+        );
+        assert!(merged["models"].get("dropped").is_none());
+        assert_eq!(merged["models"]["glm-5.2-air"], json!({}));
+        assert_eq!(merged["notes"], json!("mine"));
+        // 再合并一次结果不变：启动导入不会每次都重存
+        assert_eq!(merge_zcode_settings(&merged, &live), merged);
+    }
+
+    #[test]
+    fn zcode_import_merge_takes_limits_from_live() {
+        let db = json!({
+            "models": {
+                "a": {"name": "A", "limit": {"context": 200000, "output": 8000}},
+                "b": {"limit": {"context": 1000}}
+            }
+        });
+        // ZCode 里改过 a 的上限、删了 b 的上限：读回器给每个模型都带 limit
+        let live = json!({
+            "models": {"a": {"limit": {"context": 60000}}, "b": {"limit": {}}}
+        });
+        let merged = merge_zcode_settings(&db, &live);
+        assert_eq!(
+            merged["models"]["a"],
+            json!({"name": "A", "limit": {"context": 60000}})
+        );
+        assert_eq!(merged["models"]["b"], json!({"limit": {}}));
+    }
 
     #[test]
     fn claude_common_config_remove_strips_what_old_versions_merged() {

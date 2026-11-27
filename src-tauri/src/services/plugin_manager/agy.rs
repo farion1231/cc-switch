@@ -162,6 +162,7 @@ pub(super) fn parse_installed(value: &Value, wsl_root: Option<&Path>) -> Vec<Plu
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
                         scope: None,
+                        project_path: None,
                         manageable: true,
                         removable,
                         installable: true,
@@ -212,6 +213,7 @@ pub(super) fn parse_catalog_document(value: &Value, default_marketplace: &str) -
                         installed: false,
                         enabled: false,
                         scope: None,
+                        project_path: None,
                         manageable: true,
                         removable: true,
                         installable: true,

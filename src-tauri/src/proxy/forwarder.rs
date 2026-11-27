@@ -2064,6 +2064,17 @@ impl RequestForwarder {
                 super::providers::codex_chat_common::fill_gemini_thought_signature_fallback(
                     &mut chat_body,
                 );
+            // Gemini 经 Chat 网关时工具参数落到只认字符串 enum 的旧字段，布尔 enum 会让整轮 400
+            // （#9168 / #10032）。只对 Gemini 模型改写，其他模型的工具定义逐字节不变。
+            let gemini_schema_tools =
+                super::providers::transform_codex_chat_gemini_schema::adapt_chat_tools_for_gemini(
+                    &mut chat_body,
+                );
+            if gemini_schema_tools > 0 {
+                log::debug!(
+                    "[Codex] Dropped non-string enums from {gemini_schema_tools} tool schema(s) for a Gemini model"
+                );
+            }
             if signature_fallbacks > 0 {
                 log::debug!(
                     "[Codex] Filled {signature_fallbacks} missing Gemini thought signature(s) with the skip placeholder"

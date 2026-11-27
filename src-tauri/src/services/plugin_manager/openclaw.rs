@@ -75,6 +75,7 @@ pub(super) fn parse_installed(value: &Value) -> Vec<PluginEntry> {
                             .and_then(Value::as_bool)
                             .unwrap_or(false),
                         scope: None,
+                        project_path: None,
                         manageable: true,
                         removable: origin.as_deref() == Some("global"),
                         installable: true,

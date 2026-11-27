@@ -1483,28 +1483,41 @@ export function CodexFormFields({
   // 保留官方 Fast 档：镜像官方的 GPT 行默认清空速度档，后面接官方账号的中转（如 CPA）才认
   // service_tier=priority。Chat、Anthropic 转换会把它转给不认的上游，Copilot 走自己的目录，
   // 都只给原生 Responses；聚合布局不显示（合并目录不看卡上的设置）。
+  // 这一档只加在模型列表的行上：没有列表时既不生成目录、保存也不会存这个设置，开关就锁住并说明。
+  const speedTiersNeedCatalog = autoReviewChoices.length === 0;
   const officialSpeedTiersToggle = onOfficialSpeedTiersChange &&
     !isCopilotPreset &&
     effectiveApiFormat === "openai_responses" && (
-      <div className="flex items-center justify-between gap-4">
-        {labelWithHelp(
-          t("codexConfig.officialSpeedTiersLabel", {
-            defaultValue: "保留官方 Fast 档",
-          }),
-          t("codexConfig.officialSpeedTiersHint", {
-            defaultValue:
-              "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
-          }),
-          "codexOfficialSpeedTiers",
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-4">
+          {labelWithHelp(
+            t("codexConfig.officialSpeedTiersLabel", {
+              defaultValue: "保留官方 Fast 档",
+            }),
+            t("codexConfig.officialSpeedTiersHint", {
+              defaultValue:
+                "让模型列表里的 GPT 模型保留官方的 Fast 速度档，Codex 选了 Fast 后请求会带 service_tier=priority。只有转发官方 ChatGPT 账号的中转（如 CPA）才认，会更快消耗额度；其他上游可能报错或按更高价计费。Codex 桌面版要登录 ChatGPT 才显示 Fast：在桌面版登录后，打开设置里的「非接管切换时保留官方登录」（或使用路由模式），请求仍发往这张卡；不登录时只有命令行版能用（/fast）。打开后，之前在官方卡下选过的 Fast 会立刻在这家生效。聚合模式下不生效。改完需要重启 Codex。",
+            }),
+            "codexOfficialSpeedTiers",
+          )}
+          <Switch
+            id="codexOfficialSpeedTiers"
+            checked={officialSpeedTiers && !speedTiersNeedCatalog}
+            disabled={speedTiersNeedCatalog}
+            onCheckedChange={onOfficialSpeedTiersChange}
+            aria-label={t("codexConfig.officialSpeedTiersLabel", {
+              defaultValue: "保留官方 Fast 档",
+            })}
+          />
+        </div>
+        {speedTiersNeedCatalog && (
+          <p className="text-xs leading-relaxed text-fg-2">
+            {t("codexConfig.officialSpeedTiersNoList", {
+              defaultValue:
+                "这张卡没有模型列表：Fast 档只加在模型列表里的 GPT 模型上，所以现在打不开。在上面的模型列表里加上 GPT 模型后才能打开。",
+            })}
+          </p>
         )}
-        <Switch
-          id="codexOfficialSpeedTiers"
-          checked={officialSpeedTiers}
-          onCheckedChange={onOfficialSpeedTiersChange}
-          aria-label={t("codexConfig.officialSpeedTiersLabel", {
-            defaultValue: "保留官方 Fast 档",
-          })}
-        />
       </div>
     );
 

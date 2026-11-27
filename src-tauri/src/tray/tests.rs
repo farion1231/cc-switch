@@ -2376,3 +2376,151 @@ fn problems_drop_attach_failures_once_the_app_routes_again() {
     assert!(!clear_app_problems(&AppType::Codex));
     assert!(collect_problems(None, &rerouted).is_empty());
 }
+
+// ─── Antigravity 官方账号区 ───
+
+fn agy_account(id: &str, email: Option<&str>) -> crate::services::agy_account::AgyAccount {
+    crate::services::agy_account::AgyAccount {
+        id: id.to_string(),
+        email: email.map(str::to_string),
+        name: None,
+        picture: None,
+        authenticated_at: 0,
+        requires_reauth: false,
+    }
+}
+
+fn agy_status(
+    accounts: Vec<crate::services::agy_account::AgyAccount>,
+    current: Option<&str>,
+) -> crate::services::agy_account::AgyAccountStatus {
+    crate::services::agy_account::AgyAccountStatus {
+        accounts,
+        current_account_id: current.map(str::to_string),
+        supported: true,
+    }
+}
+
+#[test]
+fn agy_section_appears_only_with_accounts_on_a_platform_that_can_switch() {
+    assert!(agy_snapshot(None, |_| None).is_none());
+    assert!(agy_snapshot(Some(agy_status(vec![], None)), |_| None).is_none());
+    let mut unsupported = agy_status(vec![agy_account("1", Some("a@x.com"))], None);
+    unsupported.supported = false;
+    assert!(agy_snapshot(Some(unsupported), |_| None).is_none());
+}
+
+#[test]
+fn agy_section_lists_accounts_and_only_the_signed_in_one_feeds_the_title_quota() {
+    let status = agy_status(
+        vec![
+            agy_account("111111111", Some("a@x.com")),
+            agy_account("222222222", None),
+        ],
+        Some("222222222"),
+    );
+    let asked = std::cell::RefCell::new(Vec::new());
+    let snapshot = agy_snapshot(Some(status), |id| {
+        asked.borrow_mut().push(id.to_string());
+        Some(QuotaView::Failed(QuotaFailure::Other))
+    })
+    .expect("section");
+    assert_eq!(snapshot.app, AppType::Agy);
+    let names: Vec<&str> = snapshot.providers.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(names, ["a@x.com", "Google (222222)"]);
+    assert_eq!(snapshot.current_id.as_deref(), Some("222222222"));
+    assert_eq!(*asked.borrow(), ["222222222"]);
+
+    // 钥匙串里是没收录的号：不勾任何一个，标题也不写额度
+    let stray = agy_snapshot(
+        Some(agy_status(
+            vec![agy_account("1", Some("a@x.com"))],
+            Some("9"),
+        )),
+        |_| panic!("no current account, no quota"),
+    )
+    .expect("section");
+    assert_eq!(stray.current_id, None);
+    assert_eq!(stray.quota, None);
+}
+
+#[test]
+fn agy_submenu_switches_accounts_and_sends_management_to_the_auth_center() {
+    let snapshot = agy_snapshot(
+        Some(agy_status(
+            vec![
+                agy_account("1", Some("a@x.com")),
+                agy_account("2", Some("b@x.com")),
+            ],
+            Some("2"),
+        )),
+        |_| None,
+    )
+    .expect("section");
+    let menu = model(&[], &[snapshot]);
+    assert!(texts_of(&menu).contains(&"Antigravity · b@x.com".to_string()));
+    let children = children_of(&menu, &AppType::Agy);
+    assert_eq!(
+        texts_of(&children),
+        ["官方账号", "a@x.com", "b@x.com", "---", "管理账号…"]
+    );
+    assert!(matches!(
+        &children[1],
+        TrayEntry::Check { id, checked: false, enabled: true, .. } if id == "prov:agy:1"
+    ));
+    assert!(matches!(
+        &children[2],
+        TrayEntry::Check { id, checked: true, .. } if id == "prov:agy:2"
+    ));
+    assert!(matches!(
+        &children[4],
+        TrayEntry::Item { id, .. } if id == AUTH_PAGE_NAV_ID
+    ));
+    assert_eq!(
+        parse_nav_id(AUTH_PAGE_NAV_ID),
+        Some(TrayNavigation {
+            page: Some("auth".to_string()),
+            ..Default::default()
+        })
+    );
+    assert_eq!(parse_nav_id("nav:page:nope"), None);
+}
+
+#[test]
+fn agy_quota_groups_gemini_claude_and_argon_by_their_lowest_left() {
+    use crate::services::subscription_agy as agy;
+    let quota = make_quota(
+        "agy",
+        true,
+        vec![
+            tier(agy::TIER_AGY_GEMINI_FIVE_HOUR, 10.0),
+            tier(agy::TIER_AGY_GEMINI_WEEKLY, 60.0),
+            tier(agy::TIER_AGY_GEMINI_ARGON_WEEKLY, 0.0),
+            tier(agy::TIER_AGY_THIRD_PARTY_FIVE_HOUR, 95.0),
+            tier(agy::TIER_AGY_THIRD_PARTY_WEEKLY, 30.0),
+        ],
+    );
+    let (text, almost_out) = title(format_subscription_quota(&en(), &quota)).expect("lines");
+    assert_eq!(
+        text,
+        "Gemini 40% left · Claude/GPT 5% left · Argon 100% left"
+    );
+    assert!(almost_out);
+}
+
+#[test]
+fn agy_switch_failures_point_to_the_auth_center_and_feedback_names_the_account() {
+    let problem = TrayProblem::SwitchFailed {
+        app: AppType::Agy,
+        reason: "expired".to_string(),
+    };
+    assert_eq!(problem_id(&problem), AUTH_PAGE_NAV_ID);
+    let feedback = TrayFeedback::AccountSwitched {
+        app: AppType::Agy,
+        name: "b@x.com".to_string(),
+    };
+    assert_eq!(
+        feedback_text(&zh(), &feedback),
+        "Antigravity 已切换到账号 b@x.com，已打开的 Antigravity 重启后生效"
+    );
+}

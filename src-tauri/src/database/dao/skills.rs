@@ -15,7 +15,7 @@ use rusqlite::params;
 
 const INSTALLED_SKILL_SELECT: &str = "SELECT id, name, description, directory, repo_owner, repo_name, repo_branch,
         readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild,
-        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host, enabled_codebuddy
+        enabled_opencode, enabled_hermes, installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host, enabled_codebuddy, enabled_zcode
  FROM skills";
 
 fn row_to_installed_skill(row: &rusqlite::Row<'_>) -> rusqlite::Result<InstalledSkill> {
@@ -45,6 +45,7 @@ fn row_to_installed_skill(row: &rusqlite::Row<'_>) -> rusqlite::Result<Installed
             copilot: row.get(21)?,
             workbuddy: row.get(22)?,
             codebuddy: row.get(24)?,
+            zcode: row.get(25)?,
         },
         installed_at: row.get(14)?,
         content_hash: row.get(15)?,
@@ -97,8 +98,8 @@ impl Database {
             "INSERT OR REPLACE INTO skills
              (id, name, description, directory, repo_owner, repo_name, repo_branch,
               readme_url, enabled_claude, enabled_codex, enabled_gemini, enabled_grokbuild, enabled_opencode, enabled_hermes,
-              installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host, enabled_codebuddy)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+              installed_at, content_hash, updated_at, enabled_mcode, enabled_agy, enabled_kimi, enabled_dsh, enabled_copilot, enabled_workbuddy, repo_host, enabled_codebuddy, enabled_zcode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
             params![
                 skill.id,
                 skill.name,
@@ -125,6 +126,7 @@ impl Database {
                 skill.apps.workbuddy,
                 skill.repo_host,
                 skill.apps.codebuddy,
+                skill.apps.zcode,
             ],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
@@ -193,8 +195,8 @@ impl Database {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_agy = ?9, enabled_kimi = ?10, enabled_dsh = ?11, enabled_copilot = ?12, enabled_workbuddy = ?13, enabled_codebuddy = ?14 WHERE id = ?7",
-                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.agy, apps.kimi, apps.dsh, apps.copilot, apps.workbuddy, apps.codebuddy],
+                "UPDATE skills SET enabled_claude = ?1, enabled_codex = ?2, enabled_gemini = ?3, enabled_grokbuild = ?4, enabled_opencode = ?5, enabled_hermes = ?6, enabled_mcode = ?8, enabled_agy = ?9, enabled_kimi = ?10, enabled_dsh = ?11, enabled_copilot = ?12, enabled_workbuddy = ?13, enabled_codebuddy = ?14, enabled_zcode = ?15 WHERE id = ?7",
+                params![apps.claude, apps.codex, apps.gemini, apps.grokbuild, apps.opencode, apps.hermes, id, apps.mcode, apps.agy, apps.kimi, apps.dsh, apps.copilot, apps.workbuddy, apps.codebuddy, apps.zcode],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

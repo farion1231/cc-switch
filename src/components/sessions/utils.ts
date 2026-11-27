@@ -24,6 +24,7 @@ export const SESSION_APP_IDS = [
   "agy",
   "copilot",
   "workbuddy",
+  "zcode",
 ] as const satisfies readonly AppId[];
 
 export type SessionAppId = (typeof SESSION_APP_IDS)[number];
@@ -47,6 +48,7 @@ export const SESSION_SOURCE_PATHS: Record<SessionAppId, string[]> = {
   codebuddy: ["~/.codebuddy/projects"],
   dsh: ["~/.dsh/sessions/<project>/<session>/session.v*.jsonl[.zstd]"],
   workbuddy: ["~/.workbuddy/projects"],
+  zcode: ["~/.zcode/cli/db/db.sqlite"],
   agy: [
     "~/.gemini/antigravity-cli/brain/<conversation>/.system_generated/logs",
     "~/.gemini/antigravity/brain/<conversation>/.system_generated/logs",
@@ -63,6 +65,7 @@ const NATIVE_DELETE_HINT_KEYS: Record<string, string> = {
   copilot: "sessionManager.copilotDeleteHint",
   workbuddy: "workbuddy.deleteSessionHint",
   codebuddy: "sessionManager.codebuddyDeleteHint",
+  zcode: "sessionManager.zcodeDeleteHint",
 };
 
 /** Antigravity 只有 CLI 的会话能在这里删（后端连索引一起清）；IDE（`antigravity/brain`）

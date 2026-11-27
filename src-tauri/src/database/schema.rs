@@ -107,7 +107,8 @@ impl Database {
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             enabled_pi BOOLEAN NOT NULL DEFAULT 0,
-            enabled_omp BOOLEAN NOT NULL DEFAULT 0
+            enabled_omp BOOLEAN NOT NULL DEFAULT 0,
+            enabled_zcode BOOLEAN NOT NULL DEFAULT 0
         )",
             [],
         )
@@ -143,6 +144,7 @@ impl Database {
             enabled_copilot BOOLEAN NOT NULL DEFAULT 0,
             enabled_workbuddy BOOLEAN NOT NULL DEFAULT 0,
             enabled_codebuddy BOOLEAN NOT NULL DEFAULT 0,
+            enabled_zcode BOOLEAN NOT NULL DEFAULT 0,
             enabled_hermes BOOLEAN NOT NULL DEFAULT 0,
             installed_at INTEGER NOT NULL DEFAULT 0,
             content_hash TEXT,
@@ -741,6 +743,20 @@ impl Database {
                         log::info!("迁移数据库从 v27 到 v28（MCP/Skills 添加 CodeBuddy 支持）");
                         Self::migrate_v27_to_v28(conn)?;
                         Self::set_user_version(conn, 28)?;
+                    }
+                    28 => {
+                        log::info!("迁移数据库从 v28 到 v29（MCP/Skills 添加 ZCode 支持）");
+                        for table in ["mcp_servers", "skills"] {
+                            if Self::table_exists(conn, table)? {
+                                Self::add_column_if_missing(
+                                    conn,
+                                    table,
+                                    "enabled_zcode",
+                                    "BOOLEAN NOT NULL DEFAULT 0",
+                                )?;
+                            }
+                        }
+                        Self::set_user_version(conn, 29)?;
                     }
                     _ => {
                         return Err(AppError::Database(format!(
@@ -4474,6 +4490,37 @@ mod tests {
         Ok(())
     }
 
+    /// v28 库（CodeBuddy 已发布、还没有 ZCode）升级后两张表都有 `enabled_zcode`，
+    /// 已有行默认 0；全新库同样有这一列。
+    #[test]
+    fn zcode_migration_adds_enabled_zcode_to_v28_and_fresh_databases() -> Result<(), AppError> {
+        let conn = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&conn)?;
+        for table in ["mcp_servers", "skills"] {
+            conn.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN enabled_zcode;"))?;
+        }
+        conn.execute_batch("INSERT INTO mcp_servers (id, name, server_config, enabled_codebuddy) VALUES ('m', 'm', '{\"command\":\"echo\"}', 1); INSERT INTO skills (id, name, directory, enabled_codebuddy) VALUES ('s', 's', 's', 1);")?;
+        Database::set_user_version(&conn, 28)?;
+        Database::apply_schema_migrations_on_conn(&conn)?;
+        assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
+        for (table, id) in [("mcp_servers", "m"), ("skills", "s")] {
+            let flags = conn.query_row(
+                &format!("SELECT enabled_codebuddy, enabled_zcode FROM {table} WHERE id = '{id}'"),
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )?;
+            assert_eq!(flags, (1, 0), "{table}");
+        }
+
+        let fresh = Connection::open_in_memory()?;
+        Database::create_tables_on_conn(&fresh)?;
+        Database::apply_schema_migrations_on_conn(&fresh)?;
+        for table in ["mcp_servers", "skills"] {
+            assert!(Database::has_column(&fresh, table, "enabled_zcode")?);
+        }
+        Ok(())
+    }
+
     #[test]
     fn codebuddy_fresh_install_has_omp_dsh_and_codebuddy_columns() -> Result<(), AppError> {
         // Same path as `Database::init` on a brand-new file: create tables, then migrate from 0.
@@ -4481,7 +4528,6 @@ mod tests {
         Database::create_tables_on_conn(&conn)?;
         Database::apply_schema_migrations_on_conn(&conn)?;
         assert_eq!(Database::get_user_version(&conn)?, SCHEMA_VERSION);
-        assert_eq!(SCHEMA_VERSION, 28);
         assert!(Database::has_column(&conn, "mcp_servers", "enabled_omp")?);
         for table in ["mcp_servers", "skills"] {
             assert!(Database::has_column(&conn, table, "enabled_dsh")?);

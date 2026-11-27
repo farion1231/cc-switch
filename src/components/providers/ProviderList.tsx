@@ -36,6 +36,7 @@ import {
   useHermesLiveProviderIds,
   useHermesModelConfig,
 } from "@/hooks/useHermes";
+import { useZcodeLiveProviderIds } from "@/hooks/useZcode";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -163,6 +164,11 @@ export function ProviderList({
     isPending: isHermesLiveIdsPending,
     error: hermesLiveIdsError,
   } = useHermesLiveProviderIds(appId === "hermes");
+  const {
+    data: zcodeLiveIds,
+    isPending: isZcodeLiveIdsPending,
+    error: zcodeLiveIdsError,
+  } = useZcodeLiveProviderIds(appId === "zcode");
   const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
   const { data: openclawDefaultModel } = useOpenClawDefaultModel(
     appId === "openclaw",
@@ -202,6 +208,7 @@ export function ProviderList({
     (appId === "opencode" && isOpencodeLiveIdsPending) ||
     (appId === "openclaw" && isOpenclawLiveIdsPending) ||
     (appId === "hermes" && isHermesLiveIdsPending) ||
+    (appId === "zcode" && isZcodeLiveIdsPending) ||
     (appHas(appId, "piFamily") && isPiCurrentStatePending);
 
   const isInConfig = useCallback(
@@ -220,6 +227,8 @@ export function ProviderList({
           return openclawLiveIds?.includes(provider.id) ?? false;
         case "hermes":
           return hermesLiveIds?.includes(provider.id) ?? false;
+        case "zcode":
+          return zcodeLiveIds?.includes(provider.id) ?? false;
         case "pi":
         case "omp":
           return isPiStateReady
@@ -235,6 +244,7 @@ export function ProviderList({
       opencodeLiveIds,
       openclawLiveIds,
       hermesLiveIds,
+      zcodeLiveIds,
       isPiStateReady,
       piCurrentState,
     ],
@@ -258,6 +268,9 @@ export function ProviderList({
       }
       if (appId === "hermes") {
         return (await providersApi.importHermesFromLive()) > 0;
+      }
+      if (appId === "zcode") {
+        return (await providersApi.importZCodeFromLive()) > 0;
       }
       if (appId === "claude-desktop") {
         return (await providersApi.importClaudeDesktopFromClaude()) > 0;
@@ -520,7 +533,9 @@ export function ProviderList({
         ? openclawLiveIdsError
         : appId === "hermes"
           ? hermesLiveIdsError
-          : null;
+          : appId === "zcode"
+            ? zcodeLiveIdsError
+            : null;
   const liveIdsErrorMessage = liveIdsError
     ? extractErrorMessage(liveIdsError)
     : "";

@@ -20,7 +20,8 @@ pub(super) async fn update_node_gap(
     tool: &str,
     target: &str,
 ) -> Option<NodeRequirementGap> {
-    let package = tool_spec(tool).npm_package?;
+    // OpenCode 2.x 是另一个包；目标版本决定查哪个包的 `engines.node`。
+    let package = npm_package_for_version(tool, Some(target))?.name;
     // MiniMax Code 的官方 installer 在系统 Node 不达标时会自带一份 Node。
     if tool == "mcode" {
         return None;

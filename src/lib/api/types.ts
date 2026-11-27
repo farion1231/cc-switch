@@ -16,4 +16,5 @@ export type AppId =
   | "omp"
   | "copilot"
   | "workbuddy"
-  | "codebuddy";
+  | "codebuddy"
+  | "zcode";

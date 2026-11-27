@@ -363,9 +363,10 @@ const UsageScriptModal: React.FC<UsageScriptModalProps> = ({
         } else if (
           appId === "opencode" ||
           appId === "dsh" ||
-          appId === "mcode"
+          appId === "mcode" ||
+          appId === "zcode"
         ) {
-          // OpenCode / DeepSeek Harness / MiniMax Code: 凭据嵌在 options.{baseURL, apiKey}。
+          // OpenCode / DeepSeek Harness / MiniMax Code / ZCode: 凭据嵌在 options.{baseURL, apiKey}。
           const options = (config as any).options || {};
           return {
             apiKey: options.apiKey,

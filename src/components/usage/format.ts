@@ -406,7 +406,7 @@ export function getEstimatedTokensPerSecond(
 
 /**
  * 汇总速度 = Σ输出 ÷ Σ生成时间（只算满足条件的请求），不是逐条平均——
- * 逐条平均会被短请求带歪。分子分母都来自后端汇总（或 [sumSpeedTotals]）。
+ * 逐条平均会被短请求带歪。分子分母都来自后端汇总。
  */
 export function getAggregateTokensPerSecond(
   outputTokens: unknown,
@@ -417,21 +417,6 @@ export function getAggregateTokensPerSecond(
   if (output == null || ms == null || output <= 0 || ms <= 0) return null;
   const tps = output / (ms / 1000);
   return Number.isFinite(tps) && tps > 0 ? tps : null;
-}
-
-/** 前端已有明细时的汇总：只累加满足条件的请求。 */
-export function sumSpeedTotals(logs: readonly OutputTokensPerSecondInput[]): {
-  outputTokens: number;
-  generationMs: number;
-} {
-  let outputTokens = 0;
-  let generationMs = 0;
-  for (const log of logs) {
-    if (!isSpeedEligible(log)) continue;
-    outputTokens += parseFiniteNumber(log.outputTokens) as number;
-    generationMs += getGenerationMs(log) as number;
-  }
-  return { outputTokens, generationMs };
 }
 
 /** tok/s 的显示：≥ 1 取整，否则一位小数；null 原样返回（界面显示「—」）。 */

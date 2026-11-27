@@ -1527,6 +1527,7 @@ fn switch_codex_ignores_a_broken_claude_json() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -1597,6 +1598,7 @@ fn sync_all_enabled_reports_broken_app_but_projects_the_rest() {
                 kimi: false,
                 copilot: false,
                 codebuddy: false,
+                zcode: false,
                 dsh: false,
                 workbuddy: false,
                 pi: false,
@@ -2267,6 +2269,35 @@ fn switching_back_to_imported_gemini_default_keeps_an_export_line_key() {
     assert_eq!(
         std::fs::read_to_string(&env_path).expect("read .env"),
         "export GEMINI_API_KEY=AIza-user-key\n"
+    );
+}
+
+#[test]
+fn imported_gemini_default_reads_quoted_env_values_without_the_quotes() {
+    let _guard = test_mutex().lock().unwrap_or_else(|e| e.into_inner());
+    reset_test_fs();
+    let env_path = ensure_test_home().join(".gemini").join(".env");
+    std::fs::create_dir_all(env_path.parent().expect("env dir")).expect("create ~/.gemini");
+    std::fs::write(
+        &env_path,
+        "GEMINI_API_KEY=\"AIza-user-key\"\nGOOGLE_GEMINI_BASE_URL='https://relay.example' # relay\n",
+    )
+    .expect("write .env");
+
+    let state = create_test_state().expect("create test state");
+    import_default_config_test_hook(&state, AppType::Gemini).expect("import live .env");
+
+    let default = state
+        .db
+        .get_provider_by_id("default", &AppType::Gemini)
+        .expect("read default")
+        .expect("default provider");
+    assert_eq!(
+        default.settings_config["env"],
+        json!({
+            "GEMINI_API_KEY": "AIza-user-key",
+            "GOOGLE_GEMINI_BASE_URL": "https://relay.example"
+        })
     );
 }
 
