@@ -700,6 +700,15 @@ impl McpService {
             }
         }
 
+        // VS Code 不是 AppType（没有开关位，只作导入源），不进上面的循环。
+        match mcp::vscode::import(state) {
+            Ok(count) => total += count,
+            Err(err) => {
+                log::warn!("从 vscode 导入 MCP 失败: {err}");
+                failures.push(format!("vscode: {err}"));
+            }
+        }
+
         if failures.is_empty() {
             Ok(total)
         } else {

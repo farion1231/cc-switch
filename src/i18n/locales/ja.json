@@ -4831,6 +4831,7 @@
       "sameName": "同名の MCP は該当アプリのスイッチをオンにしただけで、設定は CC Switch のものが優先されます。",
       "failedTitle": "読み込めなかったアプリがあります",
       "filesTitle": "読み込んだファイル",
+      "extraSourceLabel": "その他のソース",
       "claudeNote": "（トップレベルの mcpServers）",
       "codebuddyNote": "（.mcp.json → mcp.json → ~/.codebuddy.json の順で最初に見つかったファイル）",
       "dshNote": "（初期化済みのすべての profile に書き込みます：web、desktop、headless、acp。ホームレベルの ~/.dsh/cordis.patch.yml は読み書きしません。そこにある MCP はそのファイルで管理してください）",

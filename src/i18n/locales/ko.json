@@ -4831,6 +4831,7 @@
       "sameName": "목록에 이미 있는 서버는 해당 앱의 스위치만 켰으며, 설정은 CC Switch에 저장된 내용을 유지합니다.",
       "failedTitle": "일부 앱을 읽을 수 없습니다",
       "filesTitle": "읽은 파일",
+      "extraSourceLabel": "기타 소스",
       "claudeNote": " (최상위 mcpServers)",
       "codebuddyNote": " (.mcp.json, mcp.json, ~/.codebuddy.json 중 처음 존재하는 파일)",
       "ok": "확인",

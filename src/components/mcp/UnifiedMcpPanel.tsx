@@ -45,6 +45,7 @@ import {
   extractErrorMessage,
   translateMcpBackendError,
 } from "@/utils/errorUtils";
+import { isMac, isWindows } from "@/lib/platform";
 import { cn } from "@/lib/utils";
 import McpFormModal from "./McpFormModal";
 import {
@@ -115,6 +116,18 @@ const IMPORT_SOURCE_FILES: Record<
   mcode: { file: "~/.minimax/mcp.json" },
   omp: { file: "~/.omp/agent/mcp.json" },
 };
+
+/** 导入时还会读取的非应用配置源（只做导入源，没有开关位）。
+ * VS Code 的用户级 mcp.json 在各平台的用户数据目录里，按平台显示真实路径。 */
+const IMPORT_EXTRA_SOURCES: { file: string }[] = [
+  {
+    file: isWindows()
+      ? "%APPDATA%/Code/User/mcp.json (VS Code)"
+      : isMac()
+        ? "~/Library/Application Support/Code/User/mcp.json (VS Code)"
+        : "~/.config/Code/User/mcp.json (VS Code)",
+  },
+];
 
 /** 先写配置文件、成功后才入库的应用：写失败时开关没变，重试要逐行重写 */
 const WRITE_THEN_SAVE_APPS: ReadonlySet<AppIdWith<"mcp">> = new Set([
@@ -1230,6 +1243,21 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
                               {t(IMPORT_SOURCE_FILES[app].noteKey as string)}
                             </span>
                           )}
+                        </span>
+                      </li>
+                    ))}
+                    {IMPORT_EXTRA_SOURCES.map((source) => (
+                      <li
+                        key={source.file}
+                        className="flex min-w-0 items-baseline gap-3 text-caption"
+                      >
+                        <span className="w-[84px] shrink-0 text-fg-2">
+                          {t("mcpPage.import.extraSourceLabel")}
+                        </span>
+                        <span className="min-w-0">
+                          <code className="whitespace-nowrap font-mono">
+                            {source.file}
+                          </code>
                         </span>
                       </li>
                     ))}
