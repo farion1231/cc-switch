@@ -519,7 +519,7 @@ describe("AppsPage layout, grouping and diagnostics", () => {
       expect(rowApps("appsPage.sectionInstalled")).toContain("claude");
       expect(rowApps("appsPage.sectionNotInstalled")).toContain("codex");
     });
-    expect(card("Codex").queryByText("common.notInstalled")).toBeNull();
+    expect(card("Codex").queryByText("appsPage.notDetected")).toBeNull();
     await act(async () => {
       pending.resolve();
     });

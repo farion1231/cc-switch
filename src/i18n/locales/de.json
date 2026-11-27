@@ -4439,6 +4439,7 @@
     "desktopConnected": "Verbunden",
     "desktopNotConnected": "Nicht verbunden",
     "newVersion": "{{version}} verfügbar",
+    "notDetected": "Nicht erkannt",
     "notRunnable": "Nicht ausführbar",
     "updateNeedsNode": "{{version}} erfordert Node {{required}}, diese Installation läuft aber mit Node {{current}}. Aktualisieren Sie zuerst Node.",
     "otherInstalls": "{{count}} weitere Installation(en)",

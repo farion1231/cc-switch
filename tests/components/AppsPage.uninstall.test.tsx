@@ -305,7 +305,7 @@ describe("AppsPage uninstall flows", () => {
       card("Claude Code").getByRole("button", { name: "settings.toolInstall" }),
     ).toBeEnabled();
     expect(
-      card("Claude Code").getByText("common.notInstalled"),
+      card("Claude Code").getByText("appsPage.notDetected"),
     ).toBeInTheDocument();
     expect(mocks.probeToolInstallations).toHaveBeenCalledWith(["claude"]);
     expect(mocks.success).toHaveBeenCalledOnce();

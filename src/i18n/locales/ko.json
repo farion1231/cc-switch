@@ -4439,6 +4439,7 @@
     "desktopConnected": "연결됨",
     "desktopNotConnected": "연결되지 않음",
     "newVersion": "새 버전 {{version}} 사용 가능",
+    "notDetected": "감지되지 않음",
     "notRunnable": "실행할 수 없습니다",
     "updateNeedsNode": "새 버전 {{version}}에는 Node {{required}}가 필요하지만 이 설치는 Node {{current}}을(를) 사용합니다. 먼저 Node를 업그레이드하세요.",
     "otherInstalls": "추가 설치 {{count}}개",
