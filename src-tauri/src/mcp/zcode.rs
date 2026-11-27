@@ -65,6 +65,20 @@ pub fn sync_single_server_to_zcode(id: &str, server_spec: &Value) -> Result<(), 
     zcode_config::set_mcp_server(id, spec_for_zcode(server_spec)?)
 }
 
+/// 写入（`spec` 为 `Some`）或移除一个 MCP 条目，文件写成功后才提交数据库（见
+/// [`zcode_config::sync_mcp_server_and_commit`]）。ZCode 没装（没有配置目录）时只提交。
+pub(crate) fn sync_and_commit<T>(
+    id: &str,
+    spec: Option<&Value>,
+    commit: impl FnOnce() -> Result<T, AppError>,
+) -> Result<T, AppError> {
+    if !should_sync_zcode_mcp() {
+        return commit();
+    }
+    let spec = spec.map(spec_for_zcode).transpose()?;
+    zcode_config::sync_mcp_server_and_commit(id, spec, commit)
+}
+
 /// Remove a single MCP server from ZCode live config
 pub fn remove_server_from_zcode(id: &str) -> Result<(), AppError> {
     if !should_sync_zcode_mcp() {

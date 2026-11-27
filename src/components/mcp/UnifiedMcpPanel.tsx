@@ -128,6 +128,7 @@ const WRITE_THEN_SAVE_APPS: ReadonlySet<AppIdWith<"mcp">> = new Set([
   "agy",
   "omp",
   "copilot",
+  "zcode",
 ]);
 
 /** 写入失败：记下想要的状态，「重试」按这个值再写一次 */
