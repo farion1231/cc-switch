@@ -2228,10 +2228,10 @@ fn mcode_skill_update_rolls_back_deployments_when_database_is_read_only() {
                 SkillService::copy_dir_recursive(&ssot, &native).unwrap();
             }
             let deployment =
-                SkillService::inspect_pi_skill_destination(&ssot, &native, &skill.directory)
+                SkillService::inspect_pi_skill_destination(&ssot, &native, &skill.directory, &app)
                     .unwrap()
                     .unwrap();
-            deployments.push((native, deployment));
+            deployments.push((native, deployment, app));
         }
         let mut updated = skill.clone();
         updated.name = "new".into();
@@ -2256,9 +2256,9 @@ fn mcode_skill_update_rolls_back_deployments_when_database_is_read_only() {
         assert!(fs::read_to_string(ssot.join("SKILL.md"))
             .unwrap()
             .contains("name: old"));
-        for (native, _) in &deployments {
+        for (native, _, app) in &deployments {
             assert_eq!(SkillService::is_symlink(native), symlink);
-            SkillService::ensure_pi_skill_destination_matches(&ssot, native, &skill.directory)
+            SkillService::ensure_pi_skill_destination_matches(&ssot, native, &skill.directory, app)
                 .unwrap();
         }
         db.conn
@@ -2278,14 +2278,14 @@ fn mcode_skill_update_rolls_back_deployments_when_database_is_read_only() {
             db.get_installed_skill(&skill.id).unwrap().unwrap().name,
             "new"
         );
-        for (native, _) in &deployments {
+        for (native, _, app) in &deployments {
             assert_eq!(SkillService::is_symlink(native), symlink);
-            SkillService::ensure_pi_skill_destination_matches(&ssot, native, &skill.directory)
+            SkillService::ensure_pi_skill_destination_matches(&ssot, native, &skill.directory, app)
                 .unwrap();
         }
         SkillService::uninstall(&db, &skill.id).unwrap();
         assert!(!ssot.exists());
-        assert!(deployments.iter().all(|(native, _)| !native.exists()));
+        assert!(deployments.iter().all(|(native, _, _)| !native.exists()));
     }
 }
 
@@ -2305,10 +2305,11 @@ fn mcode_skill_update_can_retry_after_native_directory_write_failure() {
     write_skill(&ssot, "old");
     write_skill(&source, "new");
     SkillService::copy_dir_recursive(&ssot, &native).unwrap();
-    let deployment = SkillService::inspect_pi_skill_destination(&ssot, &native, "test-skill")
-        .unwrap()
-        .unwrap();
-    let deployments = vec![(native.clone(), deployment)];
+    let deployment =
+        SkillService::inspect_pi_skill_destination(&ssot, &native, "test-skill", &AppType::Mcode)
+            .unwrap()
+            .unwrap();
+    let deployments = vec![(native.clone(), deployment, AppType::Mcode)];
     let parent = native.parent().unwrap();
     let original_permissions = fs::metadata(parent).unwrap().permissions();
     fs::set_permissions(parent, fs::Permissions::from_mode(0o555)).unwrap();
@@ -2321,7 +2322,13 @@ fn mcode_skill_update_can_retry_after_native_directory_write_failure() {
     assert!(fs::read_to_string(ssot.join("SKILL.md"))
         .unwrap()
         .contains("name: old"));
-    SkillService::ensure_pi_skill_destination_matches(&ssot, &native, "test-skill").unwrap();
+    SkillService::ensure_pi_skill_destination_matches(
+        &ssot,
+        &native,
+        "test-skill",
+        &AppType::Mcode,
+    )
+    .unwrap();
     SkillService::update_mcode_skill_files(&source, &ssot, "test-skill", &deployments, || Ok(()))
         .unwrap();
     assert!(fs::read_to_string(native.join("SKILL.md"))
@@ -2337,15 +2344,25 @@ fn managed_pi_copy_refreshes_from_its_expected_old_content() {
     write_skill(&source, "old");
     SkillService::copy_dir_recursive(&source, &destination).expect("seed managed copy");
 
-    let deployment =
-        SkillService::inspect_pi_skill_destination(&source, &destination, "test-skill")
-            .expect("inspect managed copy")
-            .expect("managed deployment");
+    let deployment = SkillService::inspect_pi_skill_destination(
+        &source,
+        &destination,
+        "test-skill",
+        &AppType::Pi,
+    )
+    .expect("inspect managed copy")
+    .expect("managed deployment");
 
     fs::remove_dir_all(&source).expect("replace old source");
     write_skill(&source, "new");
-    SkillService::refresh_pi_skill_destination(&source, &destination, "test-skill", &deployment)
-        .expect("refresh managed copy");
+    SkillService::refresh_pi_skill_destination(
+        &source,
+        &destination,
+        "test-skill",
+        &deployment,
+        &AppType::Pi,
+    )
+    .expect("refresh managed copy");
 
     assert!(fs::read_to_string(destination.join("SKILL.md"))
         .expect("read refreshed copy")
@@ -2359,10 +2376,14 @@ fn managed_pi_copy_rejects_hidden_native_changes() {
     let destination = temp.path().join("pi-skill");
     write_skill(&source, "old");
     SkillService::copy_dir_recursive(&source, &destination).expect("seed managed copy");
-    let deployment =
-        SkillService::inspect_pi_skill_destination(&source, &destination, "test-skill")
-            .expect("inspect managed copy")
-            .expect("managed deployment");
+    let deployment = SkillService::inspect_pi_skill_destination(
+        &source,
+        &destination,
+        "test-skill",
+        &AppType::Pi,
+    )
+    .expect("inspect managed copy")
+    .expect("managed deployment");
 
     fs::write(destination.join(".env"), "user-owned").expect("add hidden native file");
     fs::remove_dir_all(&source).expect("replace old source");
@@ -2373,6 +2394,7 @@ fn managed_pi_copy_rejects_hidden_native_changes() {
         &destination,
         "test-skill",
         &deployment,
+        &AppType::Pi,
     );
     assert!(
         result.is_err(),
@@ -2635,14 +2657,17 @@ fn pi_uninstall_rechecks_a_destination_created_after_preflight() {
     let source = temp.path().join("source");
     let destination = temp.path().join("pi-skill");
     write_skill(&source, "managed");
-    assert!(
-        SkillService::inspect_pi_skill_destination(&source, &destination, "test-skill")
-            .expect("inspect absent destination")
-            .is_none()
-    );
+    assert!(SkillService::inspect_pi_skill_destination(
+        &source,
+        &destination,
+        "test-skill",
+        &AppType::Pi,
+    )
+    .expect("inspect absent destination")
+    .is_none());
 
     SkillService::copy_dir_recursive(&source, &destination).expect("simulate concurrent Pi sync");
-    SkillService::remove_verified_pi_destination(&source, &destination, "test-skill")
+    SkillService::remove_verified_pi_destination(&source, &destination, "test-skill", &AppType::Pi)
         .expect("remove destination created after preflight");
 
     assert!(!destination.exists());
