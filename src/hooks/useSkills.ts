@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import {
+  useIsFetching,
   useIsMutating,
   useMutation,
   useQuery,
@@ -131,6 +132,13 @@ export function useDiscoverableSkills() {
 }
 
 /**
+ * 订阅发现查询的加载态，不挂载查询本身（避免停在「已安装」时触发首次拉仓库）。
+ */
+export function useIsFetchingDiscoverableSkills() {
+  return useIsFetching({ queryKey: DISCOVERABLE_QUERY_KEY, exact: true }) > 0;
+}
+
+/**
  * 手动刷新发现列表：绕过后端缓存，所有启用的仓库都重新下载
  */
 export function useRefreshDiscoverableSkills() {
@@ -142,6 +150,21 @@ export function useRefreshDiscoverableSkills() {
       exact: true,
     });
   }, [queryClient]);
+}
+
+/**
+ * 手动刷新仓库列表缓存，不挂载 useSkillRepos 查询本身。
+ */
+export function useRefreshSkillRepos() {
+  const queryClient = useQueryClient();
+  return useCallback(
+    () =>
+      queryClient.refetchQueries({
+        queryKey: ["skills", "repos"],
+        exact: true,
+      }),
+    [queryClient],
+  );
 }
 
 /**

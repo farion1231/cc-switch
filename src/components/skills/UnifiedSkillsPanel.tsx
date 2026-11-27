@@ -49,8 +49,10 @@ import {
   useImportSkillsFromApps,
   useInstallSkillsFromZip,
   useInstalledSkills,
+  useIsFetchingDiscoverableSkills,
   useRefreshDiscoverableSkills,
   useRefreshLocalSkillMetadata,
+  useRefreshSkillRepos,
   useRestoreSkillBackup,
   useScanUnmanagedSkills,
   useSkillBackups,
@@ -179,9 +181,9 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
     },
     [],
   );
-  const { isFetching: fetchingDiscoverable } = useDiscoverableSkills();
+  const fetchingDiscoverable = useIsFetchingDiscoverableSkills();
   const refreshDiscoverable = useRefreshDiscoverableSkills();
-  const { refetch: refetchRepos } = useSkillRepos();
+  const refreshSkillRepos = useRefreshSkillRepos();
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -1004,7 +1006,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
         disabled={fetchingDiscoverable}
         onClick={() => {
           void refreshDiscoverable();
-          void refetchRepos();
+          void refreshSkillRepos();
         }}
       >
         <RefreshCw
@@ -1462,6 +1464,7 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
               installTo={installTo}
               onShowInstalled={showInstalled}
               onOpenRepoManager={() => setRepoManagerOpen(true)}
+              onOpenSkillsSh={() => setView("skillssh")}
               onEnableFailures={recordEnableFailures}
             />
           </div>
@@ -1492,71 +1495,167 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
             view === "installed" ? "flex" : "hidden",
           )}
         >
-          {/* 统一单行平铺工具栏（h-14，对齐 MCP / Plugins / 仓库）：左搜索 + 单一筛选 + 计数，右更新或批量条 */}
+          {/* 统一单行平铺工具栏（min-h-14 可换行，对齐 MCP / Plugins / 仓库）：
+              左边搜索、筛选、激活标签和计数常驻（多选时也保留，支持连续搜索勾选）；
+              右边优先显示更新进度，其次批量操作，否则有更新时显示「全部更新」 */}
           {showInstalledToolbar && (
-            <div className="flex h-14 shrink-0 items-center gap-3 px-6">
-              {selectionActive ? (
-                <>
-                  <div className="flex min-w-0 flex-wrap items-center gap-0.5">
-                    <span className="shrink-0 whitespace-nowrap pe-2 text-body font-medium tabular-nums">
-                      {t("skillsPage.bulk.selected", { count: selected.size })}
-                    </span>
-                    <AppMenuButton
-                      label={t("skillsPage.bulk.enableTo")}
-                      ariaLabel={t("skillsPage.bulk.enableToAria", {
-                        count: selected.size,
-                      })}
-                      apps={appIds}
-                      disabled={controlsDisabled}
-                      onPick={(app) => handleSelectionToggle(app, true)}
-                    />
-                    <AppMenuButton
-                      label={t("skillsPage.bulk.disable")}
-                      ariaLabel={t("skillsPage.bulk.disableAria", {
-                        count: selected.size,
-                      })}
-                      apps={appIds}
-                      disabled={controlsDisabled}
-                      onPick={(app) => handleSelectionToggle(app, false)}
-                    />
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="compact"
-                      className="px-2"
-                      disabled={controlsDisabled}
-                      onClick={() => {
-                        const ids = [...selected].filter(
-                          (id) => updatesMap[id],
-                        );
-                        if (ids.length === 0) {
-                          toast.info(
-                            t("skillsPage.toast.noUpdatesInSelection"),
-                            {
-                              closeButton: true,
-                            },
-                          );
-                          return;
-                        }
-                        void updateIds(ids);
-                      }}
-                    >
-                      {t("skills.update")}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="quiet"
-                      size="compact"
-                      className="px-2 text-danger-text hover:text-danger-text"
-                      disabled={controlsDisabled}
-                      onClick={() =>
-                        setConfirm({ kind: "uninstall", ids: [...selected] })
+            <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-6 py-2">
+              <MatrixSearch
+                className="w-[320px] min-w-[180px] shrink"
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+                placeholder={t("skillsPage.searchPlaceholder")}
+                ariaLabel={t("skills.installedSearchAriaLabel")}
+                status={
+                  normalizedQuery
+                    ? t("appMatrix.found", {
+                        count: filteredSkills.length,
+                      })
+                    : ""
+                }
+              />
+              <InstalledFilterMenu
+                active={filtersActive}
+                statusItems={(["all", "updates", "none"] as StatusFilter[]).map(
+                  (value) => ({
+                    key: value,
+                    label: statusLabel(value),
+                    checked: statusFilter === value,
+                    onSelect: () => setStatusFilter(value),
+                  }),
+                )}
+                sourceItems={[
+                  {
+                    key: "all",
+                    label: t("skillsPage.filter.all"),
+                    checked: sourceFilter === "all",
+                    onSelect: () => setSourceFilter("all"),
+                  },
+                  ...sourceOptions.map(([key, count]) => ({
+                    key,
+                    label: sourceLabel(key),
+                    mono: key !== "local",
+                    count,
+                    checked: sourceFilter === key,
+                    onSelect: () => setSourceFilter(key),
+                  })),
+                ]}
+              />
+              {statusFilter !== "all" && (
+                <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-control bg-subtle px-2 text-caption text-fg-1">
+                  <span>{statusLabel(statusFilter)}</span>
+                  <button
+                    type="button"
+                    aria-label={t("skillsPage.clearFilters")}
+                    onClick={() => setStatusFilter("all")}
+                    className="rounded-sm text-fg-3 transition-colors hover:text-fg-1"
+                  >
+                    <X className="h-3 w-3" strokeWidth={2} />
+                  </button>
+                </span>
+              )}
+              {sourceFilter !== "all" && (
+                <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-control bg-subtle px-2 text-caption text-fg-1">
+                  <span
+                    className={cn(
+                      "max-w-[140px] truncate",
+                      sourceFilter !== "local" && "font-mono",
+                    )}
+                  >
+                    {sourceLabel(sourceFilter)}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={t("skillsPage.clearFilters")}
+                    onClick={() => setSourceFilter("all")}
+                    className="rounded-sm text-fg-3 transition-colors hover:text-fg-1"
+                  >
+                    <X className="h-3 w-3" strokeWidth={2} />
+                  </button>
+                </span>
+              )}
+              <span className="shrink-0 whitespace-nowrap text-caption tabular-nums text-fg-2">
+                {filteredSkills.length === nInstalled
+                  ? nInstalled === 1
+                    ? t("skillsPage.countOne", { count: nInstalled })
+                    : t("skillsPage.count", { count: nInstalled })
+                  : t("skillsPage.countFiltered", {
+                      shown: filteredSkills.length,
+                      count: nInstalled,
+                    })}
+              </span>
+              <div className="flex-1" />
+              {updateProgress ? (
+                <Button
+                  type="button"
+                  variant="neutral"
+                  size="regular"
+                  className="shrink-0"
+                  disabled
+                >
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  {t("skillsPage.updatingProgress", {
+                    done: Math.min(
+                      updateProgress.done + 1,
+                      updateProgress.total,
+                    ),
+                    total: updateProgress.total,
+                  })}
+                </Button>
+              ) : selectionActive ? (
+                <div className="flex shrink-0 flex-wrap items-center gap-0.5">
+                  <span className="shrink-0 whitespace-nowrap pe-2 text-body font-medium tabular-nums">
+                    {t("skillsPage.bulk.selected", { count: selected.size })}
+                  </span>
+                  <AppMenuButton
+                    label={t("skillsPage.bulk.enableTo")}
+                    ariaLabel={t("skillsPage.bulk.enableToAria", {
+                      count: selected.size,
+                    })}
+                    apps={appIds}
+                    disabled={controlsDisabled}
+                    onPick={(app) => handleSelectionToggle(app, true)}
+                  />
+                  <AppMenuButton
+                    label={t("skillsPage.bulk.disable")}
+                    ariaLabel={t("skillsPage.bulk.disableAria", {
+                      count: selected.size,
+                    })}
+                    apps={appIds}
+                    disabled={controlsDisabled}
+                    onPick={(app) => handleSelectionToggle(app, false)}
+                  />
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="compact"
+                    className="px-2"
+                    disabled={controlsDisabled}
+                    onClick={() => {
+                      const ids = [...selected].filter((id) => updatesMap[id]);
+                      if (ids.length === 0) {
+                        toast.info(t("skillsPage.toast.noUpdatesInSelection"), {
+                          closeButton: true,
+                        });
+                        return;
                       }
-                    >
-                      {t("skillsPage.bulk.uninstall")}
-                    </Button>
-                  </div>
-                  <div className="flex-1" />
+                      void updateIds(ids);
+                    }}
+                  >
+                    {t("skills.update")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="compact"
+                    className="px-2 text-danger-text hover:text-danger-text"
+                    disabled={controlsDisabled}
+                    onClick={() =>
+                      setConfirm({ kind: "uninstall", ids: [...selected] })
+                    }
+                  >
+                    {t("skillsPage.bulk.uninstall")}
+                  </Button>
                   <Button
                     type="button"
                     variant="quiet"
@@ -1566,124 +1665,20 @@ const UnifiedSkillsPanel: React.FC<UnifiedSkillsPanelProps> = ({
                   >
                     {t("common.cancel")}
                   </Button>
-                </>
-              ) : (
-                <>
-                  <MatrixSearch
-                    className="w-[320px] min-w-[180px] shrink"
-                    value={searchQuery}
-                    onValueChange={setSearchQuery}
-                    placeholder={t("skillsPage.searchPlaceholder")}
-                    ariaLabel={t("skills.installedSearchAriaLabel")}
-                    status={
-                      normalizedQuery
-                        ? t("appMatrix.found", {
-                            count: filteredSkills.length,
-                          })
-                        : ""
-                    }
-                  />
-                  <InstalledFilterMenu
-                    active={filtersActive}
-                    statusItems={(
-                      ["all", "updates", "none"] as StatusFilter[]
-                    ).map((value) => ({
-                      key: value,
-                      label: statusLabel(value),
-                      checked: statusFilter === value,
-                      onSelect: () => setStatusFilter(value),
-                    }))}
-                    sourceItems={[
-                      {
-                        key: "all",
-                        label: t("skillsPage.filter.all"),
-                        checked: sourceFilter === "all",
-                        onSelect: () => setSourceFilter("all"),
-                      },
-                      ...sourceOptions.map(([key, count]) => ({
-                        key,
-                        label: sourceLabel(key),
-                        mono: key !== "local",
-                        count,
-                        checked: sourceFilter === key,
-                        onSelect: () => setSourceFilter(key),
-                      })),
-                    ]}
-                  />
-                  {statusFilter !== "all" && (
-                    <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-control bg-subtle px-2 text-caption text-fg-1">
-                      <span>{statusLabel(statusFilter)}</span>
-                      <button
-                        type="button"
-                        aria-label={t("skillsPage.clearFilters")}
-                        onClick={() => setStatusFilter("all")}
-                        className="rounded-sm text-fg-3 transition-colors hover:text-fg-1"
-                      >
-                        <X className="h-3 w-3" strokeWidth={2} />
-                      </button>
-                    </span>
-                  )}
-                  {sourceFilter !== "all" && (
-                    <span className="inline-flex h-6 shrink-0 items-center gap-1 rounded-control bg-subtle px-2 text-caption text-fg-1">
-                      <span
-                        className={cn(
-                          "max-w-[140px] truncate",
-                          sourceFilter !== "local" && "font-mono",
-                        )}
-                      >
-                        {sourceLabel(sourceFilter)}
-                      </span>
-                      <button
-                        type="button"
-                        aria-label={t("skillsPage.clearFilters")}
-                        onClick={() => setSourceFilter("all")}
-                        className="rounded-sm text-fg-3 transition-colors hover:text-fg-1"
-                      >
-                        <X className="h-3 w-3" strokeWidth={2} />
-                      </button>
-                    </span>
-                  )}
-                  <span className="shrink-0 whitespace-nowrap text-caption tabular-nums text-fg-2">
-                    {filteredSkills.length === nInstalled
-                      ? t("skillsPage.count", { count: nInstalled })
-                      : t("skillsPage.countFiltered", {
-                          shown: filteredSkills.length,
-                          count: nInstalled,
-                        })}
-                  </span>
-                  <div className="flex-1" />
-                  {updateProgress ? (
-                    <Button
-                      type="button"
-                      variant="neutral"
-                      size="regular"
-                      className="shrink-0"
-                      disabled
-                    >
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                      {t("skillsPage.updatingProgress", {
-                        done: Math.min(
-                          updateProgress.done + 1,
-                          updateProgress.total,
-                        ),
-                        total: updateProgress.total,
-                      })}
-                    </Button>
-                  ) : nUpdates > 0 && !isCheckingUpdates ? (
-                    <Button
-                      type="button"
-                      variant="neutral"
-                      size="regular"
-                      className="shrink-0"
-                      disabled={controlsDisabled}
-                      onClick={() => setConfirm({ kind: "updateAll" })}
-                    >
-                      <ArrowUpCircle className="h-4 w-4" strokeWidth={2} />
-                      {t("skillsPage.updateAllCount", { count: nUpdates })}
-                    </Button>
-                  ) : null}
-                </>
-              )}
+                </div>
+              ) : nUpdates > 0 && !isCheckingUpdates ? (
+                <Button
+                  type="button"
+                  variant="neutral"
+                  size="regular"
+                  className="shrink-0"
+                  disabled={controlsDisabled}
+                  onClick={() => setConfirm({ kind: "updateAll" })}
+                >
+                  <ArrowUpCircle className="h-4 w-4" strokeWidth={2} />
+                  {t("skillsPage.updateAllCount", { count: nUpdates })}
+                </Button>
+              ) : null}
             </div>
           )}
 

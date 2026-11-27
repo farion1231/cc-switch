@@ -4955,8 +4955,8 @@
     "viewAria": "Вид навыков",
     "viewInstalled": "Установленные",
     "viewInstalledCount": "Установленные {{count}}",
-    "viewDiscover": "Обзор",
     "viewRepos": "Репозитории",
+    "countOne": "{{count}} навык",
     "count": "{{count}} навыков",
     "countFiltered": "{{shown}} из {{count}}",
     "searchPlaceholder": "Поиск по имени, каталогу, описанию или репозиторию",
@@ -4975,8 +4975,7 @@
       "all": "Все",
       "updates": "Есть обновления",
       "none": "Нигде не включены",
-      "inApp": "Включены в {{app}}",
-      "sourceButton": "Источник: {{source}}"
+      "inApp": "Включены в {{app}}"
     },
     "source": {
       "local": "Локальные"
@@ -5052,8 +5051,6 @@
       "skillsShAria": "Поиск по skills.sh",
       "skillsShHint": "Введите выше минимум 2 символа и нажмите Enter, чтобы искать по skills.sh.",
       "skillsShNone": "На skills.sh ничего не найдено по запросу «{{query}}»",
-      "sourceAria": "Источник обзора",
-      "sourceRepos": "Репозитории · {{count}}",
       "reload": "Обновить репозитории",
       "listLabel": "Навыки, доступные для установки",
       "installed": "Установлен",
@@ -5073,7 +5070,6 @@
       "onlyUninstalled": "Только неустановленные"
     },
     "repos": {
-      "buttonAll": "Источник: все",
       "buttonSome": "Источник: {{count}} из {{total}}",
       "popoverAria": "Репозитории, используемые в обзоре",
       "enableAria": "Использовать {{repo}} в обзоре",

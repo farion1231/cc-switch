@@ -138,6 +138,8 @@ interface SkillsPageProps {
   /** 「已安装 · 3 个应用 ›」：切到已安装段并定位到那一行 */
   onShowInstalled: (skillId: string) => void;
   onOpenRepoManager: () => void;
+  /** 没配置仓库时在空状态提供切到 skills.sh 的入口 */
+  onOpenSkillsSh?: () => void;
   /** 安装后有应用没能启用：交给已安装段标 ⚠ */
   onEnableFailures: (
     failures: Array<{ id: string; app: AppId; error: unknown }>,
@@ -209,6 +211,7 @@ export function SkillsPage({
   installTo,
   onShowInstalled,
   onOpenRepoManager,
+  onOpenSkillsSh,
   onEnableFailures,
   onSkillsShRefreshChange,
   initialQuery = "",
@@ -236,18 +239,25 @@ export function SkillsPage({
   const refreshDiscoverable = useRefreshDiscoverableSkills();
   const { data: repoFailures = [] } = useDiscoverableSkillsFailures();
   const { data: installedSkills = [] } = useInstalledSkills();
-  const { data: repos = [], refetch: refetchRepos } = useSkillRepos();
+  const {
+    data: repos = [],
+    isLoading: loadingRepos,
+    refetch: refetchRepos,
+  } = useSkillRepos();
   const {
     data: skillsShResult,
     isLoading: loadingSkillsSh,
     isFetching: fetchingSkillsSh,
     isPlaceholderData: placeholderSkillsSh,
     isError: skillsShError,
+    dataUpdatedAt: skillsShUpdatedAt,
     refetch: refetchSkillsSh,
   } = useSearchSkillsSh(skillsShQuery, SKILLSSH_PAGE_SIZE, skillsShOffset);
   const installMutation = useInstallSkill();
   const { setRepoEnabled } = useSkillRepoActions();
 
+  // 带上 skillsShUpdatedAt：刷新返回相同数据时 TanStack Query 保持 data 引用不变，
+  // 也要同步更新 accumulated，避免 retry 清空列表后一直停在空状态。
   useEffect(() => {
     if (skillsShResult && !placeholderSkillsSh) {
       setAccumulated((prev) =>
@@ -256,10 +266,18 @@ export function SkillsPage({
           : [...prev, ...skillsShResult.skills],
       );
     }
-  }, [skillsShResult, skillsShOffset, placeholderSkillsSh]);
+  }, [skillsShResult, skillsShOffset, placeholderSkillsSh, skillsShUpdatedAt]);
 
   const isSkillsSh = source === "skillssh";
   const enabledRepos = repos.filter((repo) => repo.enabled);
+  const refetchPageZeroRef = useRef(false);
+
+  useEffect(() => {
+    if (skillsShOffset === 0 && refetchPageZeroRef.current) {
+      refetchPageZeroRef.current = false;
+      void refetchSkillsSh();
+    }
+  }, [skillsShOffset, refetchSkillsSh]);
 
   const submitSkillsSh = () => {
     const trimmed = query.trim();
@@ -276,19 +294,31 @@ export function SkillsPage({
     if (skillsShOffset === 0) {
       void refetchSkillsSh();
     } else {
+      refetchPageZeroRef.current = true;
       setSkillsShOffset(0);
     }
   };
 
-  const retrySkillsShRef = useRef(retrySkillsSh);
-  retrySkillsShRef.current = retrySkillsSh;
+  // 页头刷新：不先清空已展示的列表；翻过页时回到第一页并强制重拉（不吃 5 分钟缓存）
+  const refreshSkillsSh = () => {
+    if (skillsShQuery.length < 2) return;
+    if (skillsShOffset === 0) {
+      void refetchSkillsSh();
+    } else {
+      refetchPageZeroRef.current = true;
+      setSkillsShOffset(0);
+    }
+  };
+
+  const refreshSkillsShRef = useRef(refreshSkillsSh);
+  refreshSkillsShRef.current = refreshSkillsSh;
 
   useEffect(() => {
     if (!isSkillsSh || !onSkillsShRefreshChange) return;
     onSkillsShRefreshChange({
       canRefresh: skillsShQuery.length >= 2,
       refreshing: fetchingSkillsSh,
-      refresh: () => retrySkillsShRef.current(),
+      refresh: () => refreshSkillsShRef.current(),
     });
   }, [isSkillsSh, skillsShQuery, fetchingSkillsSh, onSkillsShRefreshChange]);
 
@@ -506,6 +536,17 @@ export function SkillsPage({
           onClick: onOpenRepoManager,
         },
       ];
+    } else if (!loadingRepos && repos.length === 0) {
+      title = t("skills.repo.empty");
+      buttons = [
+        {
+          label: t("skillsPage.discover.manageRepos"),
+          onClick: onOpenRepoManager,
+        },
+        ...(onOpenSkillsSh
+          ? [{ label: "skills.sh", onClick: onOpenSkillsSh }]
+          : []),
+      ];
     } else if (repoRows.length === 0) {
       // 后端逐仓库报告了失败：如实写哪些没读到、为什么；否则是读到了但里面没有 Skill
       title =
@@ -577,10 +618,15 @@ export function SkillsPage({
     !isSkillsSh &&
     (statusFilter === "uninstalled" || enabledRepos.length < repos.length);
 
+  const formatSkillCount = (count: number) =>
+    count === 1
+      ? t("skillsPage.countOne", { count })
+      : t("skillsPage.count", { count });
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {/* 统一平铺工具栏（h-14，对齐 MCP / Plugins / 已安装）：左搜索 + 筛选 + 计数，右安装到 */}
-      <div className="flex h-14 shrink-0 items-center gap-3 px-6">
+      {/* 统一平铺工具栏（min-h-14 可换行，对齐 MCP / Plugins / 已安装）：左搜索 + 筛选 + 计数，右安装到 */}
+      <div className="flex min-h-14 shrink-0 flex-wrap items-center gap-x-3 gap-y-2 px-6 py-2">
         <MatrixSearch
           className="w-[320px] min-w-[180px] shrink"
           inputId={`sk-${source}-search`}
@@ -644,11 +690,11 @@ export function SkillsPage({
           (isSkillsSh ? accumulated.length > 0 : repoRows.length > 0) && (
             <span className="shrink-0 whitespace-nowrap text-caption tabular-nums text-fg-2">
               {isSkillsSh
-                ? t("skillsPage.count", {
-                    count: skillsShResult?.totalCount ?? accumulated.length,
-                  })
+                ? formatSkillCount(
+                    skillsShResult?.totalCount ?? accumulated.length,
+                  )
                 : visibleRows.length === repoRows.length
-                  ? t("skillsPage.count", { count: repoRows.length })
+                  ? formatSkillCount(repoRows.length)
                   : t("skillsPage.countFiltered", {
                       shown: visibleRows.length,
                       count: repoRows.length,

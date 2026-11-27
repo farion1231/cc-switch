@@ -15,6 +15,8 @@ import type {
 import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const m = vi.hoisted(() => ({
+  discoverableMounted: vi.fn(),
+  reposMounted: vi.fn(),
   scanUnmanaged: vi.fn(),
   toggle: vi.fn(),
   bulkToggle: vi.fn(),
@@ -116,10 +118,18 @@ vi.mock("@/hooks/useSkills", () => ({
   }),
   useResyncSkillsToApps: () => ({ mutateAsync: m.resync, isPending: false }),
   useIsResyncingSkills: () => false,
-  useDiscoverableSkills: () => ({ data: [], refetch: vi.fn() }),
+  useDiscoverableSkills: () => {
+    m.discoverableMounted();
+    return { data: [], refetch: vi.fn() };
+  },
+  useIsFetchingDiscoverableSkills: () => false,
   useRefreshDiscoverableSkills: () => vi.fn(),
+  useRefreshSkillRepos: () => vi.fn(),
   useDiscoverableSkillsFailures: () => ({ data: [] }),
-  useSkillRepos: () => ({ data: [], refetch: vi.fn() }),
+  useSkillRepos: () => {
+    m.reposMounted();
+    return { data: [], refetch: vi.fn() };
+  },
   useSkillRepoTokens: () => ({ data: { hosts: [], secureStorage: true } }),
   useSkillRepoTokenActions: () => ({
     setToken: vi.fn(),
@@ -177,6 +187,8 @@ async function openMenu(trigger: string, item: string) {
 
 describe("UnifiedSkillsPanel", () => {
   beforeEach(() => {
+    m.discoverableMounted.mockReset();
+    m.reposMounted.mockReset();
     m.installed = [];
     m.backups = [];
     m.updates = [];
@@ -218,6 +230,13 @@ describe("UnifiedSkillsPanel", () => {
     ]) {
       fn.mockReset();
     }
+  });
+
+  it("does not mount discoverable or repo queries while staying on Installed", () => {
+    m.installed = [makeSkill()];
+    renderPanel();
+    expect(m.discoverableMounted).not.toHaveBeenCalled();
+    expect(m.reposMounted).not.toHaveBeenCalled();
   });
 
   it("always shows the Pi column and toggles it like the other apps", async () => {
@@ -612,11 +631,18 @@ describe("UnifiedSkillsPanel", () => {
 
     await openMenu("skillsPage.filter.button", "skillsPage.filter.updates");
     expect(screen.getAllByRole("listitem")).toHaveLength(1);
-    // 选中行时工具栏切换为批量操作条，取消后回到搜索与筛选
+    // 搜索框、筛选按钮与激活标签在多选时都保持可见，支持连续搜索勾选
     await userEvent.click(
       screen.getByRole("checkbox", { name: "skillsPage.selectAria" }),
     );
     expect(screen.getByText("skillsPage.bulk.selected")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "skillsPage.filter.button" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("skillsPage.filter.updates")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "skills.installedSearchAriaLabel" }),
+    ).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "common.cancel" }),
     );

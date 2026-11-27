@@ -4957,8 +4957,8 @@
     "viewAria": "Skills 檢視",
     "viewInstalled": "已安裝",
     "viewInstalledCount": "已安裝 {{count}}",
-    "viewDiscover": "探索",
     "viewRepos": "倉庫",
+    "countOne": "{{count}} 個 Skill",
     "count": "{{count}} 個 Skill",
     "countFiltered": "{{shown}} / {{count}}",
     "searchPlaceholder": "搜尋名稱、目錄、描述或倉庫",
@@ -4977,8 +4977,7 @@
       "all": "全部",
       "updates": "可更新",
       "none": "未在任何應用啟用",
-      "inApp": "在 {{app}} 啟用",
-      "sourceButton": "來源：{{source}}"
+      "inApp": "在 {{app}} 啟用"
     },
     "source": {
       "local": "本機"
@@ -5054,8 +5053,6 @@
       "skillsShAria": "在 skills.sh 搜尋",
       "skillsShHint": "在上面輸入至少 2 個字，按 Enter 搜尋 skills.sh。",
       "skillsShNone": "skills.sh 上沒有找到「{{query}}」",
-      "sourceAria": "探索來源",
-      "sourceRepos": "倉庫 · {{count}}",
       "reload": "重新整理倉庫",
       "listLabel": "可安裝的 Skill",
       "installed": "已安裝",
@@ -5075,7 +5072,6 @@
       "onlyUninstalled": "只看未安裝"
     },
     "repos": {
-      "buttonAll": "來源：全部",
       "buttonSome": "來源：{{count}} / {{total}}",
       "popoverAria": "參與探索的倉庫",
       "enableAria": "在探索裡使用 {{repo}}",

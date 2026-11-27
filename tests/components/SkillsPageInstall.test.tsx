@@ -451,4 +451,75 @@ describe("SkillsPage (Discover)", () => {
       }),
     );
   });
+
+  it("shows empty repositories state with skills.sh shortcut when zero repos are configured", async () => {
+    const onOpenSkillsSh = vi.fn();
+    renderPage({ source: "repos", onOpenSkillsSh });
+    expect(screen.getByText("skills.repo.empty")).toBeInTheDocument();
+    expect(
+      screen.queryByText("skillsPage.discover.noneRead"),
+    ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "skills.sh" }));
+    expect(onOpenSkillsSh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps skills.sh results when Refresh returns identical data and forces page-0 refetch after Load more", async () => {
+    const refetchPage0 = vi.fn();
+    const refetchPage1 = vi.fn();
+    setSearchResult(
+      "react",
+      0,
+      {
+        skills: [makeSkillsSh({ key: "p0", name: "Page 0 Skill" })],
+        totalCount: 25,
+        query: "react",
+      },
+      { refetch: refetchPage0 },
+    );
+    setSearchResult(
+      "react",
+      20,
+      {
+        skills: [makeSkillsSh({ key: "p1", name: "Page 1 Skill" })],
+        totalCount: 25,
+        query: "react",
+      },
+      { refetch: refetchPage1 },
+    );
+
+    let handle: {
+      canRefresh: boolean;
+      refreshing: boolean;
+      refresh: () => void;
+    } = { canRefresh: false, refreshing: false, refresh: () => undefined };
+    renderPage({
+      source: "skillssh",
+      onSkillsShRefreshChange: (next) => {
+        handle = next;
+      },
+    });
+
+    await userEvent.type(
+      screen.getByRole("textbox", { name: "skillsPage.discover.skillsShAria" }),
+      "react{Enter}",
+    );
+    await screen.findByText("Page 0 Skill");
+    expect(handle.canRefresh).toBe(true);
+
+    // Refresh on page 0: refetches without wiping results even if data reference is unchanged
+    handle.refresh();
+    expect(refetchPage0).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Page 0 Skill")).toBeInTheDocument();
+
+    // Load more -> page 1
+    await userEvent.click(
+      screen.getByRole("button", { name: "skills.skillssh.loadMore" }),
+    );
+    await screen.findByText("Page 1 Skill");
+
+    // Refresh after Load more: drops back to page 0 and forces a fresh refetch
+    handle.refresh();
+    await waitFor(() => expect(refetchPage0).toHaveBeenCalledTimes(2));
+    expect(screen.getByText("Page 0 Skill")).toBeInTheDocument();
+  });
 });
