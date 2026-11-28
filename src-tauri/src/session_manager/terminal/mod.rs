@@ -1,5 +1,23 @@
+#[cfg(not(target_os = "windows"))]
 use std::process::Command;
 
+/// Windows session commands use PowerShell encoding inside the selected terminal.
+#[cfg(target_os = "windows")]
+pub fn launch_terminal(
+    target: &str,
+    command: &str,
+    cwd: Option<&str>,
+    custom_config: Option<&str>,
+) -> Result<(), String> {
+    if command.trim().is_empty() {
+        return Err("Resume command is empty".to_string());
+    }
+
+    let _ = custom_config;
+    crate::launch_windows_session_command(command, cwd, target)
+}
+
+#[cfg(not(target_os = "windows"))]
 pub fn launch_terminal(
     target: &str,
     command: &str,
@@ -11,7 +29,7 @@ pub fn launch_terminal(
     }
 
     if !cfg!(target_os = "macos") {
-        return Err("Terminal resume is only supported on macOS".to_string());
+        return Err("Terminal resume is only supported on macOS and Windows".to_string());
     }
 
     match target {
@@ -31,6 +49,7 @@ pub fn launch_terminal(
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_macos_terminal(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let full_command = build_shell_command(command, cwd);
     let escaped = escape_osascript(&full_command);
@@ -153,6 +172,7 @@ fn is_executable_file(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_iterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let full_command = build_shell_command(command, cwd);
     let escaped = escape_osascript(&full_command);
@@ -180,6 +200,7 @@ end tell"#
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
 
@@ -214,6 +235,7 @@ fn launch_ghostty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     let full_command = build_shell_command(command, cwd);
 
@@ -239,6 +261,7 @@ fn launch_kitty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // wezterm start --cwd ... -- command
     // To invoke via `open`, we use `open -na "WezTerm" --args start ...`
@@ -256,6 +279,7 @@ fn launch_wezterm(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_kaku(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // Kaku is a WezTerm-derived terminal and keeps a compatible `start` entrypoint.
     let args = build_wezterm_compatible_args("Kaku", command, cwd);
@@ -272,11 +296,13 @@ fn launch_kaku(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn build_wezterm_compatible_args(app_name: &str, command: &str, cwd: Option<&str>) -> Vec<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
     build_wezterm_compatible_args_with_shell(app_name, command, cwd, &shell)
 }
 
+#[cfg(not(target_os = "windows"))]
 fn build_wezterm_compatible_args_with_shell(
     app_name: &str,
     command: &str,
@@ -346,6 +372,7 @@ fn launch_warp(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     // Alacritty: open -na Alacritty --args --working-directory ... -e shell -c command
     let full_command = build_shell_command(command, None);
@@ -375,6 +402,7 @@ fn launch_alacritty(command: &str, cwd: Option<&str>) -> Result<(), String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn launch_custom(
     command: &str,
     cwd: Option<&str>,
@@ -417,6 +445,7 @@ fn launch_custom(
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
     match cwd {
         Some(dir) if !dir.trim().is_empty() => {
@@ -434,15 +463,22 @@ fn build_shell_command(command: &str, cwd: Option<&str>) -> String {
 ///
 /// 单引号内不做任何展开，唯一的特例是 `'` 自身无法被表示：用「闭合-转义-重开」
 /// 的 `'\''` 序列绕过。
+#[cfg(not(target_os = "windows"))]
 pub(crate) fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', r"'\''"))
 }
 
+#[cfg(target_os = "windows")]
+pub(crate) fn shell_escape(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(not(target_os = "windows"))]
 fn escape_osascript(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_os = "windows")))]
 mod tests {
     use super::*;
 
@@ -581,5 +617,16 @@ mod tests {
             build_shell_command("claude --resume x", Some("/tmp/$(id -un)")),
             "cd '/tmp/$(id -un)' && claude --resume x"
         );
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::shell_escape;
+
+    #[test]
+    fn quotes_unicode_paths_and_embedded_apostrophes_for_powershell() {
+        assert_eq!(shell_escape(r"C:\项目\it's"), r"'C:\项目\it''s'");
+        assert_eq!(shell_escape("$(calc); &"), "'$(calc); &'");
     }
 }

@@ -1706,6 +1706,48 @@ fn build_windows_cwd_command_str(path: &str) -> (String, Option<String>) {
     (command, env_value)
 }
 
+/// Launch a session through PowerShell so Unicode paths and provider assignments share one syntax.
+#[cfg(target_os = "windows")]
+pub(crate) fn launch_windows_session_command(
+    command_line: &str,
+    cwd: Option<&str>,
+    terminal: &str,
+) -> Result<(), String> {
+    use base64::Engine;
+    let cwd = resolve_launch_cwd(cwd.map(str::to_owned))?;
+    let prefix = cwd
+        .map(|path| {
+            format!(
+                "Set-Location -LiteralPath '{}'; if (-not $?) {{ exit 1 }}; ",
+                path.to_string_lossy().replace('\'', "''")
+            )
+        })
+        .unwrap_or_default();
+    let script = format!("{prefix}{command_line}");
+    let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    let program = windows_powershell_program(&effective_path_string());
+    let args = [program, "-NoExit", "-EncodedCommand", encoded.as_str()];
+    let result = match terminal {
+        "wt" => run_windows_start_command(
+            &[
+                "wt",
+                program,
+                "-NoExit",
+                "-EncodedCommand",
+                encoded.as_str(),
+            ],
+            "Windows Terminal",
+        ),
+        "powershell" => run_windows_start_command(&args, "PowerShell"),
+        _ => {
+            let command = format!("{program} -NoExit -EncodedCommand {encoded}");
+            return run_windows_start_command(&["cmd", "/K", &command], "cmd");
+        }
+    };
+    result.or_else(|_| run_windows_start_command(&args, "PowerShell"))
+}
+
 #[cfg(target_os = "windows")]
 fn build_windows_cwd_command(cwd: Option<&Path>) -> (String, Option<String>) {
     cwd.map(|dir| build_windows_cwd_command_str(&dir.to_string_lossy()))
