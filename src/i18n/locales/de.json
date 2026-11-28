@@ -4472,7 +4472,18 @@
     "openclawConfig": "Konfiguration",
     "memory": "Memory",
     "webUi": "Web UI",
-    "viewUsage": "Nutzung dieser App ansehen"
+    "viewUsage": "Nutzung dieser App ansehen",
+    "desktopApp": {
+      "startApp": "App starten",
+      "restartApp": "App neu starten",
+      "checking": "{{name}} wird gesucht",
+      "notInstalled": "{{name}}-Desktop-App nicht gefunden",
+      "alreadyRunning": "{{name}} wird bereits ausgeführt",
+      "started": "{{name}} gestartet",
+      "restarted": "{{name}} neu gestartet",
+      "startFailed": "{{name}} konnte nicht gestartet werden: {{error}}",
+      "restartFailed": "{{name}} konnte nicht neu gestartet werden: {{error}}"
+    }
   },
   "mode": {
     "tabsLabel": "Verbindungsmodus",

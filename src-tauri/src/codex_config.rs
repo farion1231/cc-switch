@@ -1610,7 +1610,7 @@ const CODEX_CLI_FIXED_CANDIDATES: &[&str] = &[
 
 /// macOS 桌面版的 bundle 名，新的在前：改名前叫 Codex.app，改名迁移有时会两份都留着
 /// （openai/codex#48052），这时 ChatGPT.app 是新的那份。
-const CODEX_DESKTOP_APP_BUNDLES: &[&str] = &["ChatGPT.app", "Codex.app"];
+pub(crate) const CODEX_DESKTOP_APP_BUNDLES: &[&str] = &["ChatGPT.app", "Codex.app"];
 
 /// bundle 里自带的 Codex CLI，新结构在前：`codex-cli/bin/codex` 是指向同目录 `CodexCLI.app`
 /// 的垫片脚本，更早的版本直接放在 `Resources/codex`。只装了桌面版的人 PATH 上没有 `codex`，
