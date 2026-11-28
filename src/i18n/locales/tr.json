@@ -3920,6 +3920,7 @@
         "authTitle": "Codex önceki hesabı hâlâ önbelleğe alabilir; yeni oturum açma bilgilerini yüklemek için arka plan sunucusunu yeniden başlatın",
         "title": "Codex hala eski bir model listesi kullanıyor, dolayısıyla mevcut modeller gösterilmiyor",
         "unverifiedTitle": "Geçişten önce açık olan Codex uygulamaları önceki hesabı veya model listesini kullanmaya devam edebilir",
+        "dontShowAgain": "Bu tür bildirimleri bir daha gösterme",
         "unverifiedHint": "CC Switch, masaüstü uygulamasının veya düzenleyici uzantılarının çalışıp çalışmadığını anlayamıyor. Açık değillerse bu bildirimi kapatın.",
         "daemon": "CLI: kodeksi yeniden açmak yeterli değil; arka plan arka plan programının yeniden başlatılması gerekiyor.",
         "others": "Masaüstü uygulaması: tamamen çıkın ve yeniden açın (macOS'de ⌘Q; pencereyi kapatmak yeterli değildir). Editör uzantıları: editör penceresini yeniden açın.",
