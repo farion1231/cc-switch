@@ -3035,3 +3035,61 @@ fn test_build_usage_cache_tokens_without_input_output() {
     assert_eq!(result["cache_read_input_tokens"], json!(60));
     assert_eq!(result["cache_creation_input_tokens"], json!(20));
 }
+
+#[test]
+fn test_responses_thinking_disabled_sets_reasoning_none() {
+    // Auto-mode classifier requests: disabled thinking must win over any
+    // output_config.effort on models that accept a `none` tier.
+    for output_config in [None, Some(json!({"effort": "high"}))] {
+        let mut input = json!({
+            "model": "gpt-6-luna",
+            "max_tokens": 1024,
+            "thinking": {"type": "disabled"},
+            "messages": [{"role": "user", "content": "Hello"}]
+        });
+        if let Some(output_config) = output_config {
+            input["output_config"] = output_config;
+        }
+
+        let result = anthropic_to_responses(input, None, false, false).unwrap();
+        assert_eq!(result["reasoning"]["effort"], "none");
+    }
+}
+
+#[test]
+fn test_responses_thinking_disabled_older_model_omits_reasoning() {
+    let input = json!({
+        "model": "gpt-5.4",
+        "max_tokens": 1024,
+        "thinking": {"type": "disabled"},
+        "messages": [{"role": "user", "content": "Hello"}]
+    });
+
+    let result = anthropic_to_responses(input, None, false, false).unwrap();
+    assert!(result.get("reasoning").is_none());
+}
+
+#[test]
+fn test_responses_disabled_thinking_respects_required_reasoning_on_both_routes() {
+    for oauth in [false, true] {
+        for model in ["gpt-6-astra", "gpt-6.1-sol"] {
+            for effort in [None, Some("high")] {
+                let mut input = json!({
+                    "model": model,
+                    "max_tokens": 1024,
+                    "thinking": {"type": "disabled"},
+                    "messages": [{"role": "user", "content": "Hello"}]
+                });
+                if let Some(effort) = effort {
+                    input["output_config"] = json!({"effort": effort});
+                }
+                let result = anthropic_to_responses(input, None, oauth, false).unwrap();
+                if effort.is_some() {
+                    assert_eq!(result["reasoning"]["effort"], "low");
+                } else {
+                    assert!(result.get("reasoning").is_none());
+                }
+            }
+        }
+    }
+}
