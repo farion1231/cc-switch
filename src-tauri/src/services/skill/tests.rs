@@ -4222,11 +4222,39 @@ fn parse_git_info_refs_resolves_head_symref_and_stops_before_tags() {
         SkillService::parse_git_info_refs(b"<!DOCTYPE html>", "main", true),
         GitRefParseOutcome::Invalid
     );
-    // 未读到 refs/heads/ 结束且未到 eof 时继续等下一块
-    let partial = pkt_line(b"# service=git-upload-pack\n");
+    // 未读到 refs/heads/ 结束且未到 eof 时继续等下一块（即便落在完整 pkt-line 边界，
+    // 用于 512 KiB 上限截断时返回 NeedMore 触发回退而非误判 EOF）
+    let mut partial = pkt_line(b"# service=git-upload-pack\n");
+    partial.extend_from_slice(b"0000");
+    partial.extend_from_slice(&pkt_line(
+        format!("{sha_master} refs/heads/master\n").as_bytes(),
+    ));
     assert_eq!(
         SkillService::parse_git_info_refs(&partial, "main", false),
         GitRefParseOutcome::NeedMore
+    );
+
+    // 显式分支（非哨兵 HEAD/空串）在无 main/master 时不得回退到 HEAD symref，
+    // 保持与 try_repo_branches / countRepoSkills 一致
+    let mut develop_only = pkt_line(b"# service=git-upload-pack\n");
+    develop_only.extend_from_slice(b"0000");
+    develop_only.extend_from_slice(&pkt_line(
+        format!("{sha_dev} HEAD\0symref=HEAD:refs/heads/develop\n").as_bytes(),
+    ));
+    develop_only.extend_from_slice(&pkt_line(
+        format!("{sha_dev} refs/heads/develop\n").as_bytes(),
+    ));
+    assert_eq!(
+        SkillService::parse_git_info_refs(&develop_only, "main", true),
+        GitRefParseOutcome::Complete(None)
+    );
+    assert_eq!(
+        SkillService::parse_git_info_refs(&develop_only, "HEAD", true),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "develop".to_string(),
+            commit_sha: sha_dev.to_string(),
+            from_head_symref: true,
+        }))
     );
 }
 

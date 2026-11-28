@@ -364,7 +364,9 @@ impl SkillService {
                         let take = chunk.len().min(remaining);
                         buf.extend_from_slice(&chunk[..take]);
                         let hit_cap = buf.len() >= GIT_INFO_REFS_MAX_BYTES;
-                        match Self::parse_git_info_refs(&buf, &repo.branch, hit_cap) {
+                        // 传 `eof = false`：命中分支或越过 `refs/heads/` 立即返回 Complete；
+                        // 达到 512 KiB 上限仍未越过 `refs/heads/` 时返回 NeedMore，由下一分支回退。
+                        match Self::parse_git_info_refs(&buf, &repo.branch, false) {
                             repo::GitRefParseOutcome::Complete(res) => return res,
                             repo::GitRefParseOutcome::Invalid => return None,
                             repo::GitRefParseOutcome::NeedMore if hit_cap => return None,

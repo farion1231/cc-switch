@@ -692,7 +692,6 @@ impl SkillService {
         eof: bool,
     ) -> GitRefParseOutcome {
         let mut pos = 0usize;
-        let mut head_symref: Option<(String, String)> = None;
         let mut main_oid: Option<String> = None;
         let mut master_oid: Option<String> = None;
         let mut seen_past_heads = false;
@@ -745,22 +744,18 @@ impl SkillService {
                 continue;
             }
 
-            if refname == "HEAD" {
+            if refname == "HEAD" && want_default {
                 if let Some(caps) = caps_bytes.and_then(|b| std::str::from_utf8(b).ok()) {
                     for cap in caps.split_ascii_whitespace() {
                         if let Some(branch) = cap.strip_prefix("symref=HEAD:refs/heads/") {
                             if Self::is_valid_git_branch(branch)
                                 && !Self::is_default_branch_sentinel(branch)
                             {
-                                if want_default {
-                                    return GitRefParseOutcome::Complete(Some(ProbedGitRef {
-                                        branch: branch.to_string(),
-                                        commit_sha: oid.to_string(),
-                                        from_head_symref: true,
-                                    }));
-                                }
-                                head_symref = Some((branch.to_string(), oid.to_string()));
-                                break;
+                                return GitRefParseOutcome::Complete(Some(ProbedGitRef {
+                                    branch: branch.to_string(),
+                                    commit_sha: oid.to_string(),
+                                    from_head_symref: true,
+                                }));
                             }
                         }
                     }
@@ -801,18 +796,8 @@ impl SkillService {
             commit_sha,
             from_head_symref: false,
         });
-        let default = head_symref.map(|(branch, commit_sha)| ProbedGitRef {
-            branch,
-            commit_sha,
-            from_head_symref: true,
-        });
 
-        let resolved = if want_default {
-            default.or(main).or(master)
-        } else {
-            main.or(master).or(default)
-        };
-        GitRefParseOutcome::Complete(resolved)
+        GitRefParseOutcome::Complete(main.or(master))
     }
 
     /// 下载、探测用的客户端。带令牌时换成只走 https 的：reqwest 只在换主机或端口时

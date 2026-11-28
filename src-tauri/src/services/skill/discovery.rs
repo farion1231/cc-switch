@@ -178,28 +178,37 @@ impl SkillService {
     }
 
     /// 懒加载本地发现缓存文件（损坏或缺失时忽略）。
+    /// 使用 `discovery_disk_lock` 做双重检查锁定，保持 `discovery_disk_lock -> discovery_cache`
+    /// 锁序，避免并发加载或 `forget_platform` 删令牌时看到未载完的空缓存。
     pub(super) fn ensure_discovery_cache_loaded(&self) {
-        if self.discovery_cache_loaded.swap(true, Ordering::AcqRel) {
+        if self.discovery_cache_loaded.load(Ordering::Acquire) {
+            return;
+        }
+        let _disk_guard = self.discovery_disk_lock.lock_recover();
+        if self.discovery_cache_loaded.load(Ordering::Acquire) {
             return;
         }
         let path = Self::discovery_cache_path();
-        let Ok(raw) = fs::read_to_string(&path) else {
-            return;
-        };
-        let Ok(entries) = serde_json::from_str::<Vec<DiskDiscoveryCacheEntry>>(&raw) else {
-            log::warn!("忽略损坏的技能发现缓存: {}", path.display());
-            return;
-        };
-        let mut cache = self.discovery_cache.lock_recover();
-        for entry in entries {
-            let key = (entry.host, entry.owner, entry.name, entry.branch);
-            cache.entry(key).or_insert(CachedRepoDiscovery {
-                fetched_at: None,
-                commit_sha: entry.commit_sha,
-                resolved_branch: entry.resolved_branch,
-                skills: entry.skills,
-            });
+        if let Ok(raw) = fs::read_to_string(&path) {
+            match serde_json::from_str::<Vec<DiskDiscoveryCacheEntry>>(&raw) {
+                Ok(entries) => {
+                    let mut cache = self.discovery_cache.lock_recover();
+                    for entry in entries {
+                        let key = (entry.host, entry.owner, entry.name, entry.branch);
+                        cache.entry(key).or_insert(CachedRepoDiscovery {
+                            fetched_at: None,
+                            commit_sha: entry.commit_sha,
+                            resolved_branch: entry.resolved_branch,
+                            skills: entry.skills,
+                        });
+                    }
+                }
+                Err(_) => {
+                    log::warn!("忽略损坏的技能发现缓存: {}", path.display());
+                }
+            }
         }
+        self.discovery_cache_loaded.store(true, Ordering::Release);
     }
 
     /// 在串行落盘锁内读取内存最新快照并写入磁盘，确保旧扫描不会覆盖后发生的清理或更新。
