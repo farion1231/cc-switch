@@ -701,6 +701,19 @@ fn account_not_found(account_id: &str) -> AppError {
     AppError::Message(format!("找不到这个 Antigravity 账号: {account_id}"))
 }
 
+/// Windows 下检查 `tasklist /FI "IMAGENAME eq agy.exe" /FO CSV /NH` 输出里是否包含 `agy.exe`。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn has_agy_in_tasklist(stdout: &str) -> bool {
+    stdout.lines().any(|line| {
+        let trimmed = line.trim();
+        trimmed.starts_with('"')
+            && trimmed[1..]
+                .split('"')
+                .next()
+                .is_some_and(|name| name.eq_ignore_ascii_case("agy.exe"))
+    })
+}
+
 /// agy 有没有在跑。在跑的 agy 会继续用切换前的账号，续期时还可能把旧登录写回钥匙串。
 pub fn agy_running() -> bool {
     #[cfg(unix)]
@@ -718,7 +731,21 @@ pub fn agy_running() -> bool {
                 .is_some_and(|name| name == "agy")
         })
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let Ok(output) = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq agy.exe", "/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .output()
+        else {
+            return false;
+        };
+        has_agy_in_tasklist(&String::from_utf8_lossy(&output.stdout))
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         false
     }

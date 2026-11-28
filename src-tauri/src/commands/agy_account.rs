@@ -1,5 +1,7 @@
 //! Antigravity 官方账号的状态与专用命令（加号、切号走授权中心的通用 `auth_*` 命令）。
 
+use std::future::Future;
+use std::path::Path;
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -91,43 +93,241 @@ pub(crate) async fn agy_quota(
         }
     }
 
-    let mut last = LAST_LIVE_QUERY.lock().await;
-    if let Some(query) = last.as_ref() {
-        if query.account_id == current && query.at.elapsed() < reuse {
-            return Ok(query.quota.clone());
-        }
-    }
-    let quota = crate::services::subscription_agy::get_agy_subscription_quota().await?;
-    // 查询要七八秒：期间在别处换了号，这份结果就不知道是谁的，不记到任何账号上
-    let still_current = manager.current_account_id().await == current;
-    if still_current {
-        *last = Some(LiveQuery {
-            account_id: current.clone(),
-            at: Instant::now(),
-            quota: quota.clone(),
-        });
-        if let (Some(account_id), true) = (current.as_deref(), quota.success) {
+    let (quota, should_record) = query_live_with_cache(
+        &LAST_LIVE_QUERY,
+        current.as_deref(),
+        reuse,
+        crate::services::subscription_agy::get_agy_subscription_quota,
+        || async { manager.current_account_id().await == current },
+    )
+    .await?;
+    if should_record {
+        if let Some(account_id) = current.as_deref() {
             manager.record_quota(account_id, &quota).await;
         }
     }
     Ok(quota)
 }
 
+async fn query_live_with_cache<F, Fut, C, CFut>(
+    cache: &Mutex<Option<LiveQuery>>,
+    current: Option<&str>,
+    reuse: Duration,
+    fetch: F,
+    is_still_current: C,
+) -> Result<(SubscriptionQuota, bool), String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<SubscriptionQuota, String>>,
+    C: FnOnce() -> CFut,
+    CFut: Future<Output = bool>,
+{
+    let mut last = cache.lock().await;
+    if let Some(query) = last.as_ref() {
+        if query.account_id.as_deref() == current && query.at.elapsed() < reuse {
+            return Ok((query.quota.clone(), false));
+        }
+    }
+    let quota = fetch().await?;
+    // 查询要七八秒：期间在别处换了号，这份结果就不知道是谁的，不记到任何账号上
+    let still_current = is_still_current().await;
+    // 失败或未检测到 agy 的占位结果不缓存，避免短时间手动重试命中失败缓存
+    let should_record = still_current && quota.success;
+    if should_record {
+        *last = Some(LiveQuery {
+            account_id: current.map(str::to_string),
+            at: Instant::now(),
+            quota: quota.clone(),
+        });
+    }
+    Ok((quota, should_record))
+}
+
 /// 终端里跑的命令：agy 没登录时会直接进登录界面；已登录时用户在里面 `/logout` 再 `/login`。
 /// 去掉 GUI 进程环境里可能残留的 Key，免得 agy 改走 Key 模式。
-fn login_command() -> String {
+#[cfg_attr(not(windows), allow(dead_code))]
+fn format_windows_login_command(bin: Option<&Path>) -> String {
+    let invocation = match bin {
+        Some(path) => {
+            let escaped = path.to_string_lossy().replace('%', "%%");
+            format!("call \"{escaped}\"")
+        }
+        None => TOOL.to_string(),
+    };
+    format!("set \"GEMINI_API_KEY=\" & set \"GOOGLE_GEMINI_BASE_URL=\" & {invocation}")
+}
+
+#[cfg_attr(windows, allow(dead_code))]
+fn format_unix_login_command(bin: Option<&Path>) -> String {
+    let invocation = match bin {
+        Some(path) => {
+            let escaped = path.to_string_lossy().replace('\'', "'\\''");
+            format!("'{escaped}'")
+        }
+        None => TOOL.to_string(),
+    };
+    format!("env -u GEMINI_API_KEY -u GOOGLE_GEMINI_BASE_URL {invocation}")
+}
+
+fn login_command_for(bin: Option<&Path>) -> String {
     if cfg!(target_os = "windows") {
-        "set \"GEMINI_API_KEY=\" & set \"GOOGLE_GEMINI_BASE_URL=\" & agy".to_string()
+        format_windows_login_command(bin)
     } else {
-        "env -u GEMINI_API_KEY -u GOOGLE_GEMINI_BASE_URL agy".to_string()
+        format_unix_login_command(bin)
     }
 }
 
 /// 打开用户首选终端运行 `agy`，让用户在 agy 自己的界面里登录要添加的账号。
 pub(crate) async fn open_agy_login_terminal() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
-        crate::commands::terminal_launch::launch_terminal_running(&login_command(), "agy_login")
+        let bin = crate::agy_config::real_agy_bin();
+        let command = login_command_for(bin.as_deref());
+        crate::commands::terminal_launch::launch_terminal_running(&command, "agy_login")
     })
     .await
     .map_err(|e| format!("launch task join error: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::subscription::{CredentialStatus, QuotaTier};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn ok_quota(utilization: f64) -> SubscriptionQuota {
+        SubscriptionQuota {
+            tool: TOOL.to_string(),
+            credential_status: CredentialStatus::Valid,
+            credential_message: None,
+            success: true,
+            tiers: vec![QuotaTier {
+                name: "agy_gemini_five_hour".to_string(),
+                utilization,
+                resets_at: None,
+                used_value_usd: None,
+                max_value_usd: None,
+            }],
+            extra_usage: None,
+            reset_credits: None,
+            credits_balance: None,
+            plan_name: None,
+            error: None,
+            queried_at: Some(1),
+        }
+    }
+
+    #[tokio::test]
+    async fn live_cache_reuses_success_only_and_never_caches_failures_or_switched_results() {
+        let cache = Mutex::new(None);
+        let calls = AtomicUsize::new(0);
+
+        // 1. not_found / error 不写入缓存，下次查询必须重新触发 fetch
+        let (first, record_first) = query_live_with_cache(
+            &cache,
+            Some("alice"),
+            Duration::from_secs(20),
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(SubscriptionQuota::not_found(TOOL))
+            },
+            || async { true },
+        )
+        .await
+        .unwrap();
+        assert!(!first.success);
+        assert!(!record_first);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let (second, record_second) = query_live_with_cache(
+            &cache,
+            Some("alice"),
+            Duration::from_secs(20),
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(SubscriptionQuota::error(
+                    TOOL,
+                    CredentialStatus::Valid,
+                    "failed".into(),
+                ))
+            },
+            || async { true },
+        )
+        .await
+        .unwrap();
+        assert!(!second.success);
+        assert!(!record_second);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        // 2. 查询期间切号：成功也不写入缓存或记录
+        let (_switched, record_switched) = query_live_with_cache(
+            &cache,
+            Some("alice"),
+            Duration::from_secs(20),
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(ok_quota(12.0))
+            },
+            || async { false },
+        )
+        .await
+        .unwrap();
+        assert!(!record_switched);
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        // 3. 同一账号查询成功写入缓存并在复用窗口内命中
+        let (ok, record_ok) = query_live_with_cache(
+            &cache,
+            Some("alice"),
+            Duration::from_secs(20),
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(ok_quota(35.0))
+            },
+            || async { true },
+        )
+        .await
+        .unwrap();
+        assert!(ok.success);
+        assert!(record_ok);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+
+        let (cached, record_cached) = query_live_with_cache(
+            &cache,
+            Some("alice"),
+            Duration::from_secs(20),
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(ok_quota(99.0))
+            },
+            || async { true },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cached.tiers[0].utilization, 35.0);
+        assert!(!record_cached);
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+    }
+
+    #[test]
+    fn login_command_resolves_binary_path_and_escapes_special_chars() {
+        assert_eq!(
+            format_windows_login_command(None),
+            "set \"GEMINI_API_KEY=\" & set \"GOOGLE_GEMINI_BASE_URL=\" & agy"
+        );
+        assert_eq!(
+            format_windows_login_command(Some(Path::new(
+                r"C:\Users\My %User%\AppData\Local\agy\bin\agy.exe"
+            ))),
+            r#"set "GEMINI_API_KEY=" & set "GOOGLE_GEMINI_BASE_URL=" & call "C:\Users\My %%User%%\AppData\Local\agy\bin\agy.exe""#
+        );
+
+        assert_eq!(
+            format_unix_login_command(None),
+            "env -u GEMINI_API_KEY -u GOOGLE_GEMINI_BASE_URL agy"
+        );
+        assert_eq!(
+            format_unix_login_command(Some(Path::new("/Users/o'neil/.local/bin/agy"))),
+            "env -u GEMINI_API_KEY -u GOOGLE_GEMINI_BASE_URL '/Users/o'\\''neil/.local/bin/agy'"
+        );
+    }
 }

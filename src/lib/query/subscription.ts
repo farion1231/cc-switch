@@ -291,7 +291,8 @@ export function useAgyAccountQuota(
     enabled: autoAllowed && enabled,
     ...autoRefetch(autoAllowed && autoQuery, autoQueryIntervalMinutes),
     staleTime: REFETCH_INTERVAL,
-    retry: 1,
+    // 每次查都要冷启动一次 agy（~7–10s，超时 30s），失败/超时不自动重试以免翻倍耗时
+    retry: false,
   });
 
   return useQuotaKeepLastGood(query, accountId, policy);
