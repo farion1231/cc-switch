@@ -102,6 +102,25 @@ pub fn take_skills_migration_result() -> Option<SkillsMigrationPayload> {
     }
 }
 
+// Background history work can finish before the renderer subscribes. Keep a
+// process-local snapshot as well as the event so a safety stop is always visible.
+static CODEX_HISTORY_MIGRATION_FAILED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub(crate) fn retain_codex_history_migration_error() {
+    CODEX_HISTORY_MIGRATION_FAILED.store(true, std::sync::atomic::Ordering::Release);
+}
+
+pub fn report_codex_history_migration_error(app: &tauri::AppHandle) {
+    use tauri::Emitter;
+    retain_codex_history_migration_error();
+    let _ = app.emit("codex-history-migration-failed", ());
+}
+
+pub fn has_codex_history_migration_error() -> bool {
+    CODEX_HISTORY_MIGRATION_FAILED.load(std::sync::atomic::Ordering::Acquire)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

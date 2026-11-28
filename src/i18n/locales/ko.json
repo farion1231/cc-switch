@@ -401,7 +401,9 @@
       "officialBucket": "공식 구독",
       "thirdPartyBucket": "타사 공급자",
       "migrationFinished": "이전 세션 {{count}}개를 옮겼습니다. Codex를 다시 시작하면 이어갈 수 있습니다.",
-      "migrationFailed": "이전 세션을 옮기지 못했습니다: {{error}}. 다음에 CC Switch를 실행하면 자동으로 다시 시도합니다."
+      "migrationFailed": "이전 세션을 옮기지 못했습니다: {{error}}. 다음에 CC Switch를 실행하면 자동으로 다시 시도합니다.",
+      "migrationPartial": "파일 {{files}}개와 인덱스 {{rows}}개를 이전하고 파일 {{skippedFiles}}개와 인덱스 {{skippedRows}}개를 건너뛰었습니다. CC Switch 로그를 확인하고 원래 연결로 건너뛴 항목을 처리하세요.",
+      "migrationRetryPending": "파일 {{files}}개와 인덱스 {{rows}}개를 이전하고 파일 {{skippedFiles}}개와 인덱스 {{skippedRows}}개를 건너뛰었습니다. 일부 항목은 재시도가 필요합니다. CC Switch 로그를 확인하고 원인을 해결한 뒤 CC Switch를 다시 시작하세요."
     }
   },
   "confirm": {
@@ -441,6 +443,12 @@
       "title": "자동 동기화 활성화",
       "message": "자동 동기화가 활성화되면 모든 데이터베이스 변경 사항이 WebDAV 서버에 자동으로 업로드됩니다.\n\n이로 인해 상당한 네트워크 트래픽이 발생할 수 있습니다. 네트워크와 WebDAV 서비스가 빈번한 데이터 전송을 처리할 수 있는지 확인하세요.",
       "confirm": "확인하고 활성화하기"
+    },
+    "codexLegacyOfficialHistory": {
+      "message": "먼저 Codex를 종료하세요. 이전 마이그레이션이 완료되었더라도 남아 있는 cc-switch-official 채팅을 기본 공식 연결(openai)로 복구합니다. 복구된 채팅은 통합 기록이 켜져 있어도 공식 연결을 사용합니다.\n\n검증된 채팅과 인덱스 행을 복구하기 전에 원본을 백업합니다. 안전하게 처리할 수 없는 항목은 건너뛰고 집계합니다. 타사 채팅, 메시지, 암호화된 콘텐츠, 현재 연결 설정과 로그인 정보는 변경하지 않습니다. 완료 후 직접 채팅을 다시 여세요."
+    },
+    "codexManagedHistory": {
+      "message": "먼저 Codex를 종료하세요. CC Switch 카드에 정의된 이전 타사 연결 ID를 백업하고 공유 연결로 이전합니다. 이후 해당 채팅은 현재 선택된 연결을 사용합니다. 관리되지 않는 연결, 메시지 및 암호화된 콘텐츠는 유지됩니다. 안전하게 수정할 수 없는 파일은 건너뛰고 집계하며 다른 파일은 계속 처리합니다. 다시 시도하기 전에 로그, 원래 설정과 백업을 확인하세요."
     }
   },
   "settings": {
@@ -1208,7 +1216,24 @@
         "invalidResponse": "서비스가 잘못된 데이터를 반환했습니다",
         "unavailable": "서비스에서 데이터를 제공할 수 없습니다"
       }
-    }
+    },
+    "unifyCodexDesktopCompatibility": "통합 기록은 주로 CLI 기록 목록을 위한 기능이며 Dot, 받아쓰기 등 공식 Codex Desktop 기능이 표시되지 않을 수 있습니다. 사용 중인 Desktop 버전이 이미 여러 공급자의 채팅을 함께 표시한다면 기록 조회만을 위해 이 기능을 켤 필요는 보통 없습니다.",
+    "codexManagedHistory": "이전 타사 채팅 이전",
+    "codexManagedHistoryAction": "이전 채팅 이전",
+    "codexManagedHistoryCompleted": "이전 타사 채팅 확인 완료: 파일 {{files}}개와 인덱스 행 {{rows}}개를 이전했습니다. 연결을 불러오려면 채팅을 다시 여세요. 이전 설정이 계속 사용되면 직접 Codex를 다시 시작하세요.",
+    "codexManagedHistoryPartial": "파일 {{files}}개와 인덱스 행 {{rows}}개를 이전했으며 파일 {{skippedFiles}}개와 인덱스 행 {{skippedRows}}개를 건너뛰었습니다. CC Switch 로그를 확인하고 건너뛴 항목은 원래 연결 설정으로 직접 처리하세요.",
+    "codexLegacyOfficialHistory": "이전 공식 채팅 연결 복구",
+    "codexLegacyOfficialHistoryAction": "확인 및 복구",
+    "codexLegacyOfficialHistoryCompleted": "이전 공식 채팅 확인 완료: 파일 {{files}}개와 인덱스 행 {{rows}}개를 복구했습니다. 채팅을 다시 여세요. 복구된 채팅은 공식 연결을 사용합니다.",
+    "codexLegacyOfficialHistoryPartial": "파일 {{files}}개와 인덱스 행 {{rows}}개를 복구했으며 파일 {{skippedFiles}}개와 인덱스 행 {{skippedRows}}개를 건너뛰었습니다. CC Switch 로그를 확인하고 원인을 해결한 뒤 복구를 다시 확인하세요.",
+    "codexLegacyOfficialHistoryInUse": "현재 설정이나 프로필에서 이전 공식 연결을 사용 중입니다. 기록은 변경하지 않았습니다. 다른 연결로 전환하거나 프로필을 업데이트한 뒤 다시 시도하세요.",
+    "codexHistoryStateUnavailable": "이 환경에서는 Codex 기록 인덱스를 안전하게 잠글 수 없습니다. 기록은 변경하지 않았습니다. Codex 클라이언트가 실행되는 환경에서 이 작업을 수행하세요.",
+    "codexHistoryRetryPending": "일부 파일을 일시적으로 사용할 수 없습니다. Codex를 종료하고 다시 시도하세요.",
+    "unifyCodexHistoryRestorePartial": "파일 {{files}}개와 인덱스 행 {{rows}}개를 복원했으며 파일 {{skippedFiles}}개와 인덱스 행 {{skippedRows}}개를 건너뛰었습니다. CC Switch 로그를 확인하고 Codex를 종료한 뒤 다시 시도하거나, 건너뛴 항목을 원래 연결 설정으로 직접 처리하세요.",
+    "unifyCodexHistoryRestoreAction": "백업에서 공식 채팅 복원",
+    "unifyCodexHistoryRestoreConfirm": "먼저 Codex를 종료하세요. 백업 기록에 공식 채팅으로 등록된 항목만 복원하며, 검증할 수 없는 파일과 인덱스 행은 건너뜁니다. 확인하면 실행합니다. 남은 항목을 다시 처리하려면 나중에 다시 확인하세요.",
+    "codexHistoryMigrationFailed": "일부 Codex 기록 연결을 이전하지 못했습니다",
+    "codexHistoryMigrationRecovery": "Codex를 종료하고 CC Switch 로그에서 충돌을 확인하세요. 원래 공급자 정의를 복원해 해당 연결로 계속 사용할 수 있습니다. 문제 해결 후 설정 → 앱 설정 → Codex에서 직접 다시 시도하세요. 클라이언트를 다시 시작하거나 기록을 강제로 덮어쓰지 않습니다."
   },
   "apps": {
     "claude": "Claude",

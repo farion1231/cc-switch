@@ -464,6 +464,7 @@ pub(crate) fn outgoing_exclusive(owner: &Owner<'_>) -> Vec<(String, TomlValue)> 
 /// 登录（登录暂存第一次建立时用）。
 struct RowFacts {
     retired: Vec<KnownTable>,
+    unverified_retired: Vec<String>,
     third_party_keys: Vec<String>,
     official_logins: Vec<Value>,
 }
@@ -471,6 +472,7 @@ struct RowFacts {
 fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
     let mut facts = RowFacts {
         retired: Vec::new(),
+        unverified_retired: crate::codex_history_migration::remembered_legacy_codex_route_ids(),
         third_party_keys: Vec::new(),
         official_logins: Vec::new(),
     };
@@ -490,6 +492,20 @@ fn row_facts(db: &Database) -> Result<RowFacts, AppError> {
                 }
             }
             continue;
+        }
+        facts
+            .unverified_retired
+            .extend(crate::codex_history_migration::unverified_legacy_codex_route_ids(provider));
+        for route in
+            crate::codex_history_migration::legacy_codex_route_evidence(&provider.settings_config)?
+        {
+            // The id remains managed even when its live endpoint no longer
+            // matches the saved evidence (e.g. a renamed card or edited URL).
+            facts.unverified_retired.push(route.id.clone());
+            facts.retired.push(KnownTable {
+                id: route.id,
+                base_url: route.base_url,
+            });
         }
         if let Some(key) = auth.and_then(extract_codex_auth_api_key) {
             facts.third_party_keys.push(key);
@@ -786,6 +802,9 @@ pub(crate) fn plan(
         route,
         catalog: catalog.is_some(),
         retired: facts.retired,
+        unverified_retired: facts.unverified_retired,
+        preserve_retired_routes:
+            crate::codex_history_migration::history_may_reference_legacy_routes(),
     };
     let official_login = match &auth {
         AuthGoal::Official(row_auth) => codex_login::official_login_requirement(row_auth),

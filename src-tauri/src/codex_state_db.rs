@@ -3,7 +3,9 @@
 //! Codex stores thread metadata in `state_5.sqlite`, normally inside the Codex
 //! config dir (`CODEX_HOME` / `~/.codex`). The SQLite location can be moved with
 //! the `sqlite_home` key in `config.toml` or the `CODEX_SQLITE_HOME` env var;
-//! when set, a second DB lives there. Both history migration and the session
+//! when set, a second DB lives there. Desktop may also use the existing
+//! `sqlite/state_5.sqlite` below the config dir without an explicit override.
+//! Both history migration and the session
 //! list's title lookup need the same resolution, so it lives here once.
 
 use std::path::{Path, PathBuf};
@@ -34,6 +36,12 @@ pub(crate) fn codex_state_db_paths(config_dir: &Path, config_text: &str) -> Vec<
         push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
     } else if let Some(sqlite_home) = sqlite_home_from_env() {
         push_unique_path(&mut paths, sqlite_home.join(CODEX_STATE_DB_FILENAME));
+    }
+    // Some Desktop installations keep their active index here without an
+    // explicit sqlite_home. Do not create a new database while discovering it.
+    let desktop_state = config_dir.join("sqlite").join(CODEX_STATE_DB_FILENAME);
+    if desktop_state.is_file() {
+        push_unique_path(&mut paths, desktop_state);
     }
     paths
 }

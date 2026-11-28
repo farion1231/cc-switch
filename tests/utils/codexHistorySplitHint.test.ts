@@ -51,6 +51,7 @@ describe("codexHistorySplitToastExtras", () => {
 
 describe("showCodexUnifyMigrationFinished", () => {
   beforeEach(() => {
+    warningMock.mockReset();
     successMock.mockReset();
     errorMock.mockReset();
   });
@@ -96,6 +97,51 @@ describe("showCodexUnifyMigrationFinished", () => {
       "notifications.codexHistorySplit.migrationFailed",
       expect.anything(),
     );
+    expect(successMock).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])(
+    "reports skipped items and retryPending=%s without claiming success",
+    (retryPending) => {
+      const translate = vi.fn((key: string) => key) as unknown as TFunction;
+      showCodexUnifyMigrationFinished(
+        {
+          migratedStateRows: 1,
+          migratedJsonlFiles: 1,
+          skippedStateRows: 1,
+          skippedJsonlFiles: 1,
+          retryPending,
+        },
+        translate,
+      );
+      expect(warningMock).toHaveBeenCalledWith(
+        retryPending
+          ? "notifications.codexHistorySplit.migrationRetryPending"
+          : "notifications.codexHistorySplit.migrationPartial",
+        expect.anything(),
+      );
+      expect(translate).toHaveBeenCalledWith(expect.any(String), {
+        files: 1,
+        rows: 1,
+        skippedFiles: 1,
+        skippedRows: 1,
+      });
+      expect(successMock).not.toHaveBeenCalled();
+      expect(errorMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("reports a retry even when an unavailable index prevents all migration", () => {
+    showCodexUnifyMigrationFinished(
+      {
+        migratedStateRows: 0,
+        migratedJsonlFiles: 0,
+        retryPending: true,
+        skippedReason: "state_db_unlockable",
+      },
+      t,
+    );
+    expect(warningMock).toHaveBeenCalled();
     expect(successMock).not.toHaveBeenCalled();
   });
 });

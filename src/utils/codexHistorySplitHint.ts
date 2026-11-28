@@ -10,6 +10,11 @@ export const CODEX_UNIFY_MIGRATION_FINISHED_EVENT =
 export interface CodexUnifyMigrationFinished {
   migratedStateRows: number;
   migratedJsonlFiles: number;
+  skippedStateRows?: number;
+  skippedJsonlFiles?: number;
+  retryPending?: boolean;
+  skippedReason?: string | null;
+  sourceProviderIds?: string[];
   error?: string | null;
 }
 
@@ -26,6 +31,25 @@ export function showCodexUnifyMigrationFinished(
         error: payload.error,
       }),
       { duration: 10000, closeButton: true },
+    );
+    return;
+  }
+  const skippedFiles = payload.skippedJsonlFiles ?? 0;
+  const skippedRows = payload.skippedStateRows ?? 0;
+  if (payload.retryPending || skippedFiles > 0 || skippedRows > 0) {
+    toast.warning(
+      t(
+        payload.retryPending
+          ? "notifications.codexHistorySplit.migrationRetryPending"
+          : "notifications.codexHistorySplit.migrationPartial",
+        {
+          files: payload.migratedJsonlFiles,
+          rows: payload.migratedStateRows,
+          skippedFiles,
+          skippedRows,
+        },
+      ),
+      { duration: 15000, closeButton: true },
     );
     return;
   }

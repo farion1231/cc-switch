@@ -15,9 +15,43 @@ const CODEX_UNIFY_MIGRATION_FINISHED_EVENT: &str = "codex-unify-migration-finish
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexUnifyMigrationFinished {
-    migrated_state_rows: usize,
-    migrated_jsonl_files: usize,
+    #[serde(flatten)]
+    outcome: crate::codex_history_migration::CodexHistoryProviderBucketMigrationOutcome,
     error: Option<String>,
+}
+
+impl CodexUnifyMigrationFinished {
+    fn needs_recovery(&self) -> bool {
+        self.error.is_some()
+            || self.outcome.retry_pending
+            || self.outcome.skipped_jsonl_files > 0
+            || self.outcome.skipped_state_rows > 0
+    }
+}
+
+/// Shared by the settings background worker and its entry-point regression.
+fn run_codex_unify_migration() -> Option<CodexUnifyMigrationFinished> {
+    match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
+        Ok(outcome) => {
+            if outcome.skipped_reason.is_some() && !outcome.retry_pending {
+                return None;
+            }
+            log::info!("Codex official history migration: files={}, rows={}, skipped_files={}, skipped_rows={}, retry_pending={}, reason={:?}",
+                outcome.migrated_jsonl_files, outcome.migrated_state_rows,
+                outcome.skipped_jsonl_files, outcome.skipped_state_rows, outcome.retry_pending, outcome.skipped_reason);
+            Some(CodexUnifyMigrationFinished {
+                outcome,
+                error: None,
+            })
+        }
+        Err(error) => {
+            log::warn!("Codex official history migration failed: {error}");
+            Some(CodexUnifyMigrationFinished {
+                outcome: Default::default(),
+                error: Some(error.to_string()),
+            })
+        }
+    }
 }
 
 fn merge_settings_for_save(
@@ -200,34 +234,11 @@ pub async fn save_settings(
             // 用户要等到这一刻再重启 Codex，旧会话才会解锁。
             let app = app.clone();
             tauri::async_runtime::spawn_blocking(move || {
-                let finished = match crate::codex_history_migration::maybe_migrate_codex_official_history_to_unified_bucket() {
-                    Ok(outcome) => {
-                        if let Some(reason) = outcome.skipped_reason {
-                            log::debug!("○ Codex official history unify migration skipped: {reason}");
-                            None
-                        } else {
-                            log::info!(
-                                "✓ Codex official history unify migration completed: jsonl_files={}, state_rows={}",
-                                outcome.migrated_jsonl_files,
-                                outcome.migrated_state_rows
-                            );
-                            Some(CodexUnifyMigrationFinished {
-                                migrated_state_rows: outcome.migrated_state_rows,
-                                migrated_jsonl_files: outcome.migrated_jsonl_files,
-                                error: None,
-                            })
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("✗ Codex official history unify migration failed: {e}");
-                        Some(CodexUnifyMigrationFinished {
-                            migrated_state_rows: 0,
-                            migrated_jsonl_files: 0,
-                            error: Some(e.to_string()),
-                        })
-                    }
-                };
+                let finished = run_codex_unify_migration();
                 if let Some(payload) = finished {
+                    if payload.needs_recovery() {
+                        crate::init_status::retain_codex_history_migration_error();
+                    }
                     if let Err(e) = app.emit(CODEX_UNIFY_MIGRATION_FINISHED_EVENT, payload) {
                         log::warn!("发送 Codex 统一迁移完成事件失败: {e}");
                     }
@@ -252,6 +263,8 @@ pub async fn save_settings(
 pub struct CodexUnifyHistoryRestoreResult {
     pub restored_jsonl_files: usize,
     pub restored_state_rows: usize,
+    pub skipped_jsonl_files: usize,
+    pub skipped_state_rows: usize,
     /// 还原被跳过的原因（如当前目录没有账本），前端据此提示而非报"成功 0 项"。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_reason: Option<String>,
@@ -261,6 +274,45 @@ pub struct CodexUnifyHistoryRestoreResult {
 #[tauri::command]
 pub async fn has_codex_unify_history_backup() -> Result<bool, String> {
     Ok(crate::codex_history_migration::has_codex_official_history_unify_backup())
+}
+
+/// Explicit settings action; provider switches and startup never invoke this
+/// broader migration of user-defined routing ids.
+#[tauri::command]
+pub async fn migrate_managed_codex_history(
+    state: tauri::State<'_, crate::store::AppState>,
+) -> Result<crate::codex_history_migration::CodexHistoryProviderBucketMigrationOutcome, String> {
+    let db = state.db.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::codex_history_migration::migrate_managed_codex_history_to_unified_bucket(&db)
+    })
+    .await
+    .map_err(|error| {
+        log::warn!("Codex managed history migration task failed: {error}");
+        error.to_string()
+    })?
+    .map_err(|error| {
+        log::warn!("Codex managed history migration failed: {error}");
+        error.to_string()
+    })
+}
+
+/// Confirmed repair; startup keeps the completion marker and never calls this action.
+#[tauri::command]
+pub async fn repair_legacy_official_codex_history(
+) -> Result<crate::codex_history_migration::CodexHistoryProviderBucketMigrationOutcome, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        crate::codex_history_migration::repair_codex_legacy_official_history_to_openai_bucket()
+    })
+    .await
+    .map_err(|error| {
+        log::warn!("Codex legacy official history repair task failed: {error}");
+        error.to_string()
+    })?
+    .map_err(|error| {
+        log::warn!("Codex legacy official history repair failed: {error}");
+        error.to_string()
+    })
 }
 
 /// Codex 的 `config.toml` 是不是用 `[features] multi_agent_v2` 强制了新版子 agent 工具
@@ -326,6 +378,8 @@ pub async fn restore_codex_unified_history() -> Result<CodexUnifyHistoryRestoreR
     Ok(CodexUnifyHistoryRestoreResult {
         restored_jsonl_files: outcome.restored_jsonl_files,
         restored_state_rows: outcome.restored_state_rows,
+        skipped_jsonl_files: outcome.skipped_jsonl_files,
+        skipped_state_rows: outcome.skipped_state_rows,
         skipped_reason: outcome.skipped_reason,
     })
 }
@@ -520,6 +574,53 @@ pub async fn set_auto_launch(enabled: bool) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[serial_test::serial]
+    fn settings_unify_worker_reports_partial_and_pending_migrations() {
+        use crate::codex_state_db::CODEX_STATE_DB_FILENAME;
+        use crate::test_support::TestHome;
+        for temporary in [false, true] {
+            let home = TestHome::new();
+            let codex = home.path().join(".codex");
+            std::fs::create_dir_all(codex.join("sessions")).unwrap();
+            std::fs::write(codex.join("config.toml"), "model_provider = \"custom\"\n").unwrap();
+            let mut settings = crate::settings::get_settings();
+            settings.unify_codex_session_history = true;
+            settings.unify_codex_migrate_existing = Some(true);
+            crate::settings::update_settings(settings).unwrap();
+            std::fs::write(codex.join("sessions/good.jsonl"),
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"good\",\"model_provider\":\"openai\"}}\n").unwrap();
+            if !temporary {
+                std::fs::write(codex.join("sessions/bad.jsonl"),
+                    "{\"type\":\"session_meta\",\"payload\":{\"id\":\"bad\",\"model_provider\":\"openai\",\"model_provider\":\"openai\"}}\n").unwrap();
+            }
+            let conn = rusqlite::Connection::open(codex.join(CODEX_STATE_DB_FILENAME)).unwrap();
+            conn.execute_batch("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT, rollout_path TEXT);
+                INSERT INTO threads VALUES ('good', 'openai', 'sessions/good.jsonl'), ('bad', 'openai', 'sessions/bad.jsonl');").unwrap();
+            drop(conn);
+            let payload =
+                super::run_codex_unify_migration().expect("partial results must reach the event");
+            assert!(payload.needs_recovery());
+            assert_eq!(payload.outcome.migrated_jsonl_files, 1);
+            assert_eq!(payload.outcome.migrated_state_rows, 1);
+            assert_eq!(payload.outcome.skipped_state_rows, 1);
+            assert_eq!(payload.outcome.retry_pending, temporary);
+            if !temporary {
+                assert_eq!(payload.outcome.skipped_jsonl_files, 1);
+            }
+            let serialized = serde_json::to_value(payload).unwrap();
+            assert_eq!(serialized["retryPending"], temporary);
+            assert_eq!(serialized["skippedStateRows"], 1);
+            if temporary {
+                assert!(
+                    !crate::settings::is_codex_official_history_unify_migrated_for_dir(
+                        &std::fs::canonicalize(&codex).unwrap().to_string_lossy()
+                    )
+                );
+            }
+        }
+    }
+
     use super::merge_settings_for_save;
     use crate::settings::{
         AppSettings, CodexOfficialHistoryUnifyMigration, CodexProviderTemplateMigration,
@@ -643,6 +744,7 @@ mod tests {
         let sample_migrations = LocalMigrations {
             codex_third_party_history_provider_bucket_v1: Some(
                 CodexThirdPartyHistoryProviderBucketMigration {
+                    codex_config_dir: None,
                     completed_at: "2026-05-20T00:00:00Z".to_string(),
                     target_provider_id: "custom".to_string(),
                     source_provider_ids: vec!["rightcode".to_string()],

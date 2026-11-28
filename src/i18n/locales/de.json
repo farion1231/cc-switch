@@ -401,7 +401,9 @@
       "officialBucket": "dem offiziellen Abonnement",
       "thirdPartyBucket": "Drittanbietern",
       "migrationFinished": "{{count}} alte Sitzungen migriert. Starten Sie Codex neu, um sie fortzusetzen.",
-      "migrationFailed": "Alte Sitzungen konnten nicht migriert werden: {{error}}. CC Switch versucht es beim nächsten Start erneut."
+      "migrationFailed": "Alte Sitzungen konnten nicht migriert werden: {{error}}. CC Switch versucht es beim nächsten Start erneut.",
+      "migrationPartial": "{{files}} Dateien und {{rows}} Indexzeilen migriert; {{skippedFiles}} Dateien und {{skippedRows}} Indexzeilen übersprungen. Prüfen Sie die CC Switch-Protokolle und bearbeiten Sie übersprungene Einträge mit ihrer ursprünglichen Verbindung.",
+      "migrationRetryPending": "{{files}} Dateien und {{rows}} Indexzeilen migriert; {{skippedFiles}} Dateien und {{skippedRows}} Indexzeilen übersprungen. Einige Einträge müssen erneut versucht werden. Prüfen Sie die CC Switch-Protokolle, beheben Sie die Ursache und starten Sie CC Switch neu."
     }
   },
   "confirm": {
@@ -441,6 +443,12 @@
       "title": "Automatische Synchronisierung aktivieren",
       "message": "Wenn die automatische Synchronisierung aktiviert ist, wird jede Änderung an der Datenbank automatisch auf den WebDAV-Server hochgeladen.\n\nDas kann erheblichen Netzwerkverkehr verursachen. Bitte stellen Sie sicher, dass Ihr Netzwerk und Ihr WebDAV-Dienst häufige Datenübertragungen bewältigen können.",
       "confirm": "Verstanden, aktivieren"
+    },
+    "codexLegacyOfficialHistory": {
+      "message": "Beenden Sie zuerst Codex. Reparieren Sie verbliebene cc-switch-official-Chats auf die integrierte offizielle Verbindung (openai), auch wenn eine frühere Migration abgeschlossen wurde. Reparierte Chats verwenden die offizielle Verbindung auch bei aktiviertem vereinheitlichtem Verlauf.\n\nDie Originale werden gesichert, bevor verifizierte Chats und Indexzeilen repariert werden. Nicht sicher bearbeitbare Einträge werden übersprungen und gezählt. Drittanbieter-Chats, Nachrichten, verschlüsselte Inhalte, die aktuelle Verbindungskonfiguration und Anmeldedaten bleiben unverändert. Öffnen Sie die Chats anschließend selbst erneut."
+    },
+    "codexManagedHistory": {
+      "message": "Beenden Sie zuerst Codex. Alte Drittanbieter-Verbindungs-IDs aus CC-Switch-Karten werden gesichert und auf die gemeinsame Verbindung umgestellt. Diese Chats verwenden danach die aktuell ausgewählte Verbindung. Nicht verwaltete Verbindungen, Nachrichten und verschlüsselte Inhalte bleiben unverändert. Nicht sicher änderbare Dateien werden übersprungen und gezählt; andere Dateien werden weiter bearbeitet. Prüfen Sie vor einem erneuten Versuch die Protokolle, die ursprüngliche Konfiguration und die Sicherungen."
     }
   },
   "settings": {
@@ -1208,7 +1216,24 @@
         "invalidResponse": "Der Dienst hat ungültige Daten zurückgegeben",
         "unavailable": "Der Dienst konnte keine Daten liefern"
       }
-    }
+    },
+    "unifyCodexDesktopCompatibility": "Der vereinheitlichte Verlauf dient hauptsächlich den CLI-Verlaufslisten und kann Dot, Diktat oder andere offizielle Codex-Desktop-Funktionen ausblenden. Wenn Ihre Desktop-Version bereits Chats aller Anbieter auflistet, benötigen Sie ihn normalerweise nicht allein zum Anzeigen des Verlaufs.",
+    "codexManagedHistory": "Alte Drittanbieter-Chats migrieren",
+    "codexManagedHistoryAction": "Alte Chats migrieren",
+    "codexManagedHistoryCompleted": "Alte Drittanbieter-Chats geprüft: {{files}} Dateien und {{rows}} Indexzeilen migriert. Öffnen Sie Chats erneut, um die Verbindung zu laden; starten Sie Codex selbst neu, falls noch alte Einstellungen verwendet werden.",
+    "codexManagedHistoryPartial": "{{files}} Dateien und {{rows}} Indexzeilen migriert; {{skippedFiles}} Dateien und {{skippedRows}} Indexzeilen übersprungen. Prüfen Sie die CC-Switch-Protokolle und bearbeiten Sie übersprungene Einträge manuell mit ihrer ursprünglichen Verbindungskonfiguration.",
+    "codexLegacyOfficialHistory": "Alte offizielle Chat-Verbindungen reparieren",
+    "codexLegacyOfficialHistoryAction": "Prüfen und reparieren",
+    "codexLegacyOfficialHistoryCompleted": "Alte offizielle Chats geprüft: {{files}} Dateien und {{rows}} Indexzeilen repariert. Öffnen Sie Chats erneut; reparierte Chats verwenden die offizielle Verbindung.",
+    "codexLegacyOfficialHistoryPartial": "{{files}} Dateien und {{rows}} Indexzeilen repariert; {{skippedFiles}} Dateien und {{skippedRows}} Indexzeilen übersprungen. Prüfen Sie die CC-Switch-Protokolle, beheben Sie die Ursache und bestätigen Sie die Reparatur erneut.",
+    "codexLegacyOfficialHistoryInUse": "Die aktuelle Konfiguration oder ein Profil verwendet noch die alte offizielle Verbindung. Der Verlauf wurde nicht geändert. Wechseln Sie die Verbindung oder aktualisieren Sie das Profil und versuchen Sie es erneut.",
+    "codexHistoryStateUnavailable": "Der Codex-Verlaufsindex kann hier nicht sicher gesperrt werden. Der Verlauf wurde nicht geändert. Führen Sie die Aktion in der eigenen Umgebung des Codex-Clients aus.",
+    "codexHistoryRetryPending": "Einige Dateien sind vorübergehend nicht verfügbar. Beenden Sie Codex und versuchen Sie es erneut.",
+    "unifyCodexHistoryRestorePartial": "{{files}} Dateien und {{rows}} Indexzeilen wiederhergestellt; {{skippedFiles}} Dateien und {{skippedRows}} Indexzeilen übersprungen. Prüfen Sie die CC-Switch-Protokolle, beenden Sie Codex und versuchen Sie es erneut oder bearbeiten Sie übersprungene Einträge manuell mit ihrer ursprünglichen Verbindungskonfiguration.",
+    "unifyCodexHistoryRestoreAction": "Offizielle Chats aus Sicherungen wiederherstellen",
+    "unifyCodexHistoryRestoreConfirm": "Beenden Sie zuerst Codex. Stellen Sie nur Chats wieder her, die im Sicherungsverzeichnis als offiziell erfasst sind; nicht verifizierbare Dateien und Indexzeilen werden übersprungen. Bestätigen Sie die Ausführung; bestätigen Sie später erneut, um verbleibende Einträge nochmals zu versuchen.",
+    "codexHistoryMigrationFailed": "Einige Codex-Verlaufsverbindungen konnten nicht migriert werden",
+    "codexHistoryMigrationRecovery": "Beenden Sie Codex und prüfen Sie die CC-Switch-Protokolle auf Konflikte. Sie können die ursprüngliche Anbieterdefinition wiederherstellen und diese Verbindung weiter verwenden. Versuchen Sie es nach der Behebung manuell unter Einstellungen → App-Konfiguration → Codex erneut. Der Client wird nicht neu gestartet und der Verlauf nicht zwangsweise überschrieben."
   },
   "apps": {
     "claude": "Claude",

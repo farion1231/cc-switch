@@ -48,6 +48,12 @@ export const handlers = [
     success(JSON.stringify({})),
   ),
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
+  http.post(`${TAURI_ENDPOINT}/has_codex_history_migration_error`, () =>
+    success(false),
+  ),
+  http.post(`${TAURI_ENDPOINT}/has_codex_unify_history_backup`, () =>
+    success(false),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
