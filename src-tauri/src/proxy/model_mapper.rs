@@ -191,8 +191,7 @@ pub fn map_codex_failover_model(mut body: Value, provider: &Provider) -> Value {
     };
     if requested == own
         || crate::codex_config::codex_published_models(&provider.settings_config, config)
-            .iter()
-            .any(|model| model == requested)
+            .is_ok_and(|models| models.iter().any(|model| model == requested))
     {
         return body;
     }
@@ -488,6 +487,38 @@ mod tests {
             let result = map_codex_failover_model(json!({ "model": model }), &kimi);
             assert_eq!(result["model"], model);
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn codex_failover_uses_the_custom_catalog_and_tolerates_unavailable_files() {
+        let _home = crate::test_support::TestHome::new();
+        let catalog_dir = crate::codex_config::get_codex_config_dir();
+        std::fs::create_dir_all(&catalog_dir).unwrap();
+        let path = catalog_dir.join("team-models.json");
+        std::fs::write(&path, r#"{"models":[{"slug":"custom-model"}]}"#).unwrap();
+        let provider = codex_provider(
+            "Custom",
+            json!({
+                "config": "model = \"default-model\"\nmodel_catalog_json = \"team-models.json\"\n",
+                "modelCatalog": {"models": [{"model": "ignored-card-model"}]}
+            }),
+        );
+        for (requested, expected) in [
+            ("custom-model", "custom-model"),
+            ("ignored-card-model", "default-model"),
+        ] {
+            let result = map_codex_failover_model(json!({"model": requested}), &provider);
+            assert_eq!(result["model"], expected);
+        }
+        std::fs::write(&path, "invalid JSON").unwrap();
+        let request = json!({"model": "custom-model", "input": []});
+        let result = map_codex_failover_model(request.clone(), &provider);
+        assert_eq!(result["model"], "default-model");
+        assert_eq!(result["input"], json!([]));
+        std::fs::remove_file(&path).unwrap();
+        let result = map_codex_failover_model(request, &provider);
+        assert_eq!(result["model"], "default-model");
     }
 
     #[test]

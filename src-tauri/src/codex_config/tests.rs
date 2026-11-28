@@ -61,6 +61,48 @@ fn codex_id_token_user_identity_requires_a_nonempty_subject() {
     );
 }
 
+#[test]
+#[serial]
+fn custom_catalog_paths_match_codex_home_expansion() {
+    let _home = TestHome::new();
+    let config_dir = get_codex_config_dir();
+    fs::create_dir_all(&config_dir).unwrap();
+    let home_catalog = get_home_dir().join("models.json");
+    fs::write(&home_catalog, r#"{"models":[{"slug":"home-model"}]}"#).unwrap();
+    fs::write(
+        config_dir.join("models.json"),
+        r#"{"models":[{"slug":"config-model"}]}"#,
+    )
+    .unwrap();
+    let mut cases = vec![
+        ("models.json".to_string(), "config-model"),
+        (home_catalog.to_str().unwrap().to_string(), "home-model"),
+        ("~/models.json".to_string(), "home-model"),
+        ("~//models.json".to_string(), "home-model"),
+    ];
+    if cfg!(windows) {
+        cases.push((r"~\models.json".to_string(), "home-model"));
+        cases.push((r"~\\models.json".to_string(), "home-model"));
+    }
+    for (raw, expected) in cases {
+        let config = format!("model_catalog_json = '{}'\n", raw);
+        let models = read_codex_custom_catalog_models(&config)
+            .unwrap_or_else(|error| panic!("{raw}: {error}"))
+            .unwrap();
+        assert_eq!(models[0]["slug"], expected, "{raw}");
+    }
+    // 单独的 ~ 指向主目录本身（不是 JSON 文件），错误中应保留展开后的路径。
+    let error = read_codex_custom_catalog_models("model_catalog_json = '~'\n")
+        .unwrap_err()
+        .to_string();
+    let (_, payload) = error.split_once("CC_SWITCH_CODEX_CATALOG_ERROR:").unwrap();
+    let payload: Value = serde_json::from_str(payload).unwrap();
+    assert_eq!(
+        PathBuf::from(payload["context"]["path"].as_str().unwrap()),
+        get_home_dir()
+    );
+}
+
 #[derive(Debug, PartialEq)]
 struct CodexLiveTestState {
     auth_bytes: Vec<u8>,

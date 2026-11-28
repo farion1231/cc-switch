@@ -123,6 +123,13 @@
     "stackReselectHint": "CC Switch가 클라이언트 설정을 변경할 때마다, 모델 선택 메뉴에서 통합 모델을 선택해 둔 경우 해당 모델을 다시 선택해야 합니다.",
     "stackPartial": "설정이 일부만 저장되었습니다. 다음 작업을 수행하거나 CC Switch를 다시 시작하면 나머지 설정이 저장됩니다.",
     "stackFailed": "통합된 모델 저장 실패: {{error}}",
+    "customCatalogError": {
+      "invalidConfig": "사용자 지정 모델 카탈로그 설정을 읽을 수 없습니다. Codex config.toml이 올바르지 않습니다. {{detail}}",
+      "readFailed": "사용자 지정 Codex 모델 카탈로그를 읽을 수 없습니다: {{path}}. {{detail}}",
+      "invalidJson": "사용자 지정 Codex 모델 카탈로그에 올바르지 않은 JSON이 포함되어 있습니다: {{path}}. {{detail}}",
+      "invalidModels": "사용자 지정 Codex 모델 카탈로그에는 models 배열이 있어야 합니다: {{path}}",
+      "invalidSlug": "models[{{index}}]는 비어 있지 않은 문자열 slug를 포함하는 객체여야 합니다: {{path}}"
+    },
     "stackDefaultCannotRemove": "기본 공급자는 제거할 수 없습니다. 먼저 다른 공급자를 기본값으로 설정하세요",
     "stackDefaultHint": "기본 공급자입니다. 이 공급자의 모델 목록에서 첫 번째 모델이 Claude Code의 시작 및 백그라운드 작업을 처리합니다.",
     "officialModelsBundled": "공식 모델 목록을 아직 가져오지 못해 임시로 Codex 내장 목록을 사용합니다. 해당 계정에서만 제공되는 모델이 누락될 수 있습니다.",

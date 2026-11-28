@@ -1464,16 +1464,13 @@ pub fn stack_views(state: &AppState, app: &AppType) -> Result<StackView, String>
 
 /// [`stack_views`] 再加上 Codex 客户端是否可能缓存旧登录或模型列表（要读进程表，放到阻塞线程
 /// 池里）。账号与目录检测都不分模式：切换账号、直连↔路由切换也会让已启动的客户端拿着旧登录
-/// 或旧目录，同样要重启。路由那家自己管理目录时，重启也看不到 CC Switch 的目录，已经有
-/// `notice` 说明，不再查目录。没有目录时（直连、路由那家没配目录）照样查：之前在 CC Switch
+/// 或旧目录，同样要重启。没有目录时（直连、路由那家没配目录）照样查：之前在 CC Switch
 /// 的目录时启动的客户端还拿着它。
 pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<StackView, String> {
     let mut view = stack_views(state, app)?;
     if matches!(app, AppType::Codex) {
-        let check_catalog = view.notice != Some("routeOwnsCatalog");
         (view.stale_clients, view.stale_revision) = codex_direct::off_runtime(move || {
-            let stale =
-                codex_client_catalog::stale_clients(&DeviceStore::for_device(), check_catalog);
+            let stale = codex_client_catalog::stale_clients(&DeviceStore::for_device(), true);
             let revision = stale.map(|_| codex_client_catalog::revision());
             (stale, revision)
         })
@@ -1483,8 +1480,8 @@ pub async fn stack_view_with_clients(state: &AppState, app: &AppType) -> Result<
     Ok(view)
 }
 
-/// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：路由那家自己管理模型
-/// 目录文件（Stack 模型不发布）；或者官方做默认、最近一次写目录时没拿到官方列表，或者拿到的
+/// Codex 在 Stack 模式下有要发布的 Stack 模型，客户端却看不到或看不全：
+/// 官方做默认、最近一次写目录时没拿到官方列表，或者拿到的
 /// 列表里没有能选的模型（本机 Codex 太旧）。
 fn codex_stack_notice(state: &AppState, stack: &StackState) -> Option<&'static str> {
     codex_stack_notice_with_reasons(state, stack).map(|(notice, _)| notice)
@@ -1502,10 +1499,7 @@ fn codex_stack_notice_with_reasons(
     if published.is_empty() {
         return None;
     }
-    if codex_direct::route_owns_catalog(&route) {
-        return Some(("routeOwnsCatalog", Vec::new()));
-    }
-    if !codex_direct::is_official(&route) {
+    if !codex_direct::needs_official_rows(&route, &published) {
         return None;
     }
     match codex_official_models::last_source()? {

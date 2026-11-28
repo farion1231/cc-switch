@@ -123,6 +123,13 @@
     "stackReselectHint": "Wählen Sie das aggregierte Modell im Modellwähler erneut aus, sobald CC Switch die Client-Konfiguration neu schreibt",
     "stackPartial": "Teilweise geschrieben; wird bei der nächsten Änderung oder beim Neustart von CC Switch abgeschlossen",
     "stackFailed": "Aggregierte Modelle konnten nicht gespeichert werden: {{error}}",
+    "customCatalogError": {
+      "invalidConfig": "Die Einstellung für den benutzerdefinierten Modellkatalog kann nicht gelesen werden: ungültige Codex-Datei config.toml. {{detail}}",
+      "readFailed": "Der benutzerdefinierte Codex-Modellkatalog kann nicht gelesen werden: {{path}}. {{detail}}",
+      "invalidJson": "Der benutzerdefinierte Codex-Modellkatalog enthält ungültiges JSON: {{path}}. {{detail}}",
+      "invalidModels": "Der benutzerdefinierte Codex-Modellkatalog muss ein models-Array enthalten: {{path}}",
+      "invalidSlug": "models[{{index}}] muss ein Objekt mit einer nicht leeren Zeichenfolge für slug sein: {{path}}"
+    },
     "stackDefaultCannotRemove": "Der Standardanbieter kann nicht entfernt werden; legen Sie zuerst einen anderen Anbieter als Standard fest",
     "stackDefaultHint": "Dies ist der Standardanbieter: Das erste Modell in seiner Liste übernimmt den Start und die Hintergrundaufgaben von Claude Code",
     "officialModelsBundled": "Die offizielle Modellliste ist noch nicht verfügbar, daher wird vorerst die integrierte Liste von Codex verwendet; kontospezifische Modelle fehlen möglicherweise",
