@@ -487,9 +487,8 @@ export function AgyAccountQuota({
   const {
     data: quota,
     isFetching: loading,
-    refetch,
-    manualIdle,
-  } = useAgyAccountQuota(accountId, { enabled: true, autoQuery: false });
+    refresh,
+  } = useAgyAccountQuota(accountId, { enabled: true });
   const state = subscriptionQuotaState(
     t,
     quota,
@@ -512,8 +511,8 @@ export function AgyAccountQuota({
       }
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
-      onRefresh={() => void refetch()}
-      idle={manualIdle}
+      onRefresh={() => void refresh()}
+      idle={isCurrent && (!quota || quota.credentialStatus === "not_found")}
     />
   );
 }

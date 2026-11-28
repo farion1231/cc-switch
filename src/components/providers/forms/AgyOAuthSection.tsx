@@ -4,7 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { authApi } from "@/lib/api";
-import { agyAuthStatusQuery } from "@/lib/query/subscription";
+import {
+  AGY_RUNNING_STATE_KEY,
+  agyAuthStatusQuery,
+} from "@/lib/query/subscription";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -26,6 +29,11 @@ import {
 import { signedInDate } from "@/components/settings/auth/accountDetails";
 import { useAccountQuotaPlans } from "@/lib/query/accountPlans";
 import { AgyAccountQuota } from "@/components/settings/auth/AccountQuota";
+import {
+  agyQuitFirstBody,
+  agyQuitFirstReason,
+  useAgyAccountSwitch,
+} from "@/components/providers/useAgyOfficial";
 
 interface AgyOAuthSectionProps {
   /** 授权中心里最后一组的「?」向上弹 */
@@ -50,19 +58,34 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
     pollingState,
     deviceCode,
     error,
+    lastCompletedLogin,
     isPolling,
     isAddingAccount,
     isRemovingAccount,
-    isSettingDefaultAccount,
     addAccount,
+    reauthAccount,
+    retryAuth,
     removeAccount,
-    setDefaultAccount,
     cancelAuth,
     refetchStatus,
   } = useManagedAuth("agy_oauth");
+  const { data: runningState } = useQuery({
+    queryKey: AGY_RUNNING_STATE_KEY,
+    queryFn: () =>
+      authApi
+        .agyAccountRunningState()
+        .catch(() => ({ cli: false, desktop: false })),
+    staleTime: 0,
+    refetchInterval: 5_000,
+  });
+  const { switchToAccount, switching } = useAgyAccountSwitch();
+  const running = Boolean(runningState?.cli || runningState?.desktop);
   const accountUsers = useManagedAccountUsers("agy_oauth", defaultAccountId);
   const [removeTarget, setRemoveTarget] =
     React.useState<ManagedAccountRemoveTarget | null>(null);
+
+  const accountLogin = (accountId: string) =>
+    accounts.find((account) => account.id === accountId)?.login ?? accountId;
 
   const confirmRemove = () => {
     const target = removeTarget;
@@ -117,7 +140,7 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
       iconName="antigravity"
       help={t("authCenter.group.agyHelp", {
         defaultValue:
-          "Antigravity CLI（agy）的官方登录。agy 同时只能登录一个号，「切换」会把 agy 的登录换成选中的账号，之后新开的 agy 都用它。agy 里原来登着的号会自动收进这里，切走也不会丢。「添加账号」会打开终端运行 agy，在 agy 里登录后这里自动收录。额度用 agy 自己的 /usage 查，只查得到 agy 当前登着的号，其他号显示切走前最后一次查到的。",
+          "Antigravity 桌面端与 CLI（agy）共用的官方登录。同时只能登录一个号，切号或添加前需完全退出运行中的 Antigravity 桌面端与 agy CLI，「切换」会把选中的账号写进去并清理桌面端状态，重新打开后即生效。「添加账号」会打开终端运行 agy，在 agy 里登录后这里自动收录。额度仅在手动刷新时用 agy 自己的 /usage 查，只查得到当前登着的号，其他号显示切走前最后一次查到的。",
       })}
       helpSide={helpSide}
       accounts={rows}
@@ -126,24 +149,31 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
         defaultValue: "无法读取 Antigravity 账号，请重试。",
       })}
       onRetryStatus={() => void refetchStatus()}
+      loginDisabledReason={
+        running ? agyQuitFirstReason(t, runningState) : undefined
+      }
+      loginDisabledBody={
+        running && runningState ? agyQuitFirstBody(t, runningState) : undefined
+      }
       emptyText={t("authCenter.agy.empty", {
         defaultValue:
-          "还没有 Antigravity 账号。agy 里已登录的号会自动出现在这里，也可以点「添加账号」在 agy 里登录。",
+          "还没有 Antigravity 账号。Antigravity 里已登录的号会自动出现在这里，也可以点「添加账号」在 agy 里登录。",
       })}
       onAdd={addAccount}
       defaultLabel={t("authCenter.inUseBy", {
         defaultValue: "{{app}} 在用",
-        app: "agy",
+        app: "Antigravity",
       })}
       setDefaultLabel={t("authCenter.switchAppTo", {
         defaultValue: "切换 {{app}} 到这个账号",
-        app: "agy",
+        app: "Antigravity",
       })}
       canReauth
-      // 用同一个 Google 账号再登录一次就会替换掉旧凭据
-      onReauth={() => addAccount()}
-      onSetDefault={setDefaultAccount}
-      settingDefault={isSettingDefaultAccount}
+      onReauth={reauthAccount}
+      onSetDefault={(accountId) =>
+        void switchToAccount(accountId, accountLogin(accountId))
+      }
+      settingDefault={switching}
       onRemove={(accountId, login) =>
         setRemoveTarget({ kind: "one", accountId, login })
       }
@@ -154,8 +184,9 @@ export const AgyOAuthSection: React.FC<AgyOAuthSectionProps> = ({
         pollingState,
         deviceCode,
         error,
+        completedLogin: lastCompletedLogin,
         onCancel: cancelAuth,
-        onRetry: addAccount,
+        onRetry: retryAuth,
         pendingNote: t("authCenter.agy.pendingNote", {
           defaultValue:
             "已在终端打开 agy。没登录时按提示登录；已登录时先输入 /logout，再输入 /login 登录要添加的号。完成后这里会自动收录。",
@@ -209,7 +240,7 @@ export function AgyAccountSelect({ value, onChange }: AgyAccountSelectProps) {
   const activeAccount = accounts.find(
     (account) => account.id === data?.default_account_id,
   );
-  const inUse = t("authCenter.inUseBy", { app: "agy" });
+  const inUse = t("authCenter.inUseBy", { app: "Antigravity" });
   const [initialValue] = React.useState(value);
   const willSwitch =
     value !== null && value !== initialValue && value !== activeAccount?.id;

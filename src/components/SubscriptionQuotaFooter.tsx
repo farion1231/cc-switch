@@ -414,7 +414,7 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
   const {
     data: quota,
     isFetching: loading,
-    refetch,
+    refresh,
     manualIdle,
   } = useSubscriptionQuota(
     appId,
@@ -425,12 +425,16 @@ const SubscriptionQuotaFooter: React.FC<SubscriptionQuotaFooterProps> = ({
 
   if (!isCurrent) return null;
 
+  const isAgy = appId === "agy";
+  const agyMissingCache =
+    isAgy && (!quota || quota.credentialStatus === "not_found");
+
   return (
     <SubscriptionQuotaView
-      quota={quota}
+      quota={agyMissingCache ? undefined : quota}
       loading={loading}
-      refetch={refetch}
-      idle={manualIdle}
+      refetch={refresh}
+      idle={agyMissingCache ? true : manualIdle}
       // expiredHint 里的 {tool} 是 CLI 命令名：Grok 的命令是 `grok` 而非 appId
       appIdForExpiredHint={appId === "grokbuild" ? "grok" : appId}
       inline={inline}

@@ -662,4 +662,8 @@ export const handlers = [
       domain: null,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/agy_account_is_running`, () => success(false)),
+  http.post(`${TAURI_ENDPOINT}/agy_account_running_state`, () =>
+    success({ cli: false, desktop: false }),
+  ),
 ];

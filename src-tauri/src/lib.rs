@@ -1923,6 +1923,7 @@ pub fn run() {
             commands::auth_set_default_account,
             commands::auth_logout,
             commands::agy_account_is_running,
+            commands::agy_account_running_state,
             commands::agy_account_quota,
             commands::agy_account_open_login_terminal,
             commands::workbuddy_account_live_state,

@@ -12,7 +12,10 @@ import {
   WORKBUDDY_QUOTA_KEY,
   markWorkBuddyQuotaForceRefresh,
 } from "@/components/providers/workbuddyQuota";
-import { markCodebuddyQuotaForceRefresh } from "@/lib/query/subscription";
+import {
+  markAgyQuotaManualRefresh,
+  markCodebuddyQuotaForceRefresh,
+} from "@/lib/query/subscription";
 
 /** 授权中心各组账号行的额度缓存：`[服务, "quota", 账号]` */
 const QUOTA_SERVICES = new Set([
@@ -60,6 +63,7 @@ export function RefreshAllQuotaButton() {
       size="regular"
       disabled={fetching}
       onClick={() => {
+        markAgyQuotaManualRefresh();
         markCodebuddyQuotaForceRefresh();
         markWorkBuddyQuotaForceRefresh();
         void Promise.all(

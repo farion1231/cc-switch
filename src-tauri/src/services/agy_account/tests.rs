@@ -463,7 +463,7 @@ mod switching {
     }
 
     /// agy 1.5 自己写回钥匙串的格式：没有 id_token，只有 id_token_email 和 writer_id。
-    fn agy15_credential(sub: &str, access: &str) -> Value {
+    pub(super) fn agy15_credential(sub: &str, access: &str) -> Value {
         let mut credential = credential(sub, access);
         let object = credential.as_object_mut().unwrap();
         object.remove("id_token");
@@ -650,4 +650,416 @@ async fn an_unreadable_account_file_is_kept_instead_of_overwritten() {
         crate::test_support::dir_holds_file_with(dir.path(), &unreadable),
         "the unreadable account file was overwritten"
     );
+}
+
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+mod running_guard_and_scope {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    fn test_env(
+        cli: bool,
+        desktop: bool,
+    ) -> (
+        tempfile::TempDir,
+        tempfile::TempDir,
+        Arc<MemoryLogin>,
+        AgyAccountManager,
+        Arc<AtomicBool>,
+        Arc<AtomicBool>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let desktop_dir = tempfile::tempdir().unwrap();
+        let login = Arc::new(MemoryLogin::default());
+        let cli_flag = Arc::new(AtomicBool::new(cli));
+        let desktop_flag = Arc::new(AtomicBool::new(desktop));
+        let cli_clone = Arc::clone(&cli_flag);
+        let desktop_clone = Arc::clone(&desktop_flag);
+        let manager = AgyAccountManager::with_test_env(
+            dir.path().to_path_buf(),
+            login.clone(),
+            Arc::new(move || AgyRunningState {
+                cli: cli_clone.load(Ordering::Relaxed),
+                desktop: desktop_clone.load(Ordering::Relaxed),
+            }),
+            Some(desktop_dir.path().to_path_buf()),
+        );
+        (dir, desktop_dir, login, manager, cli_flag, desktop_flag)
+    }
+
+    #[tokio::test]
+    async fn switch_blocks_while_desktop_cli_or_both_are_running_and_preserves_scope() {
+        let (_dir, desktop_dir, login, manager, cli_flag, desktop_flag) = test_env(false, true);
+        set_live(&login, &credential("alice", "a1"));
+        add(&manager, "bob").await;
+        let scope_file = desktop_dir
+            .path()
+            .join(keychain::DESKTOP_CREDENTIAL_SCOPE_FILENAME);
+        std::fs::write(&scope_file, "scope-alice").unwrap();
+
+        // Desktop running -> blocks with running_desktop, keychain and scope untouched.
+        let err = manager.switch_to("bob").await.unwrap_err();
+        assert!(err.to_string().contains("Antigravity"), "{err}");
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+        assert!(scope_file.exists());
+
+        // CLI running -> blocks with running_cli.
+        desktop_flag.store(false, Ordering::Relaxed);
+        cli_flag.store(true, Ordering::Relaxed);
+        let err = manager.switch_to("bob").await.unwrap_err();
+        assert!(err.to_string().contains("agy CLI"), "{err}");
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+        assert!(scope_file.exists());
+
+        // Both running -> blocks with running_both.
+        desktop_flag.store(true, Ordering::Relaxed);
+        let err = manager.switch_to("bob").await.unwrap_err();
+        assert!(err.to_string().contains("Antigravity"), "{err}");
+        assert!(err.to_string().contains("agy CLI"), "{err}");
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+        assert!(scope_file.exists());
+
+        // No-op switch to already-active account succeeds even while running.
+        manager.switch_to("alice").await.unwrap();
+        assert!(scope_file.exists());
+    }
+
+    #[tokio::test]
+    async fn start_login_blocks_while_desktop_cli_or_both_are_running() {
+        let (_dir, _desktop_dir, login, manager, cli_flag, desktop_flag) = test_env(false, true);
+        set_live(&login, &credential("alice", "a1"));
+
+        let err = manager.start_login().await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Localized { key, .. } if key == "agy.account.login_running_desktop"
+        ));
+
+        desktop_flag.store(false, Ordering::Relaxed);
+        cli_flag.store(true, Ordering::Relaxed);
+        let err = manager.start_login().await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Localized { key, .. } if key == "agy.account.login_running_cli"
+        ));
+
+        desktop_flag.store(true, Ordering::Relaxed);
+        let err = manager.start_login().await.unwrap_err();
+        assert!(matches!(
+            err,
+            AppError::Localized { key, .. } if key == "agy.account.login_running_both"
+        ));
+
+        desktop_flag.store(false, Ordering::Relaxed);
+        cli_flag.store(false, Ordering::Relaxed);
+        assert!(manager.start_login().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn switch_clears_desktop_scope_and_syncs_fallback_only_after_verified_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let desktop_dir = tempfile::tempdir().unwrap();
+        let fallback_file = dir.path().join(keychain::STANDALONE_TOKEN_FILENAME);
+        let raw_keychain = Arc::new(MemoryLogin::default());
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
+            fallback_file.clone(),
+            raw_keychain.clone(),
+        ));
+        let manager = AgyAccountManager::with_test_env(
+            dir.path().to_path_buf(),
+            login,
+            Arc::new(AgyRunningState::default),
+            Some(desktop_dir.path().to_path_buf()),
+        );
+
+        let alice_cred = credential("alice", "a1");
+        let bob_cred = credential("bob", "fresh");
+        set_live(&raw_keychain, &alice_cred);
+        std::fs::write(&fallback_file, serde_json::to_vec(&alice_cred).unwrap()).unwrap();
+        add(&manager, "bob").await;
+        let scope_file = desktop_dir
+            .path()
+            .join(keychain::DESKTOP_CREDENTIAL_SCOPE_FILENAME);
+        std::fs::write(&scope_file, "scope-alice").unwrap();
+
+        // If post-write verification fails, scope file and fallback file stay untouched.
+        *raw_keychain.post_write_read_failures.lock().unwrap() = 2;
+        assert!(manager.switch_to("bob").await.is_err());
+        assert!(scope_file.exists());
+        assert_eq!(
+            keychain::decode(&std::fs::read_to_string(&fallback_file).unwrap()).unwrap(),
+            alice_cred
+        );
+
+        // Reset back to alice and perform a clean verified switch to bob -> scope cleared & fallback synced.
+        set_live(&raw_keychain, &alice_cred);
+        manager.switch_to("bob").await.unwrap();
+        assert_eq!(live_sub(&raw_keychain).as_deref(), Some("bob"));
+        assert!(!scope_file.exists());
+        assert_eq!(
+            keychain::decode(&std::fs::read_to_string(&fallback_file).unwrap()).unwrap(),
+            bob_cred
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_login_same_account_with_same_refresh_token_completes_after_seeing_logged_out() {
+        let (_dir, desktop_dir, login, manager, _cli_flag, _desktop_flag) = test_env(false, false);
+        let scope_file = desktop_dir
+            .path()
+            .join(keychain::DESKTOP_CREDENTIAL_SCOPE_FILENAME);
+        std::fs::write(&scope_file, "scope-alice").unwrap();
+
+        set_live(&login, &credential("alice", "a1"));
+        let start = manager.start_login().await.unwrap();
+        assert!(manager.has_pending_login().await);
+
+        // Still signed in with the baseline refresh token -> keep polling.
+        assert!(manager.poll_login(&start.flow_id).await.unwrap().is_none());
+
+        // User runs /logout -> LiveLogin::None recorded as saw_logged_out.
+        *login.value.lock().unwrap() = None;
+        assert!(manager.poll_login(&start.flow_id).await.unwrap().is_none());
+
+        // User signs back into the same Google account returning the same refresh_token -> completes!
+        set_live(&login, &credential("alice", "a2"));
+        let account = manager.poll_login(&start.flow_id).await.unwrap().unwrap();
+        assert_eq!(account.id, "alice");
+        assert!(!scope_file.exists());
+        assert!(!manager.has_pending_login().await);
+    }
+
+    #[tokio::test]
+    async fn identify_prefers_exact_sub_match_and_falls_back_to_id_token_email_without_duplicates()
+    {
+        let (_dir, _desktop_dir, login, manager, _cli, _desktop) = test_env(false, false);
+
+        // Existing account stored by email:<address> (e.g. from agy 1.5 without id_token).
+        set_live(&login, &switching::agy15_credential("alice", "a1"));
+        let status = manager.status().await.unwrap();
+        assert_eq!(
+            status.current_account_id.as_deref(),
+            Some("email:alice@example.com")
+        );
+
+        // Re-signing in with a credential that has id_token (sub + email) matches existing email account
+        // via id_token.email fallback without creating a duplicate account.
+        let mut with_id_token = credential("alice-sub", "a2");
+        with_id_token["id_token"] = json!(id_token("alice-sub", "alice@example.com"));
+        set_live(&login, &with_id_token);
+        let status = manager.status().await.unwrap();
+        assert_eq!(status.accounts.len(), 1);
+        assert_eq!(
+            status.current_account_id.as_deref(),
+            Some("email:alice@example.com")
+        );
+
+        // Conversely, when an account is stored under its `sub` key and another account shares email
+        // or no email match is needed, exact `sub` match takes priority over `email:` heuristic.
+        let mut store = manager.store.lock().await;
+        let sub_cred = credential("bob-sub", "b1");
+        let bob_claims = identity::identity(sub_cred["id_token"].as_str().unwrap()).unwrap();
+        upsert(&mut store, sub_cred, &bob_claims);
+        // Simulate an email-keyed entry with the same email inserted earlier.
+        let mut dup_email_cred = switching::agy15_credential("bob-sub", "b0");
+        dup_email_cred["token"]["refresh_token"] = json!("refresh-bob-old");
+        let dup_claims = identity::IdentityClaims {
+            sub: Some(identity::email_account_id("bob-sub@example.com")),
+            email: Some("bob-sub@example.com".into()),
+            name: None,
+            picture: None,
+        };
+        upsert(&mut store, dup_email_cred, &dup_claims);
+        drop(store);
+
+        let mut fresh_bob = credential("bob-sub", "b2");
+        fresh_bob["token"]["refresh_token"] = json!("refresh-bob-old");
+        set_live(&login, &fresh_bob);
+        let status = manager.status().await.unwrap();
+        assert_eq!(status.current_account_id.as_deref(), Some("bob-sub"));
+    }
+
+    #[test]
+    fn process_classification_handles_windows_and_unix_processes() {
+        let tasklist = r#""System Idle Process","0","Services","0","8 K"
+"agy.exe","1024","Console","1","45,000 K"
+"Antigravity.exe","2048","Console","1","220,000 K"
+"language_server_windows_x64.exe","4096","Console","1","180,000 K"
+"language_server.exe","8192","Console","1","160,000 K"
+"#;
+        let entries = parse_windows_tasklist_entries(tasklist);
+        assert_eq!(
+            entries,
+            vec![
+                ("System Idle Process".to_string(), 0),
+                ("agy.exe".to_string(), 1024),
+                ("Antigravity.exe".to_string(), 2048),
+                ("language_server_windows_x64.exe".to_string(), 4096),
+                ("language_server.exe".to_string(), 8192),
+            ]
+        );
+        assert_eq!(
+            classify_windows_image_name("agy.exe"),
+            WindowsProcessKind::Cli
+        );
+        assert_eq!(
+            classify_windows_image_name("antigravity.EXE"),
+            WindowsProcessKind::Desktop
+        );
+        assert_eq!(
+            classify_windows_image_name("language_server_windows_x64.exe"),
+            WindowsProcessKind::LanguageServer
+        );
+        assert_eq!(
+            classify_windows_image_name("language_server.exe"),
+            WindowsProcessKind::LanguageServer
+        );
+        assert_eq!(
+            classify_windows_image_name("node.exe"),
+            WindowsProcessKind::Other
+        );
+
+        assert_eq!(
+            classify_unix_process_lines(
+                ["/Applications/Antigravity-IDE.app/Contents/MacOS/Antigravity"].into_iter()
+            ),
+            AgyRunningState {
+                cli: false,
+                desktop: false
+            }
+        );
+        assert_eq!(
+            classify_unix_process_lines(
+                ["/Applications/Antigravity.app/Contents/MacOS/Electron"].into_iter()
+            ),
+            AgyRunningState {
+                cli: false,
+                desktop: true
+            }
+        );
+        assert_eq!(
+            classify_unix_process_lines(
+                ["/Users/me/.windsurf/bin/language_server_macos_arm64"].into_iter()
+            ),
+            AgyRunningState {
+                cli: false,
+                desktop: false
+            }
+        );
+        assert_eq!(
+            classify_unix_process_lines(
+                [
+                    "/usr/local/bin/agy",
+                    "/Users/me/.gemini/antigravity/bin/language_server_macos_arm64"
+                ]
+                .into_iter()
+            ),
+            AgyRunningState {
+                cli: true,
+                desktop: true
+            }
+        );
+
+        // Linux ps -axo args= lines with CLI flags and IDE paths.
+        assert_eq!(
+            classify_unix_process_lines(
+                [
+                    "/usr/bin/agy --model gemini-3.1",
+                    "/opt/antigravity/language_server_linux_x64 --port 1234"
+                ]
+                .into_iter()
+            ),
+            AgyRunningState {
+                cli: true,
+                desktop: true
+            }
+        );
+        assert_eq!(
+            classify_unix_process_lines(
+                [
+                    "/home/u/.gemini/antigravity-ide/bin/language_server_linux_x64 --port 1",
+                    "/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity"
+                ]
+                .into_iter()
+            ),
+            AgyRunningState {
+                cli: false,
+                desktop: false
+            }
+        );
+
+        // Windows Desktop executable path checks (legacy language_server_windows*.exe & new language_server.exe).
+        assert!(is_antigravity_desktop_language_server_path(
+            r"C:\Users\me\AppData\Local\Programs\Antigravity\resources\app\bin\language_server_windows_x64.exe"
+        ));
+        assert!(is_antigravity_desktop_language_server_path(
+            r"C:\Users\me\AppData\Local\Programs\Antigravity\resources\app\extensions\antigravity\bin\language_server.exe"
+        ));
+        assert!(!is_antigravity_desktop_language_server_path(
+            r"C:\Users\me\AppData\Local\Programs\Windsurf\language_server.exe"
+        ));
+        assert!(!is_antigravity_desktop_language_server_path(
+            r"C:\Users\me\AppData\Local\Programs\Windsurf\language_server_windows_x64.exe"
+        ));
+        assert!(!is_antigravity_desktop_language_server_path(
+            r"C:\Users\me\.gemini\antigravity-ide\bin\language_server_windows_x64.exe"
+        ));
+        assert!(!is_antigravity_desktop_language_server_path(
+            r"C:\Users\me\.gemini\antigravity-ide\bin\language_server.exe"
+        ));
+    }
+
+    #[test]
+    fn saving_new_provider_binding_rolls_back_db_when_antigravity_is_running() {
+        use crate::app_config::AppType;
+        use crate::database::Database;
+        use crate::provider::{AuthBinding, AuthBindingSource, Provider, ProviderMeta};
+        use crate::services::provider::agy_direct::save_from_editor;
+        use crate::store::AppState;
+
+        let (_dir, _desktop_dir, login, manager, _cli, _desktop) = test_env(false, true);
+        set_live(&login, &credential("alice", "a1"));
+        tauri::async_runtime::block_on(add(&manager, "bob"));
+
+        let state = AppState::new(Arc::new(Database::memory().unwrap()));
+        let mut alice_card =
+            Provider::with_id("official".into(), "Antigravity".into(), json!({}), None);
+        alice_card.category = Some("official".into());
+        alice_card.meta = Some(ProviderMeta {
+            auth_binding: Some(AuthBinding {
+                source: AuthBindingSource::ManagedAccount,
+                auth_provider: Some("agy_oauth".into()),
+                account_id: Some("alice".into()),
+            }),
+            ..Default::default()
+        });
+        state.db.save_provider(&AppType::Agy, &alice_card).unwrap();
+
+        let mut bob_card = alice_card.clone();
+        bob_card
+            .meta
+            .as_mut()
+            .unwrap()
+            .auth_binding
+            .as_mut()
+            .unwrap()
+            .account_id = Some("bob".into());
+        assert!(save_from_editor(&state, &manager, bob_card).is_err());
+
+        // DB row must remain bound to alice and keychain must stay on alice.
+        let persisted = state
+            .db
+            .get_provider_by_id("official", &AppType::Agy)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            persisted
+                .meta
+                .as_ref()
+                .and_then(|m| m.managed_account_id_for("agy_oauth"))
+                .as_deref(),
+            Some("alice")
+        );
+        assert_eq!(live_sub(&login).as_deref(), Some("alice"));
+    }
 }

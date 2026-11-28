@@ -244,6 +244,7 @@ export const CodebuddyAccountSection: React.FC<
         pollingState,
         deviceCode,
         error,
+        completedLogin: login.auth.lastCompletedLogin,
         onCancel: () => void login.cancel(),
         cancelLabel: login.cancelLabel,
         onRetry: () => login.requestLogin(),

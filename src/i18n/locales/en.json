@@ -207,7 +207,7 @@
       "agyBindingMissing": "The Antigravity account bound to this card is missing on this computer. Add it in Auth Center or use agy's current sign-in for this launch.",
       "agyUseCurrentLogin": "Use agy's current sign-in for this launch",
       "agySwitchBody": "Before opening, agy's sign-in switches to {{account}}, and agy sessions started afterwards use this account.",
-      "agySwitchRunning": "agy is running: open agy sessions keep the previous account and may write it back. Quit them first if you can.",
+      "agySwitchRunning": "Antigravity Desktop or agy CLI is running: quit them completely before switching accounts, or they will not refresh and may write the previous sign-in back.",
       "isolationBodyCopilot": "copilot in this terminal starts with --model set to the first model of \"{{name}}\", for this session only. The endpoint and key come from Copilot's providers.json, so other terminals can pick it with /model too."
     },
     "name": "Name",
@@ -235,7 +235,7 @@
         "account": "Account",
         "accountFollow": "Follow agy's current sign-in",
         "accountMissing": "An account not on this computer",
-        "accountHelp": "Saving a new account binding switches the sign-in for new agy sessions. Opening a terminal from this card also switches to its bound account. Add accounts in the Auth Center."
+        "accountHelp": "Quit running Antigravity Desktop and agy CLI before saving a new bound account. Reopen Antigravity afterwards to use it. Add accounts in Auth Center."
       },
       "gemini": {
         "model": "Model",
@@ -5222,7 +5222,7 @@
       "copilotHelp": "Used by GitHub Copilot presets in Claude Code, Claude Desktop and Codex, and by Copilot CLI's official-login binding. Providers without a chosen account use the Default one.",
       "chatgptHelp": "Used by ChatGPT presets in Claude Code and Claude Desktop, and by Codex's official-login binding. Providers without a chosen account use the Default one.",
       "xaiHelp": "Used by xAI presets in Claude Code, Claude Desktop and Codex, and by Grok Build's official-login binding. Providers without a chosen account use the Default one.",
-      "agyHelp": "The official sign-in for Antigravity CLI (agy). agy can only be signed in to one account at a time; Switch replaces agy's sign-in with the selected account, and agy sessions started afterwards use it. The account agy was already signed in with is added here automatically, so switching away never loses it. Add account opens a terminal running agy; sign in there and the account is added here automatically. Quota comes from agy's own /usage, so only the account agy is currently signed in with can be checked; other accounts show the last quota seen before switching away.",
+      "agyHelp": "The shared official sign-in for Antigravity Desktop and CLI (agy). Only one account can be signed in at a time. Quit running Antigravity Desktop and agy CLI before switching or adding accounts; Switch writes the selected account and clears stale desktop scope state so reopening Antigravity uses it. Add account opens a terminal running agy; sign in there and the account is added here automatically. Quota is queried via agy's own /usage only when manually refreshed, so only the currently signed-in account can be checked; other accounts show the last cached quota.",
       "codebuddyHelp": "The official sign-in for CodeBuddy (both the China and international sites). To switch accounts, choose \"Switch CodeBuddy to this account\" in the account's … menu, or add the \"CodeBuddy Official Sign-in\" card linked to it in the provider list. \"Add account\" opens a terminal running codebuddy and adds the account here once you finish; if CodeBuddy is already signed in, it's signed out for now and can be restored if you give up. CodeBuddy refreshes its own tokens.",
       "workbuddyHelp": "The official sign-in of the WorkBuddy desktop app. CC Switch can't sign in to WorkBuddy for you; it can only save the account WorkBuddy is signed in with (a snapshot of its sign-in files). To switch accounts, choose “Switch WorkBuddy to this account” in the account's … menu, or add the WorkBuddy Official Sign-in card linked to it in the provider list (only one official card is added at a time). Snapshots only work on this computer and are not synced.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
@@ -5267,7 +5267,9 @@
     },
     "toast": {
       "added": "{{service}} account added.",
-      "reauthed": "Signed in again as {{login}}."
+      "reauthed": "Signed in again as {{login}}.",
+      "reauthOtherAdded": "You signed in to a different account than {{target}}. {{login}} was added as a new account.",
+      "reauthOtherUpdated": "You signed in to a different account than {{target}}. {{login}} is already in the list; its copy was updated."
     },
     "quota": {
       "loading": "Checking quota…",
@@ -5279,13 +5281,15 @@
       "reauthNote": "Sign-in expired, can't switch to it",
       "addedOn": "Added {{date}}",
       "statusLoadFailed": "Couldn't read Antigravity accounts. Try again.",
-      "empty": "No Antigravity accounts yet. The account agy is signed in with appears here automatically, or click Add account to sign in within agy.",
+      "empty": "No Antigravity accounts yet. The account Antigravity is signed in with appears here automatically, or click Add account to sign in within agy.",
       "removeNote": "agy stays signed in: if agy is using this account, it keeps working after removal.",
-      "switched": "Switched. New agy sessions will use this account.",
-      "switchedWhileRunning": "Switched. agy is running: open agy sessions keep using the previous account and may write it back. Quit agy and open it again.",
+      "switched": "Switched. Reopen Antigravity to use this account.",
+      "switchedWhileRunning": "Antigravity is running. Quit Antigravity Desktop and agy CLI completely before switching accounts.",
       "pendingNote": "agy is open in a terminal. If it isn't signed in, follow its prompts; if it is, type /logout, then /login with the account to add. It's added here automatically once done.",
       "reopenTerminal": "Reopen terminal",
-      "quotaNotCurrent": "Switch to this account to check its quota"
+      "quotaNotCurrent": "Switch to this account to check its quota",
+      "runningNoticeTitle": "Antigravity is currently running",
+      "runningNoticeBody": "Quit Antigravity Desktop completely (including tray/background processes) and running agy CLI sessions before switching or adding accounts, or they will not refresh and may write the previous sign-in back."
     },
     "codebuddy": {
       "mainland": "China",
@@ -5590,5 +5594,19 @@
     "providerNamePlaceholder": "My Provider",
     "toggleModelDetails": "Toggle model details",
     "activationHint": "ZCode keeps all providers live at once: saving adds this provider to ZCode's list, but you must switch to it inside ZCode's provider picker for it to take effect."
+  },
+  "agy": {
+    "official": {
+      "quitDesktopFirst": "Quit Antigravity Desktop before switching accounts",
+      "quitDesktopFirstBody": "Quit Antigravity Desktop completely (including tray/background processes) before switching, or it will not refresh and may write its current sign-in back.",
+      "quitCliFirst": "Quit running agy CLI sessions before switching accounts",
+      "quitCliFirstBody": "Close running agy CLI sessions before switching, or they will keep using the previous account and may write it back.",
+      "quitBothFirst": "Quit Antigravity Desktop and agy CLI before switching accounts",
+      "quitBothFirstBody": "Quit Antigravity Desktop completely (including tray/background processes) and any running agy CLI sessions before switching, or they will not refresh and may write the previous sign-in back.",
+      "switched": "Switched to \"{{name}}\". Reopen Antigravity to use this account.",
+      "switchFailed": "Couldn't switch the Antigravity account",
+      "accountMissing": "The bound Antigravity account is not on this computer. Add it in Auth Center or edit this card to choose another.",
+      "accountMissingChip": "Account missing"
+    }
   }
 }

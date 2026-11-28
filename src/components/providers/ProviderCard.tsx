@@ -571,7 +571,7 @@ export function ProviderCard({
             {presentation.chips.map((chip) => (
               <CardChipBadge key={chip.key} chip={chip} />
             ))}
-            {canShowAgyAccount && (
+            {canShowAgyAccount && !presentation.status && (
               <AgyInUseChip
                 boundAccountId={agyBoundAccountId}
                 renderChip={(chip) => <CardChipBadge chip={chip} />}

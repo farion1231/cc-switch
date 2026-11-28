@@ -137,9 +137,19 @@ export async function authLogout(
   });
 }
 
-/** 有没有正在运行的 agy：在跑的 agy 还用切换前的账号，续期时可能把旧登录写回去。 */
+export interface AgyRunningState {
+  cli: boolean;
+  desktop: boolean;
+}
+
+/** 有没有正在运行的 Antigravity 桌面端或 agy CLI：在跑的进程仍用旧账号，续期时可能把旧登录写回去。 */
 export async function agyAccountIsRunning(): Promise<boolean> {
   return invoke<boolean>("agy_account_is_running");
+}
+
+/** 分别检测 Antigravity 桌面端和 agy CLI 是否正在运行。 */
+export async function agyAccountRunningState(): Promise<AgyRunningState> {
+  return invoke<AgyRunningState>("agy_account_running_state");
 }
 
 /** 「添加账号」等待中再开一个跑 `agy` 的终端（不重置这次登录）。 */
