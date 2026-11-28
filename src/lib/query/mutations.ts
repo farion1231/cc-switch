@@ -144,9 +144,13 @@ export const useAddProviderMutation = (appId: AppId) => {
       }
 
       toast.success(
-        t("notifications.providerAdded", {
-          defaultValue: "供应商已添加",
-        }),
+        appHas(appId, "additive")
+          ? t("notifications.providerAdded", {
+              defaultValue: "供应商已添加",
+            })
+          : t("notifications.providerAddedCheckActive", {
+              defaultValue: "供应商已添加。使用前请确认当前启用的供应商。",
+            }),
         {
           closeButton: true,
         },

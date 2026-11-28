@@ -352,6 +352,7 @@
   },
   "notifications": {
     "providerAdded": "Sağlayıcı eklendi",
+    "providerAddedCheckActive": "Sağlayıcı eklendi. Kullanmadan önce hangi sağlayıcının etkin olduğunu kontrol edin.",
     "switchSuccess": "Geçiş başarılı!",
     "codexRestartRequired": "Başarıyla değiştirildi. Değişiklikleri uygulamak için istemciyi yeniden başlatın.",
     "geminiRestartRequired": "Başarıyla değiştirildi. Değişiklikleri uygulamak için Gemini CLI'yi yeniden başlatın.",

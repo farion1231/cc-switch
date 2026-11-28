@@ -352,6 +352,7 @@
   },
   "notifications": {
     "providerAdded": "供应商已添加",
+    "providerAddedCheckActive": "供应商已添加。使用前请确认当前启用的供应商。",
     "switchSuccess": "切换成功！",
     "codexRestartRequired": "切换成功，请重启客户端以生效",
     "geminiRestartRequired": "切换成功，请重启 Gemini CLI 以生效",

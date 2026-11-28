@@ -352,6 +352,7 @@
   },
   "notifications": {
     "providerAdded": "공급자가 추가됨",
+    "providerAddedCheckActive": "공급자가 추가되었습니다. 사용하기 전에 현재 활성화된 공급자를 확인하세요.",
     "switchSuccess": "전환 성공!",
     "codexRestartRequired": "성공적으로 전환되었습니다. 변경 사항을 적용하려면 클라이언트를 다시 시작하세요.",
     "geminiRestartRequired": "성공적으로 전환되었습니다. 변경 사항을 적용하려면 Gemini CLI를 다시 시작하세요.",
