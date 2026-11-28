@@ -108,6 +108,11 @@ impl SkillService {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
     }
 
+    /// 空串和 "HEAD" 都是「用仓库默认分支」的哨兵值，不作为真实分支名拼进 URL。
+    pub(super) fn is_default_branch_sentinel(branch: &str) -> bool {
+        branch.is_empty() || branch.eq_ignore_ascii_case("HEAD")
+    }
+
     /// git 分支名。
     ///
     /// 分支名合法含 `/`（`feature/x`），所以不能整体禁掉分隔符——按段做白名单。
@@ -115,13 +120,7 @@ impl SkillService {
     /// `a/.../b` 这类变形。除 `git check-ref-format` 的规则外还额外禁掉 `#` 与 `%`：
     /// 前者会把 URL 后半截变成 fragment，后者可用百分号编码绕过字符检查。
     pub(super) fn is_valid_git_branch(branch: &str) -> bool {
-        // 空串和 "HEAD" 都是 `download_repo` 的哨兵，语义都是「用仓库默认分支」：
-        // 分支候选表对两者一视同仁地跳过，改试 main / master，所以它们**永远不会
-        // 被拼进 URL**，也就没有可校验的攻击面。空串必须放行——`skill_repos` 的
-        // 存量行可以是空 branch（建表默认值是 'main'，但不禁止空串），前端两处
-        // `repo.branch || "main"` 就是照着这个前提写的。把它当非法会让那些仓库
-        // 在 download_repo 第一行就报 INVALID_REPO_REF，技能面板直接列不出来。
-        if branch.is_empty() || branch.eq_ignore_ascii_case("HEAD") {
+        if Self::is_default_branch_sentinel(branch) {
             return true;
         }
         if branch.len() > 255 {
@@ -571,6 +570,236 @@ impl SkillService {
         Ok(request.header(reqwest::header::AUTHORIZATION, value))
     }
 
+    /// 按不可变 commit SHA 构造归档下载地址（避免探测与下载之间分支移动导致缓存错配）。
+    pub(super) fn build_commit_archive_url(
+        repo: &SkillRepo,
+        platform: RepoPlatform,
+        commit_sha: &str,
+        authenticated: bool,
+    ) -> Result<String> {
+        Self::validate_repo(repo)?;
+        let valid_sha = (commit_sha.len() == 40 || commit_sha.len() == 64)
+            && commit_sha.bytes().all(|b| b.is_ascii_hexdigit())
+            && !commit_sha.bytes().all(|b| b == b'0');
+        if !valid_sha {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_REPO_REF",
+                &[("owner", &repo.owner), ("name", &repo.name)],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        if repo.is_github() && authenticated {
+            let url = format!(
+                "https://api.github.com/repos/{}/{}/zipball/{}",
+                repo.owner, repo.name, commit_sha
+            );
+            let parsed = url::Url::parse(&url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
+            let expected = format!("/repos/{}/{}/zipball/{commit_sha}", repo.owner, repo.name);
+            if parsed.scheme() != "https"
+                || parsed.host_str() != Some("api.github.com")
+                || parsed.port().is_some()
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || parsed.path() != expected
+            {
+                return Err(anyhow!(format_skill_error(
+                    "INVALID_REPO_REF",
+                    &[("owner", &repo.owner), ("name", &repo.name)],
+                    Some("checkRepoUrl"),
+                )));
+            }
+            return Ok(url);
+        }
+        if repo.is_github() {
+            let url = format!(
+                "https://github.com/{}/{}/archive/{}.zip",
+                repo.owner, repo.name, commit_sha
+            );
+            let parsed = url::Url::parse(&url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
+            let expected = format!("/{}/{}/archive/{commit_sha}.zip", repo.owner, repo.name);
+            if parsed.scheme() != "https"
+                || parsed.host_str() != Some("github.com")
+                || parsed.path() != expected
+            {
+                return Err(anyhow!(format_skill_error(
+                    "INVALID_REPO_REF",
+                    &[("owner", &repo.owner), ("name", &repo.name)],
+                    Some("checkRepoUrl"),
+                )));
+            }
+            return Ok(url);
+        }
+
+        // GitLab (?sha=<commit>) 与 Gitea (/archive/<commit>.zip) 复用同一套接口和出口断言。
+        Self::build_archive_url(repo, platform, commit_sha, authenticated)
+    }
+
+    /// 构造 Git Smart HTTP `info/refs?service=git-upload-pack` 地址并做出口断言。
+    pub(super) fn build_git_info_refs_url(repo: &SkillRepo) -> Result<String> {
+        Self::validate_repo(repo)?;
+        let expected_path = format!("/{}/{}.git/info/refs", repo.owner, repo.name);
+        let url = format!(
+            "https://{}{}?service=git-upload-pack",
+            repo.host, expected_path
+        );
+        let parsed = url::Url::parse(&url).map_err(|e| anyhow!("Invalid git refs URL: {e}"))?;
+        let parsed_host = match parsed.port() {
+            Some(port) => format!("{}:{port}", parsed.host_str().unwrap_or_default()),
+            None => parsed.host_str().unwrap_or_default().to_string(),
+        };
+        if parsed.scheme() != "https"
+            || parsed_host != repo.host
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || parsed.fragment().is_some()
+            || parsed.path() != expected_path
+            || parsed.query() != Some("service=git-upload-pack")
+        {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_REPO_REF",
+                &[("owner", &repo.owner), ("name", &repo.name)],
+                Some("checkRepoUrl"),
+            )));
+        }
+        Ok(url)
+    }
+
+    /// Git Smart HTTP 的 Basic 认证头（标记敏感，不进调试输出）。
+    pub(super) fn with_basic_auth(
+        request: reqwest::RequestBuilder,
+        username: &str,
+        token: &str,
+    ) -> Result<reqwest::RequestBuilder> {
+        use base64::Engine;
+        let encoded =
+            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{token}"));
+        let mut value = reqwest::header::HeaderValue::from_str(&format!("Basic {encoded}"))
+            .map_err(|_| anyhow!("访问令牌含有不能放进请求头的字符"))?;
+        value.set_sensitive(true);
+        Ok(request.header(reqwest::header::AUTHORIZATION, value))
+    }
+
+    /// 流式解析 Git Smart HTTP v1 `info/refs` 响应，拿到目标分支及其最新 commit SHA。
+    ///
+    /// Git 按字典序发送引用（`HEAD` → `refs/heads/*` → `refs/pull/*` → `refs/tags/*`），
+    /// 命中精确分支或越过 `refs/heads/` 即返回 `Complete`，无需读完大仓库后面的数万条 tag/PR。
+    pub(super) fn parse_git_info_refs(
+        data: &[u8],
+        configured_branch: &str,
+        eof: bool,
+    ) -> GitRefParseOutcome {
+        let mut pos = 0usize;
+        let mut main_oid: Option<String> = None;
+        let mut master_oid: Option<String> = None;
+        let mut seen_past_heads = false;
+        let mut truncated = false;
+        let want_default = Self::is_default_branch_sentinel(configured_branch);
+
+        while pos < data.len() {
+            if pos + 4 > data.len() {
+                truncated = eof;
+                break;
+            }
+            let Ok(len_str) = std::str::from_utf8(&data[pos..pos + 4]) else {
+                return GitRefParseOutcome::Invalid;
+            };
+            let Ok(len) = usize::from_str_radix(len_str, 16) else {
+                return GitRefParseOutcome::Invalid;
+            };
+            if len == 0 || len == 1 || len == 2 {
+                pos += 4;
+                continue;
+            }
+            if len < 4 {
+                return GitRefParseOutcome::Invalid;
+            }
+            if pos + len > data.len() {
+                truncated = eof;
+                break;
+            }
+            let payload = &data[pos + 4..pos + len];
+            pos += len;
+
+            let payload = payload.strip_suffix(b"\n").unwrap_or(payload);
+            if payload.is_empty() || payload.starts_with(b"#") {
+                continue;
+            }
+            let (ref_bytes, caps_bytes) = match payload.iter().position(|&b| b == 0) {
+                Some(nul) => (&payload[..nul], Some(&payload[nul + 1..])),
+                None => (payload, None),
+            };
+            let Ok(ref_line) = std::str::from_utf8(ref_bytes) else {
+                continue;
+            };
+            let Some((oid, refname)) = ref_line.split_once(' ') else {
+                continue;
+            };
+            let valid_oid = (oid.len() == 40 || oid.len() == 64)
+                && oid.bytes().all(|b| b.is_ascii_hexdigit())
+                && !oid.bytes().all(|b| b == b'0');
+            if !valid_oid {
+                continue;
+            }
+
+            if refname == "HEAD" && want_default {
+                if let Some(caps) = caps_bytes.and_then(|b| std::str::from_utf8(b).ok()) {
+                    for cap in caps.split_ascii_whitespace() {
+                        if let Some(branch) = cap.strip_prefix("symref=HEAD:refs/heads/") {
+                            if Self::is_valid_git_branch(branch)
+                                && !Self::is_default_branch_sentinel(branch)
+                            {
+                                return GitRefParseOutcome::Complete(Some(ProbedGitRef {
+                                    branch: branch.to_string(),
+                                    commit_sha: oid.to_string(),
+                                    from_head_symref: true,
+                                }));
+                            }
+                        }
+                    }
+                }
+            } else if let Some(branch) = refname.strip_prefix("refs/heads/") {
+                if !want_default && branch == configured_branch {
+                    return GitRefParseOutcome::Complete(Some(ProbedGitRef {
+                        branch: branch.to_string(),
+                        commit_sha: oid.to_string(),
+                        from_head_symref: false,
+                    }));
+                }
+                if branch == "main" {
+                    main_oid = Some(oid.to_string());
+                } else if branch == "master" {
+                    master_oid = Some(oid.to_string());
+                }
+            } else if refname > "refs/heads/" {
+                seen_past_heads = true;
+                break;
+            }
+        }
+
+        if !eof && !seen_past_heads {
+            return GitRefParseOutcome::NeedMore;
+        }
+        if truncated && !seen_past_heads {
+            return GitRefParseOutcome::Complete(None);
+        }
+
+        let main = main_oid.map(|commit_sha| ProbedGitRef {
+            branch: "main".to_string(),
+            commit_sha,
+            from_head_symref: false,
+        });
+        let master = master_oid.map(|commit_sha| ProbedGitRef {
+            branch: "master".to_string(),
+            commit_sha,
+            from_head_symref: false,
+        });
+
+        GitRefParseOutcome::Complete(main.or(master))
+    }
+
     /// 下载、探测用的客户端。带令牌时换成只走 https 的：reqwest 只在换主机或端口时
     /// 去掉 `Authorization`，同主机非默认端口从 https 跳到 http 会把令牌明文发出去。
     /// 匿名请求仍用共享客户端，行为不变。
@@ -581,4 +810,11 @@ impl SkillService {
             Ok(crate::proxy::http_client::get())
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum GitRefParseOutcome {
+    NeedMore,
+    Invalid,
+    Complete(Option<ProbedGitRef>),
 }

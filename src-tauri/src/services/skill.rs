@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::time::timeout;
@@ -616,13 +616,37 @@ struct LocalSkillMetadataCandidate {
     new_hash: String,
 }
 
+/// 发现缓存的单仓记录：进程内带 TTL，落盘后跨重启按 commit SHA 复用。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct CachedRepoDiscovery {
+    #[serde(skip)]
+    pub(super) fetched_at: Option<Instant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) commit_sha: Option<String>,
+    pub(super) resolved_branch: String,
+    pub(super) skills: Vec<DiscoverableSkill>,
+}
+
+/// 通过 Git Smart HTTP `info/refs` 探出的真实分支与最新 commit。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ProbedGitRef {
+    pub(super) branch: String,
+    pub(super) commit_sha: String,
+    /// 分支名是否由远端 `symref=HEAD:refs/heads/<branch>` 明确给出（非 main/master 猜测）。
+    pub(super) from_head_symref: bool,
+}
+
 pub struct SkillService {
     #[cfg(test)]
     repo_fixture: Option<PathBuf>,
-    /// 发现结果按仓库缓存（键是 owner/name/branch），只存读成功的仓库。
-    /// 发现要把每个仓库的归档整包下下来，添加、启用仓库或导入后的重拉不该把
-    /// 没变的仓库再下一遍；手动刷新会绕过它（`force_refresh`）。
-    discovery_cache: Mutex<HashMap<RepoCacheKey, (Instant, Vec<DiscoverableSkill>)>>,
+    /// 发现结果按仓库缓存，只存读成功的仓库；跨重启持久化在本地缓存文件，
+    /// 手动刷新时先比对远端分支 commit SHA，未变化直接跳过归档下载。
+    discovery_cache: Mutex<HashMap<RepoCacheKey, CachedRepoDiscovery>>,
+    /// 串行化发现缓存落盘，确保旧快照无法覆盖后发生的写盘或令牌清理。
+    /// 锁序严格为 `discovery_disk_lock -> discovery_cache`，且永不跨 `.await` 持有。
+    discovery_disk_lock: Mutex<()>,
+    /// 本地发现缓存文件是否已载入内存（每进程懒加载一次）。
+    discovery_cache_loaded: AtomicBool,
     /// 主机 → 平台的探测结果，进程内有效。只记探明的，见 `resolve_platform`。
     platform_cache: Mutex<HashMap<String, RepoPlatform>>,
     /// 访问令牌的代次，任何主机的令牌增删都加一。下载开始时记下它，探测结果回写缓存前
@@ -632,11 +656,23 @@ pub struct SkillService {
     repo_tokens: Arc<RepoTokenStore>,
 }
 
-/// host / owner / name / branch（branch 是配置值，不是解析后的分支）
+/// host / owner / name / branch（branch 是配置值，哨兵 HEAD/空串会归一为解析后的真实分支）
 type RepoCacheKey = (String, String, String, String);
 
 /// 发现缓存的有效期：GitHub 归档本身也有几分钟的 CDN 缓存，再短意义不大
 const DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(10 * 60);
+/// 发现并发上限：避免启用多个大仓库时瞬间打满带宽与磁盘/CPU
+const DISCOVERY_MAX_CONCURRENCY: usize = 3;
+/// Git Smart HTTP `info/refs` 最多读取字节数（分支排在 pull/tags 前面，正常几 KB 即停）
+const GIT_INFO_REFS_MAX_BYTES: usize = 512 * 1024;
+/// 发现阶段单个 `SKILL.md` 的读取上限：frontmatter 在文件开头，限制体积防止压缩炸弹占满内存
+const MAX_SKILL_MD_BYTES: u64 = 256 * 1024;
+/// 单仓库发现扫描的累计解压预算（所有 SKILL.md 与 symlink 目标共用）
+const MAX_DISCOVERY_SCAN_BYTES: u64 = 32 * 1024 * 1024;
+/// 单仓库发现扫描保留的元数据内存上限（名称 + 描述累计字节）
+const MAX_DISCOVERY_METADATA_BYTES: usize = 8 * 1024 * 1024;
+/// 本地发现缓存文件名（仅存本机，不进数据库和云同步）
+const DISCOVERY_CACHE_FILENAME: &str = "skill-discovery-cache.json";
 
 impl Default for SkillService {
     fn default() -> Self {
@@ -650,6 +686,8 @@ impl SkillService {
             #[cfg(test)]
             repo_fixture: None,
             discovery_cache: Mutex::new(HashMap::new()),
+            discovery_disk_lock: Mutex::new(()),
+            discovery_cache_loaded: AtomicBool::new(false),
             platform_cache: Mutex::new(HashMap::new()),
             credential_epoch: AtomicU64::new(0),
             repo_tokens: Arc::new(RepoTokenStore::system()),

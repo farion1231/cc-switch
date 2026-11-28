@@ -33,6 +33,8 @@ describe("countRepoSkills", () => {
     expect(countRepoSkills(skills, repo("head"))).toBe(2);
     expect(countRepoSkills(skills, repo(""))).toBe(2);
     expect(countRepoSkills([skill("master")], repo("HEAD"))).toBe(1);
+    // info/refs 的 symref=HEAD 可以解析出非 main/master 的默认分支
+    expect(countRepoSkills([skill("develop")], repo("HEAD"))).toBe(1);
   });
 
   it("counts skills when the configured branch fell back to master", () => {
@@ -40,7 +42,6 @@ describe("countRepoSkills", () => {
   });
 
   it("does not count skills from a branch discovery could not have used", () => {
-    expect(countRepoSkills([skill("feature")], repo("HEAD"))).toBe(0);
     expect(countRepoSkills([skill("dev")], repo("main"))).toBe(0);
     expect(countRepoSkills([skill("dev")], repo("dev"))).toBe(1);
   });

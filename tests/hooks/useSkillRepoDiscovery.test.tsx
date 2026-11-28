@@ -8,6 +8,7 @@ import {
   useDiscoverableSkills,
   useRefreshDiscoverableSkills,
   useRemoveSkillRepo,
+  useSkillRepoTokenActions,
 } from "@/hooks/useSkills";
 import type {
   DiscoverableSkill,
@@ -20,6 +21,8 @@ const apiMocks = vi.hoisted(() => ({
   removeRepo: vi.fn(),
   discoverRepo: vi.fn(),
   discoverAvailable: vi.fn(),
+  setRepoToken: vi.fn(),
+  deleteRepoToken: vi.fn(),
 }));
 
 vi.mock("@/lib/api/skills", () => ({
@@ -257,24 +260,121 @@ describe("repo mutation races", () => {
 });
 
 describe("useRefreshDiscoverableSkills", () => {
-  it("asks the backend to bypass its per-repo cache", async () => {
-    apiMocks.discoverAvailable.mockResolvedValue({ skills: [], failures: [] });
+  beforeEach(() => {
+    localStorage.clear();
+    Object.values(apiMocks).forEach((mock) => mock.mockReset());
+  });
+
+  it("shows cached discovery without auto-refetching on mount, and refreshes on demand", async () => {
+    const cached: SkillDiscoveryResult = {
+      skills: [skill("b", "two", "beta")],
+      failures: [],
+    };
+    localStorage.setItem(
+      "cc-switch-cache:skills.discoverable.v1",
+      JSON.stringify(cached),
+    );
+    apiMocks.discoverAvailable.mockResolvedValue({
+      skills: [skill("a", "one", "alpha")],
+      failures: [],
+    });
+
     const { queryClient, wrapper } = setup();
-    // 需要一个活跃的 observer，refetchQueries 才会真正发请求；先等挂载时的
-    // 首次发现结束，否则刷新会直接复用那次在飞的请求
     const discover = renderHook(() => useDiscoverableSkills(), { wrapper });
+
+    expect(discover.result.current.data).toEqual(cached.skills);
+    expect(apiMocks.discoverAvailable).not.toHaveBeenCalled();
+
+    const { result: refresh } = renderHook(
+      () => useRefreshDiscoverableSkills(),
+      { wrapper },
+    );
+    await act(async () => {
+      await refresh.current();
+    });
+
+    expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1);
+    expect(apiMocks.discoverAvailable).toHaveBeenLastCalledWith(true);
+    queryClient.clear();
+  });
+
+  it("invalidates repos when a HEAD repo is resolved during discovery", async () => {
+    apiMocks.discoverAvailable.mockResolvedValue({
+      skills: [skill("alibaba", "open-code-review", "review")],
+      failures: [],
+    });
+    const { queryClient, wrapper } = setup();
+    queryClient.setQueryData<SkillRepo[]>(
+      ["skills", "repos"],
+      [
+        {
+          owner: "alibaba",
+          name: "open-code-review",
+          branch: "HEAD",
+          enabled: true,
+        },
+      ],
+    );
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    renderHook(() => useDiscoverableSkills(), { wrapper });
+
     await vi.waitFor(() =>
-      expect(discover.result.current.isFetching).toBe(false),
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["skills", "repos"],
+      }),
+    );
+    queryClient.clear();
+  });
+
+  it("drops stale in-flight discovery and scrubs localStorage when a token is deleted", async () => {
+    let resolveStale!: (value: SkillDiscoveryResult) => void;
+    apiMocks.discoverAvailable
+      .mockReturnValueOnce(
+        new Promise<SkillDiscoveryResult>((resolve) => {
+          resolveStale = resolve;
+        }),
+      )
+      .mockResolvedValue({
+        skills: [skill("pub", "repo", "public-skill")],
+        failures: [],
+      });
+    apiMocks.deleteRepoToken.mockResolvedValue("git.example.com");
+
+    const { queryClient, wrapper } = setup();
+    renderHook(() => useDiscoverableSkills(), { wrapper });
+    await vi.waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1),
     );
 
-    const { result } = renderHook(() => useRefreshDiscoverableSkills(), {
-      wrapper,
-    });
+    const { result: tokenActions } = renderHook(
+      () => useSkillRepoTokenActions(),
+      { wrapper },
+    );
     await act(async () => {
-      await result.current();
+      await tokenActions.current.deleteToken("git.example.com");
     });
 
-    expect(apiMocks.discoverAvailable).toHaveBeenLastCalledWith(true);
+    // 删令牌前发出的旧请求晚到：不得写回 localStorage
+    await act(async () => {
+      resolveStale({
+        skills: [
+          {
+            ...skill("priv", "repo", "secret-skill"),
+            repoHost: "git.example.com",
+          },
+        ],
+        failures: [],
+      });
+    });
+
+    await vi.waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(2),
+    );
+    const persisted = JSON.parse(
+      localStorage.getItem("cc-switch-cache:skills.discoverable.v1") ?? "{}",
+    ) as SkillDiscoveryResult;
+    expect(persisted.skills?.map((s) => s.name)).toEqual(["public-skill"]);
     queryClient.clear();
   });
 });

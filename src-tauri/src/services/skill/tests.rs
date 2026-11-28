@@ -332,10 +332,9 @@ async fn run_branch_fallback(
     repo: &SkillRepo,
     mut outcome: impl FnMut(&str) -> Result<()>,
 ) -> (Result<String>, Vec<String>) {
-    let temp = tempdir().unwrap();
     let mut attempted = Vec::new();
     let platform = SkillService::default_platform(&repo.host);
-    let result = SkillService::try_repo_branches(repo, platform, false, temp.path(), |url| {
+    let result = SkillService::try_repo_branches(repo, platform, false, |url| {
         let branch = url
             .rsplit('/')
             .next()
@@ -346,7 +345,8 @@ async fn run_branch_fallback(
         attempted.push(branch);
         async move { result }
     })
-    .await;
+    .await
+    .map(|((), branch)| branch);
     (result, attempted)
 }
 
@@ -652,8 +652,10 @@ fn download_failure_hints_separate_missing_tokens_from_rejected_ones() {
 }
 
 #[tokio::test]
+#[serial_test::serial]
 async fn set_and_delete_repo_token_reprobe_the_platform() {
     let dir = tempfile::tempdir().unwrap();
+    let _home = TestHomeGuard::set(dir.path());
     let (store, secrets) = crate::services::skill_repo_tokens::tests::memory_store(dir.path());
     let service = SkillService::new().with_repo_tokens(store);
     service
@@ -662,10 +664,15 @@ async fn set_and_delete_repo_token_reprobe_the_platform() {
         .insert("git.example.com".into(), RepoPlatform::GitLab);
     let cached = |host: &str| (host.to_string(), "o".into(), "n".into(), "main".into());
     for host in ["git.example.com", "other.example.com"] {
-        service
-            .discovery_cache
-            .lock_recover()
-            .insert(cached(host), (Instant::now(), Vec::new()));
+        service.discovery_cache.lock_recover().insert(
+            cached(host),
+            CachedRepoDiscovery {
+                fetched_at: Some(Instant::now()),
+                commit_sha: Some("a".repeat(40)),
+                resolved_branch: "main".to_string(),
+                skills: Vec::new(),
+            },
+        );
     }
     // 匿名探测还在途中时保存了令牌
     let stale_epoch = service.credential_epoch.load(Ordering::SeqCst);
@@ -713,21 +720,20 @@ async fn set_and_delete_repo_token_reprobe_the_platform() {
 #[tokio::test]
 async fn branch_fallback_walks_gitlab_branches_on_404() {
     let repo = gitlab_repo("gitlab.com", "group/sub", "skills", "develop");
-    let temp = tempdir().unwrap();
     let mut attempted = Vec::new();
-    let result =
-        SkillService::try_repo_branches(&repo, RepoPlatform::GitLab, false, temp.path(), |url| {
-            let found = url.ends_with("?sha=master");
-            attempted.push(url);
-            async move {
-                if found {
-                    Ok(())
-                } else {
-                    Err(http404_error())
-                }
+    let result = SkillService::try_repo_branches(&repo, RepoPlatform::GitLab, false, |url| {
+        let found = url.ends_with("?sha=master");
+        attempted.push(url);
+        async move {
+            if found {
+                Ok(())
+            } else {
+                Err(http404_error())
             }
-        })
-        .await;
+        }
+    })
+    .await
+    .map(|((), branch)| branch);
     assert_eq!(result.unwrap(), "master");
     let prefix = "https://gitlab.com/api/v4/projects/group%2Fsub%2Fskills/repository/archive.zip";
     assert_eq!(
@@ -877,21 +883,20 @@ fn build_archive_url_targets_the_gitea_api() {
 #[tokio::test]
 async fn branch_fallback_walks_gitea_branches_on_404() {
     let repo = gitlab_repo("codeberg.org", "team", "skills", "develop");
-    let temp = tempdir().unwrap();
     let mut attempted = Vec::new();
-    let result =
-        SkillService::try_repo_branches(&repo, RepoPlatform::Gitea, false, temp.path(), |url| {
-            let found = url.ends_with("/master.zip");
-            attempted.push(url);
-            async move {
-                if found {
-                    Ok(())
-                } else {
-                    Err(http404_error())
-                }
+    let result = SkillService::try_repo_branches(&repo, RepoPlatform::Gitea, false, |url| {
+        let found = url.ends_with("/master.zip");
+        attempted.push(url);
+        async move {
+            if found {
+                Ok(())
+            } else {
+                Err(http404_error())
             }
-        })
-        .await;
+        }
+    })
+    .await
+    .map(|((), branch)| branch);
     assert_eq!(result.unwrap(), "master");
     let prefix = "https://codeberg.org/api/v1/repos/team/skills/archive";
     assert_eq!(
@@ -4144,6 +4149,356 @@ async fn discover_repo_reports_failure_and_skips_disabled_repo() {
         .await;
     assert!(disabled.skills.is_empty());
     assert!(disabled.failures.is_empty());
+}
+
+fn pkt_line(payload: &[u8]) -> Vec<u8> {
+    let mut out = format!("{:04x}", payload.len() + 4).into_bytes();
+    out.extend_from_slice(payload);
+    out
+}
+
+#[test]
+fn parse_git_info_refs_resolves_head_symref_and_stops_before_tags() {
+    use super::repo::GitRefParseOutcome;
+
+    let sha_main = "1111111111111111111111111111111111111111";
+    let sha_master = "2222222222222222222222222222222222222222";
+    let sha_dev = "3333333333333333333333333333333333333333";
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&pkt_line(b"# service=git-upload-pack\n"));
+    payload.extend_from_slice(b"0000");
+    payload.extend_from_slice(&pkt_line(
+        format!("{sha_master} HEAD\0multi_ack symref=HEAD:refs/heads/master agent=git/2.40\n")
+            .as_bytes(),
+    ));
+    payload.extend_from_slice(&pkt_line(format!("{sha_dev} refs/heads/dev\n").as_bytes()));
+    payload.extend_from_slice(&pkt_line(
+        format!("{sha_master} refs/heads/master\n").as_bytes(),
+    ));
+    // 越过 refs/heads/ 即应提前结束，无需读完后续 pull/tags
+    payload.extend_from_slice(&pkt_line(
+        format!("{sha_main} refs/pull/1/head\n").as_bytes(),
+    ));
+    payload.extend_from_slice(&pkt_line(b"not-reached-after-pull"));
+
+    // HEAD / 空串直接取 symref 默认分支，首行即可命中并标记 from_head_symref = true
+    assert_eq!(
+        SkillService::parse_git_info_refs(&payload, "HEAD", false),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "master".to_string(),
+            commit_sha: sha_master.to_string(),
+            from_head_symref: true,
+        }))
+    );
+    assert_eq!(
+        SkillService::parse_git_info_refs(&payload, "", false),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "master".to_string(),
+            commit_sha: sha_master.to_string(),
+            from_head_symref: true,
+        }))
+    );
+    // 显式分支命中即停
+    assert_eq!(
+        SkillService::parse_git_info_refs(&payload, "dev", false),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "dev".to_string(),
+            commit_sha: sha_dev.to_string(),
+            from_head_symref: false,
+        }))
+    );
+    // 配置 main 但仓库只有 master：越过 refs/heads/ 后回退到 master，不必等到 eof
+    assert_eq!(
+        SkillService::parse_git_info_refs(&payload, "main", false),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "master".to_string(),
+            commit_sha: sha_master.to_string(),
+            from_head_symref: false,
+        }))
+    );
+    // 非法 pkt-line（如 HTML 登录页）立判 Invalid
+    assert_eq!(
+        SkillService::parse_git_info_refs(b"<!DOCTYPE html>", "main", true),
+        GitRefParseOutcome::Invalid
+    );
+    // 未读到 refs/heads/ 结束且未到 eof 时继续等下一块（即便落在完整 pkt-line 边界，
+    // 用于 512 KiB 上限截断时返回 NeedMore 触发回退而非误判 EOF）
+    let mut partial = pkt_line(b"# service=git-upload-pack\n");
+    partial.extend_from_slice(b"0000");
+    partial.extend_from_slice(&pkt_line(
+        format!("{sha_master} refs/heads/master\n").as_bytes(),
+    ));
+    assert_eq!(
+        SkillService::parse_git_info_refs(&partial, "main", false),
+        GitRefParseOutcome::NeedMore
+    );
+
+    // 显式分支（非哨兵 HEAD/空串）在无 main/master 时不得回退到 HEAD symref，
+    // 保持与 try_repo_branches / countRepoSkills 一致
+    let mut develop_only = pkt_line(b"# service=git-upload-pack\n");
+    develop_only.extend_from_slice(b"0000");
+    develop_only.extend_from_slice(&pkt_line(
+        format!("{sha_dev} HEAD\0symref=HEAD:refs/heads/develop\n").as_bytes(),
+    ));
+    develop_only.extend_from_slice(&pkt_line(
+        format!("{sha_dev} refs/heads/develop\n").as_bytes(),
+    ));
+    assert_eq!(
+        SkillService::parse_git_info_refs(&develop_only, "main", true),
+        GitRefParseOutcome::Complete(None)
+    );
+    assert_eq!(
+        SkillService::parse_git_info_refs(&develop_only, "HEAD", true),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "develop".to_string(),
+            commit_sha: sha_dev.to_string(),
+            from_head_symref: true,
+        }))
+    );
+}
+
+#[test]
+fn build_git_info_refs_and_commit_archive_urls_validate_host_and_sha() {
+    let sha = "1111111111111111111111111111111111111111";
+    let gh = branch_fallback_repo("HEAD");
+    assert_eq!(
+        SkillService::build_git_info_refs_url(&gh).unwrap(),
+        "https://github.com/acme/skills.git/info/refs?service=git-upload-pack"
+    );
+    assert_eq!(
+        SkillService::build_commit_archive_url(&gh, RepoPlatform::GitHub, sha, false).unwrap(),
+        format!("https://github.com/acme/skills/archive/{sha}.zip")
+    );
+    assert_eq!(
+        SkillService::build_commit_archive_url(&gh, RepoPlatform::GitHub, sha, true).unwrap(),
+        format!("https://api.github.com/repos/acme/skills/zipball/{sha}")
+    );
+    assert!(
+        SkillService::build_commit_archive_url(&gh, RepoPlatform::GitHub, "not-a-sha", false)
+            .is_err()
+    );
+
+    let gitlab = gitlab_repo("gitlab.example.com:8443", "group/sub", "skills", "main");
+    assert_eq!(
+        SkillService::build_git_info_refs_url(&gitlab).unwrap(),
+        "https://gitlab.example.com:8443/group/sub/skills.git/info/refs?service=git-upload-pack"
+    );
+    assert_eq!(
+        SkillService::build_commit_archive_url(&gitlab, RepoPlatform::GitLab, sha, false).unwrap(),
+        format!("https://gitlab.example.com:8443/api/v4/projects/group%2Fsub%2Fskills/repository/archive.zip?sha={sha}")
+    );
+    assert!(SkillService::build_git_info_refs_url(&repo("bad owner!", "skills", true)).is_err());
+}
+
+#[test]
+fn scan_skills_from_archive_reads_only_skill_md_and_respects_nesting_and_symlinks() {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    let mut buf = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts = SimpleFileOptions::default();
+
+        zip.start_file("repo-main/README.md", opts).unwrap();
+        zip.write_all(b"ignored").unwrap();
+
+        // 正常技能
+        zip.start_file("repo-main/skills/alpha/SKILL.md", opts)
+            .unwrap();
+        zip.write_all(b"---\nname: Alpha\ndescription: top\n---\n")
+            .unwrap();
+        // 父目录已有 SKILL.md，子目录里的 SKILL.md 必须被忽略（与 scan_dir_recursive 一致）
+        zip.start_file("repo-main/skills/alpha/nested/SKILL.md", opts)
+            .unwrap();
+        zip.write_all(b"---\nname: Nested\n---\n").unwrap();
+        // 同安装名更深路径会被 keep_one_per_install_name 去重
+        zip.start_file("repo-main/plugins/p/skills/alpha/SKILL.md", opts)
+            .unwrap();
+        zip.write_all(b"---\nname: Alpha Dup\n---\n").unwrap();
+        // 越界条目必须跳过
+        zip.start_file("repo-main/../evil/SKILL.md", opts).unwrap();
+        zip.write_all(b"---\nname: Evil\n---\n").unwrap();
+        // 指向归档内文件的 symlink SKILL.md
+        zip.add_symlink(
+            "repo-main/skills/linked/SKILL.md",
+            "../alpha/SKILL.md",
+            opts,
+        )
+        .unwrap();
+        // 指向技能目录的 symlink（不同安装名），必须照常发现
+        zip.add_symlink("repo-main/skills/dir-alias", "alpha", opts)
+            .unwrap();
+        // 包含自身的目录 symlink 与越出归档根的 symlink 必须跳过
+        zip.add_symlink("repo-main/skills/loop", "..", opts)
+            .unwrap();
+        zip.add_symlink(
+            "repo-main/skills/escape/SKILL.md",
+            "../../../etc/passwd",
+            opts,
+        )
+        .unwrap();
+
+        zip.finish().unwrap();
+    }
+
+    let r = branch_fallback_repo("main");
+    let skills =
+        SkillService::scan_skills_from_archive(std::io::Cursor::new(buf), &r, RepoPlatform::GitHub)
+            .expect("scan archive");
+
+    let dirs: Vec<&str> = skills.iter().map(|s| s.directory.as_str()).collect();
+    assert_eq!(
+        dirs,
+        vec!["skills/alpha", "skills/dir-alias", "skills/linked"]
+    );
+    assert_eq!(skills[0].name, "Alpha");
+    assert_eq!(
+        skills[0].readme_url.as_deref(),
+        Some("https://github.com/acme/skills/blob/main/skills/alpha/SKILL.md")
+    );
+    assert_eq!(
+        skills[1].readme_url.as_deref(),
+        Some("https://github.com/acme/skills/blob/main/skills/dir-alias/SKILL.md")
+    );
+    assert_eq!(skills[2].name, "Alpha");
+}
+
+#[test]
+fn scan_skills_from_archive_enforces_cumulative_metadata_budget() {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    // 单份 description 约 100 KiB，重复 90 份超过 8 MiB 元数据预算但仍远小于单文件与总解压上限
+    let desc = "x".repeat(100 * 1024);
+    let body = format!("---\nname: big\ndescription: {desc}\n---\n");
+    let mut buf = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts = SimpleFileOptions::default();
+        for i in 0..90 {
+            zip.start_file(format!("repo-main/skills/s{i}/SKILL.md"), opts)
+                .unwrap();
+            zip.write_all(body.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    let r = branch_fallback_repo("main");
+    let err =
+        SkillService::scan_skills_from_archive(std::io::Cursor::new(buf), &r, RepoPlatform::GitHub)
+            .unwrap_err();
+    assert!(
+        err.to_string().contains("ARCHIVE_TOO_LARGE"),
+        "expected ARCHIVE_TOO_LARGE, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn persist_resolved_branch_guards_host_branch_and_symref_provenance() {
+    let remote = tempdir().expect("remote repo");
+    write_skill(&remote.path().join("pdf"), "pdf");
+    let db = Database::memory().expect("memory db");
+    let orig = SkillRepo {
+        host: "old.example.com".to_string(),
+        owner: "team".to_string(),
+        name: "skills".to_string(),
+        branch: "HEAD".to_string(),
+        enabled: true,
+    };
+    db.save_skill_repo(&orig).unwrap();
+
+    // 1. 仅走本地回退（非 symref）时不永久改写 HEAD
+    let service = SkillService {
+        repo_fixture: Some(remote.path().to_path_buf()),
+        ..SkillService::new()
+    };
+    let report = service
+        .discover_available_for_db(&db, false)
+        .await
+        .expect("discover for db");
+    assert_eq!(report.skills.len(), 1);
+    assert_eq!(db.get_skill_repos().unwrap()[0].branch, "HEAD");
+
+    // 2. 同名仓库已被替换到另一主机时，旧主机的 symref 解析结果不得改写新主机
+    let replaced = SkillRepo {
+        host: "new.example.com".to_string(),
+        ..orig.clone()
+    };
+    db.save_skill_repo(&replaced).unwrap();
+    SkillService::persist_resolved_branch(&db, &orig, "old-default");
+    let current = &db.get_skill_repos().unwrap()[0];
+    assert_eq!(current.host, "new.example.com");
+    assert_eq!(current.branch, "HEAD");
+
+    // 3. 主机、原始哨兵分支与启用状态一致时，回写成功
+    SkillService::persist_resolved_branch(&db, &replaced, "develop");
+    assert_eq!(db.get_skill_repos().unwrap()[0].branch, "develop");
+}
+
+#[test]
+#[serial_test::serial]
+fn discovery_disk_cache_round_trips_and_scrubs_on_token_change() {
+    let home = tempdir().expect("home");
+    let _home = TestHomeGuard::set(home.path());
+    let target = gitlab_repo("git.example.com", "team", "skills", "main");
+    let other = branch_fallback_repo("main");
+    let sample_skill = DiscoverableSkill {
+        key: "team/skills:demo".to_string(),
+        name: "demo".to_string(),
+        description: "desc".to_string(),
+        directory: "demo".to_string(),
+        readme_url: None,
+        repo_host: "git.example.com".to_string(),
+        repo_owner: "team".to_string(),
+        repo_name: "skills".to_string(),
+        repo_branch: "main".to_string(),
+    };
+
+    let writer = SkillService::new();
+    let epoch = writer.credential_epoch.load(Ordering::SeqCst);
+    writer.store_discovery_cache(
+        &target,
+        Instant::now(),
+        epoch,
+        Some("a".repeat(40)),
+        "main".to_string(),
+        vec![sample_skill.clone()],
+        true,
+        false,
+    );
+    writer.store_discovery_cache(
+        &other,
+        Instant::now(),
+        epoch,
+        Some("b".repeat(40)),
+        "main".to_string(),
+        Vec::new(),
+        true,
+        false,
+    );
+
+    // 模拟重启：新实例从磁盘载入缓存，commit_sha 与技能列表保留
+    let reader = SkillService::new();
+    reader.ensure_discovery_cache_loaded();
+    {
+        let cache = reader.discovery_cache.lock_recover();
+        let loaded = cache
+            .get(&SkillService::discovery_cache_key(&target))
+            .expect("persisted entry");
+        assert_eq!(loaded.commit_sha.as_deref(), Some("a".repeat(40).as_str()));
+        assert_eq!(loaded.skills.len(), 1);
+        assert_eq!(loaded.skills[0].name, "demo");
+    }
+
+    // 该主机令牌变更后，内存与磁盘缓存均同步清除，别的主机不受影响
+    reader.forget_platform("git.example.com");
+    let after = SkillService::new();
+    after.ensure_discovery_cache_loaded();
+    let cache = after.discovery_cache.lock_recover();
+    assert!(!cache.contains_key(&SkillService::discovery_cache_key(&target)));
+    assert!(cache.contains_key(&SkillService::discovery_cache_key(&other)));
 }
 
 #[tokio::test]

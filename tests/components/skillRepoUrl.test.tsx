@@ -1,6 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { RepoManagerPanel } from "@/components/skills/RepoManagerPanel";
+import {
+  countRepoSkills,
+  displayRepoBranch,
+  RepoManagerPanel,
+} from "@/components/skills/RepoManagerPanel";
 import {
   isInsecureRepoUrl,
   parseRepoUrl,
@@ -203,5 +207,88 @@ describe("RepoManagerPanel add form", () => {
     submit("http://10.22.36.105:8081/me_release/SkillList");
     expect(screen.getByText("skills.repo.httpsOnly")).toBeInTheDocument();
     expect(onAdd).not.toHaveBeenCalled();
+  });
+});
+
+describe("displayRepoBranch", () => {
+  it("replaces HEAD and empty sentinels with the resolved discovered branch", () => {
+    const skills = [
+      {
+        key: "alibaba/open-code-review:review",
+        name: "review",
+        description: "",
+        directory: "review",
+        repoOwner: "alibaba",
+        repoName: "open-code-review",
+        repoBranch: "master",
+      },
+    ];
+    expect(
+      displayRepoBranch(skills, {
+        owner: "alibaba",
+        name: "open-code-review",
+        branch: "HEAD",
+        enabled: true,
+      }),
+    ).toBe("master");
+    expect(
+      displayRepoBranch([], {
+        owner: "vercel-labs",
+        name: "skills",
+        branch: "HEAD",
+        enabled: true,
+      }),
+    ).toBe("main");
+    expect(
+      displayRepoBranch(skills, {
+        owner: "alibaba",
+        name: "open-code-review",
+        branch: "release",
+        enabled: true,
+      }),
+    ).toBe("release");
+  });
+
+  it("counts HEAD repos resolved to non-main/master branches and respects host", () => {
+    const skills = [
+      {
+        key: "team/skills:a",
+        name: "a",
+        description: "",
+        directory: "a",
+        repoHost: "gitlab.example.com",
+        repoOwner: "team",
+        repoName: "skills",
+        repoBranch: "develop",
+      },
+      {
+        key: "team/skills:b",
+        name: "b",
+        description: "",
+        directory: "b",
+        repoHost: "github.com",
+        repoOwner: "team",
+        repoName: "skills",
+        repoBranch: "main",
+      },
+    ];
+    expect(
+      countRepoSkills(skills, {
+        host: "gitlab.example.com",
+        owner: "team",
+        name: "skills",
+        branch: "HEAD",
+        enabled: true,
+      }),
+    ).toBe(1);
+    expect(
+      displayRepoBranch(skills, {
+        host: "gitlab.example.com",
+        owner: "team",
+        name: "skills",
+        branch: "HEAD",
+        enabled: true,
+      }),
+    ).toBe("develop");
   });
 });

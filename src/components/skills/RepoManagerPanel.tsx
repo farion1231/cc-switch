@@ -68,14 +68,45 @@ function resolvableBranches(branch: string | undefined): string[] {
   return branches;
 }
 
+function isDefaultBranchSentinel(branch: string | undefined): boolean {
+  const trimmed = branch?.trim() ?? "";
+  return !trimmed || trimmed.toUpperCase() === "HEAD";
+}
+
+function sameRepoOrigin(skill: DiscoverableSkill, repo: SkillRepo): boolean {
+  return (
+    (skill.repoHost || GITHUB_HOST) === (repo.host || GITHUB_HOST) &&
+    skill.repoOwner === repo.owner &&
+    skill.repoName === repo.name
+  );
+}
+
 export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
+  if (isDefaultBranchSentinel(repo.branch)) {
+    return skills.filter((skill) => sameRepoOrigin(skill, repo)).length;
+  }
   const branches = resolvableBranches(repo.branch);
   return skills.filter(
     (skill) =>
-      skill.repoOwner === repo.owner &&
-      skill.repoName === repo.name &&
+      sameRepoOrigin(skill, repo) &&
       branches.includes(skill.repoBranch || "main"),
   ).length;
+}
+
+/** 展示用分支名：存量哨兵值 HEAD / 空串优先显示发现结果里的真实分支。 */
+export function displayRepoBranch(
+  skills: DiscoverableSkill[],
+  repo: SkillRepo,
+): string {
+  const configured = repo.branch?.trim();
+  if (configured && configured.toUpperCase() !== "HEAD") return configured;
+  const resolved = skills.find(
+    (skill) =>
+      sameRepoOrigin(skill, repo) &&
+      skill.repoBranch &&
+      skill.repoBranch.toUpperCase() !== "HEAD",
+  )?.repoBranch;
+  return resolved || "main";
 }
 
 /** 仓库管理（右侧抽屉，宽 420）：添加、停用、删除 Skill 仓库。 */
@@ -260,7 +291,7 @@ export function RepoManagerPanel({
                           {repo.host && repo.host !== GITHUB_HOST
                             ? `${repo.host} · `
                             : ""}
-                          {repo.branch || "main"}
+                          {displayRepoBranch(skills, repo)}
                           {" · "}
                           {!repo.enabled ? (
                             t("skillsPage.repos.disabled")

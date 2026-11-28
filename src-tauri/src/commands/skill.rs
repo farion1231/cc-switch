@@ -153,17 +153,16 @@ pub async fn import_skills_from_apps(
 
 /// 发现可安装的 Skills（从仓库获取），并逐仓库报告没读到的仓库
 ///
-/// `force_refresh` 为 true（手动刷新）时绕过按仓库的发现缓存。
+/// `force_refresh` 为 true（手动刷新）时绕过按仓库的发现缓存（仍用远端 commit SHA 判重）。
 #[tauri::command]
 pub async fn discover_available_skills(
     force_refresh: Option<bool>,
     service: State<'_, SkillServiceState>,
     app_state: State<'_, AppState>,
 ) -> Result<SkillDiscoveryResult, String> {
-    let repos = app_state.db.get_skill_repos()?;
     service
         .0
-        .discover_available_report(repos, force_refresh.unwrap_or(false))
+        .discover_available_for_db(&app_state.db, force_refresh.unwrap_or(false))
         .await
         .map_err(|e| e.to_string())
 }
@@ -184,7 +183,7 @@ pub async fn discover_repo_skills(
     else {
         return Ok(SkillDiscoveryResult::default());
     };
-    Ok(service.0.discover_repo(&repo).await)
+    Ok(service.0.discover_repo_for_db(&app_state.db, &repo).await)
 }
 
 /// 检查 Skills 更新，并逐仓库报告没读到的仓库
