@@ -356,11 +356,19 @@ pub fn get_claude_desktop_default_routes(
 #[tauri::command]
 pub async fn import_claude_desktop_providers_from_claude(
     state: State<'_, AppState>,
+    replace_existing: Option<bool>,
 ) -> Result<usize, String> {
-    run_db_task(&state, import_claude_desktop_providers_from_claude_blocking).await
+    let replace_existing = replace_existing.unwrap_or(false);
+    run_db_task(&state, move |state| {
+        import_claude_desktop_providers(state, replace_existing)
+    })
+    .await
 }
 
-fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Result<usize, String> {
+fn import_claude_desktop_providers(
+    state: &AppState,
+    replace_existing: bool,
+) -> Result<usize, String> {
     // 读不出来的 Claude 供应商没法转换，跳过；它在 Claude 那边原样保留。
     let claude_providers = state
         .db
@@ -370,7 +378,7 @@ fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Res
 
     let mut imported = 0usize;
     for provider in claude_providers.values() {
-        if existing_ids.contains(&provider.id) {
+        if existing_ids.contains(&provider.id) && !replace_existing {
             continue;
         }
 
@@ -389,9 +397,16 @@ fn import_claude_desktop_providers_from_claude_blocking(state: &AppState) -> Res
             continue;
         }
 
-        state
-            .db
-            .save_provider(&AppType::ClaudeDesktop, &desktop_provider)?;
+        if existing_ids.contains(&provider.id) {
+            // Reuse the normal update path: current direct/proxy providers must
+            // keep their live configuration and mode guards in sync with the row.
+            ProviderService::update(state, AppType::ClaudeDesktop, None, desktop_provider)
+                .map_err(|e| e.to_string())?;
+        } else {
+            state
+                .db
+                .save_provider(&AppType::ClaudeDesktop, &desktop_provider)?;
+        }
         imported += 1;
     }
 
@@ -1145,6 +1160,7 @@ pub fn set_opencode_default_model(model: String) -> Result<(), AppError> {
 mod import_claude_desktop_tests {
     use super::suggested_claude_desktop_routes;
     use crate::provider::{Provider, ProviderMeta};
+    use crate::AppType;
     use serde_json::json;
 
     fn make_provider(env: serde_json::Value, provider_type: Option<&str>) -> Provider {
@@ -1161,6 +1177,58 @@ mod import_claude_desktop_tests {
             });
         }
         p
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reimport_replaces_matching_rows_only_after_opt_in() {
+        let db = std::sync::Arc::new(crate::Database::memory().unwrap());
+        let state = crate::AppState::new(db.clone());
+        let source = make_provider(
+            json!({
+                "ANTHROPIC_AUTH_TOKEN": "new-token",
+                "ANTHROPIC_BASE_URL": "https://example.com"
+            }),
+            None,
+        );
+        let mut old = source.clone();
+        old.name = "Desktop local edit".into();
+        db.save_provider(&AppType::Claude, &source).unwrap();
+        db.save_provider(&AppType::ClaudeDesktop, &old).unwrap();
+        let mut desktop_only = old.clone();
+        desktop_only.id = "desktop-only".into();
+        db.save_provider(&AppType::ClaudeDesktop, &desktop_only)
+            .unwrap();
+
+        assert_eq!(
+            super::import_claude_desktop_providers(&state, false).unwrap(),
+            0
+        );
+        assert_eq!(
+            db.get_provider_by_id(&source.id, &AppType::ClaudeDesktop)
+                .unwrap()
+                .unwrap()
+                .name,
+            "Desktop local edit"
+        );
+        assert_eq!(
+            super::import_claude_desktop_providers(&state, true).unwrap(),
+            1
+        );
+        assert_eq!(
+            db.get_provider_by_id(&source.id, &AppType::ClaudeDesktop)
+                .unwrap()
+                .unwrap()
+                .name,
+            source.name
+        );
+        assert_eq!(
+            db.get_provider_by_id("desktop-only", &AppType::ClaudeDesktop)
+                .unwrap()
+                .unwrap()
+                .name,
+            desktop_only.name
+        );
     }
 
     #[test]
