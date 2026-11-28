@@ -4,9 +4,13 @@
 //! 这是唯一的查询方式：CC Switch 不拿 agy 的令牌、也不冒充 agy 的客户端标识去问 Google，
 //! 所以只能查 agy 现在登着的那个号（别的号显示切走前最后一次查到的，见 `agy_account`）。
 
+use std::process::{Output, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures::future::try_join3;
+use process_wrap::tokio::{KillOnDrop, TokioChildWrapper, TokioCommandWrap};
 use serde::Deserialize;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::subscription::{CredentialStatus, QuotaTier, SubscriptionQuota};
 
@@ -112,6 +116,83 @@ fn collect_tiers(
     Some(tiers)
 }
 
+#[derive(Debug)]
+enum CommandExecError {
+    Io(std::io::Error),
+    Timeout,
+}
+
+struct ChildTreeGuard(Option<Box<dyn TokioChildWrapper>>);
+
+impl Drop for ChildTreeGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            // Unix 上 ProcessGroupChild 不在 Drop 时发 killpg，必须显式调用 start_kill()
+            let _ = child.start_kill();
+        }
+    }
+}
+
+async fn run_command_output(
+    mut command: tokio::process::Command,
+    timeout: Duration,
+) -> Result<Output, CommandExecError> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut wrapped = TokioCommandWrap::from(command);
+    wrapped.wrap(KillOnDrop);
+    // 超时或被取消时清理整棵子进程树，避免 Windows/Unix 上残留子进程
+    #[cfg(unix)]
+    wrapped.wrap(process_wrap::tokio::ProcessGroup::leader());
+    #[cfg(windows)]
+    {
+        let mut flags = process_wrap::tokio::CreationFlags(Default::default());
+        flags.0 .0 = 0x0800_0000; // CREATE_NO_WINDOW
+        wrapped.wrap(flags).wrap(process_wrap::tokio::JobObject);
+    }
+
+    let mut guard = ChildTreeGuard(Some(wrapped.spawn().map_err(CommandExecError::Io)?));
+    let outcome = tokio::time::timeout(timeout, async {
+        async fn read_to_end<A: AsyncRead + Unpin>(io: &mut Option<A>) -> std::io::Result<Vec<u8>> {
+            let mut vec = Vec::new();
+            if let Some(io) = io.as_mut() {
+                io.read_to_end(&mut vec).await?;
+            }
+            Ok(vec)
+        }
+
+        let mut stdout_pipe = guard.0.as_mut().expect("child present").stdout().take();
+        let mut stderr_pipe = guard.0.as_mut().expect("child present").stderr().take();
+
+        let child = guard.0.as_mut().expect("child present");
+        let (status, stdout, stderr) = try_join3(
+            Box::into_pin(child.wait()),
+            read_to_end(&mut stdout_pipe),
+            read_to_end(&mut stderr_pipe),
+        )
+        .await?;
+
+        drop(stdout_pipe);
+        drop(stderr_pipe);
+        guard.0 = None;
+        Ok::<_, std::io::Error>(Output {
+            status,
+            stdout,
+            stderr,
+        })
+    })
+    .await;
+
+    match outcome {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(error)) => Err(CommandExecError::Io(error)),
+        Err(_) => Err(CommandExecError::Timeout),
+    }
+}
+
 /// 由 `subscription::get_subscription_quota("agy")` 分发。没装 agy 时按「没有凭据」处理（卡片不显示）；
 /// 超时、没登录或输出看不懂都写成查询失败，错误里不带 agy 的原始输出。
 pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, String> {
@@ -119,20 +200,25 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
         .await
         .map_err(|e| e.to_string())?
     else {
+        log::debug!("[AgyQuota] 未找到 agy 可执行文件，跳过额度查询");
         return Ok(SubscriptionQuota::not_found(TOOL));
     };
-    let mut command = crate::agy_config::background_command(&bin);
+    let mut command = tokio::process::Command::new(&bin);
     command
         .args(["--print", "/usage", "--output-format", "json"])
         // 只问官方登录：GUI 进程里残留的 Key 会让 agy 改走 Key 模式。
         .env_remove("GEMINI_API_KEY")
-        .env_remove("GOOGLE_GEMINI_BASE_URL")
-        .stdin(std::process::Stdio::null())
-        .kill_on_drop(true);
-    let output = match tokio::time::timeout(TIMEOUT, command.output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(_)) => return Ok(SubscriptionQuota::not_found(TOOL)),
-        Err(_) => return Err("Antigravity quota query timed out".to_string()),
+        .env_remove("GOOGLE_GEMINI_BASE_URL");
+    let output = match run_command_output(command, TIMEOUT).await {
+        Ok(output) => output,
+        Err(CommandExecError::Io(error)) => {
+            log::warn!("[AgyQuota] 启动或执行 agy 失败: {error}");
+            return Ok(SubscriptionQuota::not_found(TOOL));
+        }
+        Err(CommandExecError::Timeout) => {
+            log::warn!("[AgyQuota] agy /usage 查询超时（{}s）", TIMEOUT.as_secs());
+            return Err("Antigravity quota query timed out".to_string());
+        }
     };
     let tiers = output
         .status
@@ -140,6 +226,12 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
         .then(|| parse_usage(&output.stdout))
         .flatten();
     let Some(tiers) = tiers else {
+        log::warn!(
+            "[AgyQuota] agy /usage 未返回有效额度（exit={:?}, stdout={}B, stderr={}B）",
+            output.status.code(),
+            output.stdout.len(),
+            output.stderr.len()
+        );
         return Ok(SubscriptionQuota::error(
             TOOL,
             CredentialStatus::Valid,
@@ -220,5 +312,43 @@ mod tests {
             br#"{"status":"SUCCESS","command":{"data":{"groups":[{"buckets":[{"id":"gemini-5h"}]}]}}}"#
         )
         .is_none());
+    }
+
+    #[tokio::test]
+    async fn run_command_output_captures_stdout_and_times_out_cleanly() {
+        #[cfg(windows)]
+        let ok_cmd = {
+            let mut cmd = tokio::process::Command::new("cmd");
+            cmd.args(["/C", "echo agy-ok"]);
+            cmd
+        };
+        #[cfg(not(windows))]
+        let ok_cmd = {
+            let mut cmd = tokio::process::Command::new("sh");
+            cmd.args(["-c", "printf 'agy-ok\\n'"]);
+            cmd
+        };
+        let output = run_command_output(ok_cmd, Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "agy-ok");
+
+        #[cfg(windows)]
+        let slow_cmd = {
+            let mut cmd = tokio::process::Command::new("cmd");
+            cmd.args(["/C", "ping -n 10 127.0.0.1 >nul"]);
+            cmd
+        };
+        #[cfg(not(windows))]
+        let slow_cmd = {
+            let mut cmd = tokio::process::Command::new("sh");
+            cmd.args(["-c", "sleep 10"]);
+            cmd
+        };
+        let err = run_command_output(slow_cmd, Duration::from_millis(150))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CommandExecError::Timeout));
     }
 }

@@ -620,6 +620,25 @@ async fn removing_from_cc_switch_never_touches_the_keychain() {
     assert_eq!(live_sub(&login).as_deref(), Some("bob"));
 }
 
+#[test]
+fn tasklist_parser_matches_exact_agy_executable_only() {
+    assert!(has_agy_in_tasklist(
+        "\"agy.exe\",\"1234\",\"Console\",\"1\",\"50,000 K\"\r\n"
+    ));
+    assert!(has_agy_in_tasklist(
+        "  \"AGY.EXE\",\"5678\",\"Console\",\"1\",\"42,000 K\""
+    ));
+    assert!(!has_agy_in_tasklist(
+        "INFO: No tasks are running which match the specified criteria.\r\n"
+    ));
+    assert!(!has_agy_in_tasklist(
+        "信息: 没有运行的任务匹配指定标准。\r\n"
+    ));
+    assert!(!has_agy_in_tasklist(
+        "\"agy-node.exe\",\"12\",\"Console\",\"1\",\"10,000 K\"\n\"antigravity.exe\",\"34\",\"Console\",\"1\",\"20,000 K\"\n\"myagy.exe\",\"56\",\"Console\",\"1\",\"30,000 K\"\n"
+    ));
+}
+
 #[tokio::test]
 async fn unknown_login_flow_reports_an_error() {
     let (_dir, _login, manager) = manager();
