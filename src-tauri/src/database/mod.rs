@@ -232,6 +232,16 @@ impl Database {
         Ok(())
     }
 
+    /// 释放 SQLite 页缓存里不再活跃的冷页（如全量扫描、定期维护或进入轻量模式后），
+    /// 避免 16 MiB 页缓存常驻物理内存。热路径配置读写已有 `ProxyReadCache` 兜底。
+    pub fn shrink_memory(&self) {
+        if let Ok(conn) = lock_recovering(&self.conn) {
+            if let Err(e) = conn.execute_batch("PRAGMA shrink_memory;") {
+                log::debug!("PRAGMA shrink_memory 失败: {e}");
+            }
+        }
+    }
+
     /// 初始化数据库连接并创建表
     ///
     /// 数据库文件位于 `~/.cc-switch/cc-switch.db`

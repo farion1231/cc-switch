@@ -599,6 +599,7 @@ impl Database {
                 log::warn!("Periodic incremental vacuum failed: {e}");
             }
         }
+        self.shrink_memory();
 
         backup_result
     }

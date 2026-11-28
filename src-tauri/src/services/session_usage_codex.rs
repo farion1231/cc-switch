@@ -540,11 +540,83 @@ fn replay_caches() -> &'static Mutex<CodexReplayCaches> {
     CODEX_REPLAY_CACHES.get_or_init(|| Mutex::new(CodexReplayCaches::default()))
 }
 
+const MAX_PARENT_TIMELINE_CACHE_ENTRIES: usize = 128;
+const MAX_REPLAY_PREFIX_CACHE_ENTRIES: usize = 512;
+
 pub(crate) fn clear_codex_replay_caches() {
     // 清空即丢弃持锁 panic 时可能写了一半的内容，所以顺带解除中毒。
     let mut caches = replay_caches().lock_recover();
     *caches = CodexReplayCaches::default();
     replay_caches().clear_poison();
+}
+
+/// 仅逐出超出上限的最旧条目，避免整表清空导致高频抖动。
+fn evict_excess_entries<V>(
+    map: &mut HashMap<PathBuf, V>,
+    max_entries: usize,
+    timestamp: impl Fn(&V) -> i64,
+) {
+    if map.len() <= max_entries {
+        return;
+    }
+    let excess = map.len() - max_entries;
+    let mut keys_by_age: Vec<(i64, PathBuf)> = map
+        .iter()
+        .map(|(path, value)| (timestamp(value), path.clone()))
+        .collect();
+    keys_by_age
+        .select_nth_unstable_by(excess - 1, |a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    for (_, path) in keys_by_age.into_iter().take(excess) {
+        map.remove(&path);
+    }
+}
+
+/// 清理已删除或超上限的 Codex 回放缓存，防止长期运行后在内存中无限累积。
+///
+/// `pending` 已按现存文件 `retain` 收口且用于跳过未变更 deferred 文件的重解析与告警去重，
+/// 因此不设整表硬上限；仅对内存占用较大的 `parent_timelines` 和 `replay_prefixes` 逐出超出部分。
+fn prune_codex_replay_caches(live_files: &[PathBuf]) {
+    let Ok(mut caches) = replay_caches().lock() else {
+        return;
+    };
+    if caches.parent_timelines.is_empty()
+        && caches.replay_prefixes.is_empty()
+        && caches.pending.is_empty()
+    {
+        return;
+    }
+    let live: std::collections::HashSet<&Path> = live_files.iter().map(PathBuf::as_path).collect();
+    caches
+        .parent_timelines
+        .retain(|path, _| live.contains(path.as_path()));
+    caches
+        .replay_prefixes
+        .retain(|path, _| live.contains(path.as_path()));
+    caches
+        .pending
+        .retain(|path, _| live.contains(path.as_path()));
+
+    evict_excess_entries(
+        &mut caches.parent_timelines,
+        MAX_PARENT_TIMELINE_CACHE_ENTRIES,
+        |entry| entry.stamp.modified_nanos,
+    );
+    evict_excess_entries(
+        &mut caches.replay_prefixes,
+        MAX_REPLAY_PREFIX_CACHE_ENTRIES,
+        |entry| entry.modified,
+    );
+
+    if caches.parent_timelines.capacity() > caches.parent_timelines.len().saturating_mul(4).max(64)
+    {
+        caches.parent_timelines.shrink_to_fit();
+    }
+    if caches.replay_prefixes.capacity() > caches.replay_prefixes.len().saturating_mul(4).max(64) {
+        caches.replay_prefixes.shrink_to_fit();
+    }
+    if caches.pending.capacity() > caches.pending.len().saturating_mul(4).max(64) {
+        caches.pending.shrink_to_fit();
+    }
 }
 
 fn is_rollout_filename(file_name: &str) -> bool {
@@ -1096,6 +1168,8 @@ pub(crate) fn sync_codex_usage_with_cursors(
             }
         }
     }
+
+    prune_codex_replay_caches(&files);
 
     if result.imported > 0 || result.deferred_files > 0 {
         log::info!(

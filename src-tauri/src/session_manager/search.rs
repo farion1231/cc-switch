@@ -920,6 +920,31 @@ fn remove_index_files_with(
     }
 }
 
+/// 在没有后台索引任务运行时关闭常驻的索引写连接，归还 FTS5 页缓存与文件描述符；
+/// 下次搜索或增量索引时会通过 [`with_index`] 自动按需重开。
+pub fn release_idle_connection() {
+    release_idle_connection_in(&INDEX_LIFETIME, &INDEX, &RUNNING);
+}
+
+fn release_idle_connection_in(
+    lifetime: &RwLock<()>,
+    slot: &Mutex<Option<SessionIndex>>,
+    running: &AtomicBool,
+) {
+    // 非阻塞获取排他生命周期锁，与 clear / discard_corrupt_index 遵守相同的锁协议；
+    // 若当前有活跃搜索读者或写入，直接跳过，避免在轻量模式切换时阻塞 UI/托盘线程。
+    let _lifetime = match lifetime.try_write() {
+        Ok(guard) => guard,
+        Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+        Err(std::sync::TryLockError::WouldBlock) => return,
+    };
+    let mut guard = slot.lock_recover();
+    if running.load(Ordering::SeqCst) {
+        return;
+    }
+    *guard = None;
+}
+
 /// 删除整个索引文件（关闭功能时调用）
 pub fn clear() -> Result<(), String> {
     for task in SEARCH_REQUESTS.lock_recover().active.values() {
@@ -1090,6 +1115,7 @@ where
         if RERUN.load(Ordering::SeqCst) && !RUNNING.swap(true, Ordering::SeqCst) {
             continue;
         }
+        release_idle_connection();
         break;
     });
     status()
@@ -2369,6 +2395,47 @@ mod tests {
         drop(guard);
         reader.join().unwrap();
         completed.expect("reader must finish before writer releases its transaction");
+    }
+
+    #[test]
+    fn release_idle_connection_respects_locks_and_reopens_transparently() {
+        if crate::config::sqlite_unsupported_in_temp_dir() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(INDEX_FILE);
+        let mut writer = SessionIndex::open(&path).unwrap();
+        writer
+            .replace_source("codex", "/idle-test", fp(1), &rows(&["idle needle"]))
+            .unwrap();
+        let lifetime = RwLock::new(());
+        let slot = Mutex::new(Some(writer));
+        let running = AtomicBool::new(true);
+
+        // 后台同步仍在跑时不释放
+        release_idle_connection_in(&lifetime, &slot, &running);
+        assert!(slot.lock_recover().is_some());
+
+        // 有活跃搜索读者持 lifetime 读锁时非阻塞跳过
+        running.store(false, Ordering::SeqCst);
+        let reader_guard = lifetime
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        release_idle_connection_in(&lifetime, &slot, &running);
+        assert!(slot.lock_recover().is_some());
+        drop(reader_guard);
+
+        // 空闲且无读者时正常关闭常驻连接
+        release_idle_connection_in(&lifetime, &slot, &running);
+        assert!(slot.lock_recover().is_none());
+
+        // 下一次搜索能够透明重开并命中既有索引
+        let hits = search_in(&slot, &path, || true, "idle needle", None, 10)
+            .unwrap()
+            .hits;
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].source_path, "/idle-test");
+        assert!(slot.lock_recover().is_some());
     }
 
     #[test]
