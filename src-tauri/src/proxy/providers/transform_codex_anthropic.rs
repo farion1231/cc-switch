@@ -317,8 +317,8 @@ pub fn responses_request_to_anthropic(
     let adaptive_by_default = crate::proxy::thinking_optimizer::adaptive_thinking_is_default(model);
     let cannot_disable_thinking =
         crate::proxy::thinking_optimizer::thinking_cannot_be_disabled(model);
-    // Opus 5.5 / Sonnet 5.5 reject `disabled` but accept a tool turn the model
-    // answered without thinking, so unsigned tool history keeps adaptive thinking.
+    // Opus 5.5 / Sonnet 5.5 / Fable 5.2 reject `disabled` but accept a tool turn the
+    // model answered without thinking, so unsigned tool history keeps adaptive thinking.
     let thinking_history_is_valid = thinking_history_is_valid
         || crate::proxy::thinking_optimizer::accepts_unsigned_tool_history(model);
 
@@ -2289,10 +2289,12 @@ mod tests {
     fn test_unsigned_tool_history_keeps_adaptive_thinking_on_models_that_cannot_disable_it() {
         // #9943: Opus 5.5 / Sonnet 5.5 400 on `thinking: disabled`, and Codex tool turns
         // replayed without a signed thinking block used to fall back to exactly that.
+        // #10070: Fable 5.2 was rejected locally instead of reaching the upstream.
         for model in [
             "claude-opus-5-5",
             "claude-opus-5-5[1m]",
             "claude-sonnet-5-5",
+            "claude-fable-5-2",
         ] {
             let input = json!({
                 "model": model,

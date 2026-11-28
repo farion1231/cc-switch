@@ -118,11 +118,19 @@ pub(crate) fn thinking_cannot_be_disabled(model: &str) -> bool {
 /// Adaptive-only models that accept a replayed tool turn without a thinking
 /// block (adaptive thinking may skip thinking before a tool call), so unsigned
 /// tool history keeps adaptive thinking instead of having to disable it.
+/// Fable 5.2 verified against a real Messages upstream (#10070); earlier
+/// Fable / Mythos generations stay on the local rejection until verified.
 pub(crate) fn accepts_unsigned_tool_history(model: &str) -> bool {
     let normalized = normalize_model_name(model);
     ["opus-5-5", "sonnet-5-5"]
         .iter()
         .any(|needle| normalized.contains(needle))
+        // `fable-5-2` is also a prefix of dated Fable 5 snapshots such as
+        // `fable-5-20260609`, so require a non-digit after the minor version.
+        || normalized.match_indices("fable-5-2").any(|(at, needle)| {
+            !normalized[at + needle.len()..]
+                .starts_with(|c: char| c.is_ascii_digit())
+        })
 }
 
 fn normalize_model_name(model: &str) -> String {
@@ -219,11 +227,19 @@ mod tests {
             "claude-opus-5-5[1m]",
             "claude-opus-5-5@20261101",
             "claude-sonnet-5-5",
+            "claude-fable-5-2",
+            "claude-fable-5.2",
+            "anthropic/claude-fable-5-2-20261101",
         ] {
             assert!(thinking_cannot_be_disabled(model), "model={model}");
             assert!(accepts_unsigned_tool_history(model), "model={model}");
         }
-        for model in ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5"] {
+        for model in [
+            "claude-fable-5-1",
+            "claude-fable-5-20260609",
+            "claude-opus-5",
+            "claude-sonnet-5",
+        ] {
             assert!(!accepts_unsigned_tool_history(model), "model={model}");
         }
     }
