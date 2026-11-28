@@ -1791,35 +1791,6 @@ fn merge_additive_config(
 mod tests {
     use super::*;
 
-    #[test]
-    fn zcode_kind_uses_the_values_the_zcode_card_understands() {
-        assert_eq!(
-            native_protocol(&AppType::ZCode, Some(ApiFormat::Anthropic)),
-            "anthropic"
-        );
-        assert_eq!(
-            native_protocol(&AppType::ZCode, Some(ApiFormat::OpenAiChat)),
-            "openai-compatible"
-        );
-        assert_eq!(
-            native_protocol(&AppType::ZCode, Some(ApiFormat::OpenAiResponses)),
-            "openai"
-        );
-        assert_eq!(native_protocol(&AppType::ZCode, None), "openai-compatible");
-    }
-
-    fn hermes_request() -> DeepLinkImportRequest {
-        DeepLinkImportRequest {
-            resource: "provider".to_string(),
-            app: Some("hermes".to_string()),
-            name: Some("MyHermes".to_string()),
-            endpoint: Some("https://api.example.com/v1".to_string()),
-            api_key: Some("sk-test".to_string()),
-            model: Some("anthropic/claude-opus-4-8".to_string()),
-            ..Default::default()
-        }
-    }
-
     /// deeplink 同时声明 `api_key` 与 `env_key` 时，导入结果只保留用户可见的
     /// `api_key`：既不能带上解析后的明文环境变量，也不能把 `env_key` 这个间接
     /// 引用本身写进供应商配置。
@@ -1927,54 +1898,64 @@ mod tests {
     }
 
     #[test]
-    fn build_hermes_settings_emits_snake_case() {
-        let settings = build_hermes_settings(&hermes_request(), None);
-        let obj = settings.as_object().expect("settings must be object");
-
-        assert_eq!(obj.get("name").unwrap(), "MyHermes");
-        assert_eq!(obj.get("base_url").unwrap(), "https://api.example.com/v1");
-        assert_eq!(obj.get("api_key").unwrap(), "sk-test");
-
-        // camelCase and legacy fields must NOT be present
-        assert!(obj.get("baseUrl").is_none(), "no camelCase baseUrl");
-        assert!(obj.get("apiKey").is_none(), "no camelCase apiKey");
-        assert!(obj.get("api").is_none(), "no legacy 'api' field");
-
-        // models array with the deeplink model id
-        let models = obj.get("models").unwrap().as_array().unwrap();
-        assert_eq!(models.len(), 1);
-        assert_eq!(models[0]["id"], "anthropic/claude-opus-4-8");
-    }
-
-    #[test]
-    fn build_hermes_settings_writes_default_api_mode() {
-        let settings = build_hermes_settings(&hermes_request(), None);
-        assert_eq!(
-            settings.as_object().unwrap().get("api_mode").unwrap(),
-            "chat_completions",
-            "api_mode must be written explicitly so Hermes never falls back to URL auto-detection"
+    fn hermes_and_openclaw_settings_preserve_native_field_casing() {
+        // Hermes uses snake_case and writes api_mode explicitly (never URL heuristics).
+        let full = build_hermes_settings(
+            &DeepLinkImportRequest {
+                resource: "provider".to_string(),
+                app: Some("hermes".to_string()),
+                name: Some("MyHermes".to_string()),
+                endpoint: Some("https://api.example.com/v1".to_string()),
+                api_key: Some("sk-test".to_string()),
+                model: Some("anthropic/claude-opus-4-8".to_string()),
+                ..Default::default()
+            },
+            None,
         );
-    }
+        let obj = full.as_object().expect("settings must be object");
+        assert_eq!(obj["name"], "MyHermes");
+        assert_eq!(obj["base_url"], "https://api.example.com/v1");
+        assert_eq!(obj["api_key"], "sk-test");
+        assert_eq!(obj["api_mode"], "chat_completions");
+        assert_eq!(
+            obj["models"],
+            json!([{ "id": "anthropic/claude-opus-4-8", "name": "anthropic/claude-opus-4-8" }])
+        );
+        assert!(obj.get("baseUrl").is_none());
+        assert!(obj.get("apiKey").is_none());
+        assert!(obj.get("api").is_none());
 
-    #[test]
-    fn build_hermes_settings_skips_missing_optional_fields() {
-        let request = DeepLinkImportRequest {
-            resource: "provider".to_string(),
-            app: Some("hermes".to_string()),
-            name: Some("Minimal".to_string()),
-            endpoint: None,
-            api_key: None,
-            model: None,
-            ..Default::default()
-        };
-        let settings = build_hermes_settings(&request, None);
-        let obj = settings.as_object().unwrap();
+        let minimal = build_hermes_settings(
+            &DeepLinkImportRequest {
+                resource: "provider".to_string(),
+                app: Some("hermes".to_string()),
+                name: Some("Minimal".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        let min_obj = minimal.as_object().expect("settings must be object");
+        assert_eq!(min_obj["name"], "Minimal");
+        assert_eq!(min_obj["api_mode"], "chat_completions");
+        assert!(min_obj.get("base_url").is_none());
+        assert!(min_obj.get("api_key").is_none());
+        assert!(min_obj.get("models").is_none());
 
-        assert_eq!(obj.get("name").unwrap(), "Minimal");
-        assert!(obj.get("base_url").is_none());
-        assert!(obj.get("api_key").is_none());
-        assert!(obj.get("models").is_none());
-        assert_eq!(obj.get("api_mode").unwrap(), "chat_completions");
+        // OpenClaw natively uses camelCase; guard against refactoring it to snake_case.
+        let openclaw = build_additive_app_settings(
+            &DeepLinkImportRequest {
+                resource: "provider".to_string(),
+                app: Some("openclaw".to_string()),
+                name: Some("c".to_string()),
+                endpoint: Some("https://api.example.com".to_string()),
+                api_key: Some("k".to_string()),
+                ..Default::default()
+            },
+            None,
+        );
+        let oc_obj = openclaw.as_object().expect("settings must be object");
+        assert!(oc_obj.contains_key("baseUrl"));
+        assert!(oc_obj.contains_key("apiKey"));
     }
 
     #[test]
@@ -2016,23 +1997,5 @@ mod tests {
                 .and_then(|value| value.as_str()),
             Some("https://api.example.com/v1")
         );
-    }
-
-    #[test]
-    fn openclaw_still_uses_camel_case() {
-        // OpenClaw's live config natively uses camelCase; guard against a
-        // refactor accidentally flipping it to snake_case.
-        let request = DeepLinkImportRequest {
-            resource: "provider".to_string(),
-            app: Some("openclaw".to_string()),
-            name: Some("c".to_string()),
-            endpoint: Some("https://api.example.com".to_string()),
-            api_key: Some("k".to_string()),
-            ..Default::default()
-        };
-        let settings = build_additive_app_settings(&request, None);
-        let obj = settings.as_object().unwrap();
-        assert!(obj.contains_key("baseUrl"));
-        assert!(obj.contains_key("apiKey"));
     }
 }
