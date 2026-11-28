@@ -1319,7 +1319,7 @@ fn append_responses_item_as_chat_message(
                     pending_reasoning,
                     messages,
                     *last_assistant_index,
-                );
+                )?;
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             } else if pending_media.is_empty() {
@@ -1358,7 +1358,7 @@ fn append_responses_item_as_chat_message(
                     pending_reasoning,
                     messages,
                     *last_assistant_index,
-                );
+                )?;
                 update_last_assistant_index(messages, &message, last_assistant_index);
                 messages.push(message);
             } else if pending_media.is_empty() {
@@ -1633,7 +1633,24 @@ fn responses_message_item_to_chat_message(
     pending_reasoning: &mut Option<String>,
     messages: &mut [Value],
     last_assistant_index: Option<usize>,
-) -> Value {
+) -> Result<Value, ProxyError> {
+    // The Codex protocol does not mark plaintext compatibility payloads. Even
+    // a NEW_TASK envelope can carry real ciphertext requiring Responses-side
+    // decryption. Reject unsupported tasks instead of leaking or dropping them.
+    if item.get("type").and_then(Value::as_str) == Some("agent_message")
+        && item
+            .get("content")
+            .and_then(Value::as_array)
+            .is_some_and(|parts| {
+                parts.iter().any(|part| {
+                    part.get("type").and_then(Value::as_str) == Some("encrypted_content")
+                })
+            })
+    {
+        return Err(ProxyError::TransformError(
+            "Cannot convert encrypted agent_message content to Chat Completions; use a Responses upstream that supports agent-message decryption".to_string(),
+        ));
+    }
     let role = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let chat_role = responses_role_to_chat_role(role);
     let content = item
@@ -1660,7 +1677,7 @@ fn responses_message_item_to_chat_message(
         );
     }
 
-    message
+    Ok(message)
 }
 
 fn responses_role_to_chat_role(role: &str) -> &'static str {
