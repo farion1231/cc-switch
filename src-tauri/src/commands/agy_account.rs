@@ -14,6 +14,8 @@ const TOOL: &str = "agy";
 
 /// 界面上的额度查询在这么短的时间里重复时，直接用上一次 `/usage` 的结果，免得同时起好几个 agy。
 pub(crate) const QUOTA_REUSE_INTERACTIVE: Duration = Duration::from_secs(20);
+/// 失败或未检测到 agy 的结果仅做短时复用，避免并发或托盘悬停反复拉起 agy，又不至于把失败卡太久。
+const QUOTA_FAILURE_REUSE: Duration = Duration::from_secs(20);
 
 pub struct AgyAccountState(pub Arc<AgyAccountManager>);
 
@@ -124,16 +126,20 @@ where
 {
     let mut last = cache.lock().await;
     if let Some(query) = last.as_ref() {
-        if query.account_id.as_deref() == current && query.at.elapsed() < reuse {
+        let effective_reuse = if query.quota.success {
+            reuse
+        } else {
+            reuse.min(QUOTA_FAILURE_REUSE)
+        };
+        if query.account_id.as_deref() == current && query.at.elapsed() < effective_reuse {
             return Ok((query.quota.clone(), false));
         }
     }
     let quota = fetch().await?;
     // 查询要七八秒：期间在别处换了号，这份结果就不知道是谁的，不记到任何账号上
     let still_current = is_still_current().await;
-    // 失败或未检测到 agy 的占位结果不缓存，避免短时间手动重试命中失败缓存
     let should_record = still_current && quota.success;
-    if should_record {
+    if still_current {
         *last = Some(LiveQuery {
             account_id: current.map(str::to_string),
             at: Instant::now(),
@@ -149,8 +155,20 @@ where
 fn format_windows_login_command(bin: Option<&Path>) -> String {
     let invocation = match bin {
         Some(path) => {
-            let escaped = path.to_string_lossy().replace('%', "%%");
-            format!("call \"{escaped}\"")
+            let is_batch = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| {
+                    ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+                });
+            if is_batch {
+                // `.bat` 启动器自身和 `call` 都会展开一次 `%`，需要翻倍保留字面 `%`
+                let escaped = path.to_string_lossy().replace('%', "%%%%");
+                format!("call \"{escaped}\"")
+            } else {
+                let escaped = path.to_string_lossy().replace('%', "%%");
+                format!("\"{escaped}\"")
+            }
         }
         None => TOOL.to_string(),
     };
@@ -217,15 +235,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_cache_reuses_success_only_and_never_caches_failures_or_switched_results() {
+    async fn live_cache_uses_short_ttl_for_failures_and_skips_switched_results() {
         let cache = Mutex::new(None);
         let calls = AtomicUsize::new(0);
+        let tray_reuse = Duration::from_secs(300);
 
-        // 1. not_found / error 不写入缓存，下次查询必须重新触发 fetch
+        // 1. 失败在短 TTL（20s）内复用，防止并发/托盘反复拉起 agy
         let (first, record_first) = query_live_with_cache(
             &cache,
             Some("alice"),
-            Duration::from_secs(20),
+            tray_reuse,
             || async {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(SubscriptionQuota::not_found(TOOL))
@@ -238,10 +257,28 @@ mod tests {
         assert!(!record_first);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        let (second, record_second) = query_live_with_cache(
+        let (cached_fail, record_cached_fail) = query_live_with_cache(
             &cache,
             Some("alice"),
-            Duration::from_secs(20),
+            tray_reuse,
+            || async {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(ok_quota(50.0))
+            },
+            || async { true },
+        )
+        .await
+        .unwrap();
+        assert!(!cached_fail.success);
+        assert!(!record_cached_fail);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // 2. 超过 20s 后失败过期（即使 tray_reuse = 300s），重新触发查询
+        cache.lock().await.as_mut().unwrap().at = Instant::now() - Duration::from_secs(25);
+        let (retried_fail, record_retried_fail) = query_live_with_cache(
+            &cache,
+            Some("alice"),
+            tray_reuse,
             || async {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(SubscriptionQuota::error(
@@ -254,15 +291,16 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!second.success);
-        assert!(!record_second);
+        assert!(!retried_fail.success);
+        assert!(!record_retried_fail);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        // 2. 查询期间切号：成功也不写入缓存或记录
+        // 3. 查询期间切号：不覆盖缓存也不记录
+        cache.lock().await.as_mut().unwrap().at = Instant::now() - Duration::from_secs(25);
         let (_switched, record_switched) = query_live_with_cache(
             &cache,
             Some("alice"),
-            Duration::from_secs(20),
+            tray_reuse,
             || async {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(ok_quota(12.0))
@@ -273,12 +311,14 @@ mod tests {
         .unwrap();
         assert!(!record_switched);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(!cache.lock().await.as_ref().unwrap().quota.success);
 
-        // 3. 同一账号查询成功写入缓存并在复用窗口内命中
+        // 4. 同一账号查询成功写入缓存，25s 后在 300s 复用窗口内仍命中
+        cache.lock().await.as_mut().unwrap().at = Instant::now() - Duration::from_secs(25);
         let (ok, record_ok) = query_live_with_cache(
             &cache,
             Some("alice"),
-            Duration::from_secs(20),
+            tray_reuse,
             || async {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(ok_quota(35.0))
@@ -291,10 +331,11 @@ mod tests {
         assert!(record_ok);
         assert_eq!(calls.load(Ordering::SeqCst), 4);
 
+        cache.lock().await.as_mut().unwrap().at = Instant::now() - Duration::from_secs(25);
         let (cached, record_cached) = query_live_with_cache(
             &cache,
             Some("alice"),
-            Duration::from_secs(20),
+            tray_reuse,
             || async {
                 calls.fetch_add(1, Ordering::SeqCst);
                 Ok(ok_quota(99.0))
@@ -318,7 +359,11 @@ mod tests {
             format_windows_login_command(Some(Path::new(
                 r"C:\Users\My %User%\AppData\Local\agy\bin\agy.exe"
             ))),
-            r#"set "GEMINI_API_KEY=" & set "GOOGLE_GEMINI_BASE_URL=" & call "C:\Users\My %%User%%\AppData\Local\agy\bin\agy.exe""#
+            r#"set "GEMINI_API_KEY=" & set "GOOGLE_GEMINI_BASE_URL=" & "C:\Users\My %%User%%\AppData\Local\agy\bin\agy.exe""#
+        );
+        assert_eq!(
+            format_windows_login_command(Some(Path::new(r"C:\Users\My %User%\bin\agy.cmd"))),
+            r#"set "GEMINI_API_KEY=" & set "GOOGLE_GEMINI_BASE_URL=" & call "C:\Users\My %%%%User%%%%\bin\agy.cmd""#
         );
 
         assert_eq!(

@@ -7,8 +7,10 @@
 use std::process::{Output, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use process_wrap::tokio::{KillOnDrop, TokioCommandWrap};
+use futures::future::try_join3;
+use process_wrap::tokio::{KillOnDrop, TokioChildWrapper, TokioCommandWrap};
 use serde::Deserialize;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::subscription::{CredentialStatus, QuotaTier, SubscriptionQuota};
 
@@ -120,6 +122,17 @@ enum CommandExecError {
     Timeout,
 }
 
+struct ChildTreeGuard(Option<Box<dyn TokioChildWrapper>>);
+
+impl Drop for ChildTreeGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            // Unix 上 ProcessGroupChild 不在 Drop 时发 killpg，必须显式调用 start_kill()
+            let _ = child.start_kill();
+        }
+    }
+}
+
 async fn run_command_output(
     mut command: tokio::process::Command,
     timeout: Duration,
@@ -141,8 +154,39 @@ async fn run_command_output(
         wrapped.wrap(flags).wrap(process_wrap::tokio::JobObject);
     }
 
-    let child = wrapped.spawn().map_err(CommandExecError::Io)?;
-    match tokio::time::timeout(timeout, Box::into_pin(child.wait_with_output())).await {
+    let mut guard = ChildTreeGuard(Some(wrapped.spawn().map_err(CommandExecError::Io)?));
+    let outcome = tokio::time::timeout(timeout, async {
+        async fn read_to_end<A: AsyncRead + Unpin>(io: &mut Option<A>) -> std::io::Result<Vec<u8>> {
+            let mut vec = Vec::new();
+            if let Some(io) = io.as_mut() {
+                io.read_to_end(&mut vec).await?;
+            }
+            Ok(vec)
+        }
+
+        let mut stdout_pipe = guard.0.as_mut().expect("child present").stdout().take();
+        let mut stderr_pipe = guard.0.as_mut().expect("child present").stderr().take();
+
+        let child = guard.0.as_mut().expect("child present");
+        let (status, stdout, stderr) = try_join3(
+            Box::into_pin(child.wait()),
+            read_to_end(&mut stdout_pipe),
+            read_to_end(&mut stderr_pipe),
+        )
+        .await?;
+
+        drop(stdout_pipe);
+        drop(stderr_pipe);
+        guard.0 = None;
+        Ok::<_, std::io::Error>(Output {
+            status,
+            stdout,
+            stderr,
+        })
+    })
+    .await;
+
+    match outcome {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(error)) => Err(CommandExecError::Io(error)),
         Err(_) => Err(CommandExecError::Timeout),
@@ -168,10 +212,7 @@ pub(crate) async fn get_agy_subscription_quota() -> Result<SubscriptionQuota, St
     let output = match run_command_output(command, TIMEOUT).await {
         Ok(output) => output,
         Err(CommandExecError::Io(error)) => {
-            log::warn!(
-                "[AgyQuota] 启动或执行 agy 失败 ({}): {error}",
-                bin.display()
-            );
+            log::warn!("[AgyQuota] 启动或执行 agy 失败: {error}");
             return Ok(SubscriptionQuota::not_found(TOOL));
         }
         Err(CommandExecError::Timeout) => {
