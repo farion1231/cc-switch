@@ -104,7 +104,20 @@ fn sync_file(path: &Path, id: &str, change: AgyChange<'_>) -> Result<(), AppErro
     )
 }
 
-pub fn import(state: &AppState) -> Result<usize, AppError> {
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = read(&crate::agy_config::customizations_dir().join("mcp_config.json"))?;
+    Ok(document["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, native)| {
+            super::validation::validate_server_spec(&unified_spec(native)).is_ok()
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
+pub fn import(state: &AppState, selection: super::ImportSelection<'_>) -> Result<usize, AppError> {
     let document = read(&crate::agy_config::customizations_dir().join("mcp_config.json"))?;
     let (mut existing, unreadable) = state
         .db
@@ -113,6 +126,9 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     let mut count = 0;
     let mut skipped = Vec::new();
     for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
+        if super::outside_selection(selection, id) {
+            continue;
+        }
         if unreadable.contains(id) {
             skipped.push(format!("'{id}': stored server is unreadable"));
             continue;

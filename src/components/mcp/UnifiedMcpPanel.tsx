@@ -32,6 +32,7 @@ import {
   useBulkToggleMcpApp,
   useDeleteMcpServer,
   useImportMcpFromApps,
+  useMcpDiscovery,
   useResyncMcpToApps,
   useToggleMcpApp,
 } from "@/hooks/useMcp";
@@ -47,6 +48,7 @@ import {
 } from "@/utils/errorUtils";
 import { cn } from "@/lib/utils";
 import McpFormModal from "./McpFormModal";
+import { McpDiscoveryImportDialog } from "./McpDiscoveryImportDialog";
 import {
   MatrixCell,
   MatrixColumnHeader,
@@ -163,6 +165,11 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
   >(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [importReport, setImportReport] = useState<ImportReport | null>(null);
+  const [discoveryImportOpen, setDiscoveryImportOpen] = useState(false);
+  /** 「忽略」时记下那一批未纳管的名字；名单变了提示再出现（同 Skills 页） */
+  const [dismissedDiscovery, setDismissedDiscovery] = useState<string | null>(
+    null,
+  );
   const [importFilesOpen, setImportFilesOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [fails, setFails] = useState<Record<string, WriteFailure>>({});
@@ -180,6 +187,16 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     error: loadError,
     refetch,
   } = useAllMcpServers();
+  const discovery = useMcpDiscovery(!isLoading && !isError);
+  const unmanaged = discovery.data?.servers ?? [];
+  const discoveryKey = unmanaged.map((server) => server.id).join("\n");
+  const showDiscovery =
+    unmanaged.length > 0 && dismissedDiscovery !== discoveryKey;
+  const discoveryFailedApps = (discovery.data?.failedApps ?? []).filter((app) =>
+    appHas(app, "mcp"),
+  );
+  const showDiscoveryFailure =
+    discovery.isError || discoveryFailedApps.length > 0;
   const connectivity = useMcpConnectivity(isError ? undefined : serversMap);
   const toggleAppMutation = useToggleMcpApp();
   const bulkToggleAppMutation = useBulkToggleMcpApp();
@@ -529,12 +546,13 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
     setDrawer({ mode: "edit", id });
   };
 
-  const handleImport = async () => {
+  /** 不传 `ids` 导入全部（「从应用导入」）；传了只导入勾选的 */
+  const handleImport = async (ids?: string[]) => {
     if (!beginWrite()) return;
     const before = new Set(Object.keys(serversMap ?? {}));
     let error: string | undefined;
     try {
-      await importMutation.mutateAsync();
+      await importMutation.mutateAsync(ids);
     } catch (err) {
       // 后端是 best-effort：部分应用读失败时其余的已经入库
       error = extractErrorMessage(err) || String(err);
@@ -545,6 +563,7 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
         .filter((id) => !before.has(id))
         .sort();
       setImportFilesOpen(false);
+      setDiscoveryImportOpen(false);
       setImportReport({ added, hadExisting: before.size > 0, error });
     } finally {
       endWrite();
@@ -735,6 +754,70 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
             </span>
           </div>
         )}
+
+        <NoticeSlot
+          className={cn((showDiscovery || showDiscoveryFailure) && "px-6 pb-3")}
+        >
+          {showDiscovery && (
+            <Notice
+              title={t("mcpPage.discovery.available", {
+                count: unmanaged.length,
+              })}
+              actions={
+                <>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="compact"
+                    disabled={controlsDisabled}
+                    onClick={() => setDiscoveryImportOpen(true)}
+                  >
+                    {t("mcpPage.discovery.review")}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="compact"
+                    className="text-fg-2"
+                    onClick={() => setDismissedDiscovery(discoveryKey)}
+                  >
+                    {t("mcpPage.discovery.ignore")}
+                  </Button>
+                </>
+              }
+            >
+              {t("mcpPage.discovery.readOnly")}
+            </Notice>
+          )}
+          {showDiscoveryFailure && (
+            <Notice
+              tone="warning"
+              title={t(
+                discovery.isError
+                  ? "mcpPage.discovery.failed"
+                  : "mcpPage.discovery.partial",
+                {
+                  apps: discoveryFailedApps
+                    .map((app) => APP_DISPLAY_NAME[app])
+                    .join(t("mcpPage.listSeparator")),
+                },
+              )}
+              actions={
+                <Button
+                  type="button"
+                  variant="neutral"
+                  size="compact"
+                  disabled={controlsDisabled || discovery.isFetching}
+                  onClick={() => void discovery.refetch()}
+                >
+                  {t("mcpPage.discovery.retry")}
+                </Button>
+              }
+            >
+              {t("mcpPage.discovery.readOnly")}
+            </Notice>
+          )}
+        </NoticeSlot>
 
         <NoticeSlot className={cn(failedApps.size > 0 && "px-6 pb-3")}>
           {Array.from(failedApps.entries()).map(([app, error]) => (
@@ -1163,6 +1246,15 @@ const UnifiedMcpPanel: React.FC<UnifiedMcpPanelProps> = ({
         onConfirm={() => void confirmDelete()}
         onCancel={() => setDeleteId(null)}
       />
+
+      {discoveryImportOpen && unmanaged.length > 0 && (
+        <McpDiscoveryImportDialog
+          servers={unmanaged}
+          isImporting={importMutation.isPending}
+          onImport={(ids) => void handleImport(ids)}
+          onClose={() => setDiscoveryImportOpen(false)}
+        />
+      )}
 
       <V7Dialog
         open={importReport !== null}

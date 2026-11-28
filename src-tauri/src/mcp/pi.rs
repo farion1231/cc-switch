@@ -246,9 +246,31 @@ fn sync_file(path: &Path, id: &str, change: PiChange<'_>) -> Result<(), AppError
     )
 }
 
+/// 只读列出导入会收的名字：和 [`import`] 同一套 Pi 规则（非法名、SSE、只差 - / _ 的重名都不算），
+/// 否则提示「可导入」的条目导入时被跳过，提示永远消不掉。`managed` 是库里能读出来的服务器。
+pub(crate) fn discover_ids(
+    managed: &indexmap::IndexMap<String, McpServer>,
+) -> Result<Vec<String>, AppError> {
+    let document = read(&config_path()?)?;
+    let natives = document["mcpServers"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    Ok(natives
+        .iter()
+        .filter(|(id, native)| {
+            validate_entry(id, &unified_spec(native)).is_ok()
+                && check_name_collision(id, natives.keys()).is_ok()
+                && (native.get("enabled").and_then(Value::as_bool) == Some(false)
+                    || check_enabled_name_collision(id, managed).is_ok())
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
 /// 从 Pi 的 `mcp.json` 导入。Pi 自己的字段（`timeout`、`exposure` 等）留在连接定义里原样保存；
 /// `enabled: false` 的条目导入后不勾选 Pi。和已有服务器连接方式不同的同名条目跳过并报告。
-pub fn import(state: &AppState) -> Result<usize, AppError> {
+pub fn import(state: &AppState, selection: super::ImportSelection<'_>) -> Result<usize, AppError> {
     // 和勾选共用写锁：重名检查读到的数据库在导入写完前不会被并发勾选改掉
     let _guard = crate::sync_utils::lock_file_operation(&WRITE_LOCK);
     let document = read(&config_path()?)?;
@@ -264,6 +286,9 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         .cloned()
         .unwrap_or_default();
     for (id, native) in &natives {
+        if super::outside_selection(selection, id) {
+            continue;
+        }
         if unreadable.contains(id) {
             skipped.push(format!("'{id}': stored server is unreadable"));
             continue;

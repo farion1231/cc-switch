@@ -4766,6 +4766,23 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "Nicht verwaltete lokale MCP-Server: {{count}}.",
+      "review": "Prüfen und importieren",
+      "ignore": "Ignorieren",
+      "readOnly": "Die Erkennung liest nur Benutzerkonfigurationen der Apps. Erst beim Import werden Einträge übernommen.",
+      "partial": "MCP-Konfigurationen konnten für folgende Apps nicht gelesen werden: {{apps}}. Andere Quellen wurden geprüft.",
+      "failed": "Lokale MCP-Konfigurationen konnten nicht geprüft werden.",
+      "retry": "Erneut prüfen",
+      "dialogTitle": "Lokale MCP-Server importieren",
+      "dialogLead": "Wählen Sie die MCP-Server zum Importieren aus. Jeder wird in den Apps aktiviert, in denen er gefunden wurde; die ursprünglichen Konfigurationsdateien bleiben unverändert.",
+      "searchPlaceholder": "Name oder App suchen",
+      "searchAria": "MCP-Server zum Importieren suchen",
+      "selectAll": "Alle auswählen",
+      "selectNone": "Keine auswählen",
+      "foundIn": "Gefunden in: {{apps}}",
+      "submit": "{{count}} importieren"
+    },
     "checkConnectivity": "Konnektivität prüfen",
     "testConnection": "Verbindung testen",
     "connection": {

@@ -105,7 +105,22 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
     atomic_write_private(path, format!("{json}\n").as_bytes())
 }
 
-pub fn import(state: &AppState) -> Result<usize, AppError> {
+/// Read importable names without modifying the native file or database.
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = read(&config_path())?;
+    Ok(document["mcpServers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, native)| {
+            !is_connector(native)
+                && super::validation::validate_server_spec(&transport_spec(native)).is_ok()
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
+pub fn import(state: &AppState, selection: super::ImportSelection<'_>) -> Result<usize, AppError> {
     let document = read(&config_path())?;
     let (mut existing, unreadable) = state
         .db
@@ -119,6 +134,9 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         .into_iter()
         .flatten()
     {
+        if super::outside_selection(selection, id) {
+            continue;
+        }
         if unreadable.contains(id) {
             skipped.push(format!("'{id}': stored server is unreadable"));
             continue;

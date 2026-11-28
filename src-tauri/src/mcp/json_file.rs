@@ -108,7 +108,11 @@ impl JsonMcpFile {
         )
     }
 
-    pub(crate) fn import(&self, state: &AppState) -> Result<usize, AppError> {
+    pub(crate) fn import(
+        &self,
+        state: &AppState,
+        selection: super::ImportSelection<'_>,
+    ) -> Result<usize, AppError> {
         let document = self.read(&(self.path)())?;
         let (mut existing, unreadable) = state
             .db
@@ -117,6 +121,9 @@ impl JsonMcpFile {
         let mut count = 0;
         let mut skipped = Vec::new();
         for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
+            if super::outside_selection(selection, id) {
+                continue;
+            }
             if unreadable.contains(id) {
                 skipped.push(format!("'{id}': stored server is unreadable"));
                 continue;

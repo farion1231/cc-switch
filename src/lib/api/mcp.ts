@@ -2,6 +2,17 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import type { McpServer, McpServersMap, UnreadableEntry } from "@/types";
 import type { AppId } from "./types";
 
+/** 还没纳入 CC Switch 的本机 MCP：名字和在哪些应用里找到（连接定义和凭据不出后端） */
+export interface UnmanagedMcpServer {
+  id: string;
+  apps: string[];
+}
+
+export interface McpDiscoveryResult {
+  servers: UnmanagedMcpServer[];
+  failedApps: string[];
+}
+
 export interface McpConnectivityResult {
   serverId: string;
   /** `authRequired`: the server answered 401 and wants the client's own sign-in. */
@@ -9,6 +20,9 @@ export interface McpConnectivityResult {
 }
 
 export const mcpApi = {
+  async scanUnmanaged(): Promise<McpDiscoveryResult> {
+    return await invoke("scan_unmanaged_mcp_servers");
+  },
   async startConnectivityChecks(
     serverIds: string[],
     onResult: (result: McpConnectivityResult) => void,
@@ -69,8 +83,9 @@ export const mcpApi = {
   /**
    * 从所有应用导入 MCP 服务器
    */
-  async importFromApps(): Promise<number> {
-    return await invoke("import_mcp_from_apps");
+  /** 不传 `ids` 导入全部；传了只导入这些名字（MCP 页勾选导入） */
+  async importFromApps(ids?: string[]): Promise<number> {
+    return await invoke("import_mcp_from_apps", ids ? { ids } : undefined);
   },
 
   /**

@@ -1658,6 +1658,7 @@ pub fn run() {
             // New MCP via config.json (SSOT)
             // Unified MCP management
             commands::get_mcp_servers,
+            commands::scan_unmanaged_mcp_servers,
             commands::get_unreadable_mcp_servers,
             commands::start_mcp_connectivity_checks,
             commands::cancel_mcp_connectivity_checks,

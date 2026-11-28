@@ -4766,6 +4766,23 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "Unmanaged local MCP servers: {{count}}.",
+      "review": "Review and import",
+      "ignore": "Ignore",
+      "readOnly": "Discovery only reads user-level app configurations. Nothing is imported until you choose to import.",
+      "partial": "Could not read MCP configurations for: {{apps}}. Other sources were checked.",
+      "failed": "Could not check local MCP configurations.",
+      "retry": "Check again",
+      "dialogTitle": "Import local MCP servers",
+      "dialogLead": "Choose the MCP servers to import. Each one is enabled in the apps where it was found; the original config files stay as they are.",
+      "searchPlaceholder": "Search name or app",
+      "searchAria": "Search MCP servers to import",
+      "selectAll": "Select all",
+      "selectNone": "Select none",
+      "foundIn": "Found in: {{apps}}",
+      "submit": "Import {{count}}"
+    },
     "checkConnectivity": "Check connectivity",
     "testConnection": "Test connection",
     "connection": {

@@ -4695,6 +4695,23 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "Yönetilmeyen yerel MCP sunucusu sayısı: {{count}}.",
+      "review": "İnceleyin ve içe aktarın",
+      "ignore": "Yoksay",
+      "readOnly": "Keşif yalnızca uygulamaların kullanıcı düzeyindeki yapılandırmasını okur. Kayıtlar ancak içe aktarmayı seçtiğinizde eklenir.",
+      "partial": "Şu uygulamaların MCP yapılandırması okunamadı: {{apps}}. Diğer kaynaklar kontrol edildi.",
+      "failed": "Yerel MCP yapılandırmaları kontrol edilemedi.",
+      "retry": "Yeniden kontrol et",
+      "dialogTitle": "Yerel MCP sunucularını içe aktar",
+      "dialogLead": "İçe aktarılacak MCP sunucularını seçin. Her biri bulunduğu uygulamalarda etkinleştirilir; özgün yapılandırma dosyaları değişmez.",
+      "searchPlaceholder": "Ad veya uygulama arayın",
+      "searchAria": "İçe aktarılacak MCP sunucularını arayın",
+      "selectAll": "Tümünü seç",
+      "selectNone": "Hiçbirini seçme",
+      "foundIn": "Bulunan: {{apps}}",
+      "submit": "{{count}} tanesini içe aktar"
+    },
     "checkConnectivity": "Bağlantıyı kontrol et",
     "testConnection": "Bağlantıyı test et",
     "connection": {

@@ -56,6 +56,17 @@ pub async fn get_unreadable_mcp_servers(
     McpService::list_unreadable(&state)
 }
 
+/// Discover unmanaged user-level MCPs without importing or writing live config.
+#[tauri::command]
+pub async fn scan_unmanaged_mcp_servers(
+    state: State<'_, AppState>,
+) -> Result<crate::services::mcp::McpDiscoveryResult, String> {
+    run_db_task(&state, |state| {
+        McpService::scan_unmanaged(state).map_err(|e| e.to_string())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn upsert_mcp_server(
     state: State<'_, AppState>,
@@ -81,10 +92,15 @@ pub async fn toggle_mcp_app(
     McpService::toggle_app_locked(&state, &server_id, app_ty, enabled).await
 }
 
-/// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）
+/// 从所有应用导入 MCP 服务器（复用已有的导入逻辑）。
+/// 传 `ids` 时只导入这些名字（MCP 页勾选导入），不传时导入全部。
 #[tauri::command]
-pub async fn import_mcp_from_apps(state: State<'_, AppState>) -> Result<usize, AppError> {
-    McpService::import_from_all_apps(&state)
+pub async fn import_mcp_from_apps(
+    state: State<'_, AppState>,
+    ids: Option<Vec<String>>,
+) -> Result<usize, AppError> {
+    let selection = ids.map(|ids| ids.into_iter().collect::<std::collections::HashSet<_>>());
+    McpService::import_selected(&state, selection.as_ref())
 }
 
 /// 按数据库里的开关把 MCP 重新写进各应用的 live 配置，逐应用返回结果。

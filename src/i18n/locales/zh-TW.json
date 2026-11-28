@@ -4766,6 +4766,23 @@
     }
   },
   "mcpPage": {
+    "discovery": {
+      "available": "本機有 {{count}} 個 MCP 尚未納入 CC Switch 管理。",
+      "review": "查看並匯入",
+      "ignore": "忽略",
+      "readOnly": "探索過程只讀取應用程式的使用者層級設定，點擊匯入後才會加入管理。",
+      "partial": "無法讀取這些應用程式的 MCP 設定：{{apps}}。其他來源已檢查。",
+      "failed": "檢查本機 MCP 設定失敗。",
+      "retry": "重新檢查",
+      "dialogTitle": "匯入本機 MCP",
+      "dialogLead": "勾選要匯入的 MCP。匯入後在發現它的應用程式裡啟用，原本的設定檔不會更動。",
+      "searchPlaceholder": "搜尋名稱或應用程式",
+      "searchAria": "搜尋要匯入的 MCP",
+      "selectAll": "全選",
+      "selectNone": "全不選",
+      "foundIn": "發現於：{{apps}}",
+      "submit": "匯入 {{count}} 個"
+    },
     "checkConnectivity": "檢查連通性",
     "testConnection": "測試連線",
     "connection": {
