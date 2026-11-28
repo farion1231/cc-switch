@@ -446,11 +446,14 @@ impl AnthropicToResponsesState {
     /// started tool call). Used to distinguish a truncated-with-output stream (report
     /// incomplete) from one that produced nothing (report failed).
     fn has_substantive_output(&self) -> bool {
-        !self.output_items.is_empty()
+        self.output_items
+            .iter()
+            .any(|(_, item)| item.get("type").and_then(Value::as_str) != Some("reasoning"))
             || self.blocks.values().any(|b| {
-                !b.accum.trim().is_empty()
-                    || !b.call_id.trim().is_empty()
-                    || !b.name.trim().is_empty()
+                b.kind != BlockKind::Thinking
+                    && (!b.accum.trim().is_empty()
+                        || !b.call_id.trim().is_empty()
+                        || !b.name.trim().is_empty())
             })
     }
 
@@ -481,10 +484,18 @@ impl AnthropicToResponsesState {
         let mut output = self.output_items.clone();
         output.sort_by_key(|(output_index, _)| *output_index);
         let output: Vec<Value> = output.into_iter().map(|(_, item)| item).collect();
+        let has_actionable_output = output
+            .iter()
+            .any(|item| item.get("type").and_then(Value::as_str) != Some("reasoning"));
 
         let mut response = self.base_response(status, output);
         if let Some(reason) = incomplete_reason {
             response["incomplete_details"] = json!({ "reason": reason });
+            if !has_actionable_output {
+                events.push(sse::response_incomplete(&response));
+                self.completed = true;
+                return events;
+            }
         }
 
         events.push(sse::response_completed(&response));

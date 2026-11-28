@@ -2335,6 +2335,18 @@ pub(crate) fn chat_completion_to_response_with_context(
     }
     output.extend(tool_calls.items);
 
+    let has_actionable_output = output
+        .iter()
+        .any(|item| item.get("type").and_then(Value::as_str) != Some("reasoning"));
+    if response_status_from_finish_reason(finish_reason) == "completed"
+        && !output.is_empty()
+        && !has_actionable_output
+    {
+        return Err(ProxyError::TransformError(
+            "Upstream returned reasoning without any assistant message or tool call".to_string(),
+        ));
+    }
+
     let mut response = json!({
         "id": response_id,
         "object": "response",

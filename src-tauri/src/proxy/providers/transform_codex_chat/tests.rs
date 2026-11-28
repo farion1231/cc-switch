@@ -5453,3 +5453,27 @@ fn duplicate_exact_tool_identity_is_idempotent_without_panic() {
     assert_eq!(tools[1]["function"]["name"], "shell");
     assert_eq!(tools[1]["function"]["description"], "First shell.");
 }
+#[test]
+fn chat_response_reasoning_only_completed_turn_is_an_error() {
+    let chat = json!({
+        "id": "chatcmpl_reason_only",
+        "object": "chat.completion",
+        "created": 123,
+        "model": "gemini-4-argon",
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "reasoning_content": "only thinking",
+                "content": ""
+            },
+            "finish_reason": "stop"
+        }]
+    });
+
+    let err =
+        chat_completion_to_response_with_context(chat, &CodexToolContext::default()).unwrap_err();
+    assert!(matches!(err, ProxyError::TransformError(_)));
+    assert!(err
+        .to_string()
+        .contains("reasoning without any assistant message"));
+}
