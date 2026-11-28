@@ -1765,6 +1765,7 @@
       "outlineAborted": "Interrupted",
       "outlineNoReply": "No reply",
       "chapter": "Chapter",
+      "outlineChaptersOnly": "Chapters only",
       "viewOptions": "Display options",
       "noChanges": "No file changes in this session",
       "rawMatch": "Matches in source",

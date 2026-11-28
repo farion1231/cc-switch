@@ -1765,6 +1765,7 @@
       "outlineAborted": "Unterbrochen",
       "outlineNoReply": "Keine Antwort",
       "chapter": "Kapitel",
+      "outlineChaptersOnly": "Nur Kapitel",
       "viewOptions": "Anzeigeoptionen",
       "noChanges": "Keine Dateiänderungen in dieser Sitzung",
       "rawMatch": "Treffer in der Quelle",

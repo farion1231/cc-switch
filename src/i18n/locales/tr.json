@@ -1694,6 +1694,7 @@
       "outlineAborted": "Kesintiye uğradı",
       "outlineNoReply": "Yanıt yok",
       "chapter": "Bölüm",
+      "outlineChaptersOnly": "Yalnızca bölümler",
       "viewOptions": "Görüntüleme seçenekleri",
       "noChanges": "Bu oturumda dosya değişikliği yok",
       "rawMatch": "Kaynaktaki eşleşmeler",
