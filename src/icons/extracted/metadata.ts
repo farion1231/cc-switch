@@ -980,6 +980,12 @@ export const iconMetadata: Record<string, IconMetadata> = {
     category: "ai-provider",
     keywords: ["fastaitoken", "fastai", "fast ai token", "aggregator"],
   },
+  apione: {
+    name: "apione",
+    displayName: "APIONE",
+    category: "ai-provider",
+    keywords: ["apione", "api one", "aggregator"],
+  },
   teleai: {
     name: "teleai",
     displayName: "TeleAI",

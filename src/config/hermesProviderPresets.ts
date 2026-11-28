@@ -1533,6 +1533,27 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "alltokens-si",
   },
   {
+    name: "APIONE",
+    websiteUrl: "https://apione.ai",
+    apiKeyUrl: "https://apione.ai/zh?source=ccswitch",
+    settingsConfig: {
+      name: "apione",
+      // 文档 apione.ai/docs/guides/codex.md：base_url=https://api.apione.ai/v1、wire_api=responses；
+      // gpt-6.2-sol 见模型广场 apione.ai/zh/models（2026-11-28），/v1/models 要 Key，未用真 Key 验证
+      base_url: "https://api.apione.ai/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [{ id: "gpt-6.2-sol", name: "GPT-6.2 Sol" }],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-6.2-sol", provider: "apione" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "apione",
+    icon: "apione",
+  },
+  {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
     apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",

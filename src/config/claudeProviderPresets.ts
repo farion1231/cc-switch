@@ -1163,6 +1163,23 @@ export const providerPresets: ProviderPreset[] = [
     icon: "alltokens-si",
   },
   {
+    name: "APIONE",
+    websiteUrl: "https://apione.ai",
+    apiKeyUrl: "https://apione.ai/zh?source=ccswitch",
+    // 文档 apione.ai/docs/guides/claude-code.md：地址不带 /v1，用 AUTH_TOKEN；
+    // Claude 落地页 apione.ai/zh/claude-api 用官方模型名，透传不覆盖
+    settingsConfig: {
+      env: {
+        ANTHROPIC_BASE_URL: "https://api.apione.ai",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "apione",
+    icon: "apione",
+  },
+  {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
     apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",

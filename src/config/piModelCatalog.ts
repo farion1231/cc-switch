@@ -856,6 +856,15 @@ export const piModelCatalog = {
       maxTokens: 128000,
     },
   },
+  "openai/gpt-6.2-sol": {
+    capabilities: {
+      name: "GPT-6.2 Sol",
+      reasoning: true,
+      input: ["text", "image"],
+      contextWindow: 272000,
+      maxTokens: 128000,
+    },
+  },
   "openai/gpt-6.1-sol": {
     capabilities: {
       name: "GPT-6.1 Sol",

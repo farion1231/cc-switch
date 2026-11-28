@@ -1144,6 +1144,20 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "alltokens-si",
   },
   {
+    name: "APIONE",
+    websiteUrl: "https://apione.ai",
+    apiKeyUrl: "https://apione.ai/zh?source=ccswitch",
+    category: "aggregator",
+    // 文档地址不带 /v1；模型广场用官方 Claude 模型名（apione.ai/zh/models，2026-11-28），透传
+    baseUrl: "https://api.apione.ai",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    isPartner: true,
+    partnerPromotionKey: "apione",
+    icon: "apione",
+  },
+  {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
     apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",

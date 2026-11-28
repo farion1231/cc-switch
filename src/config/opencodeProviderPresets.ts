@@ -2315,6 +2315,41 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "alltokens-si",
   },
   {
+    name: "APIONE",
+    websiteUrl: "https://apione.ai",
+    apiKeyUrl: "https://apione.ai/zh?source=ccswitch",
+    // 文档 apione.ai/docs/guides/codex.md：base_url=https://api.apione.ai/v1、wire_api=responses；
+    // gpt-6.2-sol 见模型广场 apione.ai/zh/models（2026-11-28），/v1/models 要 Key，未用真 Key 验证
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "APIONE",
+      options: {
+        baseURL: "https://api.apione.ai/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.2-sol": {
+          name: "GPT-6.2 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "apione",
+    icon: "apione",
+  },
+  {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
     apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",

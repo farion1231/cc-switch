@@ -840,6 +840,27 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
     icon: "alltokens-si",
   },
   {
+    name: "APIONE",
+    websiteUrl: "https://apione.ai",
+    apiKeyUrl: "https://apione.ai/zh?source=ccswitch",
+    // 文档 apione.ai/docs/guides/gemini-cli.md：GOOGLE_GEMINI_BASE_URL 填根域名（CLI 自己拼 /v1beta）；
+    // gemini-3.8-flash 见模型广场 apione.ai/zh/models（2026-11-28），未用真 Key 验证
+    settingsConfig: {
+      env: {
+        GOOGLE_GEMINI_BASE_URL: "https://api.apione.ai",
+        GEMINI_API_KEY: "",
+        GEMINI_MODEL: "gemini-3.8-flash",
+      },
+    },
+    baseURL: "https://api.apione.ai",
+    model: "gemini-3.8-flash",
+    description: "APIONE",
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "apione",
+    icon: "apione",
+  },
+  {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
     apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",

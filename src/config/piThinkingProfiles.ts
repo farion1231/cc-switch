@@ -344,6 +344,11 @@ export const piThinkingBindings: readonly PiThinkingBinding[] = [
     profileId: "openaiResponsesGpt6Astra",
   },
   {
+    catalogKey: "openai/gpt-6.2-sol",
+    api: "openai-responses",
+    profileId: "openaiResponsesGpt56",
+  },
+  {
     catalogKey: "openai/gpt-6.1-sol",
     api: "openai-responses",
     profileId: "openaiResponsesGpt56",

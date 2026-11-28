@@ -1335,6 +1335,25 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "alltokens-si",
   },
   {
+    name: "APIONE",
+    providerKey: "cc-switch-apione",
+    websiteUrl: "https://apione.ai",
+    apiKeyUrl: "https://apione.ai/zh?source=ccswitch",
+    // 文档 apione.ai/docs/guides/codex.md：base_url=https://api.apione.ai/v1、wire_api=responses；
+    // gpt-6.2-sol 见模型广场 apione.ai/zh/models（2026-11-28），/v1/models 要 Key，未用真 Key 验证
+    settingsConfig: {
+      name: "APIONE",
+      baseUrl: "https://api.apione.ai/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [piModel("openai/gpt-6.2-sol", { id: "gpt-6.2-sol" })],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "apione",
+    icon: "apione",
+  },
+  {
     name: "FastAIToken",
     providerKey: "cc-switch-fastaitoken",
     websiteUrl: "https://www.fastaitoken.com",

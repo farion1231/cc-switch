@@ -24,6 +24,7 @@ import _eflowcode from "./eflowcode.png";
 import _etok from "./etok.png";
 import _everyapi from "./everyapi.svg?url";
 import _fastaitoken from "./fastaitoken.png";
+import _apione from "./apione.png";
 import _fenno from "./fenno-icon.png";
 import _fluxa from "./fluxa.png";
 import _genesis from "./genesis.svg?url";
@@ -216,6 +217,7 @@ export const iconUrls: Record<string, string> = {
   sudocode: _sudocode,
   "sudocode-us": _sudocodeUs,
   fastaitoken: _fastaitoken,
+  apione: _apione,
   teamorouter: _teamorouter,
   teleai: _teleai,
   tuzi: _tuzi,
