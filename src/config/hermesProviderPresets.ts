@@ -1535,7 +1535,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
   {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
-    apiKeyUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",
     settingsConfig: {
       name: "fastaitoken",
       // Sub2API 网关：Key 绑定分组，GPT 要用 OpenAI 分组的 Key（docs.fastaitoken.com/docs/api-manual）；

@@ -842,7 +842,7 @@ export const geminiProviderPresets: GeminiProviderPreset[] = [
   {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
-    apiKeyUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",
     // 需 Gemini 分组的 Key，Gemini 原生格式走站点根的 /v1beta（docs.fastaitoken.com/docs/api-manual）；
     // 模型列表要登录才能看，模型 ID 按官方最新填写，未用真 Key 验证
     settingsConfig: {

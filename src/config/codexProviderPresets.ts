@@ -1643,7 +1643,7 @@ requires_openai_auth = true`,
   {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
-    apiKeyUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",
     category: "aggregator",
     // Sub2API 网关：Key 绑定分组，GPT 要用 OpenAI 分组的 Key（docs.fastaitoken.com/docs/api-manual）；
     // 模型列表要登录才能看，模型 ID 取自官方文档示例 gpt-6.1-sol，未用真 Key 验证

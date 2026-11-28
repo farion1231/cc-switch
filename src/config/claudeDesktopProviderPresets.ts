@@ -1146,7 +1146,7 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
   {
     name: "FastAIToken",
     websiteUrl: "https://www.fastaitoken.com",
-    apiKeyUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com/register?promo=CC-SWITCH&utm=ccs",
     category: "aggregator",
     // 需 Claude 分组的 Key，按官方模型名透传（docs.fastaitoken.com/docs/cc-switch）
     baseUrl: "https://www.fastaitoken.com",
