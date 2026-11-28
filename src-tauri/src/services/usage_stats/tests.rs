@@ -906,7 +906,7 @@ fn test_claude_desktop_folds_into_claude_for_display() -> Result<(), AppError> {
     }
 
     // ① 分应用汇总：desktop 折叠进 claude，不再单列 claude-desktop 桶。
-    let by_app = db.get_usage_summary_by_app(None, None, None, None)?;
+    let by_app = db.get_usage_summary_by_app(None, None, None, None, None, None, None)?;
     assert_eq!(by_app.len(), 1, "应只剩一个合并后的 claude 桶");
     assert_eq!(by_app[0].app_type, "claude");
     assert_eq!(by_app[0].summary.total_requests, 2, "两条行都计入 claude");
@@ -916,7 +916,8 @@ fn test_claude_desktop_folds_into_claude_for_display() -> Result<(), AppError> {
     );
 
     // ② 选中 claude 过滤：汇总应同时覆盖 desktop 行。
-    let claude_summary = db.get_usage_summary(None, None, Some("claude"), None, None)?;
+    let claude_summary =
+        db.get_usage_summary(None, None, Some("claude"), None, None, None, None, None)?;
     assert_eq!(claude_summary.total_requests, 2);
 
     // ③ 请求日志按 claude 过滤返回两行，且 desktop 行投影仍是原始 app_type。
@@ -935,7 +936,8 @@ fn test_claude_desktop_folds_into_claude_for_display() -> Result<(), AppError> {
     );
 
     // ④ 折叠不外溢：codex 过滤为空。
-    let codex_summary = db.get_usage_summary(None, None, Some("codex"), None, None)?;
+    let codex_summary =
+        db.get_usage_summary(None, None, Some("codex"), None, None, None, None, None)?;
     assert_eq!(codex_summary.total_requests, 0);
 
     Ok(())
@@ -1212,7 +1214,7 @@ fn test_request_logs_report_fresh_input_like_the_summary() -> Result<(), AppErro
             ("claude", 1000)
         ])
     );
-    let summary = db.get_usage_summary(None, None, None, None, None)?;
+    let summary = db.get_usage_summary(None, None, None, None, None, None, None, None)?;
     assert_eq!(
         fresh.values().map(|&tokens| u64::from(tokens)).sum::<u64>(),
         summary.total_input_tokens
@@ -1674,7 +1676,7 @@ fn test_get_usage_summary() -> Result<(), AppError> {
         )?;
     }
 
-    let summary = db.get_usage_summary(None, None, None, None, None)?;
+    let summary = db.get_usage_summary(None, None, None, None, None, None, None, None)?;
     assert_eq!(summary.total_requests, 2);
     assert_eq!(summary.success_rate, 100.0);
 
@@ -1741,7 +1743,10 @@ fn test_get_session_usage_summary_counts_only_session_log_rows() -> Result<(), A
 #[test]
 fn test_get_first_usage_date_spans_rollups_and_logs() -> Result<(), AppError> {
     let db = Database::memory()?;
-    assert_eq!(db.get_first_usage_date(None, None, None)?, None);
+    assert_eq!(
+        db.get_first_usage_date(None, None, None, None, None, None)?,
+        None
+    );
 
     {
         let conn = lock_conn!(db.conn);
@@ -1786,25 +1791,29 @@ fn test_get_first_usage_date_spans_rollups_and_logs() -> Result<(), AppError> {
     }
 
     assert_eq!(
-        db.get_first_usage_date(None, None, None)?.as_deref(),
-        Some("2023-12-31")
-    );
-    assert_eq!(
-        db.get_first_usage_date(Some("claude"), None, None)?
+        db.get_first_usage_date(None, None, None, None, None, None)?
             .as_deref(),
         Some("2023-12-31")
     );
     assert_eq!(
-        db.get_first_usage_date(Some("codex"), None, None)?
+        db.get_first_usage_date(Some("claude"), None, None, None, None, None)?
+            .as_deref(),
+        Some("2023-12-31")
+    );
+    assert_eq!(
+        db.get_first_usage_date(Some("codex"), None, None, None, None, None)?
             .as_deref(),
         Some("2025-01-02")
     );
     assert_eq!(
-        db.get_first_usage_date(None, None, Some("claude-3"))?
+        db.get_first_usage_date(None, None, None, None, Some("claude-3"), None)?
             .as_deref(),
         Some("2023-12-31")
     );
-    assert_eq!(db.get_first_usage_date(Some("gemini"), None, None)?, None);
+    assert_eq!(
+        db.get_first_usage_date(Some("gemini"), None, None, None, None, None)?,
+        None
+    );
 
     Ok(())
 }
@@ -1882,7 +1891,16 @@ fn test_get_usage_summary_excludes_partial_rollup_boundary_days() -> Result<(), 
         )?;
     }
 
-    let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"), None, None)?;
+    let summary = db.get_usage_summary(
+        Some(start),
+        Some(end),
+        Some("claude"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     assert_eq!(summary.total_requests, 20);
     assert_eq!(summary.total_input_tokens, 2000);
     assert_eq!(summary.total_output_tokens, 1000);
@@ -2047,38 +2065,76 @@ fn test_provider_and_model_filters_cover_detail_and_rollup() -> Result<(), AppEr
     }
 
     // ① 汇总按 Provider 展示名过滤：明细 + rollup 都命中。
-    let packy = db.get_usage_summary(None, None, None, Some("Packy"), None)?;
+    let packy = db.get_usage_summary(None, None, None, None, None, Some("Packy"), None, None)?;
     assert_eq!(packy.total_requests, 7, "a-1 + a-2 + rollup 5");
 
     // ② 汇总按模型过滤（有效计价模型口径）。
-    let deepseek = db.get_usage_summary(None, None, None, None, Some("deepseek-v3"))?;
+    let deepseek = db.get_usage_summary(
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("deepseek-v3"),
+        None,
+    )?;
     assert_eq!(deepseek.total_requests, 8, "b-1 + rollup 7");
 
     // ③ pricing_model 优先于 model：alias-model 查不到，real-model 查得到。
-    let by_alias = db.get_usage_summary(None, None, None, None, Some("alias-model"))?;
+    let by_alias = db.get_usage_summary(
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("alias-model"),
+        None,
+    )?;
     assert_eq!(by_alias.total_requests, 0);
-    let by_real = db.get_usage_summary(None, None, None, None, Some("real-model"))?;
+    let by_real =
+        db.get_usage_summary(None, None, None, None, None, None, Some("real-model"), None)?;
     assert_eq!(by_real.total_requests, 1);
 
     // ④ 会话占位行可按可读名选中。
-    let session = db.get_usage_summary(None, None, None, Some("Claude (Session)"), None)?;
+    let session = db.get_usage_summary(
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("Claude (Session)"),
+        None,
+        None,
+    )?;
     assert_eq!(session.total_requests, 1);
 
     // ⑤ Provider 统计 + 模型过滤：只剩 DeepSeek 一行。
-    let provider_stats = db.get_provider_stats(None, None, None, None, Some("deepseek-v3"))?;
+    let provider_stats = db.get_provider_stats(
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some("deepseek-v3"),
+        None,
+    )?;
     assert_eq!(provider_stats.len(), 1);
     assert_eq!(provider_stats[0].provider_name, "DeepSeek");
     assert_eq!(provider_stats[0].request_count, 8);
 
     // ⑥ 模型统计 + Provider 过滤：只剩 Packy 名下的模型。
-    let model_stats = db.get_model_stats(None, None, None, Some("Packy"), None)?;
+    let model_stats =
+        db.get_model_stats(None, None, None, None, None, Some("Packy"), None, None)?;
     let models: Vec<&str> = model_stats.iter().map(|m| m.model.as_str()).collect();
     assert!(models.contains(&"claude-sonnet-4-6"));
     assert!(models.contains(&"real-model"));
     assert!(!models.contains(&"deepseek-v3"));
 
     // ⑦ 分应用汇总（Hero 卡片数据源）同样受过滤影响。
-    let by_app = db.get_usage_summary_by_app(None, None, Some("Packy"), None)?;
+    let by_app = db.get_usage_summary_by_app(None, None, None, None, Some("Packy"), None, None)?;
     assert_eq!(by_app.len(), 1);
     assert_eq!(by_app[0].app_type, "claude");
     assert_eq!(by_app[0].summary.total_requests, 7);
@@ -2086,7 +2142,16 @@ fn test_provider_and_model_filters_cover_detail_and_rollup() -> Result<(), AppEr
     // ⑧ 趋势（>24h 走天分桶 + rollup 分支）。
     let t_start = local_ts(2026, 6, 8, 0, 0, 0);
     let t_end = local_ts(2026, 6, 10, 23, 59, 0);
-    let trends = db.get_daily_trends(Some(t_start), Some(t_end), None, Some("Packy"), None)?;
+    let trends = db.get_daily_trends(
+        Some(t_start),
+        Some(t_end),
+        None,
+        None,
+        None,
+        Some("Packy"),
+        None,
+        None,
+    )?;
     let total_req: u64 = trends.iter().map(|d| d.request_count).sum();
     assert_eq!(total_req, 7, "明细 2 + rollup 5");
 
@@ -2098,8 +2163,11 @@ fn test_provider_and_model_filters_cover_detail_and_rollup() -> Result<(), AppEr
         Some(h_start),
         Some(h_end),
         None,
+        None,
+        None,
         Some("Packy"),
         Some("claude-sonnet-4-6"),
+        None,
     )?;
     let hourly_req: u64 = hourly.iter().map(|d| d.request_count).sum();
     assert_eq!(hourly_req, 1, "仅 a-1 命中（a-2 计价模型不同）");
@@ -2173,7 +2241,16 @@ fn test_get_usage_summary_includes_end_day_rollup_for_minute_precision_end_time(
         )?;
     }
 
-    let summary = db.get_usage_summary(Some(start), Some(end), Some("claude"), None, None)?;
+    let summary = db.get_usage_summary(
+        Some(start),
+        Some(end),
+        Some("claude"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     assert_eq!(summary.total_requests, 30);
     assert_eq!(summary.total_input_tokens, 3000);
     assert_eq!(summary.total_output_tokens, 1500);
@@ -2294,7 +2371,7 @@ fn test_effective_usage_dedup_prefers_proxy_for_session_sources() -> Result<(), 
         )?;
     }
 
-    let summary = db.get_usage_summary(None, None, None, None, None)?;
+    let summary = db.get_usage_summary(None, None, None, None, None, None, None, None)?;
     assert_eq!(summary.total_requests, 4);
     // codex-proxy contributes 100-10=90; gemini-proxy contributes 200-30=170
     // (both cache-inclusive providers). claude-proxy=300, codex-session-only=50.
@@ -2309,10 +2386,10 @@ fn test_effective_usage_dedup_prefers_proxy_for_session_sources() -> Result<(), 
     let expected_hit_rate = 60.0_f64 / 682.0_f64;
     assert!((summary.cache_hit_rate - expected_hit_rate).abs() < 1e-9);
 
-    let trends = db.get_daily_trends(Some(0), Some(40_000), None, None, None)?;
+    let trends = db.get_daily_trends(Some(0), Some(40_000), None, None, None, None, None, None)?;
     assert_eq!(trends.iter().map(|stat| stat.request_count).sum::<u64>(), 4);
 
-    let provider_stats = db.get_provider_stats(None, None, None, None, None)?;
+    let provider_stats = db.get_provider_stats(None, None, None, None, None, None, None, None)?;
     assert_eq!(
         provider_stats
             .iter()
@@ -2345,7 +2422,7 @@ fn test_effective_usage_dedup_prefers_proxy_for_session_sources() -> Result<(), 
         .iter()
         .any(|stat| stat.provider_id == "_session"));
 
-    let model_stats = db.get_model_stats(None, None, None, None, None)?;
+    let model_stats = db.get_model_stats(None, None, None, None, None, None, None, None)?;
     assert_eq!(
         model_stats
             .iter()
@@ -2530,7 +2607,7 @@ fn test_effective_usage_dedup_keeps_non_matching_session_rows() -> Result<(), Ap
         )?;
     }
 
-    let summary = db.get_usage_summary(None, None, None, None, None)?;
+    let summary = db.get_usage_summary(None, None, None, None, None, None, None, None)?;
     assert_eq!(summary.total_requests, 9);
 
     let logs = db.get_request_logs(&LogFilters::default(), 0, 10)?;
@@ -2646,7 +2723,7 @@ fn test_get_model_stats() -> Result<(), AppError> {
         )?;
     }
 
-    let stats = db.get_model_stats(None, None, None, None, None)?;
+    let stats = db.get_model_stats(None, None, None, None, None, None, None, None)?;
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].model, "claude-3-sonnet");
     assert_eq!(stats[0].request_count, 1);
@@ -2686,7 +2763,7 @@ fn test_get_model_stats_success_rate_and_speed_per_model() -> Result<(), AppErro
         insert("slow-a", "slow", 400, 8_000, None, 200, "session_log")?;
     }
 
-    let stats = db.get_model_stats(None, None, None, None, None)?;
+    let stats = db.get_model_stats(None, None, None, None, None, None, None, None)?;
     let fast = stats.iter().find(|s| s.model == "fast").expect("fast");
     assert_eq!(fast.request_count, 2);
     assert!((fast.success_rate - 50.0).abs() < f32::EPSILON);
@@ -2755,7 +2832,7 @@ fn test_stats_first_token_median_only_counts_successful_proxy_streams() -> Resul
         insert("f", "p3", "m3", None, 200, "proxy")?;
     }
 
-    let providers = db.get_provider_stats(None, None, None, None, None)?;
+    let providers = db.get_provider_stats(None, None, None, None, None, None, None, None)?;
     let median_of = |id: &str| {
         providers
             .iter()
@@ -2772,7 +2849,7 @@ fn test_stats_first_token_median_only_counts_successful_proxy_streams() -> Resul
     // 会话日志推出来的首字与失败请求（err, status 500）都不算精确速度：只计 a、b、c 三条
     assert_eq!(p1.speed_output_tokens, 1_500);
 
-    let models = db.get_model_stats(None, None, None, None, None)?;
+    let models = db.get_model_stats(None, None, None, None, None, None, None, None)?;
     let median_of = |m: &str| {
         models
             .iter()
@@ -2785,7 +2862,16 @@ fn test_stats_first_token_median_only_counts_successful_proxy_streams() -> Resul
     assert_eq!(median_of("m3"), None);
 
     // 带筛选条件时 WHERE 要接上，不能拼出两个 WHERE
-    let filtered = db.get_provider_stats(None, None, Some("codex"), None, Some("m2"))?;
+    let filtered = db.get_provider_stats(
+        None,
+        None,
+        Some("codex"),
+        None,
+        None,
+        None,
+        Some("m2"),
+        None,
+    )?;
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].first_token_median_ms, Some(2_000));
 
@@ -2816,7 +2902,16 @@ fn test_get_provider_stats_with_time_filter() -> Result<(), AppError> {
         )?;
     }
 
-    let stats = db.get_provider_stats(Some(1500), Some(2500), Some("claude"), None, None)?;
+    let stats = db.get_provider_stats(
+        Some(1500),
+        Some(2500),
+        Some("claude"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].provider_id, "p1");
     assert_eq!(stats[0].app_type, "claude");
@@ -2888,7 +2983,7 @@ fn test_get_provider_stats_preserves_app_type_identity_across_apps() -> Result<(
     }
 
     // Folded query for "claude" matches both claude and claude-desktop
-    let stats = db.get_provider_stats(None, None, Some("claude"), None, None)?;
+    let stats = db.get_provider_stats(None, None, Some("claude"), None, None, None, None, None)?;
     assert_eq!(stats.len(), 2);
 
     let claude_stat = stats
@@ -2940,7 +3035,7 @@ fn test_get_provider_stats_speed_sums_only_eligible_requests() -> Result<(), App
         insert("burst", 500, 1_050, Some(1_000))?;
     }
 
-    let stats = db.get_provider_stats(None, None, None, None, None)?;
+    let stats = db.get_provider_stats(None, None, None, None, None, None, None, None)?;
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].request_count, 6);
     assert_eq!(stats[0].speed_output_tokens, 1_300);
@@ -3072,7 +3167,7 @@ fn test_speed_sums_skip_failed_requests_and_bursts() -> Result<(), AppError> {
         )?;
     }
 
-    let providers = db.get_provider_stats(None, None, None, None, None)?;
+    let providers = db.get_provider_stats(None, None, None, None, None, None, None, None)?;
     let p1 = providers.iter().find(|s| s.provider_id == "p1").unwrap();
     assert_eq!(p1.speed_output_tokens, 1_040);
     assert_eq!(p1.speed_generation_ms, 126_600);
@@ -3084,7 +3179,7 @@ fn test_speed_sums_skip_failed_requests_and_bursts() -> Result<(), AppError> {
     assert_eq!(p2.est_speed_output_tokens, 2_240);
     assert_eq!(p2.est_speed_duration_ms, 140_000);
 
-    let models = db.get_model_stats(None, None, None, None, None)?;
+    let models = db.get_model_stats(None, None, None, None, None, None, None, None)?;
     let m1 = models.iter().find(|s| s.model == "m1").unwrap();
     assert_eq!(m1.speed_output_tokens, 1_040);
     assert_eq!(m1.speed_generation_ms, 126_600);
@@ -3123,7 +3218,7 @@ fn test_get_provider_stats_estimated_speed_sums_session_rows() -> Result<(), App
         insert("too-fast", 800, 900, "session_log")?;
     }
 
-    let stats = db.get_provider_stats(None, None, None, None, None)?;
+    let stats = db.get_provider_stats(None, None, None, None, None, None, None, None)?;
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].est_speed_output_tokens, 2_200);
     assert_eq!(stats[0].est_speed_duration_ms, 25_000);
@@ -3203,7 +3298,7 @@ fn test_agy_session_includes_first_token_in_speed_duration() -> Result<(), AppEr
         )?;
     }
 
-    let providers = db.get_provider_stats(None, None, None, None, None)?;
+    let providers = db.get_provider_stats(None, None, None, None, None, None, None, None)?;
     let agy_provider = providers
         .iter()
         .find(|s| s.provider_id == "_agy_session")
@@ -3216,7 +3311,7 @@ fn test_agy_session_includes_first_token_in_speed_duration() -> Result<(), AppEr
     assert_eq!(agy_provider.est_speed_duration_ms, 100_000);
     assert_eq!(agy_provider.est_first_token_median_ms, Some(68_175));
 
-    let models = db.get_model_stats(None, None, None, None, None)?;
+    let models = db.get_model_stats(None, None, None, None, None, None, None, None)?;
     let neon = models
         .iter()
         .find(|s| s.model == "gemini-4-neon")
@@ -3254,7 +3349,8 @@ fn test_get_provider_stats_labels_opencode_session_provider() -> Result<(), AppE
         )?;
     }
 
-    let stats = db.get_provider_stats(None, None, Some("opencode"), None, None)?;
+    let stats =
+        db.get_provider_stats(None, None, Some("opencode"), None, None, None, None, None)?;
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].provider_id, "_opencode_session");
     assert_eq!(stats[0].provider_name, "OpenCode (Session)");
@@ -3335,7 +3431,16 @@ fn test_get_provider_stats_excludes_partial_rollup_boundary_days() -> Result<(),
         )?;
     }
 
-    let stats = db.get_provider_stats(Some(start), Some(end), Some("claude"), None, None)?;
+    let stats = db.get_provider_stats(
+        Some(start),
+        Some(end),
+        Some("claude"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].provider_id, "p-rollup");
     assert_eq!(stats[0].request_count, 8);
@@ -3374,7 +3479,16 @@ fn test_get_daily_trends_respects_shorter_than_24_hours() -> Result<(), AppError
         )?;
     }
 
-    let stats = db.get_daily_trends(Some(0), Some(15 * 60 * 60), Some("claude"), None, None)?;
+    let stats = db.get_daily_trends(
+        Some(0),
+        Some(15 * 60 * 60),
+        Some("claude"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     assert_eq!(stats.len(), 15);
     assert_eq!(stats[3].request_count, 1);
 
@@ -3450,7 +3564,16 @@ fn test_get_daily_trends_groups_ranges_longer_than_24_hours_by_local_day() -> Re
         )?;
     }
 
-    let stats = db.get_daily_trends(Some(start), Some(end), Some("claude"), None, None)?;
+    let stats = db.get_daily_trends(
+        Some(start),
+        Some(end),
+        Some("claude"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     assert_eq!(stats.len(), 3);
     assert_eq!(stats[0].request_count, 1);
     assert_eq!(stats[0].total_tokens, 150);
@@ -3524,10 +3647,10 @@ fn test_provider_and_model_stats_tokens_sum_to_summary_real_total() -> Result<()
         )?;
     }
 
-    let summary = db.get_usage_summary(None, None, None, None, None)?;
+    let summary = db.get_usage_summary(None, None, None, None, None, None, None, None)?;
     assert_eq!(summary.real_total_tokens, 6300 + 1050 + 940);
 
-    let providers = db.get_provider_stats(None, None, None, None, None)?;
+    let providers = db.get_provider_stats(None, None, None, None, None, None, None, None)?;
     let tokens_of = |id: &str| {
         providers
             .iter()
@@ -3539,7 +3662,7 @@ fn test_provider_and_model_stats_tokens_sum_to_summary_real_total() -> Result<()
     let provider_sum: u64 = providers.iter().map(|s| s.total_tokens).sum();
     assert_eq!(provider_sum, summary.real_total_tokens);
 
-    let models = db.get_model_stats(None, None, None, None, None)?;
+    let models = db.get_model_stats(None, None, None, None, None, None, None, None)?;
     let model_sum: u64 = models.iter().map(|s| s.total_tokens).sum();
     assert_eq!(model_sum, summary.real_total_tokens);
 
@@ -3619,7 +3742,16 @@ fn test_get_model_stats_excludes_partial_rollup_boundary_days() -> Result<(), Ap
         )?;
     }
 
-    let stats = db.get_model_stats(Some(start), Some(end), Some("claude"), None, None)?;
+    let stats = db.get_model_stats(
+        Some(start),
+        Some(end),
+        Some("claude"),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )?;
     assert_eq!(stats.len(), 1);
     assert_eq!(stats[0].model, "claude-3-haiku");
     assert_eq!(stats[0].request_count, 9);
@@ -4770,7 +4902,7 @@ fn test_range_filter_dedups_codex_request_model_alias() -> Result<(), AppError> 
         assert_eq!(kept, ["proxy", "session-other-alias"]);
     }
     assert_eq!(
-        db.get_usage_summary(None, None, Some("codex"), None, None)?
+        db.get_usage_summary(None, None, Some("codex"), None, None, None, None, None)?
             .total_requests,
         2
     );
@@ -4910,21 +5042,46 @@ fn test_flash_and_hydrogen_tiered_pricing_backfill_and_grouping() -> Result<(), 
         1
     );
 
-    let flash_stats =
-        db.get_model_stats(None, None, Some("agy"), None, Some("gemini-3.8-flash"))?;
+    let flash_stats = db.get_model_stats(
+        None,
+        None,
+        Some("agy"),
+        None,
+        None,
+        None,
+        Some("gemini-3.8-flash"),
+        None,
+    )?;
     assert_eq!(flash_stats.len(), 1);
     assert_eq!(flash_stats[0].model, "gemini-3.8-flash");
     assert_eq!(flash_stats[0].request_count, 2);
     assert_eq!(flash_stats[0].total_cost, "0.001650");
 
-    let hydrogen_stats =
-        db.get_model_stats(None, None, Some("agy"), None, Some("gemini-4-hydrogen"))?;
+    let hydrogen_stats = db.get_model_stats(
+        None,
+        None,
+        Some("agy"),
+        None,
+        None,
+        None,
+        Some("gemini-4-hydrogen"),
+        None,
+    )?;
     assert_eq!(hydrogen_stats.len(), 1);
     assert_eq!(hydrogen_stats[0].model, "gemini-4-hydrogen");
     assert_eq!(hydrogen_stats[0].request_count, 2);
     assert_eq!(hydrogen_stats[0].total_cost, "0.003300");
 
-    let neon_stats = db.get_model_stats(None, None, Some("agy"), None, Some("gemini-4-neon"))?;
+    let neon_stats = db.get_model_stats(
+        None,
+        None,
+        Some("agy"),
+        None,
+        None,
+        None,
+        Some("gemini-4-neon"),
+        None,
+    )?;
     assert_eq!(neon_stats.len(), 1);
     assert_eq!(neon_stats[0].model, "gemini-4-neon");
     assert_eq!(neon_stats[0].request_count, 1);
@@ -5005,7 +5162,7 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
         )?;
     }
 
-    let stats = db.get_model_stats(None, None, Some("agy"), None, None)?;
+    let stats = db.get_model_stats(None, None, Some("agy"), None, None, None, None, None)?;
     assert_eq!(stats.len(), 2);
     let stat = stats
         .iter()
@@ -5021,25 +5178,27 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
     assert_eq!(stat.first_token_median_ms, Some(515));
 
     let model = Some("gemini-4-argon");
-    let summary = db.get_usage_summary(None, None, Some("agy"), None, model)?;
+    let summary = db.get_usage_summary(None, None, Some("agy"), None, None, None, model, None)?;
     assert_eq!(summary.total_requests, 8);
     assert_eq!(summary.total_cost, "26.000000");
     assert_eq!(
-        db.get_usage_summary_by_app(None, None, None, model)?[0]
+        db.get_usage_summary_by_app(None, None, None, None, None, model, None)?[0]
             .summary
             .total_requests,
         8
     );
     assert_eq!(
-        db.get_provider_stats(None, None, Some("agy"), None, model)?[0].request_count,
+        db.get_provider_stats(None, None, Some("agy"), None, None, None, model, None)?[0]
+            .request_count,
         8
     );
     assert_eq!(
-        db.get_model_stats(None, None, Some("agy"), None, model)?[0].request_count,
+        db.get_model_stats(None, None, Some("agy"), None, None, None, model, None)?[0]
+            .request_count,
         8
     );
     assert_eq!(
-        db.get_first_usage_date(Some("agy"), None, model)?
+        db.get_first_usage_date(Some("agy"), None, None, None, model, None)?
             .as_deref(),
         Some("2026-06-08")
     );
@@ -5048,10 +5207,22 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
         Some(ts + 1),
         Some("agy"),
         None,
+        None,
+        None,
         model,
+        None,
     )?;
     assert_eq!(trends.iter().map(|t| t.request_count).sum::<u64>(), 8);
-    let hourly = db.get_daily_trends(Some(ts - 3600), Some(ts + 1), Some("agy"), None, model)?;
+    let hourly = db.get_daily_trends(
+        Some(ts - 3600),
+        Some(ts + 1),
+        Some("agy"),
+        None,
+        None,
+        None,
+        model,
+        None,
+    )?;
     assert_eq!(hourly.iter().map(|t| t.request_count).sum::<u64>(), 6);
     let logs = db.get_request_logs(
         &LogFilters {
@@ -5072,7 +5243,10 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
         None,
         Some("agy"),
         None,
+        None,
+        None,
         Some("models/gemini-3.8-flash"),
+        None,
     )?;
     assert_eq!(prefixed.len(), 1);
     assert_eq!(prefixed[0].model, "models/gemini-3.8-flash");
@@ -5107,6 +5281,9 @@ fn app_and_pricing_filters_use_matching_indexes() -> Result<(), AppError> {
         app_type: Some("claude"),
         provider_name: None,
         model: None,
+        provider_app_type: None,
+        provider_id: None,
+        project_keys: None,
         pricing: OnceCell::new(),
     };
     let mut conditions = SqlWhere::default();
@@ -5190,5 +5367,83 @@ fn pricing_snapshot_matches_sql_and_refreshes_after_mutations() -> Result<(), Ap
             .0,
         "9"
     );
+    Ok(())
+}
+
+#[test]
+fn test_provider_id_filter_survives_rename() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let detail_ts = local_ts(2026, 6, 10, 12, 0, 0);
+
+    {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config) VALUES
+                 ('prov-a', 'claude', 'Packy v2', '{}')",
+            [],
+        )?;
+        insert_usage_log(
+            &conn, "old-1", "claude", "prov-a", "m1", "proxy", detail_ts, 10, 1, 0, 0, 200, "1.0",
+        )?;
+        insert_usage_log(
+            &conn,
+            "new-1",
+            "claude",
+            "prov-a",
+            "m1",
+            "proxy",
+            detail_ts + 60,
+            10,
+            1,
+            0,
+            0,
+            200,
+            "1.0",
+        )?;
+        // 改名前的行快照仍是旧名，改名后的行快照是新名。
+        conn.execute(
+                "UPDATE proxy_request_logs SET provider_name_snapshot = 'Packy' WHERE request_id = 'old-1'",
+                [],
+            )?;
+        conn.execute(
+                "UPDATE proxy_request_logs SET provider_name_snapshot = 'Packy v2' WHERE request_id = 'new-1'",
+                [],
+            )?;
+    }
+
+    // 按 provider_id 过滤：改名前后两行都命中。
+    let by_id = db.get_usage_summary(
+        None,
+        None,
+        None,
+        Some("claude"),
+        Some("prov-a"),
+        None,
+        None,
+        None,
+    )?;
+    assert_eq!(
+        by_id.total_requests, 2,
+        "provider_id 过滤应覆盖改名前后所有行"
+    );
+
+    // 请求日志列表与下拉同口径：provider_id 命中两行。
+    let logs = db.get_request_logs(
+        &LogFilters {
+            provider_app_type: Some("claude".to_string()),
+            provider_id: Some("prov-a".to_string()),
+            ..Default::default()
+        },
+        0,
+        10,
+    )?;
+    assert_eq!(logs.total, 2);
+
+    // 展示名统一取当前名，而不是各行各自的历史快照。
+    assert!(logs
+        .data
+        .iter()
+        .all(|log| log.provider_name.as_deref() == Some("Packy v2")));
+
     Ok(())
 }

@@ -5125,3 +5125,247 @@ fn test_latency_does_not_inherit_the_start_of_an_aborted_request() {
 
     assert_eq!(parsed_latencies(&lines), vec![Some(30_090), Some(10_100)]);
 }
+
+#[test]
+fn backfill_restores_project_for_proxy_only_history_after_old_marker() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let temp = tempdir().unwrap();
+    let archived = temp.path().join("archived_sessions");
+    fs::create_dir_all(&archived).unwrap();
+    let mut meta = session_meta(PARENT_ID);
+    meta["payload"]["cwd"] = serde_json::json!("/workspace/demo");
+    write_jsonl(&rollout_path(&archived, PARENT_ID), &[meta]);
+    {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('codex_usage_attribution_backfilled', '1')",
+            [],
+        )?;
+        conn.execute(
+                "INSERT INTO proxy_request_logs
+                 (request_id, provider_id, app_type, model, latency_ms, status_code,
+                  created_at, session_id)
+                 VALUES ('proxy-old', 'provider-a', 'codex', 'gpt-5.5', 1, 200, 100, 'codex_' || ?1)",
+                [PARENT_ID],
+            )?;
+    }
+    let stats = backfill_codex_usage_attribution_from_dir(&db, temp.path())?;
+    assert_eq!(stats.files_scanned, 1);
+    assert!(db.session_project("codex", PARENT_ID)?.is_some());
+    let row: (String, String) = lock_conn!(db.conn).query_row(
+        "SELECT project_key, provider_id FROM proxy_request_logs WHERE request_id = 'proxy-old'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(row, ("/workspace/demo".into(), "provider-a".into()));
+    assert_eq!(
+        backfill_codex_usage_attribution_from_dir(&db, temp.path())?.files_scanned,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn backfill_restores_codex_project_and_provider_from_session_meta() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let temp = tempdir().unwrap();
+    let archived = temp.path().join("archived_sessions");
+    fs::create_dir_all(&archived).unwrap();
+    let repo = temp.path().join("my-project");
+    fs::create_dir_all(&repo).unwrap();
+
+    let openai_id = "00000000-0000-4000-8000-0000000000a1";
+    let custom_id = "00000000-0000-4000-8000-0000000000a2";
+    let provider_a_id = "00000000-0000-4000-8000-0000000000a3";
+    let local_id = "00000000-0000-4000-8000-0000000000a4";
+
+    let meta = |id: &str, provider: &str| {
+        serde_json::json!({
+            "timestamp": "2026-10-20T00:00:00Z",
+            "type": "session_meta",
+            "payload": {
+                "id": id,
+                "cwd": repo.to_string_lossy().into_owned(),
+                "model_provider": provider
+            }
+        })
+    };
+    write_jsonl(
+        &archived.join(format!("rollout-{openai_id}.jsonl")),
+        &[meta(openai_id, "openai")],
+    );
+    write_jsonl(
+        &archived.join(format!("rollout-{custom_id}.jsonl")),
+        &[meta(custom_id, "custom")],
+    );
+    write_jsonl(
+        &archived.join(format!("rollout-{provider_a_id}.jsonl")),
+        &[meta(provider_a_id, "provider-a")],
+    );
+    write_jsonl(
+        &archived.join(format!("rollout-{local_id}.jsonl")),
+        &[meta(local_id, "codex_local_access")],
+    );
+
+    {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config)
+                 VALUES ('provider-a', 'codex', 'Provider A', '{}')",
+            [],
+        )?;
+        for id in [openai_id, custom_id, provider_a_id, local_id] {
+            conn.execute(
+                    "INSERT INTO proxy_request_logs
+                        (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, session_id, data_source)
+                     VALUES (?1, '_codex_session', 'codex', 'gpt-5.4', 100, 200, 1000, ?2, 'codex_session')",
+                    rusqlite::params![format!("r-{id}"), id],
+                )?;
+        }
+    }
+
+    let stats = backfill_codex_usage_attribution_from_dir(&db, temp.path())?;
+    assert_eq!(stats.rows_updated, 4);
+
+    let conn = lock_conn!(db.conn);
+    let provider_for = |id: &str| -> String {
+        conn.query_row(
+            "SELECT provider_id FROM proxy_request_logs WHERE session_id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(
+        provider_for(openai_id),
+        crate::database::CODEX_OFFICIAL_PROVIDER_ID
+    );
+    assert_eq!(provider_for(provider_a_id), "provider-a");
+    assert_eq!(provider_for(custom_id), "_codex_custom");
+    assert_eq!(provider_for(local_id), "_codex_local_access");
+
+    let project_name: String = conn.query_row(
+        "SELECT project_name FROM proxy_request_logs WHERE session_id = ?1",
+        rusqlite::params![openai_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(project_name, "my-project");
+    Ok(())
+}
+
+#[test]
+fn third_party_codex_session_attributes_to_activation_provider() -> Result<(), AppError> {
+    use crate::database::lock_conn;
+
+    let db = Database::memory()?;
+    {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO providers (id, app_type, name, settings_config)
+                 VALUES ('p1', 'codex', 'Provider One', '{}'),
+                        ('p2', 'codex', 'Provider Two', '{}')",
+            [],
+        )?;
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let timestamp = chrono::DateTime::from_timestamp(now, 0)
+        .expect("timestamp")
+        .to_rfc3339();
+    {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+                "INSERT INTO provider_activations
+                    (app_type, provider_id, mode, effective_at_ms, source, config_fingerprint, created_at)
+                 VALUES ('codex', 'p1', 'direct', ?1, 'switch', 'fp1', ?2)",
+                rusqlite::params![(now - 3600) * 1000, now],
+            )?;
+    }
+
+    let delta = DeltaTokens {
+        input: 100,
+        cached_input: 40,
+        cache_write_input: 0,
+        output: 20,
+    };
+    let mut suspected = 0;
+    assert!(insert_codex_session_entry(
+        &db,
+        "codex-session:attribution-1",
+        &delta,
+        "gpt-5.1-codex",
+        Some("session-attribution"),
+        Some(&timestamp),
+        &mut suspected,
+    )?);
+
+    let conn = lock_conn!(db.conn);
+    let (provider_id, source, confidence, reason): (String, String, String, String) = conn
+        .query_row(
+            "SELECT provider_id, attribution_source, attribution_confidence, attribution_reason
+                 FROM proxy_request_logs WHERE request_id = 'codex-session:attribution-1'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+    assert_eq!(provider_id, "p1");
+    assert_eq!(source, "activation");
+    assert_eq!(confidence, "high");
+    assert_eq!(reason, "");
+    Ok(())
+}
+
+#[test]
+fn backfill_session_lookup_is_indexed_without_statistics() -> Result<(), AppError> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let db = Database::memory()?;
+    let conn = lock_conn!(db.conn);
+    conn.execute(
+        "INSERT INTO proxy_request_logs
+        (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, session_key)
+        VALUES ('target', 'kept', 'codex', 'model', 1, 200, 100, 'target-session')",
+        [],
+    )?;
+    let operations = || -> Result<usize, AppError> {
+        let count = Arc::new(AtomicUsize::new(0));
+        let observed = count.clone();
+        conn.progress_handler(
+            1,
+            Some(move || {
+                observed.fetch_add(1, Ordering::Relaxed);
+                false
+            }),
+        );
+        let range: (i64, i64) =
+            conn.query_row(CODEX_SESSION_TIME_RANGE_SQL, ["target-session"], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })?;
+        conn.progress_handler(0, None::<fn() -> bool>);
+        assert_eq!(range, (100, 100));
+        Ok(count.load(Ordering::Relaxed))
+    };
+    let before = operations()?;
+    conn.execute_batch(
+        "WITH RECURSIVE rows(n) AS (
+        VALUES(1) UNION ALL SELECT n+1 FROM rows WHERE n<5000
+    ) INSERT INTO proxy_request_logs
+        (request_id, provider_id, app_type, model, latency_ms, status_code, created_at, session_key)
+        SELECT 'unrelated-' || n, 'kept', 'codex', 'model', 1, 200, n, 'other-' || n FROM rows;",
+    )?;
+    let after = operations()?;
+    assert!(
+        after <= before + 10,
+        "unrelated rows must not expand each session lookup: {before} -> {after}"
+    );
+    let mut plan = conn.prepare(&format!(
+        "EXPLAIN QUERY PLAN {CODEX_SESSION_TIME_RANGE_SQL}"
+    ))?;
+    let details = plan
+        .query_map(["target-session"], |row| row.get::<_, String>(3))?
+        .collect::<Result<Vec<_>, _>>()?
+        .join("\n");
+    assert!(
+        details.contains("idx_request_logs_session_key"),
+        "{details}"
+    );
+    Ok(())
+}

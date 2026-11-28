@@ -2733,7 +2733,8 @@
       "label": "세부 정보",
       "providers": "공급자",
       "models": "모델",
-      "pricing": "요금"
+      "pricing": "요금",
+      "projects": "프로젝트"
     },
     "app": "앱",
     "speed": "속도",
@@ -2840,6 +2841,80 @@
       "short": "DeepSeek 계정",
       "label": "{{app}} · DeepSeek 계정(OAuth)",
       "hint": "DeepSeek 계정으로 로그인하여 보낸 요청의 사용량을 세션 로그에서 읽습니다. Web과 Desktop이 로그인 정보를 공유하므로 사용량을 합산합니다"
+    },
+    "project": "프로젝트",
+    "projectFilter": {
+      "selected": "프로젝트 {{count}}개 선택됨",
+      "label": "프로젝트",
+      "title": "프로젝트별 필터",
+      "all": "모든 프로젝트",
+      "unknown": "식별되지 않은 프로젝트"
+    },
+    "projects": {
+      "apps": "앱",
+      "providers": "공급자",
+      "lastActive": "최근 활동",
+      "share": "비중"
+    },
+    "providers": {
+      "expandModels": "모델 비중 펼치기"
+    },
+    "share": {
+      "metricLabel": "비중 지표",
+      "metric": {
+        "tokens": "토큰",
+        "cost": "비용",
+        "requests": "요청",
+        "cache": "캐시"
+      },
+      "providers": "공급자 비중",
+      "providersAria": "이 프로젝트의 공급자 비중",
+      "models": "모델 비중",
+      "modelsAria": "모델 비중",
+      "modelsIn": "모델 비중 · {{provider}}",
+      "cacheHit": "캐시 적중률 {{rate}}",
+      "requestCount": "요청 {{value}}건",
+      "total": "합계",
+      "other": "기타",
+      "allProviders": "모든 공급자",
+      "requestCacheHit": "요청 {{value}}건 · 캐시 적중률 {{rate}}"
+    },
+    "cacheBreakdown": {
+      "models": "모델별 입력 비중",
+      "modelsIn": "모델별 입력 비중 · {{provider}}",
+      "providersInput": "공급자별 입력 비중",
+      "weightedRate": "가중 캐시 적중률",
+      "readOfInput": "캐시 읽기 {{read}} / 입력 {{input}}",
+      "help": "캐시 읽기 ÷ (새 입력 + 캐시 쓰기 + 캐시 읽기)를 토큰 수로 가중합니다. 출력은 제외하며, 입력이 없으면 —로 표시합니다. 누락된 데이터는 제외합니다.",
+      "read": "캐시 읽기",
+      "write": "캐시 쓰기",
+      "fresh": "새 입력",
+      "order": "입력량이 많은 순",
+      "missing": "캐시 데이터 없음",
+      "excluded": "캐시 데이터가 누락된 모델 {{count}}개를 합계에서 제외했습니다",
+      "loadError": "사용량을 불러올 수 없습니다"
+    },
+    "attributionSource": "귀속 근거",
+    "attributionConfidence": "귀속 신뢰도",
+    "attributionReason": "귀속되지 않은 이유",
+    "quality": {
+      "summary": "공급자 미식별 요청 {{provider}}건, 프로젝트 미식별 요청 {{project}}건"
+    },
+    "loading": "불러오는 중…",
+    "attribution": {
+      "source": {
+        "unknown": "알 수 없음",
+        "proxy": "프록시 로그",
+        "session_meta": "세션 메타데이터",
+        "activation": "공급자 활성화 이력",
+        "dedup": "중복 제거 시 보완",
+        "pre_migration_no_evidence": "마이그레이션 이전 근거 없음"
+      },
+      "confidence": {
+        "unknown": "알 수 없음",
+        "exact": "정확",
+        "high": "높음"
+      }
     }
   },
   "usageScript": {

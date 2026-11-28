@@ -21,7 +21,7 @@ use crate::proxy::usage::parser::TokenUsage;
 use crate::services::session_usage::{
     cost_columns, metadata_modified_nanos, update_sync_state, SessionSyncResult,
 };
-use crate::services::usage_stats::{find_model_pricing, has_matching_proxy_usage_log, DedupKey};
+use crate::services::usage_stats::{find_model_pricing, DedupKey};
 use crate::session_manager::providers::gemini::{is_session_file, parse_session_document};
 use rusqlite::OptionalExtension;
 use rust_decimal::Decimal;
@@ -164,6 +164,26 @@ fn sync_single_gemini_file(
         .get("sessionId")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let session_key = session_id
+        .as_deref()
+        .map(|id| crate::services::usage_attribution::normalize_session_key("gemini", id))
+        .unwrap_or_default();
+    let project = value
+        .get("cwd")
+        .or_else(|| value.get("projectRoot"))
+        .and_then(|v| v.as_str())
+        .and_then(|cwd| {
+            crate::services::usage_attribution::project_from_cwd(
+                "gemini",
+                &session_key,
+                cwd,
+                "session_meta",
+            )
+        });
+    if let Some(project) = project.as_ref() {
+        let conn = lock_conn!(db.conn);
+        crate::database::Database::upsert_session_project_on_conn(&conn, project)?;
+    }
 
     // 遍历 messages 数组
     let messages = match value.get("messages").and_then(|v| v.as_array()) {
@@ -213,6 +233,7 @@ fn sync_single_gemini_file(
             model,
             session_id.as_deref(),
             timestamp,
+            project.as_ref(),
         ) {
             Ok(true) => imported += 1,
             Ok(false) => skipped += 1,
@@ -247,6 +268,7 @@ fn insert_gemini_session_entry(
     model: &str,
     session_id: Option<&str>,
     timestamp: Option<&str>,
+    project: Option<&crate::services::usage_attribution::SessionProject>,
 ) -> Result<bool, AppError> {
     let mut conn = lock_conn!(db.conn);
     let tx = conn
@@ -375,12 +397,26 @@ fn insert_gemini_session_entry(
         cache_creation_tokens: 0,
         created_at,
     };
-    if has_matching_proxy_usage_log(&tx, &dedup_key)? {
+    if crate::services::usage_attribution::backfill_if_proxy_duplicate(&tx, &dedup_key, project)? {
         record_gemini_dedup_tombstone(&tx, request_id)?;
         tx.commit()
             .map_err(|e| AppError::Database(format!("提交 Gemini 会话日志事务失败: {e}")))?;
         return Ok(false);
     }
+    let attribution = crate::services::usage_attribution::resolve_provider_attribution(
+        &tx,
+        "gemini",
+        created_at,
+        created_at,
+        "_gemini_session",
+    )?;
+    let provider_name_snapshot =
+        crate::services::usage_attribution::provider_name_snapshot_on_conn(
+            &tx,
+            &attribution.provider_id,
+            "gemini",
+        )?
+        .unwrap_or_default();
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         compute_gemini_entry_costs(&tx, model, tokens.input, output_tokens, tokens.cached);
@@ -394,10 +430,12 @@ fn insert_gemini_session_entry(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            , project_key, project_name, project_path, session_key,
+            attribution_source, attribution_confidence, attribution_reason, provider_name_snapshot
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)",
         rusqlite::params![
             request_id,
-            "_gemini_session",   // provider_id
+            attribution.provider_id,
             "gemini",            // app_type
             model,
             model,               // request_model = model
@@ -419,7 +457,15 @@ fn insert_gemini_session_entry(
             1i64,                // is_streaming
             "1.0",               // cost_multiplier
             created_at,
-            GEMINI_DATA_SOURCE,  // data_source
+            "gemini_session",    // data_source
+            project.map(|p| p.project_key.as_str()).unwrap_or(""),
+            project.map(|p| p.project_name.as_str()).unwrap_or(""),
+            project.map(|p| p.project_path.as_str()).unwrap_or(""),
+            project.map(|p| p.session_key.as_str()).unwrap_or(""),
+            attribution.source,
+            attribution.confidence,
+            attribution.reason,
+            provider_name_snapshot,
         ],
     )
     .map_err(|e| AppError::Database(format!("插入 Gemini 会话日志失败: {e}")))?;
@@ -521,6 +567,7 @@ mod tests {
             "gemini-2.5-pro",
             Some("session-1"),
             Some("1970-01-01T00:16:45Z"),
+            None,
         )?;
         assert!(!inserted);
 
@@ -718,6 +765,7 @@ mod tests {
             "unknown",
             Some("sess-live"),
             Some("2026-04-10T12:00:00Z"),
+            None,
         )?);
 
         // Identical re-read is a no-op skip
@@ -728,6 +776,7 @@ mod tests {
             "unknown",
             Some("sess-live"),
             Some("2026-04-10T12:00:00Z"),
+            None,
         )?);
 
         // Updated token counters and resolved model update the retained row in place
@@ -744,6 +793,7 @@ mod tests {
             "gemini-2.5-pro",
             Some("sess-live"),
             Some("2026-04-10T12:00:00Z"),
+            None,
         )?);
 
         let conn = lock_conn!(db.conn);
@@ -828,6 +878,7 @@ mod tests {
                 "gemini-2.5-pro",
                 Some("legacy-sess"),
                 Some("2000-01-01T00:00:00Z"),
+                None,
             )?,
             "pruned legacy gemini_session row must not be re-imported"
         );
@@ -846,6 +897,7 @@ mod tests {
             "gemini-2.5-pro",
             Some("collision"),
             Some("2030-01-01T00:00:00Z"),
+            None,
         )?);
 
         let conn = lock_conn!(db.conn);

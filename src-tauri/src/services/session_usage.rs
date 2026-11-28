@@ -512,6 +512,112 @@ fn resolve_chain_start_ms(chain: &ChainNodes, first_parent: Option<uuid::Uuid>) 
     None
 }
 
+pub(crate) const CLAUDE_PROJECT_BACKFILL_FLAG: &str = "claude_usage_projects_backfilled_v1";
+
+#[derive(Debug, Default)]
+pub(crate) struct ClaudeProjectBackfillStats {
+    pub files_scanned: usize,
+    pub rows_updated: usize,
+}
+
+/// Restore retained gateway attribution from metadata only. Existing usage
+/// cursors stay at their offsets, so pruned token events are never re-imported.
+pub(crate) fn backfill_claude_usage_projects(
+    db: &Database,
+) -> Result<ClaudeProjectBackfillStats, AppError> {
+    backfill_claude_usage_projects_from_dir(db, &get_claude_config_dir().join("projects"))
+}
+
+fn backfill_claude_usage_projects_from_dir(
+    db: &Database,
+    projects_dir: &Path,
+) -> Result<ClaudeProjectBackfillStats, AppError> {
+    if db.get_setting(CLAUDE_PROJECT_BACKFILL_FLAG)?.is_some() {
+        return Ok(ClaudeProjectBackfillStats::default());
+    }
+    let rows_updated = db.backfill_claude_desktop_projects()?;
+    let pending: bool = {
+        let conn = lock_conn!(db.conn);
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM proxy_request_logs
+             WHERE app_type IN ('claude', 'claude-desktop') AND project_key = ''
+               AND session_key <> '' AND COALESCE(data_source, 'proxy') = 'proxy')",
+            [],
+            |row| row.get(0),
+        )?
+    };
+    if !pending {
+        db.set_setting(CLAUDE_PROJECT_BACKFILL_FLAG, "1")?;
+        return Ok(ClaudeProjectBackfillStats {
+            files_scanned: 0,
+            rows_updated,
+        });
+    }
+    if !projects_dir.exists() {
+        return Ok(ClaudeProjectBackfillStats {
+            files_scanned: 0,
+            rows_updated,
+        });
+    }
+    let files = collect_jsonl_files(projects_dir);
+    let mut projects = Vec::new();
+    for path in &files {
+        // Claude writes sessionId/cwd in its initial messages. Bound the
+        // metadata read; absent evidence remains unidentified.
+        let file = fs::File::open(path).map_err(|error| AppError::io(path, error))?;
+        let mut reader = BufReader::new(file.take(64 * 1024));
+        let mut session_id = None;
+        let mut line = Vec::new();
+        for _ in 0..128 {
+            line.clear();
+            if reader
+                .read_until(b'\n', &mut line)
+                .map_err(|error| AppError::io(path, error))?
+                == 0
+            {
+                break;
+            }
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if let Some(id) = value.get("sessionId").and_then(|value| value.as_str()) {
+                session_id = Some(id.to_owned());
+            }
+            if let (Some(id), Some(cwd)) = (
+                session_id.as_deref(),
+                value.get("cwd").and_then(|value| value.as_str()),
+            ) {
+                let key = crate::services::usage_attribution::normalize_session_key("claude", id);
+                if let Some(project) = crate::services::usage_attribution::project_from_cwd(
+                    "claude",
+                    &key,
+                    cwd,
+                    "session_meta",
+                ) {
+                    projects.push(project);
+                    break;
+                }
+            }
+        }
+    }
+    // File IO is complete before acquiring the database lock.
+    let conn = lock_conn!(db.conn);
+    let tx = conn.unchecked_transaction()?;
+    let mut rows_updated = rows_updated;
+    for project in &projects {
+        rows_updated += Database::upsert_session_project_on_conn(&tx, project)?;
+    }
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, '1')",
+        [CLAUDE_PROJECT_BACKFILL_FLAG],
+    )?;
+    tx.commit()?;
+    Ok(ClaudeProjectBackfillStats {
+        files_scanned: files.len(),
+        rows_updated,
+    })
+}
+
 /// 同步 Claude Code 会话日志到使用统计数据库
 pub(crate) fn sync_claude_session_logs(
     db: &Database,
@@ -848,6 +954,7 @@ fn sync_single_file(
     let mut read_error: Option<String> = None;
     let mut messages: HashMap<String, ParsedAssistantUsage> = HashMap::new();
     let mut current_session_id: Option<String> = None;
+    let mut current_project: Option<crate::services::usage_attribution::SessionProject> = None;
 
     loop {
         buf.clear();
@@ -882,6 +989,20 @@ fn sync_single_file(
         if current_session_id.is_none() {
             if let Some(sid) = value.get("sessionId").and_then(|v| v.as_str()) {
                 current_session_id = Some(sid.to_string());
+            }
+        }
+        if current_project.is_none() {
+            if let (Some(sid), Some(cwd)) = (
+                current_session_id.as_deref(),
+                value.get("cwd").and_then(|v| v.as_str()),
+            ) {
+                let key = crate::services::usage_attribution::normalize_session_key("claude", sid);
+                current_project = crate::services::usage_attribution::project_from_cwd(
+                    "claude",
+                    &key,
+                    cwd,
+                    "session_meta",
+                );
             }
         }
 
@@ -977,6 +1098,9 @@ fn sync_single_file(
     let tx = conn
         .unchecked_transaction()
         .map_err(|e| AppError::Database(format!("启动会话用量导入事务失败: {e}")))?;
+    if let Some(project) = current_project.as_ref() {
+        crate::database::Database::upsert_session_project_on_conn(&tx, project)?;
+    }
     // 只在这次持有连接锁的文件事务内复用定价（含未找到的模型）。
     // 下一文件/下一轮新建缓存，事务之间的定价更新或新增立即可见。
     let mut pricing_cache = SessionPricingCache::default();
@@ -1025,7 +1149,14 @@ fn sync_single_file(
                 })
             });
 
-        match upsert_session_log_entry_on_conn(&tx, &request_id, msg, timing, &mut pricing_cache) {
+        match upsert_session_log_entry_on_conn(
+            &tx,
+            &request_id,
+            msg,
+            timing,
+            current_project.as_ref(),
+            &mut pricing_cache,
+        ) {
             // 补全已有的行也算进 imported：数据变了，界面要跟着刷新
             Ok(SessionRowOutcome::Inserted | SessionRowOutcome::Updated) => imported += 1,
             Ok(SessionRowOutcome::Skipped) => skipped += 1,
@@ -1407,6 +1538,7 @@ fn upsert_session_log_entry_on_conn(
     request_id: &str,
     msg: &ParsedAssistantUsage,
     timing: Option<EstimatedTiming>,
+    project: Option<&crate::services::usage_attribution::SessionProject>,
     pricing_cache: &mut SessionPricingCache,
 ) -> Result<SessionRowOutcome, AppError> {
     let created_at = msg
@@ -1445,9 +1577,22 @@ fn upsert_session_log_entry_on_conn(
             pricing_cache,
         );
     }
-    if has_matching_proxy_usage_log(conn, &dedup_key)? {
+    if crate::services::usage_attribution::backfill_if_proxy_duplicate(conn, &dedup_key, project)? {
         return Ok(SessionRowOutcome::Skipped);
     }
+
+    // Claude 会话记录没有供应商卡片 ID，只能按请求时间点查激活时间线。
+    let start_s = created_at.saturating_sub(timing.map_or(0, |t| t.latency_ms) / 1000);
+    let attribution = crate::services::usage_attribution::resolve_provider_attribution(
+        conn, "claude", start_s, created_at, "_session",
+    )?;
+    let provider_name_snapshot =
+        crate::services::usage_attribution::provider_name_snapshot_on_conn(
+            conn,
+            &attribution.provider_id,
+            "claude",
+        )?
+        .unwrap_or_default();
 
     let [input_cost, output_cost, cache_read_cost, cache_creation_cost, total_cost] =
         session_costs(conn, msg, pricing_cache);
@@ -1459,11 +1604,13 @@ fn upsert_session_log_entry_on_conn(
             input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
-            provider_type, is_streaming, cost_multiplier, created_at, data_source
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24)",
+            provider_type, is_streaming, cost_multiplier, created_at, data_source,
+            project_key, project_name, project_path, session_key,
+            attribution_source, attribution_confidence, attribution_reason, provider_name_snapshot
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32)",
             rusqlite::params![
                 request_id,
-                "_session",         // provider_id: 标记为会话来源
+                attribution.provider_id,
                 "claude",           // app_type
                 msg.model,
                 msg.model,          // request_model = model
@@ -1486,6 +1633,14 @@ fn upsert_session_log_entry_on_conn(
                 "1.0",              // cost_multiplier
                 created_at,
                 "session_log",      // data_source
+                project.map(|p| p.project_key.as_str()).unwrap_or(""),
+                project.map(|p| p.project_name.as_str()).unwrap_or(""),
+                project.map(|p| p.project_path.as_str()).unwrap_or(""),
+                project.map(|p| p.session_key.as_str()).unwrap_or(""),
+                attribution.source,
+                attribution.confidence,
+                attribution.reason,
+                provider_name_snapshot,
             ],
         )
         .map_err(|e| AppError::Database(format!("插入会话日志失败: {e}")))?;
@@ -1645,7 +1800,7 @@ mod tests {
                 }
                 let id = format!("session:pricing-{model_index}-{index}");
                 assert_eq!(
-                    upsert_session_log_entry_on_conn(&tx, &id, &msg, None, &mut cache)?,
+                    upsert_session_log_entry_on_conn(&tx, &id, &msg, None, None, &mut cache)?,
                     SessionRowOutcome::Inserted
                 );
                 let stored: [String; 5] = tx.query_row(
@@ -1677,6 +1832,7 @@ mod tests {
                 &tx,
                 "session:pricing-0-0",
                 &completed,
+                None,
                 None,
                 &mut cache,
             )?,
@@ -1888,6 +2044,7 @@ mod tests {
                 "session:msg_1",
                 &msg,
                 None,
+                None,
                 &mut SessionPricingCache::default(),
             )?
         };
@@ -1987,6 +2144,97 @@ mod tests {
         let file = fs::OpenOptions::new().append(true).open(path).unwrap();
         file.set_times(fs::FileTimes::new().set_modified(later))
             .unwrap();
+    }
+
+    #[test]
+    fn retained_claude_projects_are_recovered_without_replaying_unchanged_usage(
+    ) -> Result<(), AppError> {
+        let db = Database::memory()?;
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repository");
+        fs::create_dir_all(&repo).unwrap();
+        let file = repo.join("shared.jsonl");
+        fs::write(
+            &file,
+            format!(
+                "{}\n{}\n",
+                serde_json::json!({"type":"user", "sessionId":"shared", "cwd":repo}),
+                assistant_line("already-pruned", 999),
+            ),
+        )
+        .unwrap();
+        let expected = crate::services::usage_attribution::project_from_cwd(
+            "claude",
+            "shared",
+            repo.to_str().unwrap(),
+            "session_meta",
+        )
+        .unwrap();
+        {
+            let conn = lock_conn!(db.conn);
+            // Only upstream schema28 columns are supplied: attribution columns
+            // have their upgrade defaults and no project index exists.
+            for (id, app, status) in [
+                ("success", "claude", 200),
+                ("failure", "claude-desktop", 500),
+            ] {
+                conn.execute(
+                    "INSERT INTO proxy_request_logs
+                     (request_id, provider_id, app_type, model, latency_ms, status_code,
+                      created_at, session_id, input_tokens, output_tokens, cache_read_tokens,
+                      cache_creation_tokens, total_cost_usd)
+                     VALUES (?1, 'kept-provider', ?2, 'model', 7, ?3, 100,
+                             'user_synthetic_session_shared', 123, 45, 6, 7, '0.0123')",
+                    rusqlite::params![id, app, status],
+                )?;
+            }
+            let metadata = fs::metadata(&file).unwrap();
+            update_claude_sync_state_on_conn(
+                &conn,
+                file.to_str().unwrap(),
+                metadata_modified_nanos(&metadata),
+                metadata.len() as i64,
+                None,
+            )?;
+        }
+        let retained = || -> Result<Vec<String>, AppError> {
+            let conn = lock_conn!(db.conn);
+            let mut statement = conn.prepare(
+                "SELECT json_array(request_id, session_id, provider_id, input_tokens, output_tokens,
+                        cache_read_tokens, cache_creation_tokens, total_cost_usd, status_code)
+                 FROM proxy_request_logs ORDER BY request_id",
+            )?;
+            let rows = statement.query_map([], |row| row.get(0))?;
+            Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        };
+        let before = retained()?;
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 0);
+        let stats = backfill_claude_usage_projects_from_dir(&db, temp.path())?;
+        assert_eq!((stats.files_scanned, stats.rows_updated), (1, 2));
+        assert_eq!(
+            retained()?,
+            before,
+            "metadata repair must preserve every usage field"
+        );
+        assert_eq!(
+            db.session_project("claude", "shared")?,
+            Some(expected.clone())
+        );
+        let matched: i64 = lock_conn!(db.conn).query_row(
+            "SELECT COUNT(*) FROM proxy_request_logs WHERE project_key = ?1 AND session_key = 'shared'",
+            [expected.project_key], |row| row.get(0),
+        )?;
+        assert_eq!(
+            matched, 2,
+            "successful and failed gateway rows enter the known project"
+        );
+        assert_eq!(
+            backfill_claude_usage_projects_from_dir(&db, temp.path())?.files_scanned,
+            0
+        );
+        assert_eq!(sync_with_cursor(&db, &file)?.imported, 0);
+        assert_eq!(retained()?, before);
+        Ok(())
     }
 
     #[test]

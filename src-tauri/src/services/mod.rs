@@ -46,6 +46,7 @@ pub mod subscription;
 pub mod subscription_agy;
 pub mod subscription_grok;
 pub mod sync_protocol;
+pub mod usage_attribution;
 pub mod usage_cache;
 pub(crate) mod usage_http;
 pub mod usage_stats;
@@ -62,6 +63,11 @@ pub use proxy::ProxyService;
 pub use skill::SkillService;
 pub use speedtest::{EndpointLatency, SpeedtestService};
 pub use usage_cache::UsageCache;
+#[allow(unused_imports)]
+pub use usage_stats::{
+    DailyStats, DataQualityStats, LogFilters, ModelStats, PaginatedLogs, ProjectOption,
+    ProjectStats, ProviderStats, RequestLogDetail, UsageSummary, UsageSummaryByApp,
+};
 
 pub mod session_usage_codebuddy;
 pub mod session_usage_copilot;

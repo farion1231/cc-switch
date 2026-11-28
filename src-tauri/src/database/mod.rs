@@ -279,14 +279,23 @@ impl Database {
             read_cache,
             route_revisions: Arc::default(),
         };
-        db.create_tables()?;
-
-        // Pre-migration backup: only when upgrading from an existing database
+        // Back up before create_tables too: it repairs missing columns in place.
         {
             let conn = lock_conn!(db.conn);
             let version = Self::get_user_version(&conn)?;
+            if version > SCHEMA_VERSION {
+                return Err(AppError::Database(format!(
+                    "数据库版本过新（{version}），当前应用仅支持 {SCHEMA_VERSION}，请升级应用后再尝试。"
+                )));
+            }
+            let attribution_pending = Self::usage_attribution_schema_pending(&conn)?;
             drop(conn);
-            if version > 0 && version < SCHEMA_VERSION {
+            if db_exists && attribution_pending {
+                // The rollup primary key changes even on a current-version database.
+                // Refuse to rebuild it without a recoverable snapshot.
+                db.backup_database_file()?
+                    .ok_or_else(|| AppError::Database("用量归属迁移前未能创建数据库备份".into()))?;
+            } else if version > 0 && version < SCHEMA_VERSION {
                 log::info!(
                     "Creating pre-migration database backup (v{version} → v{SCHEMA_VERSION})"
                 );
@@ -296,6 +305,7 @@ impl Database {
             }
         }
 
+        db.create_tables()?;
         db.apply_schema_migrations()?;
         if let Err(e) = db.ensure_incremental_auto_vacuum() {
             log::warn!("Failed to ensure incremental auto-vacuum: {e}");

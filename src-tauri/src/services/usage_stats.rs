@@ -124,13 +124,17 @@ pub struct ProviderStats {
     pub request_count: u64,
     /// 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径。
     pub total_tokens: u64,
+    /// 新增输入（已按客户端输入语义归一化，不含缓存）。
+    pub fresh_input_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    /// 可缓存输入 = 新增输入 + 缓存写入 + 缓存命中。
+    pub cacheable_input_tokens: u64,
+    /// cache_read / cacheable_input，0–1；分母为 0 时为 0，UI 按分母显示 `—`。
+    pub cache_hit_rate: f64,
     pub total_cost: String,
     pub success_rate: f32,
     pub avg_latency_ms: u64,
-    /// 缓存命中 Tokens：命中率的分子。
-    pub cache_read_tokens: u64,
-    /// 可缓存输入（新增输入 + 缓存写入 + 缓存命中）：命中率的分母，与指标卡同口径。
-    pub cacheable_input_tokens: u64,
     /// 速度的分子：满足条件（有首字、输出 >= 100 token、耗时 > 首字）的明细请求的输出 token 之和。
     /// 汇总速度 = speed_output_tokens / (speed_generation_ms / 1000)，不是逐条平均。
     /// 日汇总（rollup）没有逐条计时，不计入。
@@ -147,6 +151,45 @@ pub struct ProviderStats {
     /// 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的明细请求。
     /// 和上面分开：口径不同，界面上只在没有精确值时显示，带 ≈。
     pub est_first_token_median_ms: Option<u64>,
+}
+
+/// 项目维度统计。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectStats {
+    pub project_key: String,
+    pub project_name: String,
+    pub project_path: String,
+    pub request_count: u64,
+    pub total_tokens: u64,
+    pub total_cost: String,
+    pub fresh_input_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cacheable_input_tokens: u64,
+    pub cache_hit_rate: f64,
+    pub app_count: u64,
+    pub provider_count: u64,
+    pub last_active_at: i64,
+}
+
+/// 项目筛选下拉选项。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOption {
+    pub project_key: String,
+    pub project_name: String,
+    pub project_path: String,
+    pub request_count: u64,
+}
+
+/// 数据质量：当前范围内保留明细的归属情况。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DataQualityStats {
+    pub total_requests: u64,
+    pub unknown_provider_requests: u64,
+    pub unknown_project_requests: u64,
 }
 
 /// 计速度的门槛：输出少于这个数的请求（工具调用这类）不算速度，避免 0.1 秒回 15 个 token 算出离谱的数。
@@ -320,13 +363,14 @@ pub struct ModelStats {
     pub request_count: u64,
     /// 真实消耗 Tokens（新增输入 + 输出 + 缓存写入 + 缓存命中），与指标卡同口径。
     pub total_tokens: u64,
+    pub fresh_input_tokens: u64,
+    pub cache_creation_tokens: u64,
+    pub cache_read_tokens: u64,
+    pub cacheable_input_tokens: u64,
+    pub cache_hit_rate: f64,
     pub total_cost: String,
     pub avg_cost_per_request: String,
     pub success_rate: f32,
-    /// 缓存命中 Tokens：命中率的分子。
-    pub cache_read_tokens: u64,
-    /// 可缓存输入（新增输入 + 缓存写入 + 缓存命中）：命中率的分母，与指标卡同口径。
-    pub cacheable_input_tokens: u64,
     /// 速度的分子分母，口径同 [`ProviderStats::speed_output_tokens`] 那四个字段。
     pub speed_output_tokens: u64,
     pub speed_generation_ms: u64,
@@ -342,8 +386,12 @@ pub struct ModelStats {
 #[serde(rename_all = "camelCase")]
 pub struct LogFilters {
     pub app_type: Option<String>,
+    pub provider_app_type: Option<String>,
+    pub provider_id: Option<String>,
     pub provider_name: Option<String>,
     pub model: Option<String>,
+    pub project_key: Option<String>,
+    pub project_keys: Option<Vec<String>>,
     pub status_code: Option<u16>,
     pub start_date: Option<i64>,
     pub end_date: Option<i64>,
@@ -379,7 +427,6 @@ pub struct RequestLogDetail {
     /// Internal storage semantics; omitted from the UI/API payload.
     #[serde(skip)]
     pub input_token_semantics: i64,
-    pub fresh_input_tokens: u32,
     pub input_cost_usd: String,
     pub output_cost_usd: String,
     pub cache_read_cost_usd: String,
@@ -397,17 +444,27 @@ pub struct RequestLogDetail {
     /// 写入时实际用于计价的模型名。None = v11 前的历史行，"" = 未计价的错误行。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pricing_model: Option<String>,
+    pub project_key: String,
+    pub project_name: String,
+    pub project_path: String,
+    pub attribution_source: String,
+    pub attribution_confidence: String,
+    pub attribution_reason: String,
+    pub provider_name_snapshot: String,
+    pub fresh_input_tokens: u32,
 }
 
-/// 把 27 列的查询结果映射为 `RequestLogDetail`。
+/// 把 34 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 27 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 34 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source, pricing_model, input_token_semantics, fresh_input_sql(..)`
+///  data_source, pricing_model, input_token_semantics, project_key, project_name,
+///  project_path, attribution_source, attribution_confidence, attribution_reason,
+///  provider_name_snapshot, fresh_input_sql(..)`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
@@ -440,7 +497,14 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         data_source: row.get(23)?,
         pricing_model: row.get(24)?,
         input_token_semantics: row.get::<_, i64>(25)?,
-        fresh_input_tokens: row.get::<_, i64>(26)? as u32,
+        project_key: row.get(26)?,
+        project_name: row.get(27)?,
+        project_path: row.get(28)?,
+        attribution_source: row.get(29)?,
+        attribution_confidence: row.get(30)?,
+        attribution_reason: row.get(31)?,
+        provider_name_snapshot: row.get(32)?,
+        fresh_input_tokens: row.get::<_, i64>(33)? as u32,
     })
 }
 
@@ -450,17 +514,17 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
 /// authoritative mapping from placeholder to readable name.
 fn provider_name_coalesce(log_alias: &str, provider_alias: &str) -> String {
     format!(
-        "COALESCE({provider_alias}.name, CASE {log_alias}.provider_id \
+        "COALESCE({provider_alias}.name, NULLIF({log_alias}.provider_name_snapshot, ''), CASE {log_alias}.provider_id \
          WHEN '_session' THEN 'Claude (Session)' \
          WHEN '_codex_session' THEN 'Codex (Session)' \
+         WHEN '_codex_custom' THEN 'Codex (Custom)' \
+         WHEN '_codex_local_access' THEN 'Codex (Local Access)' \
          WHEN '_gemini_session' THEN 'Gemini (Session)' \
          WHEN '_opencode_session' THEN 'OpenCode (Session)' \
          WHEN '_grok_session' THEN 'Grok Build (Session)' \
          WHEN '_agy_session' THEN 'Antigravity (Session)' \
          WHEN '_kimi_session' THEN 'Kimi Code (Session)' \
          WHEN '_copilot_session' THEN 'Copilot CLI (Session)' \
-         WHEN '_workbuddy_session' THEN 'WorkBuddy (Session)' \
-         WHEN '_codebuddy_session' THEN 'CodeBuddy (Session)' \
          WHEN '_dsh_session' THEN 'DeepSeek Harness (Session)' \
          WHEN '_dsh_account_session' THEN 'DeepSeek Harness (OAuth)' \
          WHEN '_mcode_session' THEN 'MiniMax Code (Session)' \
@@ -570,6 +634,9 @@ impl SqlWhere {
 /// 精确匹配（复用 [`provider_name_coalesce`]，会话占位行的可读名如 "Claude (Session)"
 /// 也能选中）；模型按 [`effective_model_sql`] 匹配。
 struct UsageFilter<'a> {
+    provider_app_type: Option<&'a str>,
+    provider_id: Option<&'a str>,
+    project_keys: Option<&'a [String]>,
     app_type: Option<&'a str>,
     provider_name: Option<&'a str>,
     model: Option<&'a str>,
@@ -605,7 +672,13 @@ impl UsageFilter<'_> {
                 conditions.push(format!("{column} = ?"), app_type.to_string());
             }
         }
-        if let Some(name) = self.provider_name {
+        if let Some(id) = self.provider_id {
+            conditions.push(format!("{log_alias}.provider_id = ?"), id.to_string());
+            conditions.push(
+                format!("{log_alias}.app_type = ?"),
+                self.provider_app_type.unwrap_or("").to_string(),
+            );
+        } else if let Some(name) = self.provider_name {
             conditions.push(
                 format!("{} = ?", provider_name_coalesce(log_alias, provider_alias)),
                 name.to_string(),
@@ -630,6 +703,17 @@ impl UsageFilter<'_> {
                     conditions.params.push(Box::new(suffix));
                 }
             }
+        }
+        if let Some(keys) = self.project_keys.filter(|keys| !keys.is_empty()) {
+            conditions.push_condition(format!(
+                "{log_alias}.project_key IN ({})",
+                vec!["?"; keys.len()].join(", ")
+            ));
+            conditions.params.extend(
+                keys.iter()
+                    .cloned()
+                    .map(|key| Box::new(key) as Box<dyn rusqlite::ToSql>),
+            );
         }
         Ok(())
     }
@@ -935,10 +1019,14 @@ fn connection_total_changes(conn: &Connection) -> Result<u64, AppError> {
 
 fn log_count_cache_key(filters: &LogFilters) -> String {
     format!(
-        "{:?}|{:?}|{:?}|{:?}|{:?}",
+        "{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
         filters.app_type,
+        filters.provider_app_type,
+        filters.provider_id,
         filters.provider_name,
         filters.model,
+        filters.project_key,
+        filters.project_keys,
         filters.status_code,
         filters.start_date
     )
@@ -1080,6 +1168,67 @@ pub(crate) fn has_matching_proxy_usage_log(
             )
         })
         .map_err(|e| AppError::Database(format!("查询重复代理用量日志失败: {e}")))
+}
+
+pub(crate) fn matching_proxy_request_ids(
+    conn: &Connection,
+    key: &DedupKey,
+) -> Result<Vec<String>, AppError> {
+    let allow_missing_cache_creation =
+        matches!(key.app_type, "codex" | "gemini" | "opencode") && key.cache_creation_tokens == 0;
+    let allow_legacy_proxy_cache_creation = key.app_type == "codex";
+    let l_data_source = data_source_expr("l");
+    let app_type_match = dedup_app_type_match_sql("l.app_type", "?1");
+    let model_match =
+        session_proxy_model_match_sql("l.model", "l.request_model", "?2", "?1", "?11");
+    let sql = format!(
+        "SELECT l.request_id
+         FROM proxy_request_logs l
+         WHERE {l_data_source} = 'proxy'
+           AND {app_type_match}
+           AND l.status_code >= 200
+           AND l.status_code < 300
+           AND l.input_tokens = ?3
+           AND l.output_tokens = ?4
+           AND l.cache_read_tokens = ?5
+           AND (
+               l.cache_creation_tokens = ?6
+               OR ?9 = 1
+               OR (
+                   ?10 = 1
+                   AND l.cache_creation_tokens = 0
+                   AND l.input_token_semantics = {INPUT_TOKEN_SEMANTICS_LEGACY}
+               )
+           )
+           AND l.created_at BETWEEN ?7 - ?8 AND ?7 + ?8
+           AND {model_match}"
+    );
+    let mut stmt = conn
+        .prepare_cached(&sql)
+        .map_err(|e| AppError::Database(format!("准备代理去重查询失败: {e}")))?;
+    let rows = stmt
+        .query_map(
+            params![
+                key.app_type,
+                key.model,
+                key.input_tokens as i64,
+                key.output_tokens as i64,
+                key.cache_read_tokens as i64,
+                key.cache_creation_tokens as i64,
+                key.created_at,
+                SESSION_PROXY_DEDUP_WINDOW_SECONDS,
+                allow_missing_cache_creation as i64,
+                allow_legacy_proxy_cache_creation as i64,
+                key.data_source,
+            ],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(|e| AppError::Database(format!("查询代理去重 ID 失败: {e}")))?;
+    let mut ids = Vec::new();
+    for row in rows {
+        ids.push(row.map_err(|e| AppError::Database(format!("读取代理去重 ID 失败: {e}")))?);
+    }
+    Ok(ids)
 }
 
 /// grokbuild 会话导入的接管活动守卫：给定时刻 ±窗口内存在任何 grokbuild
@@ -1242,17 +1391,24 @@ fn local_day_start_rfc3339(day: NaiveDate) -> String {
 
 impl Database {
     /// 获取使用量汇总
+    #[allow(clippy::too_many_arguments)]
     pub fn get_usage_summary(
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<UsageSummary, AppError> {
         let conn = lock_conn!(self.conn);
 
         let filter = UsageFilter {
+            provider_app_type,
+            provider_id,
+            project_keys,
             app_type,
             provider_name,
             model,
@@ -1352,16 +1508,23 @@ impl Database {
     ///
     /// Single SQL with `GROUP BY app_type` — avoids the N+1 round-trip that
     /// would result from invoking `get_usage_summary` once per app_type.
+    #[allow(clippy::too_many_arguments)]
     pub fn get_usage_summary_by_app(
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<UsageSummaryByApp>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let filter = UsageFilter {
+            provider_app_type,
+            provider_id,
+            project_keys,
             app_type: None,
             provider_name,
             model,
@@ -1478,16 +1641,23 @@ impl Database {
     }
 
     /// 获取每日趋势（滑动窗口，<=24h 按小时，>24h 按天，窗口与汇总一致）
+    #[allow(clippy::too_many_arguments)]
     pub fn get_daily_trends(
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
         let filter = UsageFilter {
+            provider_app_type,
+            provider_id,
+            project_keys,
             app_type,
             provider_name,
             model,
@@ -1761,15 +1931,22 @@ impl Database {
     ///
     /// 给「全部」的按年热力图定起始年份用，所以不套跨源去重：被去重掉的会话行
     /// 和对应的代理行只差几分钟，不会改变最早的日期。
+    #[allow(clippy::too_many_arguments)]
     pub fn get_first_usage_date(
         &self,
         app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let filter = UsageFilter {
+            provider_app_type,
+            provider_id,
+            project_keys,
             app_type,
             provider_name,
             model,
@@ -1818,17 +1995,24 @@ impl Database {
     }
 
     /// 获取 Provider 统计
+    #[allow(clippy::too_many_arguments)]
     pub fn get_provider_stats(
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<ProviderStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let filter = UsageFilter {
+            provider_app_type,
+            provider_id,
+            project_keys,
             app_type,
             provider_name,
             model,
@@ -1866,7 +2050,7 @@ impl Database {
                 SUM(est_output) as est_output,
                 SUM(est_ms) as est_ms,
                 SUM(cache_read) as cache_read,
-                SUM(cacheable) as cacheable
+                SUM(cacheable) as cacheable, SUM(fresh_input) as fresh_input, SUM(cache_creation) as cache_creation
             FROM (
                 SELECT l.provider_id, l.app_type,
                     {detail_pname} as provider_name,
@@ -1880,7 +2064,7 @@ impl Database {
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.output_tokens ELSE 0 END), 0) as est_output,
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms,
                     COALESCE(SUM(l.cache_read_tokens), 0) as cache_read,
-                    COALESCE(SUM(({fresh_input_detail}) + l.cache_creation_tokens + l.cache_read_tokens), 0) as cacheable
+                    COALESCE(SUM(({fresh_input_detail}) + l.cache_creation_tokens + l.cache_read_tokens), 0) as cacheable, COALESCE(SUM({fresh_input_detail}), 0) as fresh_input, COALESCE(SUM(l.cache_creation_tokens), 0) as cache_creation
                 FROM proxy_request_logs l
                 LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
                 {detail_where}
@@ -1898,7 +2082,7 @@ impl Database {
                     0,
                     0,
                     COALESCE(SUM(r.cache_read_tokens), 0),
-                    COALESCE(SUM(({fresh_input_rollup}) + r.cache_creation_tokens + r.cache_read_tokens), 0)
+                    COALESCE(SUM(({fresh_input_rollup}) + r.cache_creation_tokens + r.cache_read_tokens), 0), COALESCE(SUM({fresh_input_rollup}), 0), COALESCE(SUM(r.cache_creation_tokens), 0)
                 FROM usage_daily_rollups r
                 LEFT JOIN providers p2 ON r.provider_id = p2.id AND r.app_type = p2.app_type
                 {rollup_where}
@@ -1953,6 +2137,13 @@ impl Database {
                 avg_latency_ms: row.get::<_, f64>(7)? as u64,
                 cache_read_tokens: row.get::<_, i64>(12)?.max(0) as u64,
                 cacheable_input_tokens: row.get::<_, i64>(13)?.max(0) as u64,
+                fresh_input_tokens: row.get::<_, i64>(14)?.max(0) as u64,
+                cache_creation_tokens: row.get::<_, i64>(15)?.max(0) as u64,
+                cache_hit_rate: if row.get::<_, i64>(13)? > 0 {
+                    row.get::<_, i64>(12)? as f64 / row.get::<_, i64>(13)? as f64
+                } else {
+                    0.0
+                },
                 speed_output_tokens: row.get::<_, i64>(8)?.max(0) as u64,
                 speed_generation_ms: row.get::<_, i64>(9)?.max(0) as u64,
                 est_speed_output_tokens: row.get::<_, i64>(10)?.max(0) as u64,
@@ -1972,18 +2163,248 @@ impl Database {
         Ok(stats)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_project_stats(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        project_keys: Option<&[String]>,
+    ) -> Result<Vec<ProjectStats>, AppError> {
+        let conn = lock_conn!(self.conn);
+
+        let filter = UsageFilter {
+            app_type,
+            provider_app_type,
+            provider_id,
+            provider_name,
+            model,
+            project_keys,
+            pricing: OnceCell::new(),
+        };
+        let (detail_where, detail_params) = filter
+            .detail_where(&conn, start_date, end_date)?
+            .into_where();
+        let detail_join = filter.join("l", "p");
+        let bounds = compute_rollup_date_bounds(start_date, end_date)?;
+        let (rollup_where, rollup_params) = filter.rollup_where(&conn, &bounds)?.into_where();
+        let rollup_join = filter.join("r", "p2");
+
+        let fresh_detail = fresh_input_sql("l");
+        let fresh_rollup = fresh_input_sql("r");
+        let real_detail = real_total_tokens_sql("l");
+        let real_rollup = real_total_tokens_sql("r");
+        let sql = format!(
+            "SELECT project_key,
+                COALESCE(MAX(NULLIF(project_name, '')), '') AS project_name,
+                COALESCE(MAX(NULLIF(project_path, '')), '') AS project_path,
+                SUM(request_count) AS request_count,
+                SUM(total_tokens) AS total_tokens,
+                SUM(total_cost) AS total_cost,
+                SUM(fresh_input) AS fresh_input,
+                SUM(cache_creation) AS cache_creation,
+                SUM(cache_read) AS cache_read,
+                COUNT(DISTINCT app_type) AS app_count,
+                COUNT(DISTINCT json_array(app_type, provider_id)) AS provider_count,
+                MAX(last_active) AS last_active
+             FROM (
+                SELECT l.project_key AS project_key,
+                    COALESCE(MAX(NULLIF(l.project_name, '')), '') AS project_name,
+                    COALESCE(MAX(NULLIF(l.project_path, '')), '') AS project_path,
+                    l.app_type AS app_type, l.provider_id AS provider_id,
+                    COUNT(*) AS request_count,
+                    COALESCE(SUM({real_detail}), 0) AS total_tokens,
+                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) AS total_cost,
+                    COALESCE(SUM({fresh_detail}), 0) AS fresh_input,
+                    COALESCE(SUM(l.cache_creation_tokens), 0) AS cache_creation,
+                    COALESCE(SUM(l.cache_read_tokens), 0) AS cache_read,
+                    MAX(l.created_at) AS last_active
+                FROM proxy_request_logs l {detail_join} {detail_where}
+                GROUP BY l.project_key, l.app_type, l.provider_id
+                UNION ALL
+                SELECT r.project_key,
+                    COALESCE(MAX(NULLIF(r.project_name, '')), '') AS project_name,
+                    COALESCE(MAX(NULLIF(r.project_path, '')), '') AS project_path,
+                    r.app_type, r.provider_id,
+                    COALESCE(SUM(r.request_count), 0),
+                    COALESCE(SUM({real_rollup}), 0),
+                    COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
+                    COALESCE(SUM({fresh_rollup}), 0),
+                    COALESCE(SUM(r.cache_creation_tokens), 0),
+                    COALESCE(SUM(r.cache_read_tokens), 0),
+                    COALESCE(MAX(CAST(strftime('%s', r.date) AS INTEGER)), 0)
+                FROM usage_daily_rollups r {rollup_join} {rollup_where}
+                GROUP BY r.project_key, r.app_type, r.provider_id
+             )
+             GROUP BY project_key
+             ORDER BY SUM(total_tokens) DESC"
+        );
+        let mut params: Vec<Box<dyn rusqlite::ToSql>> = detail_params;
+        params.extend(rollup_params);
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let fresh_input_tokens = row.get::<_, i64>(6)?.max(0) as u64;
+            let cache_creation_tokens = row.get::<_, i64>(7)?.max(0) as u64;
+            let cache_read_tokens = row.get::<_, i64>(8)?.max(0) as u64;
+            let cacheable_input_tokens =
+                fresh_input_tokens + cache_creation_tokens + cache_read_tokens;
+            let cache_hit_rate = if cacheable_input_tokens > 0 {
+                cache_read_tokens as f64 / cacheable_input_tokens as f64
+            } else {
+                0.0
+            };
+            Ok(ProjectStats {
+                project_key: row.get(0)?,
+                project_name: row.get(1)?,
+                project_path: row.get(2)?,
+                request_count: row.get::<_, i64>(3)?.max(0) as u64,
+                total_tokens: row.get::<_, i64>(4)?.max(0) as u64,
+                total_cost: format!("{:.6}", row.get::<_, f64>(5)?),
+                fresh_input_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+                cacheable_input_tokens,
+                cache_hit_rate,
+                app_count: row.get::<_, i64>(9)?.max(0) as u64,
+                provider_count: row.get::<_, i64>(10)?.max(0) as u64,
+                last_active_at: row.get::<_, i64>(11)?.max(0),
+            })
+        })?;
+        let mut stats = Vec::new();
+        for row in rows {
+            stats.push(row?);
+        }
+        Ok(stats)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_project_provider_stats(
+        &self,
+        project_key: &str,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+    ) -> Result<Vec<ProviderStats>, AppError> {
+        self.get_provider_stats(
+            start_date,
+            end_date,
+            app_type,
+            None,
+            None,
+            None,
+            None,
+            Some(&[project_key.to_string()]),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_usage_projects(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+    ) -> Result<Vec<ProjectOption>, AppError> {
+        // Facet candidates inherit other dimensions but do not filter themselves.
+        let mut options: Vec<_> = self
+            .get_project_stats(
+                start_date,
+                end_date,
+                app_type,
+                provider_app_type,
+                provider_id,
+                provider_name,
+                model,
+                None,
+            )?
+            .into_iter()
+            .map(|stat| ProjectOption {
+                project_key: stat.project_key,
+                project_name: stat.project_name,
+                project_path: stat.project_path,
+                request_count: stat.request_count,
+            })
+            .collect();
+        options.sort_by_key(|stat| std::cmp::Reverse(stat.request_count));
+        Ok(options)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_usage_data_quality(
+        &self,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
+        provider_name: Option<&str>,
+        model: Option<&str>,
+        project_keys: Option<&[String]>,
+    ) -> Result<DataQualityStats, AppError> {
+        let conn = lock_conn!(self.conn);
+        let filter = UsageFilter {
+            app_type,
+            provider_app_type,
+            provider_id,
+            provider_name,
+            model,
+            project_keys,
+            pricing: OnceCell::new(),
+        };
+        let (where_clause, params) = filter
+            .detail_where(&conn, start_date, end_date)?
+            .into_where();
+        let join = filter.join("l", "p");
+        let sql = format!(
+            "SELECT COUNT(*),
+                COALESCE(SUM(CASE WHEN l.attribution_confidence = 'unknown' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN l.project_key = '' THEN 1 ELSE 0 END), 0)
+             FROM proxy_request_logs l {join}
+             {where_clause}"
+        );
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let (total, unknown_provider, unknown_project) =
+            conn.query_row(&sql, param_refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?.max(0) as u64,
+                    row.get::<_, i64>(1)?.max(0) as u64,
+                    row.get::<_, i64>(2)?.max(0) as u64,
+                ))
+            })?;
+        Ok(DataQualityStats {
+            total_requests: total,
+            unknown_provider_requests: unknown_provider,
+            unknown_project_requests: unknown_project,
+        })
+    }
+
     /// 获取模型统计
+    #[allow(clippy::too_many_arguments)]
     pub fn get_model_stats(
         &self,
         start_date: Option<i64>,
         end_date: Option<i64>,
         app_type: Option<&str>,
+        provider_app_type: Option<&str>,
+        provider_id: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        project_keys: Option<&[String]>,
     ) -> Result<Vec<ModelStats>, AppError> {
         let conn = lock_conn!(self.conn);
 
         let filter = UsageFilter {
+            provider_app_type,
+            provider_id,
+            project_keys,
             app_type,
             provider_name,
             model,
@@ -2025,7 +2446,7 @@ impl Database {
                 SUM(est_output) as est_output,
                 SUM(est_ms) as est_ms,
                 SUM(cache_read) as cache_read,
-                SUM(cacheable) as cacheable
+                SUM(cacheable) as cacheable, SUM(fresh_input) as fresh_input, SUM(cache_creation) as cache_creation
             FROM (
                 SELECT {detail_model} as model,
                     COUNT(*) as request_count,
@@ -2037,7 +2458,7 @@ impl Database {
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.output_tokens ELSE 0 END), 0) as est_output,
                     COALESCE(SUM(CASE WHEN {est_ok} THEN l.latency_ms ELSE 0 END), 0) as est_ms,
                     COALESCE(SUM(l.cache_read_tokens), 0) as cache_read,
-                    COALESCE(SUM(({fresh_input_detail}) + l.cache_creation_tokens + l.cache_read_tokens), 0) as cacheable
+                    COALESCE(SUM(({fresh_input_detail}) + l.cache_creation_tokens + l.cache_read_tokens), 0) as cacheable, COALESCE(SUM({fresh_input_detail}), 0) as fresh_input, COALESCE(SUM(l.cache_creation_tokens), 0) as cache_creation
                 FROM proxy_request_logs l
                 {detail_join}
                 {detail_where}
@@ -2053,7 +2474,7 @@ impl Database {
                     0,
                     0,
                     COALESCE(SUM(r.cache_read_tokens), 0),
-                    COALESCE(SUM(({fresh_input_rollup}) + r.cache_creation_tokens + r.cache_read_tokens), 0)
+                    COALESCE(SUM(({fresh_input_rollup}) + r.cache_creation_tokens + r.cache_read_tokens), 0), COALESCE(SUM({fresh_input_rollup}), 0), COALESCE(SUM(r.cache_creation_tokens), 0)
                 FROM usage_daily_rollups r
                 {rollup_join}
                 {rollup_where}
@@ -2080,6 +2501,8 @@ impl Database {
                 row.get::<_, i64>(8)?.max(0) as u64,
                 row.get::<_, i64>(9)?.max(0) as u64,
                 row.get::<_, i64>(10)?.max(0) as u64,
+                row.get::<_, i64>(11)?.max(0) as u64,
+                row.get::<_, i64>(12)?.max(0) as u64,
             ))
         })?;
         let mut grouped: HashMap<String, (ModelStats, f64, u64)> = HashMap::new();
@@ -2097,6 +2520,8 @@ impl Database {
                 est_ms,
                 cache_read,
                 cacheable,
+                fresh_input,
+                cache_creation,
             ) = row?;
             let model = statistics_model_with(filter.pricing(&conn)?, &raw)?;
             if model != raw {
@@ -2117,6 +2542,9 @@ impl Database {
                             total_cost: String::new(),
                             avg_cost_per_request: String::new(),
                             success_rate: 0.0,
+                            fresh_input_tokens: 0,
+                            cache_creation_tokens: 0,
+                            cache_hit_rate: 0.0,
                             cache_read_tokens: 0,
                             cacheable_input_tokens: 0,
                             speed_output_tokens: 0,
@@ -2132,6 +2560,8 @@ impl Database {
                 });
             stats.request_count += count;
             stats.total_tokens += tokens;
+            stats.fresh_input_tokens += fresh_input;
+            stats.cache_creation_tokens += cache_creation;
             stats.cache_read_tokens += cache_read;
             stats.cacheable_input_tokens += cacheable;
             stats.speed_output_tokens += output;
@@ -2164,6 +2594,11 @@ impl Database {
         let mut stats: Vec<_> = grouped
             .into_values()
             .map(|(mut stat, cost, successes)| {
+                stat.cache_hit_rate = if stat.cacheable_input_tokens > 0 {
+                    stat.cache_read_tokens as f64 / stat.cacheable_input_tokens as f64
+                } else {
+                    0.0
+                };
                 stat.total_cost = format!("{cost:.6}");
                 if stat.request_count > 0 {
                     stat.avg_cost_per_request = format!("{:.6}", cost / stat.request_count as f64);
@@ -2191,8 +2626,12 @@ impl Database {
     ) -> Result<PaginatedLogs, AppError> {
         let conn = lock_conn!(self.conn);
 
+        let projects = filters.project_key.clone().map(|key| vec![key]);
         let filter = UsageFilter {
             app_type: filters.app_type.as_deref(),
+            provider_app_type: filters.provider_app_type.as_deref(),
+            provider_id: filters.provider_id.as_deref(),
+            project_keys: filters.project_keys.as_deref().or(projects.as_deref()),
             provider_name: filters.provider_name.as_deref(),
             model: filters.model.as_deref(),
             pricing: OnceCell::new(),
@@ -2260,7 +2699,9 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics, {logs_fresh_input} AS fresh_input_tokens
+                    l.input_token_semantics, l.project_key, l.project_name, l.project_path,
+                    l.attribution_source, l.attribution_confidence, l.attribution_reason,
+                    l.provider_name_snapshot, {logs_fresh_input} AS fresh_input_tokens
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -2305,7 +2746,9 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics, {detail_fresh_input} AS fresh_input_tokens
+                    l.input_token_semantics, l.project_key, l.project_name, l.project_path,
+                    l.attribution_source, l.attribution_confidence, l.attribution_reason,
+                    l.provider_name_snapshot, {detail_fresh_input} AS fresh_input_tokens
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -2361,7 +2804,9 @@ impl Database {
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
                         data_source, pricing_model, input_token_semantics,
-                        {fresh_input} AS fresh_input_tokens
+                        project_key, project_name, project_path,
+                        attribution_source, attribution_confidence, attribution_reason,
+                        provider_name_snapshot, {fresh_input} AS fresh_input_tokens
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
@@ -3202,3 +3647,7 @@ fn should_try_pricing_prefix_match(model_id: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "usage_stats/scope_tests.rs"]
+mod scope_tests;

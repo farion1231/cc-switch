@@ -27,7 +27,7 @@ use crate::services::session_usage::{
 };
 use crate::services::sql_helpers::INPUT_TOKEN_SEMANTICS_TOTAL;
 use crate::services::usage_stats::{
-    find_model_pricing, has_suspected_codex_session_duplicate, should_skip_session_insert, DedupKey,
+    find_model_pricing, has_suspected_codex_session_duplicate, DedupKey,
 };
 use crate::sync_utils::MutexExt;
 use chrono::{DateTime, Utc};
@@ -40,6 +40,15 @@ use std::io::BufRead;
 use std::os::unix::fs::MetadataExt;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
+
+/// 存量归属回填完成标记，避免每次启动重新扫描全部 Codex 会话文件。
+pub(crate) const CODEX_ATTRIBUTION_BACKFILL_FLAG: &str = "codex_usage_attribution_backfilled_v2";
+
+// All retained session IDs are normalized before this query. A single indexed
+// association avoids an OR plan that scans the whole application without ANALYZE.
+const CODEX_SESSION_TIME_RANGE_SQL: &str =
+    "SELECT COALESCE(MIN(created_at), 0), COALESCE(MAX(created_at), 0)
+     FROM proxy_request_logs WHERE app_type = 'codex' AND session_key = ?1";
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
@@ -491,6 +500,10 @@ struct ParsedCodexFile {
     starts_at_fork_ordinal: bool,
     has_fork_provenance: bool,
     root_timestamp: Option<DateTime<Utc>>,
+    /// root `session_meta.cwd`：会话主项目。
+    cwd: Option<String>,
+    /// root `session_meta.model_provider`：Codex 原生供应商线索。
+    model_provider: Option<String>,
     parent: ParentResolution,
     token_events: Vec<ParsedTokenEvent>,
     /// `token_usage_record` 后面紧跟 last 全 0 的 `token_count` 时补记的用量。
@@ -616,11 +629,23 @@ pub(crate) fn reset_codex_usage_on_conn(
     if sqlite_table_exists(conn, "usage_daily_rollups")?
         && sqlite_column_exists(conn, "usage_daily_rollups", "provider_id")?
     {
+        let condition = if sqlite_column_exists(conn, "usage_daily_rollups", "data_source")? {
+            "app_type = 'codex' AND (COALESCE(data_source, 'proxy') <> 'proxy' OR provider_id = '_codex_session')"
+        } else {
+            "provider_id = '_codex_session'"
+        };
         conn.execute(
-            "DELETE FROM usage_daily_rollups WHERE provider_id = '_codex_session'",
+            &format!("DELETE FROM usage_daily_rollups WHERE {condition}"),
             [],
         )
         .map_err(|error| AppError::Database(format!("清理 Codex 用量汇总失败: {error}")))?;
+    }
+    if sqlite_table_exists(conn, "settings")? {
+        conn.execute(
+            "DELETE FROM settings WHERE key = ?1",
+            [CODEX_ATTRIBUTION_BACKFILL_FLAG],
+        )
+        .map_err(|error| AppError::Database(format!("清理 Codex 回填标记失败: {error}")))?;
     }
     if sqlite_table_exists(conn, "session_log_sync")?
         && sqlite_column_exists(conn, "session_log_sync", "file_path")?
@@ -1110,6 +1135,233 @@ pub(crate) fn sync_codex_usage_with_cursors(
     Ok(result)
 }
 
+/// 一次性回填：从存量 Codex rollout 的 `session_meta` 还原项目与供应商维度，
+/// 并补到已入库的 Codex 明细行上。不重导 token，只填空值，幂等。
+///
+/// 项目来自 `session_meta.cwd`（项目名取末级目录名）；供应商来自
+/// `session_meta.model_provider` 的确定性映射，无法唯一映射时保留原生值在
+/// `attribution_reason`，不用“当前选中供应商”猜历史。
+#[derive(Debug, Default)]
+pub struct CodexBackfillStats {
+    pub files_scanned: u64,
+    pub sessions_written: u64,
+    pub rows_updated: u64,
+}
+
+struct CodexSessionBackfill {
+    session_key: String,
+    project: Option<crate::services::usage_attribution::SessionProject>,
+    model_provider: Option<String>,
+}
+
+pub fn backfill_codex_usage_attribution(db: &Database) -> Result<CodexBackfillStats, AppError> {
+    let codex_dir = get_codex_config_dir();
+    backfill_codex_usage_attribution_from_dir(db, &codex_dir)
+}
+
+fn backfill_codex_usage_attribution_from_dir(
+    db: &Database,
+    codex_dir: &Path,
+) -> Result<CodexBackfillStats, AppError> {
+    // 快速短路：回填已完成或没有待回填行时直接返回，避免每次启动全量扫描。
+    {
+        let conn = lock_conn!(db.conn);
+        let done: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM settings WHERE key = ?1",
+                [CODEX_ATTRIBUTION_BACKFILL_FLAG],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(format!("读取 Codex 回填标记失败: {e}")))?;
+        if done > 0 {
+            return Ok(CodexBackfillStats::default());
+        }
+        let needs: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM proxy_request_logs
+                 WHERE app_type = 'codex'
+                   AND (provider_id IN ('_codex_session', '_codex_custom')
+                        OR (COALESCE(data_source, 'proxy') = 'proxy' AND project_key = ''
+                            AND COALESCE(session_id, '') <> ''))",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| AppError::Database(format!("统计待回填 Codex 明细失败: {e}")))?;
+        if needs == 0 {
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, '1')",
+                [CODEX_ATTRIBUTION_BACKFILL_FLAG],
+            )
+            .map_err(|e| AppError::Database(format!("写入 Codex 回填标记失败: {e}")))?;
+            return Ok(CodexBackfillStats::default());
+        }
+    }
+
+    let files = collect_codex_session_files(codex_dir);
+    let mut stats = CodexBackfillStats {
+        files_scanned: files.len() as u64,
+        ..Default::default()
+    };
+
+    // 先只做文件 IO：每个文件读首条 session_meta，按会话去重。
+    let mut sessions: Vec<CodexSessionBackfill> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for file_path in &files {
+        let Some((session_id, cwd, model_provider)) = read_codex_session_meta(file_path) else {
+            continue;
+        };
+        let session_key =
+            crate::services::usage_attribution::normalize_session_key("codex", &session_id);
+        if !seen.insert(session_key.clone()) {
+            continue;
+        }
+        let project = cwd.as_deref().and_then(|cwd| {
+            crate::services::usage_attribution::project_from_cwd(
+                "codex",
+                &session_key,
+                cwd,
+                "session_meta",
+            )
+        });
+        sessions.push(CodexSessionBackfill {
+            session_key,
+            project,
+            model_provider,
+        });
+    }
+
+    // 一次性事务写库：session_projects + 回填明细的项目/供应商维度。
+    let conn = lock_conn!(db.conn);
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| AppError::Database(format!("开启 Codex 用量归属回填事务失败: {e}")))?;
+    // 旧版代理行尚无 session_key；保留原始 ID，只规范化关联键。
+    tx.execute(
+        "UPDATE proxy_request_logs SET session_key =
+            CASE WHEN substr(trim(session_id), 1, 6) = 'codex_'
+                 THEN substr(trim(session_id), 7) ELSE trim(session_id) END
+         WHERE app_type = 'codex' AND session_key = ''
+           AND COALESCE(session_id, '') <> ''",
+        [],
+    )?;
+    for session in &sessions {
+        if let Some(project) = &session.project {
+            stats.rows_updated +=
+                crate::database::Database::upsert_session_project_on_conn(&tx, project)? as u64;
+        }
+        let (start_s, end_s) = tx.query_row(
+            CODEX_SESSION_TIME_RANGE_SQL,
+            [session.session_key.as_str()],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        let attribution = if session.model_provider.is_some() {
+            crate::services::usage_attribution::codex_attribution_from_model_provider(
+                &tx,
+                session.model_provider.as_deref(),
+                start_s,
+                end_s,
+            )?
+        } else {
+            // 旧会话没有 model_provider，直接按请求时间区间查激活时间线。
+            crate::services::usage_attribution::resolve_provider_attribution(
+                &tx,
+                "codex",
+                start_s,
+                end_s,
+                "_codex_session",
+            )?
+        };
+        let provider_name_snapshot =
+            crate::services::usage_attribution::provider_name_snapshot_on_conn(
+                &tx,
+                &attribution.provider_id,
+                "codex",
+            )?
+            .unwrap_or_default();
+        let (project_key, project_name, project_path) = session
+            .project
+            .as_ref()
+            .map(|p| {
+                (
+                    p.project_key.as_str(),
+                    p.project_name.as_str(),
+                    p.project_path.as_str(),
+                )
+            })
+            .unwrap_or(("", "", ""));
+        let updated = tx
+            .execute(
+                "UPDATE proxy_request_logs SET
+                project_key = CASE WHEN project_key = '' THEN ?1 ELSE project_key END,
+                project_name = CASE WHEN project_name = '' THEN ?2 ELSE project_name END,
+                project_path = CASE WHEN project_path = '' THEN ?3 ELSE project_path END,
+                session_key = CASE WHEN session_key = '' THEN ?4 ELSE session_key END,
+                provider_id = ?5,
+                provider_name_snapshot = ?6,
+                attribution_source = ?7,
+                attribution_confidence = ?8,
+                attribution_reason = ?9
+             WHERE app_type = 'codex'
+               AND session_key = ?10
+               AND provider_id IN ('_codex_session', '_codex_custom')",
+                rusqlite::params![
+                    project_key,
+                    project_name,
+                    project_path,
+                    session.session_key,
+                    attribution.provider_id,
+                    provider_name_snapshot,
+                    attribution.source,
+                    attribution.confidence,
+                    attribution.reason,
+                    session.session_key,
+                ],
+            )
+            .map_err(|e| AppError::Database(format!("回填 Codex 明细归属失败: {e}")))?;
+        stats.sessions_written += 1;
+        stats.rows_updated += updated as u64;
+    }
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, '1')",
+        [CODEX_ATTRIBUTION_BACKFILL_FLAG],
+    )
+    .map_err(|e| AppError::Database(format!("写入 Codex 回填标记失败: {e}")))?;
+    tx.commit()
+        .map_err(|e| AppError::Database(format!("提交 Codex 用量归属回填失败: {e}")))?;
+
+    Ok(stats)
+}
+
+/// 从 rollout 文件头部读取 `session_meta` 的线程 ID、cwd 与 model_provider。
+/// 线程 ID 归一化为连字符 UUID，与明细表 `session_id` 同口径。
+fn read_codex_session_meta(path: &Path) -> Option<(String, Option<String>, Option<String>)> {
+    let reader = codex_rollout_file::open_reader(path).ok()?;
+    for line in reader.lines().map_while(Result::ok) {
+        let value: serde_json::Value = serde_json::from_str(&line).ok()?;
+        if value.get("type").and_then(serde_json::Value::as_str) != Some("session_meta") {
+            continue;
+        }
+        let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
+        let id = payload
+            .get("id")
+            .or_else(|| payload.get("session_id"))
+            .and_then(serde_json::Value::as_str)?;
+        let id = uuid::Uuid::parse_str(id)
+            .map(|value| value.hyphenated().to_string())
+            .unwrap_or_else(|_| id.to_string());
+        let cwd = payload
+            .get("cwd")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        let model_provider = payload
+            .get("model_provider")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string);
+        return Some((id, cwd, model_provider));
+    }
+    None
+}
+
 /// 收集所有 Codex 会话 JSONL 文件
 fn collect_codex_session_files(codex_dir: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -1280,6 +1532,8 @@ fn parse_codex_file_with_index(
     let mut has_fork_provenance = false;
     let mut root_timestamp = None;
     let mut meta_thread_id = None;
+    let mut cwd = None;
+    let mut model_provider = None;
     let mut parent = ParentResolution::None;
     let mut current_model = "unknown".to_string();
     // `total_token_usage` is session-cumulative, including across model and
@@ -1352,6 +1606,8 @@ fn parse_codex_file_with_index(
                 root_timestamp = parse_timestamp(value.get("timestamp"));
                 let payload = value.get("payload").unwrap_or(&serde_json::Value::Null);
                 parent = explicit_parent_from_meta(payload);
+                cwd = non_empty_string(payload.get("cwd"));
+                model_provider = non_empty_string(payload.get("model_provider"));
                 bounded_history = payload.get("history_base").cloned();
                 starts_at_fork_ordinal = payload
                     .get("forked_from_ordinal_exclusive")
@@ -1675,6 +1931,8 @@ fn parse_codex_file_with_index(
         starts_at_fork_ordinal,
         has_fork_provenance,
         root_timestamp,
+        cwd,
+        model_provider,
         parent,
         token_events,
         usage_record_events,
@@ -2871,6 +3129,23 @@ fn sync_single_codex_file(
     // ID 只承担 request_id 去重键（event_index 按物理文件计数，不能改用
     // 前置 ID）。
     let session_thread_id = parsed.meta_thread_id.as_deref().unwrap_or(root_thread_id);
+    let session_key =
+        crate::services::usage_attribution::normalize_session_key("codex", session_thread_id);
+    let project = parsed.cwd.as_deref().and_then(|cwd| {
+        crate::services::usage_attribution::project_from_cwd(
+            "codex",
+            &session_key,
+            cwd,
+            "session_meta",
+        )
+    });
+    if let Some(project) = project.as_ref() {
+        let conn = lock_conn!(db.conn);
+        if let Err(err) = crate::database::Database::upsert_session_project_on_conn(&conn, project)
+        {
+            log::warn!("[CODEX-SYNC] 写入会话项目失败: {err}");
+        }
+    }
     let batch_count = to_insert.len().div_ceil(CODEX_INSERT_BATCH_SIZE);
     for (batch_index, batch) in to_insert.chunks(CODEX_INSERT_BATCH_SIZE).enumerate() {
         let is_last_batch = batch_index + 1 == batch_count;
@@ -2892,6 +3167,8 @@ fn sync_single_codex_file(
                 Some(session_thread_id),
                 event.timestamp.as_deref(),
                 event.timing,
+                project.as_ref(),
+                parsed.model_provider.as_deref(),
                 &mut batch_suspected,
                 &mut pass.pricing,
             ) {
@@ -2943,6 +3220,8 @@ fn insert_codex_session_entry(
         session_id,
         timestamp,
         None,
+        None,
+        None,
         suspected_duplicates,
         &mut HashMap::new(),
     )
@@ -2963,6 +3242,8 @@ fn insert_codex_session_entry_on_conn(
     session_id: Option<&str>,
     timestamp: Option<&str>,
     timing: Option<EstimatedTiming>,
+    project: Option<&crate::services::usage_attribution::SessionProject>,
+    model_provider: Option<&str>,
     suspected_duplicates: &mut u32,
     pricing_cache: &mut HashMap<String, Option<ModelPricing>>,
 ) -> Result<bool, AppError> {
@@ -2989,9 +3270,39 @@ fn insert_codex_session_entry_on_conn(
         cache_creation_tokens: delta.cache_write_input,
         created_at,
     };
-    if should_skip_session_insert(conn, request_id, &dedup_key)? {
+    if crate::services::usage_attribution::skip_if_duplicate_with_project(
+        conn, request_id, &dedup_key, project,
+    )? {
         return Ok(false);
     }
+
+    let start_s = created_at.saturating_sub(timing.map_or(0, |t| t.latency_ms) / 1000);
+    // 归属：优先用 session_meta 的原生 model_provider 做确定性映射；`custom`
+    // 与缺失时回退到供应商激活时间线（`custom` 是 Codex 的通用路由键）。
+    let attribution = match model_provider {
+        Some(model_provider) => {
+            crate::services::usage_attribution::codex_attribution_from_model_provider(
+                conn,
+                Some(model_provider),
+                start_s,
+                created_at,
+            )?
+        }
+        None => crate::services::usage_attribution::resolve_provider_attribution(
+            conn,
+            "codex",
+            start_s,
+            created_at,
+            "_codex_session",
+        )?,
+    };
+    let provider_name_snapshot =
+        crate::services::usage_attribution::provider_name_snapshot_on_conn(
+            conn,
+            &attribution.provider_id,
+            "codex",
+        )?
+        .unwrap_or_default();
     if has_suspected_codex_session_duplicate(conn, request_id, &dedup_key)? {
         *suspected_duplicates = suspected_duplicates.saturating_add(1);
         log::warn!(
@@ -3027,12 +3338,13 @@ fn insert_codex_session_entry_on_conn(
             input_cost_usd, output_cost_usd, cache_read_cost_usd, cache_creation_cost_usd, total_cost_usd,
             latency_ms, first_token_ms, status_code, error_message, session_id,
             provider_type, is_streaming, cost_multiplier, created_at, data_source,
-            input_token_semantics
-        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25)",
+            input_token_semantics, project_key, project_name, project_path, session_key,
+            attribution_source, attribution_confidence, attribution_reason, provider_name_snapshot
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)",
         )
         .and_then(|mut stmt| stmt.execute(rusqlite::params![
                 request_id,
-                "_codex_session",    // provider_id
+                attribution.provider_id,
                 "codex",             // app_type
                 model,
                 model,               // request_model = model
@@ -3056,6 +3368,14 @@ fn insert_codex_session_entry_on_conn(
                 created_at,
                 "codex_session",     // data_source
                 INPUT_TOKEN_SEMANTICS_TOTAL, // input_tokens 含缓存读写
+                project.map(|p| p.project_key.as_str()).unwrap_or(""),
+                project.map(|p| p.project_name.as_str()).unwrap_or(""),
+                project.map(|p| p.project_path.as_str()).unwrap_or(""),
+                project.map(|p| p.session_key.as_str()).unwrap_or(""),
+                attribution.source,
+                attribution.confidence,
+                attribution.reason,
+                provider_name_snapshot,
             ]))
         .map_err(|e| AppError::Database(format!("插入 Codex 会话日志失败: {e}")))?;
 

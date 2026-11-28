@@ -2738,7 +2738,8 @@
       "label": "Details",
       "providers": "Anbieter",
       "models": "Modelle",
-      "pricing": "Preise"
+      "pricing": "Preise",
+      "projects": "Projekte"
     },
     "app": "App",
     "speed": "Geschwindigkeit",
@@ -2840,6 +2841,80 @@
       "title": "Nutzungseinstellungen",
       "pricingSummary": "Preise pro Million Token je Modell festlegen oder von models.dev synchronisieren",
       "managePricing": "Preise verwalten …"
+    },
+    "project": "Projekt",
+    "projectFilter": {
+      "selected": "{{count}} Projekte ausgewählt",
+      "label": "Projekt",
+      "title": "Nach Projekt filtern",
+      "all": "Alle Projekte",
+      "unknown": "Nicht zugeordnetes Projekt"
+    },
+    "projects": {
+      "apps": "Apps",
+      "providers": "Anbieter",
+      "lastActive": "Zuletzt aktiv",
+      "share": "Anteil"
+    },
+    "providers": {
+      "expandModels": "Modellanteile anzeigen"
+    },
+    "share": {
+      "metricLabel": "Kennzahl für den Anteil",
+      "metric": {
+        "tokens": "Tokens",
+        "cost": "Kosten",
+        "requests": "Anfragen",
+        "cache": "Cache"
+      },
+      "providers": "Anbieteranteile",
+      "providersAria": "Anbieteranteile für dieses Projekt",
+      "models": "Modellanteile",
+      "modelsAria": "Modellanteile",
+      "modelsIn": "Modellanteile · {{provider}}",
+      "cacheHit": "Cache-Treffer {{rate}}",
+      "requestCount": "{{value}} Anfragen",
+      "total": "Gesamt",
+      "other": "Sonstige",
+      "allProviders": "Alle Anbieter",
+      "requestCacheHit": "{{value}} Anfragen · Cache-Treffer {{rate}}"
+    },
+    "cacheBreakdown": {
+      "models": "Anteil der Modelle an der Eingabe",
+      "modelsIn": "Anteil der Modelle an der Eingabe · {{provider}}",
+      "providersInput": "Anteil der Anbieter an der Eingabe",
+      "weightedRate": "Gewichtete Cache-Trefferquote",
+      "readOfInput": "Gelesen {{read}} / Eingabe {{input}}",
+      "help": "Cache-Lesen ÷ (neue Eingabe + Cache-Schreiben + Cache-Lesen), nach Tokens gewichtet; Ausgabe ausgeschlossen. Ohne Eingabe erscheint —. Fehlende Daten werden ausgeschlossen.",
+      "read": "Cache-Lesen",
+      "write": "Cache-Schreiben",
+      "fresh": "Neue Eingabe",
+      "order": "Größte Eingabe zuerst",
+      "missing": "Cache-Daten nicht verfügbar",
+      "excluded": "{{count}} Modelle mit fehlenden Cache-Daten aus den Summen ausgeschlossen",
+      "loadError": "Nutzung konnte nicht geladen werden"
+    },
+    "attributionSource": "Zuordnungsquelle",
+    "attributionConfidence": "Zuordnungssicherheit",
+    "attributionReason": "Grund für fehlende Zuordnung",
+    "quality": {
+      "summary": "{{provider}} Anfragen ohne bekannten Anbieter, {{project}} ohne bekanntes Projekt"
+    },
+    "loading": "Wird geladen…",
+    "attribution": {
+      "source": {
+        "unknown": "Unbekannt",
+        "proxy": "Proxy-Protokoll",
+        "session_meta": "Sitzungsmetadaten",
+        "activation": "Anbieterzeitlinie",
+        "dedup": "Nachtrag bei Deduplizierung",
+        "pre_migration_no_evidence": "Keine Belege vor der Migration"
+      },
+      "confidence": {
+        "unknown": "Unbekannt",
+        "exact": "Exakt",
+        "high": "Hoch"
+      }
     }
   },
   "usageScript": {

@@ -56,6 +56,18 @@ const renderWith = (request: RequestLog) => {
 };
 
 describe("RequestDetailPanel", () => {
+  it("shows the saved provider name after the provider is renamed", () => {
+    renderWith(
+      log({
+        providerName: "Renamed Provider",
+        providerNameSnapshot: "Original Provider",
+      }),
+    );
+
+    expect(screen.getByText("Original Provider")).toBeInTheDocument();
+    expect(screen.queryByText("Renamed Provider")).not.toBeInTheDocument();
+  });
+
   it("copies the full request ID even when the row truncates it", async () => {
     const longId =
       "resp_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -196,6 +208,28 @@ describe("RequestDetailPanel", () => {
     expect(
       screen.queryByText("usage.detail.providerId"),
     ).not.toBeInTheDocument();
+  });
+
+  it("keeps project and attribution evidence visible for native sessions", () => {
+    renderWith(
+      log({
+        dataSource: "codex_session",
+        projectKey: "/workspace/demo",
+        projectName: "Demo",
+        projectPath: "/workspace/demo",
+        attributionSource: "session_meta",
+        attributionConfidence: "exact",
+        attributionReason: "native_provider_id",
+      }),
+    );
+    expect(screen.getByText("Demo")).toBeInTheDocument();
+    expect(
+      screen.getByText("usage.attribution.source.session_meta"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("usage.attribution.confidence.exact"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("native_provider_id")).toBeInTheDocument();
   });
 
   it("shows fresh input net of both cache reads and cache writes", () => {

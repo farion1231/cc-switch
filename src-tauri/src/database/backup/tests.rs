@@ -2,7 +2,7 @@ use super::{lock_backup_file_operations, Database};
 use crate::error::AppError;
 use crate::settings::{get_settings, update_settings, AppSettings};
 use crate::test_support::EnvVars;
-use rusqlite::Connection;
+use rusqlite::{backup::Backup, Connection};
 use serial_test::serial;
 
 #[tokio::test]
@@ -147,6 +147,42 @@ impl TestHomeGuard {
 
 struct SettingsGuard {
     previous: AppSettings,
+}
+
+#[test]
+#[serial]
+fn attribution_upgrade_backs_up_current_version_before_repair() -> Result<(), AppError> {
+    let _home = TestHomeGuard::new();
+    let db_path = crate::config::get_app_config_dir().join("cc-switch.db");
+    let source = Database::memory()?;
+    let conn = crate::database::lock_conn!(source.conn);
+    Database::set_user_version(&conn, crate::database::SCHEMA_VERSION)?;
+    conn.execute("DROP TABLE session_projects", [])?;
+    let mut disk = Connection::open(&db_path)?;
+    let backup = Backup::new(&conn, &mut disk)?;
+    backup.run_to_completion(100, std::time::Duration::from_millis(1), None)?;
+    drop(backup);
+    drop(disk);
+    drop(conn);
+
+    let upgraded = Database::init()?;
+    let snapshots = Database::list_backups()?;
+    assert_eq!(snapshots.len(), 1);
+    let saved = Connection::open(backups_dir()?.join(&snapshots[0].filename))?;
+    assert!(!Database::table_exists(&saved, "session_projects")?);
+    assert_eq!(
+        Database::get_user_version(&saved)?,
+        crate::database::SCHEMA_VERSION
+    );
+    {
+        let repaired = crate::database::lock_conn!(upgraded.conn);
+        assert!(Database::table_exists(&repaired, "session_projects")?);
+    }
+    // A completed repair needs no new safety snapshot on the next startup.
+    drop(upgraded);
+    let _reopened = Database::init()?;
+    assert_eq!(Database::list_backups()?.len(), 1);
+    Ok(())
 }
 
 impl SettingsGuard {
@@ -2621,5 +2657,80 @@ fn maintenance_prunes_logs_even_when_backup_destination_is_invalid() -> Result<(
     let rollups: i64 =
         conn.query_row("SELECT COUNT(*) FROM usage_daily_rollups", [], |r| r.get(0))?;
     assert_eq!((logs, rollups), (0, 1));
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn sync_keeps_usage_backfill_completion_with_each_devices_local_rows() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let a = Database::memory()?;
+    let b = Database::memory()?;
+    let codex_flag = crate::services::session_usage_codex::CODEX_ATTRIBUTION_BACKFILL_FLAG;
+    let claude_flag = crate::services::session_usage::CLAUDE_PROJECT_BACKFILL_FLAG;
+    a.set_setting(codex_flag, "1")?;
+    a.set_setting(claude_flag, "local-a")?;
+    a.set_setting("synced-preference", "a")?;
+    {
+        let conn = crate::database::lock_conn!(b.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs
+            (request_id, provider_id, app_type, model, latency_ms, status_code,
+             created_at, session_id, input_tokens, total_cost_usd)
+            VALUES ('local-b', 'kept-provider', 'codex', 'model', 1, 200, 100,
+                    '00000000-0000-4000-8000-000000000001', 123, '0.0123')",
+            [],
+        )?;
+    }
+    let export = a.export_sql_string_for_sync()?;
+    assert!(!export.contains(codex_flag));
+    assert!(!export.contains(claude_flag));
+    assert!(export.contains("synced-preference"));
+    // Also tolerate an older sender that included its completion markers.
+    b.import_sql_string_for_sync(&a.export_sql_string()?)?;
+    assert_eq!(b.get_setting(codex_flag)?, None);
+    assert_eq!(b.get_setting(claude_flag)?, None);
+    assert_eq!(b.get_setting("synced-preference")?, Some("a".into()));
+    let sessions = crate::codex_config::get_codex_config_dir().join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join("rollout-00000000-0000-4000-8000-000000000001.jsonl"),
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "session_meta", "payload": {"id": "00000000-0000-4000-8000-000000000001",
+                "cwd": "/synthetic/project"}
+            })
+        ),
+    )
+    .unwrap();
+    let repaired = crate::services::session_usage_codex::backfill_codex_usage_attribution(&b)?;
+    assert_eq!(
+        repaired.files_scanned, 1,
+        "B must run its own first backfill"
+    );
+    let row: (String, String, i64, String) = crate::database::lock_conn!(b.conn).query_row(
+        "SELECT project_key, provider_id, input_tokens, total_cost_usd FROM proxy_request_logs WHERE request_id='local-b'",
+        [], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?)),
+    )?;
+    assert_eq!(
+        row,
+        (
+            "/synthetic/project".into(),
+            "kept-provider".into(),
+            123,
+            "0.0123".into()
+        )
+    );
+    b.set_setting(claude_flag, "local-b")?;
+    b.set_setting("synced-preference", "b")?;
+    a.import_sql_string_for_sync(&b.export_sql_string()?)?;
+    assert_eq!(a.get_setting(codex_flag)?, Some("1".into()));
+    assert_eq!(a.get_setting(claude_flag)?, Some("local-a".into()));
+    assert_eq!(a.get_setting("synced-preference")?, Some("b".into()));
+    assert_eq!(
+        crate::services::session_usage_codex::backfill_codex_usage_attribution(&b)?.files_scanned,
+        0
+    );
     Ok(())
 }

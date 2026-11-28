@@ -8,7 +8,7 @@ use crate::error::AppError;
 use chrono::{Local, Utc};
 use rusqlite::backup::{Backup, StepResult};
 use rusqlite::types::ValueRef;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -150,6 +150,8 @@ const SYNC_SKIP_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "provider_activations",
+    "session_projects",
 ];
 
 /// Tables whose local data is preserved from the live database during WebDAV import.
@@ -161,6 +163,14 @@ const SYNC_PRESERVE_TABLES: &[&str] = &[
     "usage_daily_rollups",
     "session_log_sync",
     "session_usage_dedup",
+    "provider_activations",
+    "session_projects",
+];
+
+// Completion belongs to the device-local usage rows preserved during sync.
+const SYNC_LOCAL_SETTING_KEYS: &[&str] = &[
+    crate::services::session_usage_codex::CODEX_ATTRIBUTION_BACKFILL_FLAG,
+    crate::services::session_usage::CLAUDE_PROJECT_BACKFILL_FLAG,
 ];
 
 /// A database backup entry for the UI
@@ -206,6 +216,9 @@ impl Database {
     /// Export SQL for sync (WebDAV), skipping local-only tables' data
     pub fn export_sql_string_for_sync(&self) -> Result<String, AppError> {
         let snapshot = self.snapshot_to_memory()?;
+        for key in SYNC_LOCAL_SETTING_KEYS {
+            snapshot.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+        }
         Self::dump_sql(&snapshot, SYNC_SKIP_TABLES)
     }
 
@@ -365,6 +378,20 @@ impl Database {
                 Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
+                for key in SYNC_LOCAL_SETTING_KEYS {
+                    temp_conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+                    let value: Option<String> = main_conn
+                        .query_row("SELECT value FROM settings WHERE key = ?1", [key], |row| {
+                            row.get(0)
+                        })
+                        .optional()?;
+                    if let Some(value) = value {
+                        temp_conn.execute(
+                            "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                            rusqlite::params![key, value],
+                        )?;
+                    }
+                }
             }
             self.replace_from_staging(&temp_conn, &mut main_conn, "替换主数据库")?;
             backup_path
