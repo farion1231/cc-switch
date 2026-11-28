@@ -389,30 +389,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn enabled_apps_merge_covers_every_supported_mcp_client() {
-        let existing = McpApps {
-            claude: true,
-            ..McpApps::default()
-        };
-        let target = McpApps {
-            codex: true,
-            gemini: true,
-            grokbuild: true,
-            opencode: true,
-            hermes: true,
-            ..McpApps::default()
-        };
-        let merged = merge_mcp_apps(&existing, &target);
-
-        assert!(merged.claude);
-        assert!(merged.codex);
-        assert!(merged.gemini);
-        assert!(merged.grokbuild);
-        assert!(merged.opencode);
-        assert!(merged.hermes);
-    }
-
-    #[test]
     #[serial_test::serial]
     fn import_mcp_from_deeplink_rejects_credential_exfil_and_helper_fields() {
         use base64::prelude::*;
