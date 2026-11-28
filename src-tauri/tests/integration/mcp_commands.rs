@@ -55,7 +55,7 @@ fn deleting_enabled_agy_mcp_removes_its_native_entry() {
 }
 
 #[test]
-fn mcode_import_ignores_native_metadata_and_continues_after_conflicts() {
+fn mcode_import_keeps_distinct_app_connections_and_native_metadata() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
     let state = create_test_state().unwrap();
@@ -75,13 +75,18 @@ fn mcode_import_ignores_native_metadata_and_continues_after_conflicts() {
         "c-new":{"command":"node"}
     }});
     fs::write(&path, original.to_string()).unwrap();
-    let error = McpService::import_from_all_apps(&state)
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("a-conflict"));
-    assert!(!error.contains("b-shared"));
+    assert_eq!(McpService::import_from_all_apps(&state).unwrap(), 1);
+    assert_eq!(fs::read_to_string(&path).unwrap(), original.to_string());
     let servers = state.db.get_all_mcp_servers().unwrap();
-    assert!(!servers["a-conflict"].apps.mcode);
+    assert!(servers["a-conflict"].apps.mcode);
+    assert_eq!(
+        servers["a-conflict"].server["url"],
+        "https://example.com/mcp"
+    );
+    assert_eq!(
+        servers["a-conflict"].server_for_app(&AppType::Mcode)["command"],
+        "different"
+    );
     assert!(servers["b-shared"].apps.mcode && servers["b-shared"].apps.claude);
     assert!(servers["c-new"].apps.mcode);
     McpService::sync_enabled_for_app(&state, &AppType::Mcode).unwrap();
@@ -94,8 +99,8 @@ fn mcode_import_ignores_native_metadata_and_continues_after_conflicts() {
         );
     }
     assert_eq!(
-        written["mcpServers"]["a-conflict"],
-        original["mcpServers"]["a-conflict"]
+        written["mcpServers"]["a-conflict"]["command"],
+        original["mcpServers"]["a-conflict"]["command"]
     );
 }
 
@@ -147,7 +152,7 @@ fn mcode_write_failures_keep_managed_mcp_state_for_all_write_entries() {
 }
 
 #[test]
-fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
+fn mcode_automatic_sync_preserves_unmanaged_servers_until_explicit_import() {
     let _guard = test_mutex().lock().unwrap();
     reset_test_fs();
     let state = create_test_state().unwrap();
@@ -156,6 +161,7 @@ fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
     let native = json!({"mcpServers":{"context7":{"command":"native-server","enabled":true}}});
     fs::write(&path, native.to_string()).unwrap();
     let server = McpServer {
+        app_overrides: Default::default(),
         id: "context7".into(),
         name: "Context7".into(),
         server: json!({"command":"managed-server"}),
@@ -169,17 +175,22 @@ fn mcode_automatic_sync_preserves_unmanaged_same_name_servers() {
         tags: vec![],
     };
     state.db.save_mcp_server(&server).unwrap();
-    let error = McpService::import_from_all_apps(&state).unwrap_err();
-    assert!(error.to_string().contains("context7"));
-    assert!(
-        !state.db.get_all_mcp_servers().unwrap()["context7"]
-            .apps
-            .mcode
-    );
     McpService::sync_enabled_for_app(&state, &AppType::Mcode).unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap(),
         native
+    );
+    assert_eq!(McpService::import_from_all_apps(&state).unwrap(), 0);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap(),
+        native
+    );
+    let imported = state.db.get_all_mcp_servers().unwrap()["context7"].clone();
+    assert!(imported.apps.mcode);
+    assert_eq!(imported.server["command"], "managed-server");
+    assert_eq!(
+        imported.server_for_app(&AppType::Mcode)["command"],
+        "native-server"
     );
     McpService::toggle_app(&state, "context7", AppType::Mcode, true).unwrap();
     McpService::import_from_all_apps(&state).unwrap();
@@ -860,6 +871,7 @@ command = "echo"
     state
         .db
         .save_mcp_server(&McpServer {
+            app_overrides: Default::default(),
             id: "shared".to_string(),
             name: "shared".to_string(),
             server: json!({
@@ -1016,6 +1028,7 @@ fn set_mcp_enabled_for_codex_writes_live_config() {
     config.mcp.servers.as_mut().unwrap().insert(
         "codex-server".into(),
         McpServer {
+            app_overrides: Default::default(),
             id: "codex-server".to_string(),
             name: "Codex Server".to_string(),
             server: json!({
@@ -1092,6 +1105,7 @@ fn enabling_codex_mcp_skips_when_codex_dir_missing() {
     McpService::upsert_server(
         &state,
         McpServer {
+            app_overrides: Default::default(),
             id: "codex-server".to_string(),
             name: "Codex Server".to_string(),
             server: json!({
@@ -1148,6 +1162,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
     McpService::upsert_server(
         &state,
         McpServer {
+            app_overrides: Default::default(),
             id: "echo".to_string(),
             name: "echo".to_string(),
             server: json!({
@@ -1193,6 +1208,7 @@ fn upsert_mcp_server_disabling_app_removes_from_claude_live_config() {
     McpService::upsert_server(
         &state,
         McpServer {
+            app_overrides: Default::default(),
             id: "echo".to_string(),
             name: "echo".to_string(),
             server: json!({
@@ -1385,6 +1401,7 @@ fn enabling_gemini_mcp_skips_when_gemini_dir_missing() {
     McpService::upsert_server(
         &state,
         McpServer {
+            app_overrides: Default::default(),
             id: "gemini-server".to_string(),
             name: "Gemini Server".to_string(),
             server: json!({
@@ -1451,6 +1468,7 @@ fn enabling_claude_mcp_skips_when_claude_config_absent() {
     McpService::upsert_server(
         &state,
         McpServer {
+            app_overrides: Default::default(),
             id: "claude-server".to_string(),
             name: "Claude Server".to_string(),
             server: json!({
@@ -1517,6 +1535,7 @@ fn explicit_default_claude_dir_keeps_default_split_mcp_path() {
     McpService::upsert_server(
         &state,
         McpServer {
+            app_overrides: Default::default(),
             id: "claude-default".to_string(),
             name: "Claude Default".to_string(),
             server: json!({
@@ -1584,6 +1603,7 @@ fn custom_claude_dir_writes_mcp_inside_config_dir() {
     McpService::upsert_server(
         &state,
         McpServer {
+            app_overrides: Default::default(),
             id: "claude-custom".to_string(),
             name: "Claude Custom".to_string(),
             server: json!({
@@ -1674,6 +1694,7 @@ fn custom_claude_dir_sync_does_not_copy_default_profile() {
     McpService::upsert_server(
         &state,
         McpServer {
+            app_overrides: Default::default(),
             id: "custom-only".to_string(),
             name: "Custom Only".to_string(),
             server: json!({
@@ -1769,6 +1790,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
     state
         .db
         .save_mcp_server(&McpServer {
+            app_overrides: Default::default(),
             id: "managed-disabled".to_string(),
             name: "Managed Disabled".to_string(),
             server: json!({
@@ -1802,6 +1824,7 @@ fn sync_all_enabled_removes_known_disabled_but_preserves_unknown_live_entries() 
     state
         .db
         .save_mcp_server(&McpServer {
+            app_overrides: Default::default(),
             id: "managed-enabled".to_string(),
             name: "Managed Enabled".to_string(),
             server: json!({
@@ -2002,7 +2025,7 @@ fn omp_mcp_disable_reenable_preserves_options_and_suppresses_discovered_sources(
 }
 
 #[test]
-fn omp_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
+fn omp_mcp_requires_explicit_import_before_adopting_native_configuration() {
     let _guard = test_mutex().lock().unwrap();
     let (state, path) = omp_test_state();
     let native =
@@ -2014,11 +2037,22 @@ fn omp_mcp_resync_and_conflicting_enable_preserve_native_configuration() {
     assert_eq!(fs::read_to_string(&path).unwrap(), native.to_string());
     assert!(McpService::toggle_app(&state, &server.id, AppType::Omp, true).is_err());
     assert!(!state.db.get_all_mcp_servers().unwrap()[&server.id].apps.omp);
-    assert!(McpService::import_from_app(&state, &AppType::Omp)
-        .unwrap_err()
-        .to_string()
-        .contains("context7"));
+    assert_eq!(
+        McpService::import_from_app(&state, &AppType::Omp).unwrap(),
+        0
+    );
     assert_eq!(fs::read_to_string(&path).unwrap(), native.to_string());
+    let saved = state.db.get_all_mcp_servers().unwrap()["context7"].clone();
+    assert!(saved.apps.omp);
+    assert_eq!(saved.server["command"], "managed");
+    assert_eq!(saved.server_for_app(&AppType::Omp)["command"], "authored");
+    McpService::sync_enabled_for_app(&state, &AppType::Omp).unwrap();
+    let written: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        written["mcpServers"]["context7"]["env"],
+        native["mcpServers"]["context7"]["env"]
+    );
 }
 
 #[test]

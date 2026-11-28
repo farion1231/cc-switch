@@ -15,7 +15,7 @@
 //! strict JSON files so a user's comments are never lost.
 //!
 //! Docs: <https://www.codebuddy.ai/docs/cli/mcp>
-use crate::app_config::{McpApps, McpServer};
+use crate::app_config::{AppType, McpApps, McpServer};
 use crate::config::{atomic_write_private, get_home_dir};
 use crate::error::AppError;
 use crate::jsonc_document::JsoncDocument;
@@ -219,15 +219,13 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         }
         let enabled = !disabled.contains(&id.as_str());
         let server = if let Some(mut server) = existing.shift_remove(id) {
-            if transport_spec(&server.server) != transport_spec(&spec) {
-                skipped.push(format!("'{id}': conflicts with an existing server"));
-                continue;
-            }
+            server.import_app_server(&AppType::Codebuddy, spec);
             server.apps.codebuddy = enabled;
             server
         } else {
             count += 1;
             McpServer {
+                app_overrides: Default::default(),
                 id: id.clone(),
                 name: id.clone(),
                 server: spec,
@@ -253,7 +251,7 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     }
 }
 
-fn transport_spec(spec: &Value) -> Value {
+pub(crate) fn transport_spec(spec: &Value) -> Value {
     let mut spec = unified_spec(spec);
     if let Some(object) = spec.as_object_mut() {
         object.retain(|key, _| TRANSPORT_FIELDS.contains(&key.as_str()));
@@ -449,6 +447,7 @@ mod tests {
         state
             .db
             .save_mcp_server(&McpServer {
+                app_overrides: Default::default(),
                 id: "shared".into(),
                 name: "shared".into(),
                 server: json!({"type": "stdio", "command": "node"}),

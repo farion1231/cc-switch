@@ -3,7 +3,7 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpServer, MultiAppConfig};
+use crate::app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 
 use super::validation::validate_server_spec;
@@ -38,7 +38,9 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
 
         if let Some(existing) = servers.get_mut(id) {
             // 已存在：仅启用 Gemini 应用
-            if !existing.apps.gemini {
+            let previous = existing.app_overrides.clone();
+            existing.import_app_server(&AppType::Gemini, spec.clone());
+            if !existing.apps.gemini || existing.app_overrides != previous {
                 existing.apps.gemini = true;
                 changed += 1;
                 log::info!("MCP 服务器 '{id}' 已启用 Gemini 应用");
@@ -48,6 +50,7 @@ pub fn import_from_gemini(config: &mut MultiAppConfig) -> Result<usize, AppError
             servers.insert(
                 id.clone(),
                 McpServer {
+                    app_overrides: Default::default(),
                     id: id.clone(),
                     name: id.clone(),
                     server: spec.clone(),

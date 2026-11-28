@@ -30,6 +30,10 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     FILE.import(state)
 }
 
+pub(super) fn unified_spec(native: &Value) -> Value {
+    FILE.unified_spec(native)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

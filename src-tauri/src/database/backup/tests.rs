@@ -563,6 +563,94 @@ fn unix_colon_named_backup_supports_list_restore_rename_and_delete() -> Result<(
 
 #[test]
 #[serial]
+fn sync_import_rejects_invalid_mcp_overrides_before_replacing_local_data() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    for invalid in [
+        "{",
+        r#"{"unsupported-agent":{"command":"x"}}"#,
+        r#"{"codex":{}}"#,
+    ] {
+        let source = Database::memory()?;
+        let server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({
+            "id":"remote","name":"remote","server":{"command":"echo"},"apps":{}
+        }))
+        .unwrap();
+        source.save_mcp_server(&server)?;
+        let sql = format!(
+            "{}\nUPDATE mcp_servers SET app_overrides='{invalid}';",
+            source.export_sql_string_for_sync()?
+        );
+        let target = Database::memory()?;
+        target.set_setting("local-marker", "keep")?;
+        let result = target.import_sql_string_for_sync(&sql);
+        assert!(result.is_err(), "accepted invalid overrides: {invalid}");
+        assert_eq!(target.get_setting("local-marker")?, Some("keep".into()));
+        assert!(target.get_all_mcp_servers()?.is_empty());
+    }
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn sync_import_preserves_unreadable_mcp_base_fields() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let source = Database::memory()?;
+    let server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({
+        "id":"remote","name":"remote","server":{"command":"echo"},"apps":{},
+        "appOverrides":{"codex":{"command":"echo"}}
+    }))
+    .unwrap();
+    source.save_mcp_server(&server)?;
+    let sql = format!(
+        "{}\nUPDATE mcp_servers SET server_config='{{';",
+        source.export_sql_string_for_sync()?
+    );
+
+    let target = Database::memory()?;
+    target.import_sql_string_for_sync(&sql)?;
+
+    let entry = target.get_unreadable_mcp_server("remote")?.unwrap();
+    assert!(entry.error.contains("server_config"));
+    let conn = crate::database::lock_conn!(target.conn);
+    let raw: String = conn.query_row(
+        "SELECT server_config FROM mcp_servers WHERE id = 'remote'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(raw, "{");
+    Ok(())
+}
+
+#[test]
+#[serial]
+fn sync_import_revalidates_mcp_after_restoring_preserved_tables() -> Result<(), AppError> {
+    let _test_home = TestHomeGuard::new();
+    let source = Database::memory()?;
+    let server: crate::app_config::McpServer = serde_json::from_value(serde_json::json!({
+        "id":"remote","name":"remote","server":{"command":"echo"},"apps":{}
+    }))
+    .unwrap();
+    source.save_mcp_server(&server)?;
+    let sql = format!("{}\nCREATE TRIGGER poison AFTER INSERT ON proxy_live_backup BEGIN UPDATE mcp_servers SET app_overrides='{{\"codex\":{{}}}}'; END;", source.export_sql_string_for_sync()?);
+    let target = Database::memory()?;
+    target.set_setting("local-marker", "keep")?;
+    target.conn.lock().unwrap().execute_batch("INSERT INTO proxy_live_backup(app_type,original_config,backed_up_at) VALUES ('claude','{}','2026-10-24');")?;
+    assert!(target.import_sql_string_for_sync(&sql).is_err());
+    assert_eq!(target.get_setting("local-marker")?, Some("keep".into()));
+    assert!(target.get_all_mcp_servers()?.is_empty());
+    assert_eq!(
+        target.conn.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM proxy_live_backup",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        1
+    );
+    Ok(())
+}
+
+#[test]
+#[serial]
 fn import_clears_custom_icons_that_fail_validation() -> Result<(), AppError> {
     let _test_home = TestHomeGuard::new();
     // 保存时会拒绝的图标，可以直接写进别人给的 SQL 备份或云端快照：导入时要清掉

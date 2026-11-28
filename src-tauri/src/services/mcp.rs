@@ -51,6 +51,7 @@ impl McpService {
 
     /// 添加或更新 MCP 服务器
     pub fn upsert_server(state: &AppState, server: McpServer) -> Result<(), AppError> {
+        mcp::validation::validate_app_overrides(&server.app_overrides)?;
         // 读取旧状态：用于处理“编辑时取消勾选某个应用”的场景（需要从对应 live 配置中移除）。
         // 别的服务器读不出来不影响；这个 id 本身读不出来就在写任何 live 之前拒绝。
         let previous = state.db.get_mcp_server_rows()?.get(&server.id)?.cloned();
@@ -63,14 +64,24 @@ impl McpService {
         let managed_omp = server.apps.omp
             || prev_apps.omp
             || previous.as_ref().is_some_and(|saved| {
-                mcp::omp::is_disabled_managed(&saved.id, &saved.server).unwrap_or(false)
+                mcp::omp::is_disabled_managed(&saved.id, saved.server_for_app(&AppType::Omp))
+                    .unwrap_or(false)
+            });
+        let managed_pi = server.apps.pi
+            || prev_apps.pi
+            || previous.as_ref().is_some_and(|saved| {
+                mcp::pi::is_disabled_managed(&saved.id, saved.server_for_app(&AppType::Pi))
+                    .unwrap_or(false)
             });
         // Native MCP writes and managed state commit together.
         let save_with_copilot = || {
             if server.apps.copilot || prev_apps.copilot {
                 mcp::copilot::sync_and_commit(
                     &server.id,
-                    server.apps.copilot.then_some(&server.server),
+                    server
+                        .apps
+                        .copilot
+                        .then_some(server.server_for_app(&AppType::Copilot)),
                     || state.db.save_mcp_server(&server),
                 )
             } else {
@@ -82,11 +93,11 @@ impl McpService {
                 mcp::omp::sync_and_commit(
                     &server.id,
                     mcp::omp::OmpChange::from_previous(
-                        &server.server,
+                        server.server_for_app(&AppType::Omp),
                         previous
                             .as_ref()
-                            .map(|s| &s.server)
-                            .unwrap_or(&server.server),
+                            .map(|s| s.server_for_app(&AppType::Omp))
+                            .unwrap_or(server.server_for_app(&AppType::Omp)),
                         server.apps.omp,
                     ),
                     save_with_copilot,
@@ -100,7 +111,10 @@ impl McpService {
             if server.apps.workbuddy || prev_apps.workbuddy {
                 mcp::workbuddy::sync_and_commit(
                     &server.id,
-                    server.apps.workbuddy.then_some(&server.server),
+                    server
+                        .apps
+                        .workbuddy
+                        .then_some(server.server_for_app(&AppType::WorkBuddy)),
                     save_with_omp,
                 )
             } else {
@@ -111,7 +125,10 @@ impl McpService {
             if server.apps.codebuddy || prev_apps.codebuddy {
                 mcp::codebuddy::sync_and_commit(
                     &server.id,
-                    server.apps.codebuddy.then_some(&server.server),
+                    server
+                        .apps
+                        .codebuddy
+                        .then_some(server.server_for_app(&AppType::Codebuddy)),
                     save_with_workbuddy,
                 )
             } else {
@@ -122,7 +139,10 @@ impl McpService {
             if server.apps.dsh || prev_apps.dsh {
                 mcp::dsh::sync_and_commit(
                     &server.id,
-                    server.apps.dsh.then_some(&server.server),
+                    server
+                        .apps
+                        .dsh
+                        .then_some(server.server_for_app(&AppType::Dsh)),
                     save_with_codebuddy,
                 )
             } else {
@@ -133,7 +153,10 @@ impl McpService {
             if server.apps.kimi || prev_apps.kimi {
                 mcp::kimi::sync_and_commit(
                     &server.id,
-                    server.apps.kimi.then_some(&server.server),
+                    server
+                        .apps
+                        .kimi
+                        .then_some(server.server_for_app(&AppType::Kimi)),
                     save_with_dsh,
                 )
             } else {
@@ -144,7 +167,12 @@ impl McpService {
             if server.apps.agy || prev_apps.agy {
                 mcp::agy::sync_and_commit(
                     &server.id,
-                    mcp::agy::AgyChange::from_enabled(server.apps.agy.then_some(&server.server)),
+                    mcp::agy::AgyChange::from_enabled(
+                        server
+                            .apps
+                            .agy
+                            .then_some(server.server_for_app(&AppType::Agy)),
+                    ),
                     save_with_kimi,
                 )
             } else {
@@ -152,11 +180,18 @@ impl McpService {
             }
         };
         let save_with_pi = || {
-            if server.apps.pi || prev_apps.pi {
+            if managed_pi {
                 mcp::pi::sync_and_commit(
                     &state.db,
                     &server.id,
-                    mcp::pi::PiChange::from_enabled(server.apps.pi.then_some(&server.server)),
+                    mcp::pi::PiChange::from_previous(
+                        server.server_for_app(&AppType::Pi),
+                        previous
+                            .as_ref()
+                            .map(|saved| saved.server_for_app(&AppType::Pi))
+                            .unwrap_or(server.server_for_app(&AppType::Pi)),
+                        server.apps.pi,
+                    ),
                     save_with_agy,
                 )
             } else {
@@ -167,7 +202,10 @@ impl McpService {
             if server.apps.zcode || prev_apps.zcode {
                 mcp::zcode::sync_and_commit(
                     &server.id,
-                    server.apps.zcode.then_some(&server.server),
+                    server
+                        .apps
+                        .zcode
+                        .then_some(server.server_for_app(&AppType::ZCode)),
                     save_with_pi,
                 )
             } else {
@@ -177,7 +215,10 @@ impl McpService {
         if server.apps.mcode || prev_apps.mcode {
             mcp::mcode::sync_and_commit(
                 &server.id,
-                server.apps.mcode.then_some(&server.server),
+                server
+                    .apps
+                    .mcode
+                    .then_some(server.server_for_app(&AppType::Mcode)),
                 save_with_zcode,
             )?;
         } else {
@@ -246,7 +287,7 @@ impl McpService {
                 if server.apps.omp {
                     mcp::omp::sync_and_commit(
                         id,
-                        mcp::omp::OmpChange::Remove(Some(&server.server)),
+                        mcp::omp::OmpChange::Remove(Some(server.server_for_app(&AppType::Omp))),
                         delete_with_kimi,
                     )
                 } else {
@@ -288,13 +329,17 @@ impl McpService {
             // native entry may belong to the user; leave it intact without proof of ownership.
             if !server.apps.pi {
                 // 取消勾选只在 Pi 里禁用、条目还留着：服务器删了就一并清掉（尽力而为）
-                if let Err(err) = mcp::pi::remove_disabled_if_managed(id, &server.server) {
+                if let Err(err) =
+                    mcp::pi::remove_disabled_if_managed(id, server.server_for_app(&AppType::Pi))
+                {
                     log::warn!("清理 Pi 中已禁用的 MCP 条目 '{id}' 失败: {err}");
                 }
             }
 
             if !server.apps.omp {
-                if let Err(err) = mcp::omp::remove_disabled_if_managed(id, &server.server) {
+                if let Err(err) =
+                    mcp::omp::remove_disabled_if_managed(id, server.server_for_app(&AppType::Omp))
+                {
                     log::warn!("Cleaning disabled Oh My Pi MCP '{id}' failed: {err}");
                 }
             }
@@ -330,7 +375,7 @@ impl McpService {
     ) -> Result<(), AppError> {
         if commits_with_db(&app) {
             if let Some(server) = state.db.get_mcp_server_rows()?.get(server_id)? {
-                let spec = enabled.then_some(&server.server);
+                let spec = enabled.then_some(server.server_for_app(&app));
                 let commit = || {
                     state
                         .db
@@ -359,7 +404,7 @@ impl McpService {
                 } else if app == AppType::Omp {
                     mcp::omp::sync_and_commit(
                         server_id,
-                        mcp::omp::OmpChange::from_enabled(&server.server, enabled),
+                        mcp::omp::OmpChange::from_enabled(server.server_for_app(&app), enabled),
                         commit,
                     )?;
                 } else {
@@ -402,9 +447,10 @@ impl McpService {
 
     /// 将 MCP 服务器同步到指定应用
     fn sync_server_to_app(server: &McpServer, app: &AppType) -> Result<(), AppError> {
+        mcp::validation::validate_app_overrides(&server.app_overrides)?;
         match app {
             AppType::Claude => {
-                mcp::sync_single_server_to_claude(&server.id, &server.server)?;
+                mcp::sync_single_server_to_claude(&server.id, server.server_for_app(app))?;
                 // 各官方账号目录镜像默认 .claude.json 的 mcpServers
                 crate::services::claude_account::sync_all_shared(
                     &crate::config::get_app_config_dir(),
@@ -415,16 +461,16 @@ impl McpService {
             }
             AppType::Codex => {
                 // Codex uses TOML format, must use the correct function
-                mcp::sync_single_server_to_codex(&server.id, &server.server)?;
+                mcp::sync_single_server_to_codex(&server.id, server.server_for_app(app))?;
             }
             AppType::Gemini => {
-                mcp::sync_single_server_to_gemini(&server.id, &server.server)?;
+                mcp::sync_single_server_to_gemini(&server.id, server.server_for_app(app))?;
             }
             AppType::GrokBuild => {
-                mcp::sync_single_server_to_grokbuild(&server.id, &server.server)?;
+                mcp::sync_single_server_to_grokbuild(&server.id, server.server_for_app(app))?;
             }
             AppType::OpenCode => {
-                mcp::sync_single_server_to_opencode(&server.id, &server.server)?;
+                mcp::sync_single_server_to_opencode(&server.id, server.server_for_app(app))?;
             }
             AppType::OpenClaw => {
                 // OpenClaw MCP support is still in development (Issue #4834)
@@ -432,18 +478,24 @@ impl McpService {
                 log::debug!("OpenClaw MCP support is still in development, skipping sync");
             }
             AppType::Hermes => {
-                mcp::sync_single_server_to_hermes(&server.id, &server.server)?;
+                mcp::sync_single_server_to_hermes(&server.id, server.server_for_app(app))?;
             }
-            AppType::Mcode => mcp::mcode::sync(&server.id, Some(&server.server))?,
-            AppType::Kimi => mcp::kimi::sync(&server.id, Some(&server.server))?,
-            AppType::Dsh => mcp::dsh::sync(&server.id, Some(&server.server))?,
-            AppType::Copilot => mcp::copilot::sync(&server.id, Some(&server.server))?,
-            AppType::Pi => mcp::pi::sync(&server.id, Some(&server.server))?,
-            AppType::Agy => mcp::agy::sync(&server.id, Some(&server.server))?,
-            AppType::Omp => mcp::sync_single_server_to_omp(&server.id, &server.server)?,
-            AppType::WorkBuddy => mcp::workbuddy::sync(&server.id, Some(&server.server))?,
-            AppType::Codebuddy => mcp::codebuddy::sync(&server.id, Some(&server.server))?,
-            AppType::ZCode => mcp::sync_single_server_to_zcode(&server.id, &server.server)?,
+            AppType::Mcode => mcp::mcode::sync(&server.id, Some(server.server_for_app(app)))?,
+            AppType::Kimi => mcp::kimi::sync(&server.id, Some(server.server_for_app(app)))?,
+            AppType::Dsh => mcp::dsh::sync(&server.id, Some(server.server_for_app(app)))?,
+            AppType::Copilot => mcp::copilot::sync(&server.id, Some(server.server_for_app(app)))?,
+            AppType::Pi => mcp::pi::sync(&server.id, Some(server.server_for_app(app)))?,
+            AppType::Agy => mcp::agy::sync(&server.id, Some(server.server_for_app(app)))?,
+            AppType::Omp => mcp::sync_single_server_to_omp(&server.id, server.server_for_app(app))?,
+            AppType::WorkBuddy => {
+                mcp::workbuddy::sync(&server.id, Some(server.server_for_app(app)))?
+            }
+            AppType::Codebuddy => {
+                mcp::codebuddy::sync(&server.id, Some(server.server_for_app(app)))?
+            }
+            AppType::ZCode => {
+                mcp::sync_single_server_to_zcode(&server.id, server.server_for_app(app))?
+            }
         }
         Ok(())
     }
@@ -630,7 +682,7 @@ impl McpService {
 
     /// 从单个应用的 live 配置导入 MCP，返回新导入的数量。
     ///
-    /// 已存在的服务器只启用该应用，不覆盖其他字段。导入只读 live 配置，
+    /// 已有服务器保留共享配置，导入该应用的独立配置并启用它。导入只读 live 配置，
     /// 不反向写回任何应用；显式编辑、启用/禁用或手动同步时再写回。
     pub fn import_from_app(state: &AppState, app: &AppType) -> Result<usize, AppError> {
         let read_live: fn(&mut MultiAppConfig) -> Result<usize, AppError> = match app {
@@ -677,6 +729,7 @@ impl McpService {
             let to_save = if let Some(existing_server) = existing.get(&server.id) {
                 let mut merged = existing_server.clone();
                 merged.apps.set_enabled_for(app, true);
+                merged.import_app_server(app, server.server_for_app(app).clone());
                 merged
             } else {
                 new_count += 1;
@@ -748,6 +801,7 @@ mod tests {
             id: id.into(),
             name: format!("{id} name"),
             server: serde_json::json!({"command": "npx"}),
+            app_overrides: Default::default(),
             apps: McpApps::default(),
             description: None,
             homepage: None,

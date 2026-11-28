@@ -11,7 +11,7 @@
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::app_config::{McpApps, McpServer, MultiAppConfig};
+use crate::app_config::{AppType, McpApps, McpServer, MultiAppConfig};
 use crate::error::AppError;
 use crate::zcode_config;
 
@@ -121,6 +121,11 @@ pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError>
                 .server
                 .as_object_mut()
                 .is_some_and(|server| server.remove("enabled").is_some());
+            let previous = existing.app_overrides.clone();
+            existing.import_app_server(&AppType::ZCode, spec);
+            if existing.app_overrides != previous {
+                server_changed = true;
+            }
             if existing.apps.zcode != zcode_enabled {
                 existing.apps.zcode = zcode_enabled;
                 server_changed = true;
@@ -134,6 +139,7 @@ pub fn import_from_zcode(config: &mut MultiAppConfig) -> Result<usize, AppError>
             servers.insert(
                 id.clone(),
                 McpServer {
+                    app_overrides: Default::default(),
                     id: id.clone(),
                     name: id.clone(),
                     server: spec,

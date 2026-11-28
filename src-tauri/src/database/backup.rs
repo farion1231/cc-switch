@@ -361,11 +361,14 @@ impl Database {
         // device-local rows can miss writes that arrived during staging.
         let backup_path = {
             let mut main_conn = lock_conn!(self.conn);
-            let backup_path =
-                Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
             if !preserve_tables.is_empty() {
                 Self::restore_tables(&main_conn, &temp_conn, preserve_tables)?;
             }
+            // Imported triggers may run during cleanup or preserved-table
+            // restoration. Validate the final staged data, before any live backup/replacement.
+            Self::validate_mcp_app_overrides_on_conn(&temp_conn)?;
+            let backup_path =
+                Self::backup_database_file_from_conn(&backup_file_guard, &main_conn, &[])?;
             self.replace_from_staging(&temp_conn, &mut main_conn, "替换主数据库")?;
             backup_path
         };
@@ -1316,6 +1319,8 @@ impl Database {
         Self::apply_schema_migrations_on_conn(&staging_conn)?;
         Self::ensure_model_pricing_seeded_on_conn(&staging_conn)?;
         Self::validate_sqlite_integrity(&staging_conn)?;
+
+        Self::validate_mcp_app_overrides_on_conn(&staging_conn)?;
 
         // Keep one main-DB guard across the safety snapshot and final apply so
         // the safety file exactly represents the state being replaced.

@@ -29,13 +29,14 @@ impl JsonMcpFile {
                 "command",
                 "args",
                 "env",
+                "cwd",
                 "url",
                 "headers",
                 "type",
                 "transport",
             ]
         } else {
-            &["command", "args", "env", "url", "headers", "type"]
+            &["command", "args", "env", "cwd", "url", "headers", "type"]
         }
     }
 
@@ -132,10 +133,7 @@ impl JsonMcpFile {
                 .unwrap_or(true);
             spec.as_object_mut().unwrap().remove("enabled");
             let server = if let Some(mut server) = existing.shift_remove(id) {
-                if self.transport_spec(&server.server) != self.transport_spec(&spec) {
-                    skipped.push(format!("'{id}': conflicts with an existing server"));
-                    continue;
-                }
+                server.import_app_server(&self.app, spec);
                 server.apps.set_enabled_for(&self.app, enabled);
                 server
             } else {
@@ -143,6 +141,7 @@ impl JsonMcpFile {
                 let mut apps = McpApps::default();
                 apps.set_enabled_for(&self.app, enabled);
                 McpServer {
+                    app_overrides: Default::default(),
                     id: id.clone(),
                     name: id.clone(),
                     server: spec,
@@ -164,14 +163,6 @@ impl JsonMcpFile {
                 skipped.join("; ")
             )))
         }
-    }
-
-    fn transport_spec(&self, spec: &Value) -> Value {
-        let mut spec = self.unified_spec(spec);
-        if let Some(object) = spec.as_object_mut() {
-            object.retain(|key, _| self.transport_fields().contains(&key.as_str()));
-        }
-        spec
     }
 
     /// 原生条目 → 统一结构

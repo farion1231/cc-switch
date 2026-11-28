@@ -2755,6 +2755,7 @@ requires_openai_auth = true
                     id: "ctx".into(),
                     name: "ctx".into(),
                     server: json!({"type": "stdio", "command": "ctx-server"}),
+                    app_overrides: Default::default(),
                     apps: crate::app_config::McpApps {
                         opencode: true,
                         ..Default::default()

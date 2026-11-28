@@ -293,6 +293,7 @@ fn codebuddy_mcp_writes_the_file_codebuddy_reads_and_round_trips() {
     )
     .unwrap();
     let server = McpServer {
+        app_overrides: Default::default(),
         id: "test".into(),
         name: "Test".into(),
         server: json!({"type":"http","url":"https://example.com/mcp"}),
