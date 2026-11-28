@@ -46,12 +46,12 @@ pub trait AgyLoginStore: Send + Sync {
         self.write(&encode(credential)?)
     }
     /// 写入核验或新登录确认后，同步更新已存在的 standalone 回退凭据文件。
-    fn sync_fallback(&self, credential: &Value) {
-        let _ = credential;
+    fn sync_fallback(&self, _credential: &Value) -> Result<(), AppError> {
+        Ok(())
     }
 }
 
-/// Antigravity 原生登录存储：优先读写系统钥匙串，钥匙串没有凭据或不可用时回退到
+/// Antigravity 原生登录存储：优先读写系统钥匙串，被动读取时可回退到
 /// `~/.gemini/jetski-standalone-oauth-token`（Desktop standalone language server 的凭据文件）。
 pub(crate) struct AgyLogin {
     keychain: Arc<dyn AgyLoginStore>,
@@ -91,6 +91,7 @@ impl AgyLogin {
         match primary {
             Ok(Some(raw)) => Ok(Some(raw)),
             Ok(None) => self.read_file(),
+            Err(error) if allow_unlock => Err(error),
             Err(error) => match self.read_file()? {
                 Some(raw) => Ok(Some(raw)),
                 None => Err(error),
@@ -118,38 +119,25 @@ impl AgyLoginStore for AgyLogin {
     }
 
     fn write_credential(&self, credential: &Value) -> Result<(), AppError> {
-        let encoded = encode(credential)?;
-        match self.keychain.write(&encoded) {
-            Ok(()) => Ok(()),
-            Err(write_err) => {
-                if self.keychain.read_for_switch().is_err() {
-                    let bytes = encode_fallback_file(credential)?;
-                    crate::config::atomic_write_private(&self.file, &bytes)?;
-                    Ok(())
-                } else {
-                    Err(write_err)
-                }
-            }
-        }
+        // agy CLI 只读钥匙串：写入失败必须报错，回退文件在核验成功后才同步。
+        self.keychain.write(&encode(credential)?)
     }
 
-    fn sync_fallback(&self, credential: &Value) {
-        if !self.file.exists() {
-            return;
-        }
-        match encode_fallback_file(credential) {
-            Ok(bytes) => {
-                if let Err(error) = crate::config::atomic_write_private(&self.file, &bytes) {
-                    log::warn!(
-                        "[AgyAccount] 同步更新 Desktop 回退凭据文件失败（{}）: {error}",
-                        self.file.display()
-                    );
-                }
+    fn sync_fallback(&self, credential: &Value) -> Result<(), AppError> {
+        let sync = || {
+            // 不把权限错误当成「文件不存在」；已有的失效软链接也交给原子写入修复。
+            match std::fs::symlink_metadata(&self.file) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(AppError::io(&self.file, error)),
             }
-            Err(error) => {
-                log::warn!("[AgyAccount] 序列化 Desktop 回退凭据失败: {error}");
-            }
-        }
+            crate::config::atomic_write_private(&self.file, &encode_fallback_file(credential)?)
+        };
+        sync().map_err(|error| AppError::localized(
+            "agy.account.fallback_sync_failed",
+            format!("登录已写入钥匙串，但 Antigravity 桌面端回退凭据同步失败，请修复文件访问问题后重试切换：{error}"),
+            format!("The sign-in was saved to the keychain, but Antigravity Desktop's fallback credentials could not be synced. Fix file access and retry switching: {error}"),
+        ))
     }
 }
 
@@ -185,7 +173,7 @@ pub fn default_desktop_user_data_dir() -> Option<PathBuf> {
 }
 
 /// 清理指定 Desktop 用户数据目录下的 `credential-user-scope` 缓存文件。
-pub fn clear_desktop_user_scope_in(dir: &Path) {
+pub fn clear_desktop_user_scope_in(dir: &Path) -> Result<(), AppError> {
     let path = dir.join(DESKTOP_CREDENTIAL_SCOPE_FILENAME);
     match std::fs::remove_file(&path) {
         Ok(()) => {
@@ -196,20 +184,24 @@ pub fn clear_desktop_user_scope_in(dir: &Path) {
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => {
-            log::warn!(
-                "[AgyAccount] 清理 Antigravity Desktop scope 文件失败 ({}): {error}",
-                path.display()
-            );
+            let error = AppError::io(&path, error);
+            return Err(AppError::localized(
+                "agy.account.desktop_scope_cleanup_failed",
+                format!("登录已写入钥匙串，但 Antigravity 桌面端登录缓存清理失败，请修复文件访问问题后重试切换：{error}"),
+                format!("The sign-in was saved to the keychain, but Antigravity Desktop's credential cache could not be cleared. Fix file access and retry switching: {error}"),
+            ));
         }
     }
+    Ok(())
 }
 
 /// 清理本机 Antigravity Desktop 的 `credential-user-scope` 缓存文件。
 #[allow(dead_code)]
-pub fn clear_desktop_user_scope() {
+pub fn clear_desktop_user_scope() -> Result<(), AppError> {
     if let Some(dir) = default_desktop_user_data_dir() {
-        clear_desktop_user_scope_in(&dir);
+        clear_desktop_user_scope_in(&dir)?;
     }
+    Ok(())
 }
 
 /// 按 go-keyring 的格式解出登录 JSON；没有前缀的当成裸 JSON（Windows / Linux 上就是这样存的）。
@@ -701,7 +693,7 @@ mod tests {
             decode(&std::fs::read_to_string(&file).unwrap()).unwrap(),
             alice
         );
-        login.sync_fallback(&bob);
+        login.sync_fallback(&bob).unwrap();
         assert_eq!(
             decode(&std::fs::read_to_string(&file).unwrap()).unwrap(),
             bob
@@ -709,17 +701,18 @@ mod tests {
 
         // sync_fallback does not create the standalone file if it did not exist.
         std::fs::remove_file(&file).unwrap();
-        login.sync_fallback(&alice);
+        login.sync_fallback(&alice).unwrap();
         assert!(!file.exists());
 
-        // When keychain is unavailable, reads and writes fall back to the standalone file.
+        // Passive reads may use the file; switching must report an unavailable keychain.
         *keychain.unavailable.lock().unwrap() = true;
         std::fs::write(&file, serde_json::to_vec(&alice).unwrap()).unwrap();
         assert_eq!(decode(&login.read().unwrap().unwrap()).unwrap(), alice);
-        login.write_credential(&bob).unwrap();
+        assert!(login.read_for_switch().is_err());
+        assert!(login.write_credential(&bob).is_err());
         assert_eq!(
             decode(&std::fs::read_to_string(&file).unwrap()).unwrap(),
-            bob
+            alice
         );
     }
 
@@ -727,10 +720,10 @@ mod tests {
     fn clear_desktop_user_scope_in_removes_file_and_ignores_missing() {
         let dir = tempfile::tempdir().unwrap();
         let scope = dir.path().join(DESKTOP_CREDENTIAL_SCOPE_FILENAME);
-        clear_desktop_user_scope_in(dir.path());
+        clear_desktop_user_scope_in(dir.path()).unwrap();
         std::fs::write(&scope, "scope-value").unwrap();
         assert!(scope.exists());
-        clear_desktop_user_scope_in(dir.path());
+        clear_desktop_user_scope_in(dir.path()).unwrap();
         assert!(!scope.exists());
     }
 }

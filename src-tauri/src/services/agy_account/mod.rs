@@ -139,6 +139,10 @@ struct StoreFile {
     /// 切走时也能按原 `sub` 收回。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     dismissed_emails: BTreeMap<String, String>,
+    /// 写钥匙串前落盘；只有核验、回退文件同步和桌面缓存清理都完成后才清除。
+    /// 失败后即使钥匙串已是目标账号，重试（含重启后）也不能直接当成成功。
+    #[serde(default)]
+    switch_incomplete: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -387,33 +391,26 @@ impl AgyAccountManager {
             {
                 return Ok(None);
             }
-            let (id, changed) = absorb(&mut store, live, true);
+            let (id, _) = absorb(&mut store, live, true);
             let Some(id) = id else {
                 return Ok(None);
             };
-            if changed {
-                self.persist(&store)?;
-            }
-            remember(&store, Some(Some(id.clone())));
-            store
+            let data = store
                 .accounts
                 .get(&id)
-                .map(|data| (AgyAccount::from(data), data.credential.clone()))
-        };
-        if let Some((account, credential)) = result {
+                .cloned()
+                .ok_or_else(|| account_not_found(&id))?;
+            // 登录确认也会更新 Desktop 的凭据与缓存；失败后允许切换当前号补齐。
+            store.switch_incomplete = true;
+            self.persist(&store)?;
             let login = Arc::clone(&self.login);
-            let _ = run_blocking(move || {
-                login.sync_fallback(&credential);
-                Ok(())
-            })
-            .await;
-            self.clear_desktop_credential_scope();
-            self.pending.lock().await.remove(flow_id);
-            Ok(Some(account))
-        } else {
-            self.pending.lock().await.remove(flow_id);
-            Ok(None)
-        }
+            let credential = data.credential.clone();
+            run_blocking(move || login.sync_fallback(&credential)).await?;
+            self.finish_switch(&mut store, &id)?;
+            Some(AgyAccount::from(&data))
+        };
+        self.pending.lock().await.remove(flow_id);
+        Ok(result)
     }
 
     pub async fn cancel_login(&self, flow_id: &str) -> bool {
@@ -446,7 +443,7 @@ impl AgyAccountManager {
         })
     }
 
-    /// 把 agy 的全局登录换成这个账号。已经是它时什么都不写。
+    /// 把 agy 的全局登录换成这个账号。已经是它且没有未完成的切换时什么都不写。
     pub async fn switch_to(&self, account_id: &str) -> Result<(), AppError> {
         if !keychain::supported() {
             return Err(keychain::unsupported_error());
@@ -474,7 +471,8 @@ impl AgyAccountManager {
         if changed {
             self.persist(&store)?;
         }
-        if current.as_deref() == Some(account_id) {
+        let already_current = current.as_deref() == Some(account_id);
+        if already_current && !store.switch_incomplete {
             remember(&store, Some(current));
             return Ok(());
         }
@@ -485,6 +483,16 @@ impl AgyAccountManager {
             return Err(running_switch_error(running));
         }
 
+        if already_current {
+            // read_live/absorb 已拿到当前凭据，重试时不能拿切换前的副本覆盖它。
+            let credential = store.accounts[account_id].credential.clone();
+            let login = Arc::clone(&self.login);
+            run_blocking(move || login.sync_fallback(&credential)).await?;
+            return self.finish_switch(&mut store, account_id);
+        }
+
+        store.switch_incomplete = true;
+        self.persist(&store)?;
         let credential = target.credential;
         let expected = refresh_token_of(&credential).map(str::to_string);
         let login = Arc::clone(&self.login);
@@ -497,15 +505,9 @@ impl AgyAccountManager {
                 let written = refresh_token_of(&credential);
                 if written.is_some() && written == expected.as_deref() {
                     let login = Arc::clone(&self.login);
-                    let fallback_credential = credential.clone();
-                    let _ = run_blocking(move || {
-                        login.sync_fallback(&fallback_credential);
-                        Ok(())
-                    })
-                    .await;
-                    self.clear_desktop_credential_scope();
+                    run_blocking(move || login.sync_fallback(&credential)).await?;
+                    self.finish_switch(&mut store, account_id)?;
                     log::info!("[AgyAccount] 已切换 Antigravity 登录");
-                    remember(&store, Some(Some(account_id.to_string())));
                     return Ok(());
                 }
             }
@@ -647,6 +649,7 @@ impl AgyAccountManager {
             accounts: store.accounts.clone(),
             dismissed: store.dismissed.clone(),
             dismissed_emails: store.dismissed_emails.clone(),
+            switch_incomplete: store.switch_incomplete,
         };
         let content = serde_json::to_vec_pretty(&snapshot)
             .map_err(|source| AppError::JsonSerialize { source })?;
@@ -655,10 +658,22 @@ impl AgyAccountManager {
         Ok(())
     }
 
-    fn clear_desktop_credential_scope(&self) {
-        if let Some(dir) = &self.desktop_user_data_dir {
-            keychain::clear_desktop_user_scope_in(dir);
+    fn finish_switch(&self, store: &mut StoreFile, account_id: &str) -> Result<(), AppError> {
+        self.clear_desktop_credential_scope()?;
+        store.switch_incomplete = false;
+        if let Err(error) = self.persist(store) {
+            store.switch_incomplete = true;
+            return Err(error);
         }
+        remember(store, Some(Some(account_id.to_string())));
+        Ok(())
+    }
+
+    fn clear_desktop_credential_scope(&self) -> Result<(), AppError> {
+        if let Some(dir) = &self.desktop_user_data_dir {
+            keychain::clear_desktop_user_scope_in(dir)?;
+        }
+        Ok(())
     }
 }
 
@@ -940,7 +955,7 @@ pub fn agy_running_state() -> AgyRunningState {
             return AgyRunningState::default();
         };
         let text = String::from_utf8_lossy(&output.stdout);
-        classify_unix_process_lines(text.lines())
+        classify_unix_process_lines(text.lines().map(unix_executable_token))
     }
     #[cfg(windows)]
     {
@@ -955,37 +970,10 @@ pub fn agy_running_state() -> AgyRunningState {
             return AgyRunningState::default();
         };
         let text = String::from_utf8_lossy(&output.stdout);
-        let entries = parse_windows_tasklist_entries(&text);
-        let mut state = AgyRunningState::default();
-        let mut desktop_pids = Vec::new();
-        let mut language_server_pids = Vec::new();
-        for (image, pid) in entries {
-            match classify_windows_image_name(&image) {
-                WindowsProcessKind::Cli => state.cli = true,
-                WindowsProcessKind::Desktop => desktop_pids.push(pid),
-                WindowsProcessKind::LanguageServer => language_server_pids.push(pid),
-                WindowsProcessKind::Other => {}
-            }
-        }
-        for pid in desktop_pids {
-            if let Some(path) = windows_process_image_path(pid) {
-                if !is_antigravity_ide_path(&path) {
-                    state.desktop = true;
-                    break;
-                }
-            } else {
-                // 无法读取提权进程路径时，按 Antigravity.exe 保守视为桌面端在运行。
-                state.desktop = true;
-                break;
-            }
-        }
-        if !state.desktop {
-            state.desktop = language_server_pids
-                .into_iter()
-                .filter_map(windows_process_image_path)
-                .any(|path| is_antigravity_desktop_language_server_path(&path));
-        }
-        state
+        classify_windows_processes(
+            parse_windows_tasklist_entries(&text),
+            windows_process_image_path,
+        )
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -1013,7 +1001,7 @@ fn is_antigravity_desktop_language_server_path(path: &str) -> bool {
         .any(|segment| segment == "antigravity" || segment == "antigravity.app")
 }
 
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg(any(test, all(unix, not(target_os = "macos"))))]
 fn unix_executable_token(line: &str) -> &str {
     let trimmed = line.trim();
     if let Some(app_idx) = trimmed.find(".app/") {
@@ -1028,6 +1016,7 @@ fn unix_executable_token(line: &str) -> &str {
 }
 
 #[cfg_attr(not(unix), allow(dead_code))]
+// 只接收可执行文件路径。macOS 的 ps comm= 已是完整路径，不能再按空格拆分。
 fn classify_unix_process_lines<'a>(lines: impl Iterator<Item = &'a str>) -> AgyRunningState {
     let mut state = AgyRunningState::default();
     for raw in lines {
@@ -1035,19 +1024,14 @@ fn classify_unix_process_lines<'a>(lines: impl Iterator<Item = &'a str>) -> AgyR
         if trimmed.is_empty() {
             continue;
         }
-        let exe = unix_executable_token(trimmed);
+        let exe = trimmed;
         let path = std::path::Path::new(exe);
         let file_name = path.file_name().and_then(|name| name.to_str());
         if file_name == Some("agy") {
             state.cli = true;
             continue;
         }
-        let in_ide_bundle = path.components().any(|part| {
-            let s = part.as_os_str().to_string_lossy();
-            s.eq_ignore_ascii_case("Antigravity-IDE.app")
-                || s.eq_ignore_ascii_case("Antigravity IDE.app")
-        }) || is_antigravity_ide_path(exe);
-        if in_ide_bundle {
+        if is_antigravity_ide_path(exe) {
             continue;
         }
         let in_desktop_bundle = path
@@ -1090,6 +1074,34 @@ fn classify_windows_image_name(image: &str) -> WindowsProcessKind {
             WindowsProcessKind::Other
         }
     }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn classify_windows_processes(
+    entries: impl IntoIterator<Item = (String, u32)>,
+    mut image_path: impl FnMut(u32) -> Option<String>,
+) -> AgyRunningState {
+    let mut state = AgyRunningState::default();
+    let mut language_server_pids = Vec::new();
+    for (image, pid) in entries {
+        match classify_windows_image_name(&image) {
+            WindowsProcessKind::Cli => state.cli = true,
+            WindowsProcessKind::Desktop => {
+                // IDE 与 Desktop 都可能叫 Antigravity.exe，必须按实际路径区分。
+                // 无法读取路径时仍保留运行态保护，不能贸然覆盖登录。
+                state.desktop |= image_path(pid).is_none_or(|path| !is_antigravity_ide_path(&path));
+            }
+            WindowsProcessKind::LanguageServer => language_server_pids.push(pid),
+            WindowsProcessKind::Other => {}
+        }
+    }
+    if !state.desktop {
+        state.desktop = language_server_pids
+            .into_iter()
+            .filter_map(&mut image_path)
+            .any(|path| is_antigravity_desktop_language_server_path(&path));
+    }
+    state
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]

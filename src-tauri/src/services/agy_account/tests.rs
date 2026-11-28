@@ -879,6 +879,266 @@ mod running_guard_and_scope {
         assert_eq!(status.current_account_id.as_deref(), Some("bob-sub"));
     }
 
+    #[tokio::test]
+    async fn poll_login_reports_scope_cleanup_failure_and_can_retry() {
+        let (_dir, desktop_dir, login, manager, _cli, _desktop) = test_env(false, false);
+        set_live(&login, &credential("alice", "a1"));
+        let start = manager.start_login().await.unwrap();
+        set_live(&login, &credential("bob", "fresh"));
+        let scope = desktop_dir
+            .path()
+            .join(keychain::DESKTOP_CREDENTIAL_SCOPE_FILENAME);
+        std::fs::create_dir(&scope).unwrap();
+
+        assert!(matches!(
+            manager.poll_login(&start.flow_id).await.unwrap_err(),
+            AppError::Localized { key, .. } if key == "agy.account.desktop_scope_cleanup_failed"
+        ));
+        assert!(manager.has_pending_login().await);
+        std::fs::remove_dir(&scope).unwrap();
+        std::fs::write(&scope, "scope-alice").unwrap();
+        let writes_before = *login.writes.lock().unwrap();
+        let account = manager.poll_login(&start.flow_id).await.unwrap().unwrap();
+        assert_eq!(account.id, "bob");
+        assert!(!scope.exists());
+        assert!(!manager.has_pending_login().await);
+        assert_eq!(*login.writes.lock().unwrap(), writes_before);
+    }
+
+    #[tokio::test]
+    async fn poll_login_reports_fallback_failure_and_can_retry_after_restart() {
+        let (dir, desktop_dir, keychain, _manager, _cli, _desktop) = test_env(false, false);
+        let file = dir.path().join(keychain::STANDALONE_TOKEN_FILENAME);
+        set_live(&keychain, &credential("alice", "a1"));
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
+            file.clone(),
+            keychain.clone(),
+        ));
+        let manager = AgyAccountManager::with_test_env(
+            dir.path().to_path_buf(),
+            login.clone(),
+            Arc::new(AgyRunningState::default),
+            Some(desktop_dir.path().to_path_buf()),
+        );
+        let start = manager.start_login().await.unwrap();
+        set_live(&keychain, &credential("bob", "fresh"));
+        std::fs::create_dir(&file).unwrap();
+        assert!(matches!(
+            manager.poll_login(&start.flow_id).await.unwrap_err(),
+            AppError::Localized { key, .. } if key == "agy.account.fallback_sync_failed"
+        ));
+        assert!(manager.has_pending_login().await);
+
+        let reopened = AgyAccountManager::with_test_env(
+            dir.path().to_path_buf(),
+            login,
+            Arc::new(AgyRunningState::default),
+            Some(desktop_dir.path().to_path_buf()),
+        );
+        std::fs::remove_dir(&file).unwrap();
+        std::fs::write(
+            &file,
+            serde_json::to_vec(&credential("alice", "a1")).unwrap(),
+        )
+        .unwrap();
+        set_live(&keychain, &credential("bob", "refreshed"));
+        let writes_before = *keychain.writes.lock().unwrap();
+        reopened.switch_to("bob").await.unwrap();
+        assert_eq!(*keychain.writes.lock().unwrap(), writes_before);
+        assert_eq!(
+            keychain::decode(&std::fs::read_to_string(&file).unwrap()).unwrap(),
+            credential("bob", "refreshed")
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_scope_cleanup_is_reported_and_retried_after_restart() {
+        let (dir, desktop_dir, login, manager, _cli_flag, _desktop_flag) = test_env(false, false);
+        set_live(&login, &credential("alice", "a1"));
+        add(&manager, "bob").await;
+        let scope = desktop_dir
+            .path()
+            .join(keychain::DESKTOP_CREDENTIAL_SCOPE_FILENAME);
+        // A directory at the file path deterministically makes remove_file fail.
+        std::fs::create_dir(&scope).unwrap();
+
+        assert!(manager.switch_to("bob").await.is_err());
+        assert_eq!(live_sub(&login).as_deref(), Some("bob"));
+        assert!(scope.exists());
+
+        let reopened = AgyAccountManager::with_test_env(
+            dir.path().to_path_buf(),
+            login.clone(),
+            Arc::new(AgyRunningState::default),
+            Some(desktop_dir.path().to_path_buf()),
+        );
+        assert!(reopened.switch_to("bob").await.is_err());
+        std::fs::remove_dir(&scope).unwrap();
+        std::fs::write(&scope, "scope-alice").unwrap();
+        // Keep a token refreshed by agy since the partial switch.
+        set_live(&login, &credential("bob", "refreshed"));
+        let writes_before = *login.writes.lock().unwrap();
+        reopened.switch_to("bob").await.unwrap();
+        assert!(!scope.exists());
+        assert_eq!(*login.writes.lock().unwrap(), writes_before);
+        assert_eq!(
+            keychain::decode(&login.read().unwrap().unwrap()).unwrap()["token"]["access_token"],
+            "refreshed"
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_fallback_sync_is_reported_and_retried_after_restart() {
+        let (dir, desktop_dir, keychain, _manager, _cli, _desktop) = test_env(false, false);
+        let fallback_dir = tempfile::tempdir().unwrap();
+        let file = fallback_dir
+            .path()
+            .join(keychain::STANDALONE_TOKEN_FILENAME);
+        std::fs::create_dir(&file).unwrap();
+        set_live(&keychain, &credential("alice", "a1"));
+        let login = Arc::new(keychain::AgyLogin::with_keychain(
+            file.clone(),
+            keychain.clone(),
+        ));
+        let manager = AgyAccountManager::with_test_env(
+            dir.path().to_path_buf(),
+            login.clone(),
+            Arc::new(AgyRunningState::default),
+            Some(desktop_dir.path().to_path_buf()),
+        );
+        add(&manager, "bob").await;
+        let scope = desktop_dir
+            .path()
+            .join(keychain::DESKTOP_CREDENTIAL_SCOPE_FILENAME);
+        std::fs::write(&scope, "scope-alice").unwrap();
+
+        assert!(manager.switch_to("bob").await.is_err());
+        assert_eq!(live_sub(&keychain).as_deref(), Some("bob"));
+        assert_eq!(std::fs::read_to_string(&scope).unwrap(), "scope-alice");
+
+        let running = Arc::new(AtomicBool::new(true));
+        let running_check = Arc::clone(&running);
+        let reopened = AgyAccountManager::with_test_env(
+            dir.path().to_path_buf(),
+            login,
+            Arc::new(move || AgyRunningState {
+                cli: running_check.load(Ordering::Relaxed),
+                desktop: false,
+            }),
+            Some(desktop_dir.path().to_path_buf()),
+        );
+        // A partially completed switch must not take the current-account no-op path.
+        assert!(reopened.switch_to("bob").await.is_err());
+        assert!(file.is_dir());
+        running.store(false, Ordering::Relaxed);
+        assert!(reopened.switch_to("bob").await.is_err());
+
+        std::fs::remove_dir(&file).unwrap();
+        std::fs::write(
+            &file,
+            serde_json::to_vec(&credential("alice", "a1")).unwrap(),
+        )
+        .unwrap();
+        set_live(&keychain, &credential("bob", "refreshed"));
+        let writes_before = *keychain.writes.lock().unwrap();
+        reopened.switch_to("bob").await.unwrap();
+        assert_eq!(
+            keychain::decode(&std::fs::read_to_string(&file).unwrap()).unwrap(),
+            credential("bob", "refreshed")
+        );
+        assert!(!scope.exists());
+        assert_eq!(*keychain.writes.lock().unwrap(), writes_before);
+        // Completed switches are once again no-ops, including while agy is running.
+        running.store(true, Ordering::Relaxed);
+        reopened.switch_to("bob").await.unwrap();
+    }
+
+    #[test]
+    fn macos_process_paths_with_spaces_are_not_split_into_arguments() {
+        for path in [
+            "/Users/Jane Doe/.local/bin/agy",
+            "/Volumes/Development Tools/agy",
+        ] {
+            assert!(
+                classify_unix_process_lines([path].into_iter()).cli,
+                "{path}"
+            );
+        }
+        for path in [
+            "/Users/Jane Doe/.gemini/antigravity/bin/language_server_macos_arm64",
+            "/Applications/Google Apps/Antigravity.app/Contents/Frameworks/Antigravity Helper.app/Contents/MacOS/Antigravity Helper",
+        ] {
+            assert!(classify_unix_process_lines([path].into_iter()).desktop, "{path}");
+        }
+        assert!(!classify_unix_process_lines(
+            [
+                "/Users/Jane Doe/Applications/Antigravity-IDE.app/Contents/MacOS/Antigravity",
+                "/Users/Jane Doe/.windsurf/bin/language_server_macos_arm64",
+            ]
+            .into_iter()
+        )
+        .any());
+    }
+
+    #[test]
+    fn windows_process_paths_distinguish_ide_from_desktop() {
+        for path in [
+            r"C:\Program Files\Antigravity-IDE\Antigravity.exe",
+            r"C:\Users\Jane Doe\Antigravity IDE\Antigravity.exe",
+            r"C:\PROGRAM FILES\ANTIGRAVITY-IDE\antigravity.EXE",
+        ] {
+            let state =
+                classify_windows_processes([("Antigravity.exe".into(), 1)], |_| Some(path.into()));
+            assert!(!state.any(), "IDE must not block account switching: {path}");
+        }
+        let entries = [
+            ("Antigravity.exe".into(), 1),
+            ("Antigravity.exe".into(), 2),
+            ("agy.exe".into(), 3),
+            ("node.exe".into(), 4),
+        ];
+        let state = classify_windows_processes(entries, |pid| match pid {
+            1 => Some(r"C:\Program Files\Antigravity-IDE\Antigravity.exe".into()),
+            2 => Some(r"C:\Users\Jane Doe\Antigravity\Antigravity.exe".into()),
+            _ => panic!("only desktop candidates need a path lookup"),
+        });
+        assert_eq!(
+            state,
+            AgyRunningState {
+                cli: true,
+                desktop: true
+            }
+        );
+        assert!(
+            classify_windows_processes([("Antigravity.exe".into(), 1)], |_| None).desktop,
+            "an unreadable image path must not disable the running-process guard"
+        );
+        for (path, desktop) in [
+            (
+                r"C:\Program Files\Antigravity-IDE\language_server_windows_x64.exe",
+                false,
+            ),
+            (
+                r"C:\Program Files\Antigravity IDE\language_server_windows_x64.exe",
+                false,
+            ),
+            (
+                r"C:\Users\Jane Doe\Antigravity\language_server_windows_x64.exe",
+                true,
+            ),
+            (
+                r"C:\Program Files\Windsurf\language_server_windows_x64.exe",
+                false,
+            ),
+        ] {
+            let state =
+                classify_windows_processes([("language_server_windows_x64.exe".into(), 1)], |_| {
+                    Some(path.into())
+                });
+            assert_eq!(state.desktop, desktop, "{path}");
+        }
+    }
+
     #[test]
     fn process_classification_handles_windows_and_unix_processes() {
         let tasklist = r#""System Idle Process","0","Services","0","8 K"
@@ -968,6 +1228,7 @@ mod running_guard_and_scope {
                     "/opt/antigravity/language_server_linux_x64 --port 1234"
                 ]
                 .into_iter()
+                .map(unix_executable_token)
             ),
             AgyRunningState {
                 cli: true,
@@ -981,6 +1242,7 @@ mod running_guard_and_scope {
                     "/Applications/Antigravity IDE.app/Contents/MacOS/Antigravity"
                 ]
                 .into_iter()
+                .map(unix_executable_token)
             ),
             AgyRunningState {
                 cli: false,
