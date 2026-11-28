@@ -52,6 +52,7 @@ const signedOut: DshAccountStatus = {
   usageUrl: null,
   topUpUrl: null,
   error: null,
+  queried: false,
 };
 
 describe("DeepSeek account entry in the DeepSeek Harness add-provider dialog", () => {

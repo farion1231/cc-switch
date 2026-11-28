@@ -2,9 +2,10 @@
 
 /// The DeepSeek account (OAuth) login shared by DSH Web and Desktop, with profile and balance.
 #[tauri::command]
-pub async fn dsh_account_status() -> Result<crate::services::dsh_account::DshAccountStatus, String>
-{
-    crate::services::dsh_account::status().await
+pub async fn dsh_account_status(
+    remote: bool,
+) -> Result<crate::services::dsh_account::DshAccountStatus, String> {
+    crate::services::dsh_account::status(remote).await
 }
 
 /// Sign out of the DeepSeek account for both DSH Web and Desktop.

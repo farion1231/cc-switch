@@ -16,6 +16,7 @@ import {
 } from "@/lib/api/dsh";
 import { deliverLoginLink } from "@/lib/authLoginLink";
 import { extractErrorMessage } from "@/utils/errorUtils";
+import { useQuotaPolicy } from "@/lib/query/quotaPolicy";
 import { ProviderIconBox } from "@/components/ProviderIconBox";
 import { resolveProviderIcon } from "@/utils/providerIcon";
 import { CardChipBadge } from "./ProviderCard";
@@ -25,13 +26,42 @@ import type { CardChip } from "./presentation";
 /** 授权中心和两个 DeepSeek Harness 供应商页共用一份查询：登录本来就是 Web / Desktop 共用的 */
 export const DSH_ACCOUNT_STATUS_KEY = ["dsh-account-status"] as const;
 
+let dshForceRefreshEpoch = 0;
+
+/** 授权中心「全部刷新」时调用：只手动查询时，下一次查询也去平台查资料和余额。 */
+export function markDshForceRefresh() {
+  dshForceRefreshEpoch += 1;
+}
+
+/**
+ * 登录状态，自动查询时连同资料和余额。余额算官方额度：只手动查询时只读本机登录，
+ * 点 ↻ 或「全部刷新」才去平台查。
+ */
 export function useDshAccountStatus(enabled = true) {
-  return useQuery({
+  const { autoAllowed, manualOnly } = useQuotaPolicy();
+  const force = useRef(false);
+  const seenForceEpoch = useRef(dshForceRefreshEpoch);
+  const query = useQuery({
     queryKey: DSH_ACCOUNT_STATUS_KEY,
-    queryFn: dshApi.accountStatus,
-    staleTime: 60_000,
-    enabled,
+    queryFn: () => {
+      const remote =
+        autoAllowed ||
+        force.current ||
+        seenForceEpoch.current !== dshForceRefreshEpoch;
+      force.current = false;
+      seenForceEpoch.current = dshForceRefreshEpoch;
+      return dshApi.accountStatus(remote);
+    },
+    // 只手动查询时别让重新挂载把查到的余额换回只读本机的结果
+    staleTime: manualOnly ? Infinity : 60_000,
+    refetchOnWindowFocus: autoAllowed,
+    enabled: enabled && (autoAllowed || manualOnly),
   });
+  const refresh = () => {
+    force.current = true;
+    return query.refetch();
+  };
+  return { ...query, refresh };
 }
 
 const CURRENCY_SYMBOL: Record<string, string> = { CNY: "¥", USD: "$" };
@@ -63,7 +93,7 @@ function DshBalance({
 }: {
   login: string;
   status: DshAccountStatus;
-  queriedAt: number;
+  queriedAt: number | null;
   loading: boolean;
   onRefresh: () => void;
 }) {
@@ -74,7 +104,9 @@ function DshBalance({
   return (
     <>
       <div className="flex min-w-0 shrink-0 flex-col items-end justify-center gap-0.5 text-end">
-        {status.error ? (
+        {!status.queried ? (
+          <span className={`${cell} text-fg-3`}>{t("quota.manualIdle")}</span>
+        ) : status.error ? (
           <span className={`${cell} text-fg-3`}>
             {t("dsh.account.balanceFailed")}
           </span>
@@ -238,9 +270,9 @@ export function DshAccountLogin({ helpSide }: DshAccountLoginProps) {
               <DshBalance
                 login={name}
                 status={data}
-                queriedAt={status.dataUpdatedAt}
+                queriedAt={data.queried ? status.dataUpdatedAt : null}
                 loading={status.isFetching}
-                onRefresh={() => void status.refetch()}
+                onRefresh={() => void status.refresh()}
               />
             ),
             removeLabel: t("dsh.account.signOut"),
