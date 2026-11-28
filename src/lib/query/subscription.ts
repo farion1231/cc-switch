@@ -1,5 +1,6 @@
 import { useRef } from "react";
 import {
+  queryOptions,
   useQuery,
   useQueryClient,
   type QueryClient,
@@ -33,18 +34,105 @@ export const subscriptionKeys = {
   quota: (appId: AppId) => [...subscriptionKeys.all, "quota", appId] as const,
 };
 
-export const agyAuthStatusQuery = managedAuthStatusQuery("agy_oauth");
+/**
+ * Antigravity 的登录状态。agy 的登录可能在外部终端被 `/logout`、`/login` 换掉，
+ * 窗口重新聚焦时跳过 30s staleTime 重读钥匙串，及时同步「agy 在用」徽标。
+ */
+export const agyAuthStatusQuery = queryOptions<ManagedAuthStatus>({
+  ...managedAuthStatusQuery("agy_oauth"),
+  refetchOnWindowFocus: "always",
+});
+
+function removeAgyNotFoundQuotas(queryClient: QueryClient) {
+  // 清掉之前作为非当前号缓存的 not_found：手动模式下 disabled query 不会被
+  // invalidateQueries 重查，留着它会导致切到该号后整列连同 ↻ 按钮消失。
+  queryClient.removeQueries({
+    queryKey: ["agy_oauth", "quota"],
+    predicate: (query) =>
+      (query.state.data as SubscriptionQuota | undefined)?.credentialStatus ===
+      "not_found",
+  });
+}
+
+async function invalidateAgyQuotaCaches(
+  queryClient: QueryClient,
+  currentAccountId?: string | null,
+) {
+  removeAgyNotFoundQuotas(queryClient);
+  const tasks: Promise<void>[] = [
+    queryClient.invalidateQueries({ queryKey: subscriptionKeys.quota("agy") }),
+    queryClient.invalidateQueries({ queryKey: ["agy_oauth", "last_quota"] }),
+  ];
+  if (currentAccountId === undefined) {
+    tasks.push(
+      queryClient.invalidateQueries({ queryKey: ["agy_oauth", "quota"] }),
+    );
+  } else {
+    // 非当前号只标 stale 不触发活跃重查，避免旧当前号在 React 卸载前多查一次 agy_account_quota 读钥匙串。
+    tasks.push(
+      queryClient.invalidateQueries({
+        queryKey: ["agy_oauth", "quota"],
+        predicate: (query) => query.queryKey[2] !== currentAccountId,
+        refetchType: "none",
+      }),
+    );
+    if (currentAccountId) {
+      tasks.push(
+        queryClient.invalidateQueries({
+          queryKey: ["agy_oauth", "quota", currentAccountId],
+        }),
+      );
+    }
+  }
+  await Promise.all(tasks);
+}
 
 /**
  * Refresh the actual agy login and every Antigravity quota: only the account agy is
  * signed in with can be queried, so a switch changes which one shows live numbers.
  */
 export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
-  await Promise.all([
-    queryClient.invalidateQueries({ queryKey: agyAuthStatusQuery.queryKey }),
-    queryClient.invalidateQueries({ queryKey: subscriptionKeys.quota("agy") }),
-    queryClient.invalidateQueries({ queryKey: ["agy_oauth", "quota"] }),
-  ]);
+  removeAgyNotFoundQuotas(queryClient);
+  // 先刷新当前登录号，再按最新的当前号失效额度缓存。
+  await queryClient.invalidateQueries({
+    queryKey: agyAuthStatusQuery.queryKey,
+  });
+  const statusState = queryClient.getQueryState<ManagedAuthStatus>(
+    agyAuthStatusQuery.queryKey,
+  );
+  const currentAccountId =
+    statusState && !statusState.isInvalidated
+      ? (statusState.data?.default_account_id ?? null)
+      : undefined;
+  await invalidateAgyQuotaCaches(queryClient, currentAccountId);
+}
+
+/**
+ * 窗口重新聚焦时同步 Antigravity 登录状态；若用户在外部终端换了号，
+ * 同步清理旧的 not_found 并失效额度缓存。
+ */
+export async function syncAgyLoginOnWindowFocus(queryClient: QueryClient) {
+  const previous = queryClient.getQueryData<ManagedAuthStatus>(
+    agyAuthStatusQuery.queryKey,
+  );
+  await queryClient.invalidateQueries({
+    queryKey: agyAuthStatusQuery.queryKey,
+  });
+  const nextState = queryClient.getQueryState<ManagedAuthStatus>(
+    agyAuthStatusQuery.queryKey,
+  );
+  if (
+    previous !== undefined &&
+    nextState &&
+    !nextState.isInvalidated &&
+    nextState.data !== undefined &&
+    previous.default_account_id !== nextState.data.default_account_id
+  ) {
+    await invalidateAgyQuotaCaches(
+      queryClient,
+      nextState.data.default_account_id ?? null,
+    );
+  }
 }
 
 /**
@@ -290,11 +378,30 @@ export function useAgyAccountQuota(
     queryFn: () => subscriptionApi.getAgyAccountQuota(accountId),
     enabled: autoAllowed && enabled,
     ...autoRefetch(autoAllowed && autoQuery, autoQueryIntervalMinutes),
-    staleTime: REFETCH_INTERVAL,
+    // 缓存里如果是之前作为非当前号拿到的 not_found，成为当前号重新挂载时立刻重查，不等 5 分钟。
+    staleTime: (current) =>
+      current.state.data?.credentialStatus === "not_found"
+        ? 0
+        : REFETCH_INTERVAL,
     retry: 1,
   });
 
   return useQuotaKeepLastGood(query, accountId, policy);
+}
+
+/**
+ * 只读 Antigravity 账号本地保存的上次额度快照（不读钥匙串、不启动 `agy`），
+ * 供授权中心非当前账号展示切走前的历史额度，不受手动查询开关限制。
+ */
+export function useAgyAccountLastQuota(accountId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["agy_oauth", "last_quota", accountId],
+    queryFn: () => subscriptionApi.getAgyAccountLastQuota(accountId),
+    enabled: Boolean(accountId) && enabled,
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
 }
 
 /**

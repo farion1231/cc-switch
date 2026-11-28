@@ -5285,7 +5285,8 @@
       "switchedWhileRunning": "전환했습니다. 실행 중인 agy가 감지되었습니다. 이미 실행 중인 agy는 기존 계정을 계속 사용하며 기존 계정 정보를 로그인 설정에 다시 저장할 수도 있습니다. agy를 모두 종료한 뒤 다시 실행하세요.",
       "pendingNote": "터미널에서 agy를 열었습니다. 로그인되어 있지 않으면 안내에 따라 로그인하고, 로그인되어 있으면 /logout 후 /login으로 추가할 계정에 로그인하세요. 완료되면 여기에 자동으로 추가됩니다.",
       "reopenTerminal": "터미널 다시 열기",
-      "quotaNotCurrent": "이 계정으로 전환해야 사용량을 조회할 수 있습니다"
+      "quotaNotCurrent": "이 계정으로 전환해야 사용량을 조회할 수 있습니다",
+      "quotaRefreshNotCurrent": "이 계정으로 전환해야 최신 사용량을 조회할 수 있습니다"
     },
     "codebuddy": {
       "mainland": "중국",

@@ -47,6 +47,16 @@ pub async fn agy_account_quota(
     Ok(quota)
 }
 
+/// 只读本地保存的上次额度快照，不读钥匙串、不启动 `agy`。
+/// 授权中心展示非当前登录账号的历史额度时用。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn agy_account_last_quota(
+    account_id: String,
+    state: tauri::State<'_, AgyAccountState>,
+) -> Result<Option<SubscriptionQuota>, String> {
+    Ok(state.0.last_quota(&account_id).await)
+}
+
 /// 「添加账号」等待中「重新打开终端」：只再开一个终端，不重置这次登录。
 #[tauri::command]
 pub async fn agy_account_open_login_terminal() -> Result<(), String> {

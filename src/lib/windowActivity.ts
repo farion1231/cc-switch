@@ -8,6 +8,7 @@ const HEARTBEAT_DIM_MS = 300;
 let initialized = false;
 let heartbeatInterval: number | undefined;
 let heartbeatReset: number | undefined;
+const windowFocusListeners = new Set<() => void>();
 
 function stopHeartbeat() {
   if (heartbeatInterval !== undefined) {
@@ -33,14 +34,35 @@ function startHeartbeat() {
 }
 
 function setWindowActive(active: boolean) {
-  if (document.documentElement.dataset.windowActive === String(active)) return;
+  const previous = document.documentElement.dataset.windowActive;
+  if (previous === String(active)) return;
   document.documentElement.dataset.windowActive = String(active);
 
   if (active) {
     startHeartbeat();
+    if (previous === "false") {
+      windowFocusListeners.forEach((listener) => listener());
+    }
   } else {
     stopHeartbeat();
   }
+}
+
+/**
+ * 窗口从失焦或隐藏回到激活状态时通知调用方。
+ * 运行时复用 initializeWindowActivity 合并后的 DOM focus 与 Tauri onFocusChanged，
+ * 避免同一轮回焦重复触发；未初始化时（如单元测试）回退到原生 window focus 事件。
+ */
+export function subscribeWindowFocus(listener: () => void): () => void {
+  windowFocusListeners.add(listener);
+  const onFallbackFocus = () => {
+    if (!initialized) listener();
+  };
+  window.addEventListener("focus", onFallbackFocus);
+  return () => {
+    windowFocusListeners.delete(listener);
+    window.removeEventListener("focus", onFallbackFocus);
+  };
 }
 
 export function initializeWindowActivity() {

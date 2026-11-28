@@ -20,6 +20,11 @@ export const subscriptionApi = {
     invoke("get_claude_default_plan"),
   getAgyAccountQuota: (accountId: string): Promise<SubscriptionQuota> =>
     invoke("agy_account_quota", { accountId }),
+  /** 只读本地保存的 Antigravity 额度快照，不读钥匙串、不启动 `agy`。 */
+  getAgyAccountLastQuota: (
+    accountId: string,
+  ): Promise<SubscriptionQuota | null> =>
+    invoke("agy_account_last_quota", { accountId }),
   getCodingPlanQuota: (
     baseUrl: string,
     apiKey: string,

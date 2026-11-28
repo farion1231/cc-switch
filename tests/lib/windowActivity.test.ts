@@ -21,6 +21,7 @@ vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => native }));
 describe("window activity", () => {
   let focusManager: (typeof import("@tanstack/react-query"))["focusManager"];
   let initialize: (typeof import("@/lib/windowActivity"))["initializeWindowActivity"];
+  let subscribeFocus: (typeof import("@/lib/windowActivity"))["subscribeWindowFocus"];
 
   beforeEach(async () => {
     vi.resetModules();
@@ -51,9 +52,10 @@ describe("window activity", () => {
       return native.offVisibility;
     });
     ({ focusManager } = await import("@tanstack/react-query"));
-    ({ initializeWindowActivity: initialize } = await import(
-      "@/lib/windowActivity"
-    ));
+    ({
+      initializeWindowActivity: initialize,
+      subscribeWindowFocus: subscribeFocus,
+    } = await import("@/lib/windowActivity"));
   });
 
   afterEach(() => {
@@ -261,5 +263,32 @@ describe("window activity", () => {
       client.unmount();
       client.clear();
     }
+  });
+
+  it("notifies window focus subscribers once on visible blur-to-focus transitions and deduplicates native/DOM events", async () => {
+    initialize();
+    await vi.advanceTimersByTimeAsync(0);
+    const onFocus = vi.fn();
+    const off = subscribeFocus(onFocus);
+    try {
+      expect(onFocus).not.toHaveBeenCalled();
+
+      // 失焦到外部终端（窗口仍可见）再切回来：合并原生与 DOM focus，只触发一次
+      native.listener?.({ payload: false });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onFocus).not.toHaveBeenCalled();
+
+      native.listener?.({ payload: true });
+      window.dispatchEvent(new Event("focus"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onFocus).toHaveBeenCalledTimes(1);
+    } finally {
+      off();
+    }
+
+    native.listener?.({ payload: false });
+    native.listener?.({ payload: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onFocus).toHaveBeenCalledTimes(1);
   });
 });

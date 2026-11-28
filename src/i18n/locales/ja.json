@@ -5285,7 +5285,8 @@
       "switchedWhileRunning": "切り替えました。agy が実行中です。開いている agy は元のアカウントのままで、元のアカウントを書き戻す可能性があります。agy を終了してから開き直してください。",
       "pendingNote": "ターミナルで agy を開きました。未ログインなら案内に従ってログインし、ログイン済みなら /logout の後に /login で追加するアカウントにログインしてください。完了すると自動でここに追加されます。",
       "reopenTerminal": "ターミナルを再度開く",
-      "quotaNotCurrent": "このアカウントに切り替えると残量を確認できます"
+      "quotaNotCurrent": "このアカウントに切り替えると残量を確認できます",
+      "quotaRefreshNotCurrent": "このアカウントに切り替えると最新の残量を確認できます"
     },
     "codebuddy": {
       "mainland": "国内版",

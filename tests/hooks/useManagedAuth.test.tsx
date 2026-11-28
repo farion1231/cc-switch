@@ -1,6 +1,10 @@
 import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  focusManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useManagedAuth } from "@/components/providers/forms/hooks/useManagedAuth";
 import { CODEX_OAUTH_DUPLICATE_ACCOUNT_ERROR } from "@/lib/api/auth";
@@ -686,5 +690,201 @@ describe("useManagedAuth", () => {
       ).toBe(true),
     );
     expect(queryClient.getQueryState(quotaKey)?.isInvalidated).toBe(false);
+  });
+
+  it("refreshes agy_oauth login status on window focus even within staleTime", async () => {
+    apiMocks.authGetStatus
+      .mockResolvedValueOnce({
+        provider: "agy_oauth",
+        authenticated: true,
+        default_account_id: "a",
+        accounts: [
+          {
+            id: "a",
+            provider: "agy_oauth",
+            login: "a@example.com",
+            avatar_url: null,
+            authenticated_at: 1,
+            is_default: true,
+            github_domain: "google.com",
+            requires_reauth: false,
+          },
+          {
+            id: "b",
+            provider: "agy_oauth",
+            login: "b@example.com",
+            avatar_url: null,
+            authenticated_at: 2,
+            is_default: false,
+            github_domain: "google.com",
+            requires_reauth: false,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        provider: "agy_oauth",
+        authenticated: true,
+        default_account_id: "b",
+        accounts: [
+          {
+            id: "a",
+            provider: "agy_oauth",
+            login: "a@example.com",
+            avatar_url: null,
+            authenticated_at: 1,
+            is_default: false,
+            github_domain: "google.com",
+            requires_reauth: false,
+          },
+          {
+            id: "b",
+            provider: "agy_oauth",
+            login: "b@example.com",
+            avatar_url: null,
+            authenticated_at: 2,
+            is_default: true,
+            github_domain: "google.com",
+            requires_reauth: false,
+          },
+        ],
+      });
+
+    focusManager.setFocused(true);
+    try {
+      const { result } = renderHook(() => useManagedAuth("agy_oauth"), {
+        wrapper: createWrapper(),
+      });
+      await waitFor(() => expect(result.current.defaultAccountId).toBe("a"));
+      expect(apiMocks.authGetStatus).toHaveBeenCalledTimes(1);
+
+      act(() => focusManager.setFocused(false));
+      act(() => focusManager.setFocused(true));
+
+      await waitFor(() => expect(result.current.defaultAccountId).toBe("b"));
+      expect(apiMocks.authGetStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+  });
+
+  it("refreshes agy_oauth login status and invalidates quota caches on visible window focus even when focusManager stays focused", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const quotaA = {
+      tool: "agy",
+      credentialStatus: "valid",
+      credentialMessage: null,
+      success: true,
+      tiers: [],
+      extraUsage: null,
+      error: null,
+      queriedAt: 1,
+    };
+    const notFound = {
+      ...quotaA,
+      credentialStatus: "not_found",
+      success: false,
+      queriedAt: null,
+    };
+    queryClient.setQueryData(["agy_oauth", "quota", "a"], quotaA);
+    queryClient.setQueryData(["agy_oauth", "quota", "b"], notFound);
+    queryClient.setQueryData(["agy_oauth", "last_quota", "a"], null);
+
+    apiMocks.authGetStatus
+      .mockResolvedValueOnce({
+        provider: "agy_oauth",
+        authenticated: true,
+        default_account_id: "a",
+        accounts: [],
+      })
+      .mockResolvedValueOnce({
+        provider: "agy_oauth",
+        authenticated: true,
+        default_account_id: "b",
+        accounts: [],
+      });
+
+    // 模拟真实 Tauri 窗口（windowActivity.ts）：切去外部终端时窗口仍可见，focusManager 始终为 true
+    focusManager.setFocused(true);
+    try {
+      const { result } = renderHook(() => useManagedAuth("agy_oauth"), {
+        wrapper,
+      });
+      await waitFor(() => expect(result.current.defaultAccountId).toBe("a"));
+      expect(apiMocks.authGetStatus).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        window.dispatchEvent(new Event("blur"));
+        window.dispatchEvent(new Event("focus"));
+      });
+
+      await waitFor(() => expect(result.current.defaultAccountId).toBe("b"));
+      expect(apiMocks.authGetStatus).toHaveBeenCalledTimes(2);
+      // 外部终端换号后同步清理 not_found 并失效额度缓存
+      expect(
+        queryClient.getQueryData(["agy_oauth", "quota", "b"]),
+      ).toBeUndefined();
+      expect(
+        queryClient.getQueryState(["agy_oauth", "quota", "a"])?.isInvalidated,
+      ).toBe(true);
+      expect(
+        queryClient.getQueryState(["agy_oauth", "last_quota", "a"])
+          ?.isInvalidated,
+      ).toBe(true);
+    } finally {
+      focusManager.setFocused(undefined);
+    }
+  });
+
+  it("does not invalidate agy quota caches on window focus when the current account did not change", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    queryClient.setQueryData(["agy_oauth", "quota", "a"], {
+      tool: "agy",
+      credentialStatus: "valid",
+      credentialMessage: null,
+      success: true,
+      tiers: [],
+      extraUsage: null,
+      error: null,
+      queriedAt: 1,
+    });
+    apiMocks.authGetStatus.mockResolvedValue({
+      provider: "agy_oauth",
+      authenticated: true,
+      default_account_id: "a",
+      accounts: [],
+    });
+
+    const { result } = renderHook(() => useManagedAuth("agy_oauth"), {
+      wrapper,
+    });
+    await waitFor(() => expect(result.current.defaultAccountId).toBe("a"));
+    expect(apiMocks.authGetStatus).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() =>
+      expect(apiMocks.authGetStatus).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      queryClient.getQueryState(["agy_oauth", "quota", "a"])?.isInvalidated,
+    ).toBe(false);
   });
 });
