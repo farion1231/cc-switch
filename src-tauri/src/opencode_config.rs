@@ -607,15 +607,84 @@ pub fn set_default_model(model: &str) -> Result<(), AppError> {
 
 pub fn get_mcp_servers() -> Result<Map<String, Value>, AppError> {
     let config = read_opencode_config()?;
-    Ok(config
-        .get("mcp")
-        .and_then(|v| v.as_object())
+    let Some(mcp) = config.get("mcp").and_then(Value::as_object) else {
+        return Ok(Map::new());
+    };
+    let mut servers = mcp.clone();
+    if is_native_mcp_timeout(mcp) {
+        servers.remove("timeout");
+    }
+    if let Some(native) = native_mcp_servers(mcp) {
+        servers.remove("servers");
+        servers.extend(native.clone());
+    }
+    Ok(servers)
+}
+
+fn native_mcp_servers(mcp: &Map<String, Value>) -> Option<&Map<String, Value>> {
+    // "servers" is also a legal name for a legacy MCP entry with a string type.
+    mcp.get("servers")
+        .and_then(Value::as_object)
+        .filter(|servers| !servers.get("type").is_some_and(Value::is_string))
+}
+
+fn is_native_mcp_timeout(mcp: &Map<String, Value>) -> bool {
+    // V2 puts global timeout defaults in `mcp.timeout` ({ startup, catalog, execution });
+    // a legacy server named "timeout" carries a string `type`.
+    mcp.get("timeout")
+        .and_then(Value::as_object)
+        .is_some_and(|timeout| {
+            !timeout.get("type").is_some_and(Value::is_string)
+                && (timeout.is_empty()
+                    || ["startup", "catalog", "execution"]
+                        .iter()
+                        .any(|key| timeout.contains_key(*key)))
+        })
+}
+
+fn set_native_mcp_server(
+    servers: &mut Map<String, Value>,
+    id: &str,
+    config: Value,
+) -> Result<(), AppError> {
+    let Value::Object(mut spec) = config else {
+        return Err(AppError::McpValidation(
+            "MCP spec must be a JSON object".into(),
+        ));
+    };
+    let enabled = spec.remove("enabled").and_then(|value| value.as_bool());
+    let mut server = servers
+        .get(id)
+        .and_then(Value::as_object)
+        .filter(|previous| previous.get("type") == spec.get("type"))
         .cloned()
-        .unwrap_or_default())
+        .unwrap_or_default();
+    // Replace the fields CC Switch owns while retaining native options such as
+    // cwd, oauth and timeout when the transport is unchanged.
+    for key in [
+        "command",
+        "environment",
+        "url",
+        "headers",
+        "enabled",
+        "disabled",
+    ] {
+        server.remove(key);
+    }
+    server.extend(spec);
+    if enabled == Some(false) {
+        server.insert("disabled".to_string(), Value::Bool(true));
+    }
+    servers.insert(id.to_owned(), Value::Object(server));
+    Ok(())
 }
 
 pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
-    edit_config(get_opencode_config_path, |full_config| {
+    try_edit_config(get_opencode_config_path, |full_config| {
+        // V2's CLI settings file is also present after upgrading a legacy config.
+        let v2_hint = full_config.get("providers").is_some_and(Value::is_object)
+            || full_config.get("plugins").is_some_and(Value::is_array)
+            || get_opencode_dir().join("cli.json").is_file();
         if !full_config.get("mcp").is_some_and(Value::is_object) {
             if full_config.get("mcp").is_some() {
                 log::warn!(
@@ -624,7 +693,24 @@ pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
             }
             full_config["mcp"] = json!({});
         }
-        full_config["mcp"][id] = config;
+        let mcp = full_config["mcp"].as_object_mut().expect("MCP object");
+        let has_native_timeout = is_native_mcp_timeout(mcp);
+        if native_mcp_servers(mcp).is_some()
+            || ((v2_hint || has_native_timeout) && !mcp.contains_key("servers"))
+        {
+            let servers = mcp.entry("servers").or_insert_with(|| json!({}));
+            set_native_mcp_server(
+                servers.as_object_mut().expect("native MCP object"),
+                id,
+                config,
+            )?;
+            if id != "servers" && !(id == "timeout" && has_native_timeout) {
+                mcp.remove(id);
+            }
+        } else {
+            mcp.insert(id.to_owned(), config);
+        }
+        Ok(())
     })
     .map(|_| ())
 }
@@ -632,7 +718,18 @@ pub fn set_mcp_server(id: &str, config: Value) -> Result<(), AppError> {
 pub fn remove_mcp_server(id: &str) -> Result<(), AppError> {
     edit_config(get_opencode_config_path, |config| {
         if let Some(mcp) = config.get_mut("mcp").and_then(Value::as_object_mut) {
-            mcp.remove(id);
+            let has_native_timeout = is_native_mcp_timeout(mcp);
+            if native_mcp_servers(mcp).is_some() {
+                if let Some(servers) = mcp.get_mut("servers").and_then(Value::as_object_mut) {
+                    servers.remove(id);
+                }
+                if id == "servers" {
+                    return;
+                }
+            }
+            if !(id == "timeout" && has_native_timeout) {
+                mcp.remove(id);
+            }
         }
     })
     .map(|_| ())

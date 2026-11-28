@@ -203,6 +203,13 @@ pub fn remove_server_from_opencode(id: &str) -> Result<(), AppError> {
     opencode_config::remove_mcp_server(id)
 }
 
+fn is_disabled_opencode_server(spec: &Value) -> bool {
+    match spec.get("disabled").and_then(Value::as_bool) {
+        Some(disabled) => disabled,
+        None => spec.get("enabled").and_then(Value::as_bool) == Some(false),
+    }
+}
+
 /// Import MCP servers from OpenCode config to unified structure
 ///
 /// Existing servers will have OpenCode app enabled without overwriting other fields.
@@ -219,6 +226,9 @@ pub fn import_from_opencode(config: &mut MultiAppConfig) -> Result<usize, AppErr
     let mut errors = Vec::new();
 
     for (id, spec) in mcp_map {
+        if is_disabled_opencode_server(&spec) {
+            continue;
+        }
         // Convert from OpenCode format to unified format
         let unified_spec = match convert_from_opencode_format(&spec) {
             Ok(s) => s,
