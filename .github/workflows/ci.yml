@@ -29,8 +29,9 @@ jobs:
       # readme / frontend_contracts 默认 false：定时或手动运行时 frontend 已是 true，
       # 会跑全量前端检查与测试，不需要再单独起轻量 job。
       frontend: ${{ steps.filter.outputs.frontend || 'true' }}
-      backend: ${{ steps.filter.outputs.backend || 'true' }}
-      wsl: ${{ steps.filter.outputs.wsl || 'true' }}
+      backend: ${{ steps.scope.outputs.backend }}
+      wsl: ${{ steps.scope.outputs.wsl }}
+      macos_full: ${{ steps.scope.outputs.macos_full }}
       readme: ${{ steps.filter.outputs.readme || 'false' }}
       frontend_contracts: ${{ steps.filter.outputs.frontend_contracts || 'false' }}
     steps:
@@ -64,9 +65,8 @@ jobs:
             readme:
               - "README*.md"
             frontend_contracts:
-              - "src-tauri/src/lib.rs"
-              - "src-tauri/src/omp_config.rs"
-              - "src-tauri/src/services/usage_stats.rs"
+              # 纯 Rust PR 也检查 CI 路径覆盖，防止新增平台代码后静默漏检。
+              - "src-tauri/**/*.rs"
             backend:
               - "src-tauri/**"
               - "tests/config/*.json"
@@ -85,6 +85,99 @@ jobs:
               - "src-tauri/build.rs"
               - "rust-toolchain.toml"
               - ".github/workflows/ci.yml"
+            # 命中 macOS 专属实现、集成测试或构建/依赖变更时，PR 自动升级为 macOS 全量 Clippy + nextest；
+            # 同时下面还会扫描 PR diff 中新增/修改的 target_os = "macos" / objc2，兜底新文件。
+            # 未命中时，普通 PR 在 macOS 上仅跑 cargo check --all-targets 守住编译，main/定时/手动或打 full-ci/test:macos 标签时跑全量。
+            macos_full:
+              - "src-tauri/src/auto_launch.rs"
+              - "src-tauri/src/claude_desktop_config.rs"
+              - "src-tauri/src/commands/misc.rs"
+              - "src-tauri/src/commands/terminal_launch.rs"
+              - "src-tauri/src/commands/tool_*.rs"
+              - "src-tauri/src/commands/tool_discovery/**"
+              - "src-tauri/src/commands/workbuddy_account.rs"
+              - "src-tauri/src/lib.rs"
+              - "src-tauri/src/lightweight.rs"
+              - "src-tauri/src/macos_tray_window.rs"
+              - "src-tauri/src/mode/operation.rs"
+              - "src-tauri/src/omp_config.rs"
+              - "src-tauri/src/services/*_account/**"
+              - "src-tauri/src/services/*_account.rs"
+              - "src-tauri/src/services/provider/mod.rs"
+              - "src-tauri/src/services/skill_repo_tokens.rs"
+              - "src-tauri/src/services/subscription.rs"
+              - "src-tauri/src/session_manager/terminal/**"
+              - "src-tauri/src/tray*.rs"
+              - "src-tauri/src/tray/**"
+              - "src-tauri/tests/**"
+              - "src-tauri/.config/nextest.toml"
+              - "tests/fixtures/**"
+              - "src-tauri/Cargo.toml"
+              - "src-tauri/Cargo.lock"
+              - "src-tauri/build.rs"
+              - "rust-toolchain.toml"
+              - ".github/workflows/ci.yml"
+
+      # 实时拉取 PR 标签与 diff 中的 macOS 条件编译痕迹：
+      # 1. Re-run all jobs 时 github.event.pull_request.labels 是冻结快照，必须走 API 才能读到新打的 full-ci / test:macos 标签；
+      # 2. 不把 labeled 加进 on.pull_request.types，避免 labeler.yml 自动打标时误取消正在运行的 CI；
+      # 3. 兜底扫描 diff 中的 target_os = "macos" / objc2，即使新文件不在静态列表里也会升级为 macOS 全量。
+      - name: Fetch live PR labels and macOS diff guard
+        id: pr_meta
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BACKEND_CHANGED: ${{ steps.filter.outputs.backend }}
+          MACOS_FULL_FILTER: ${{ steps.filter.outputs.macos_full }}
+        run: |
+          set -euo pipefail
+          labels=$(gh api "repos/${GH_REPO}/pulls/${PR_NUMBER}" --jq '[.labels[].name] | tojson')
+          echo "labels=${labels}" >> "$GITHUB_OUTPUT"
+
+          patch_touches_macos=false
+          if [ "$BACKEND_CHANGED" = "true" ] && [ "$MACOS_FULL_FILTER" != "true" ]; then
+            # API 失败必须让 job 失败；先完整读取再匹配，避免 grep -q 提前关闭管道造成 SIGPIPE。
+            # GitHub 未提供 Rust 文件 patch（例如过大的 diff）时，保守升级为全量。
+            patches=$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" \
+              --jq '.[] | if (.filename | endswith(".rs")) and .patch == null then "CC_SWITCH_MISSING_RUST_PATCH" else .patch // empty end')
+            if grep -qE 'target_os[[:space:]]*=[[:space:]]*"macos"|objc2|CC_SWITCH_MISSING_RUST_PATCH' <<< "$patches"; then
+              patch_touches_macos=true
+            fi
+          fi
+          echo "patch_touches_macos=${patch_touches_macos}" >> "$GITHUB_OUTPUT"
+
+      # 在 job 路径门禁之前处理实时标签，backend 和所有 WSL 步骤使用同一份执行范围。
+      - name: Resolve backend check scope
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGED_AREAS: ${{ toJSON(steps.filter.outputs) }}
+          PR_LABELS: ${{ steps.pr_meta.outputs.labels || '[]' }}
+          PATCH_TOUCHES_MACOS: ${{ steps.pr_meta.outputs.patch_touches_macos || 'false' }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const changed = JSON.parse(process.env.CHANGED_AREAS || '{}') || {};
+          const labels = JSON.parse(process.env.PR_LABELS || '[]');
+          // 定时 / 手动未执行过滤时按全量处理，字符串 'false' 必须保留为 false。
+          const matches = area => changed[area] !== 'false';
+          const full = labels.includes('full-ci');
+          const macos = full || labels.includes('test:macos');
+          const windows = full || labels.includes('test:windows');
+          const nonPr = process.env.EVENT_NAME !== 'pull_request';
+          const scope = {
+            backend: matches('backend') || macos || windows,
+            macos_full: nonPr || matches('macos_full') || macos || process.env.PATCH_TOUCHES_MACOS === 'true',
+            wsl: nonPr || matches('wsl') || windows,
+          };
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,
+            Object.entries(scope).map(([key, value]) => `${key}=${value}\n`).join(''));
+          console.log('Backend check scope:', scope);
+          NODE
 
   frontend:
     name: Frontend Checks
@@ -218,7 +311,7 @@ jobs:
       - name: Run README parity test
         run: pnpm test:unit --project=node-unisolated tests/config/readmeParity.test.ts
 
-  # 只改前端契约测试直接解析的 Rust 源文件时，补跑对应 3 个跨端契约测试，避免静默漂移。
+  # 纯 Rust PR 补跑跨端契约和 CI 路径覆盖测试，避免配置与平台代码静默漂移。
   frontend-contracts:
     name: Frontend Contract Tests
     runs-on: ubuntu-latest
@@ -240,8 +333,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run frontend contract tests
-        run: pnpm test:unit --project=node-unisolated tests/lib/registeredCommands.test.ts tests/config/ompProviderPresets.test.ts tests/components/usageProviderLabel.test.ts
+      - name: Run frontend and CI contract tests
+        run: pnpm test:unit --project=node-unisolated tests/lib/registeredCommands.test.ts tests/config/ompProviderPresets.test.ts tests/components/usageProviderLabel.test.ts tests/config/ciWorkflow.test.ts
 
   backend:
     name: Backend Checks
@@ -249,11 +342,47 @@ jobs:
     needs: changes
     if: needs.changes.outputs.backend == 'true'
     timeout-minutes: 45
+    env:
+      # CI 禁用调试信息（与 tauri-apps/tauri 一致）：跳过 DWARF 生成以减少编译/链接耗时与 target 缓存体积；
+      # 本地开发仍沿用 Cargo.toml 的 line-tables-only。
+      CARGO_PROFILE_DEV_DEBUG: 0
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, windows-latest, macos-latest]
+        # 显式固定镜像版本（与 release.yml 的 macos-15、wsl2-nightly.yml 的 windows-2025 对齐），
+        # 避免 *-latest 静默滚动引入性能或环境回归。
+        os: [ubuntu-22.04, windows-2025, macos-15]
     steps:
+      - name: Determine backend check scope
+        id: scope
+        shell: bash
+        env:
+          RUNNER_OS: ${{ runner.os }}
+          MACOS_FULL: ${{ needs.changes.outputs.macos_full }}
+        run: |
+          run_clippy=false
+          run_tests=false
+          run_check_only=false
+
+          if [ "$RUNNER_OS" = "Linux" ] || [ "$RUNNER_OS" = "Windows" ]; then
+            run_clippy=true
+            run_tests=true
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            if [ "$MACOS_FULL" = "true" ]; then
+              run_clippy=true
+              run_tests=true
+            else
+              run_check_only=true
+            fi
+          fi
+
+          {
+            echo "run_clippy=$run_clippy"
+            echo "run_tests=$run_tests"
+            echo "run_check_only=$run_check_only"
+          } >> "$GITHUB_OUTPUT"
+          echo "Backend check scope ($RUNNER_OS): clippy=$run_clippy tests=$run_tests check_only=$run_check_only"
+
       - name: Checkout
         uses: actions/checkout@v6
 
@@ -270,7 +399,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
-          components: ${{ runner.os == 'Linux' && 'rustfmt, clippy' || 'clippy' }}
+          components: ${{ runner.os == 'Linux' && 'rustfmt, clippy' || (steps.scope.outputs.run_clippy == 'true' && 'clippy' || '') }}
 
       # 格式和系统无关，只在 Linux 上查一次；放在装依赖、恢复缓存之前，格式不对几秒就报错
       - name: Check Rust formatting
@@ -282,26 +411,39 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config libssl-dev \
+            build-essential clang lld pkg-config libssl-dev \
             libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
             || sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.0-dev
           sudo apt-get install -y --no-install-recommends libsoup-3.0-dev \
             || sudo apt-get install -y --no-install-recommends libsoup2.4-dev
+          echo "RUSTFLAGS=-C linker=clang -C link-arg=-fuse-ld=lld" >> "$GITHUB_ENV"
+
+      # 一次性 CI 虚拟机上排除 target 与 CARGO_HOME，避免 Defender 实时扫描拖慢缓存解压、编译与 5,000+ 测试进程启动
+      - name: Exclude Cargo dirs from Windows Defender
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          try {
+            Add-MpPreference -ExclusionPath "${{ github.workspace }}\src-tauri\target", "$env:USERPROFILE\.cargo"
+          } catch {
+            Write-Warning "Failed to configure Windows Defender exclusions: $_"
+          }
 
       # 只缓存依赖：本仓库的 crate 每次都要重编，缓存它只会让缓存变大、恢复变慢。
       # key 自带 OS、rustc 版本和 Cargo.lock；shared-key 让 wsl2-nightly 能读到 Windows 这份。
-      # backend-v2：对齐 [profile.dev.package] 优化依赖与 clippy --all-targets 的缓存指纹。
-      # 只有 main 保存：PR 能读 main 的缓存，PR 自己存的别人读不到，三个系统一份 3 GB 多，
+      # backend-v3：对齐 CARGO_PROFILE_DEV_DEBUG=0 与 Linux lld 链接器后的缓存指纹。
+      # 只有 main 保存：PR 能读 main 的缓存，PR 自己存的别人读不到，三个系统一份约 3 GB，
       # 存下来只会把 main 的缓存挤出仓库 10 GB 的配额。
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri -> target
-          shared-key: backend-v2
+          shared-key: backend-v3
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-nextest
+        if: steps.scope.outputs.run_tests == 'true'
         uses: taiki-e/install-action@e407f7bafb71fd004bc5c2da3032e5470cbb6ef0 # v2.87.24
         with:
           tool: cargo-nextest
@@ -311,17 +453,31 @@ jobs:
         run: mkdir -p dist
 
       - name: Clippy
+        if: steps.scope.outputs.run_clippy == 'true'
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      # 普通 PR 未命中 macos_full 路径时，在 macOS 上只做全目标类型/条件编译检查，不触发高内存全量代码生成与单测
+      - name: Check macOS compilation
+        if: steps.scope.outputs.run_check_only == 'true'
+        run: cargo check --manifest-path src-tauri/Cargo.toml --all-targets
+
+      # macOS runner 仅 3 vCPU / 7 GB RAM；先单独编 --lib 测试二进制再跑全量，
+      # 避免 cc_switch_lib (rlib) 与 cc_switch_lib (--test) 两个 ~400k LOC rustc 进程并发争抢内存触发 swap，
+      # 同时在冷缓存时仍保留外部依赖的并发编译能力。
+      - name: Prebuild lib tests on macOS (avoid 7 GB RAM swap)
+        if: runner.os == 'macOS' && steps.scope.outputs.run_tests == 'true'
+        run: cargo nextest run --manifest-path src-tauri/Cargo.toml --profile ci --lib --no-run
 
       # 每个测试一个进程，单测超时见 src-tauri/.config/nextest.toml。doctest 目前只有两个
       # ignored，nextest 不跑 doctest 也不漏。
       - name: Run tests
+        if: steps.scope.outputs.run_tests == 'true'
         run: cargo nextest run --manifest-path src-tauri/Cargo.toml --profile ci
 
       # WSL2 契约测试并入 Windows backend，直接复用 nextest 刚编好的 cc_switch_lib 测试二进制，
-      # 省掉独立 Windows VM、缓存恢复和重复编译；PR 仅在命中 wsl 闭包时触发，push/定时/手动必跑。
+      # PR 命中 wsl 路径或 full-ci/test:windows 标签时触发，push/定时/手动必跑。
       - name: Setup WSL2
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        if: runner.os == 'Windows' && needs.changes.outputs.wsl == 'true'
         uses: Vampire/setup-wsl@d1da7f2c0322a5ee4f24975344f67fc0f5baf364 # v7
         with:
           distribution: Ubuntu-24.04
@@ -332,7 +488,7 @@ jobs:
       # 直接定位 nextest 已编好的 cc_switch_lib-*.exe，不再调用 cargo test --lib --no-run，
       # 避免 tauri::generate_context! 共享 OUT_DIR 时间戳触发无谓重编与 UNC TEMP 下的 LNK1327。
       - name: Prepare WSL2-backed test environment & locate test binary
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        if: runner.os == 'Windows' && needs.changes.outputs.wsl == 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -360,7 +516,7 @@ jobs:
           "CC_SWITCH_WSL_TEST_TEMP=$testTemp" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run Windows-to-WSL2 filesystem contract
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        if: runner.os == 'Windows' && needs.changes.outputs.wsl == 'true'
         # Run the test binary built by nextest directly. Invoking cargo here
         # with TEMP pointing at a WSL UNC path can re-link the crate, and
         # link.exe/mt.exe cannot create manifest temp files on \\wsl.localhost.
@@ -383,7 +539,7 @@ jobs:
           }
 
       - name: Run Hermes live WAL reads inside WSL2
-        if: runner.os == 'Windows' && (github.event_name != 'pull_request' || needs.changes.outputs.wsl == 'true')
+        if: runner.os == 'Windows' && needs.changes.outputs.wsl == 'true'
         env:
           CC_SWITCH_WSL_DISTRO: Ubuntu-24.04
         shell: pwsh
