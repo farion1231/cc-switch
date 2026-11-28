@@ -230,6 +230,43 @@ pub(super) fn should_force_identity_encoding(
     is_streaming_request(endpoint, body, headers)
 }
 
+pub(super) fn apply_codex_provider_header_overrides(
+    headers: &mut http::HeaderMap,
+    provider: &Provider,
+    is_copilot: bool,
+) {
+    // The shared client marker belongs to the route, not necessarily the
+    // upstream chosen for this request (Stack or failover).
+    headers.remove("x-openai-actor-authorization");
+    let Some(config) = provider
+        .settings_config
+        .get("config")
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let Ok(config) = config.parse::<toml::Value>() else {
+        return;
+    };
+    let Some(configured_headers) = config
+        .get("model_provider")
+        .and_then(toml::Value::as_str)
+        .and_then(|active| config.get("model_providers")?.get(active))
+        .and_then(|active| active.get("http_headers"))
+        .and_then(toml::Value::as_table)
+    else {
+        return;
+    };
+    let overrides = LocalProxyRequestOverrides {
+        headers: configured_headers
+            .iter()
+            .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_string())))
+            .collect(),
+        body: None,
+    };
+    apply_local_proxy_header_overrides(headers, Some(&overrides), is_copilot);
+}
+
 pub(super) fn apply_local_proxy_header_overrides(
     headers: &mut http::HeaderMap,
     overrides: Option<&LocalProxyRequestOverrides>,

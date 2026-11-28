@@ -2561,6 +2561,13 @@ impl RequestForwarder {
             );
         }
 
+        // The local provider exposes the route's actor-authorization marker for
+        // Codex tool discovery. Resolve upstream headers from the selected row,
+        // so aggregate routing and failover cannot reuse the route's marker.
+        if matches!(app_type, AppType::Codex) && !codex_official_auth_passthrough {
+            apply_codex_provider_header_overrides(&mut ordered_headers, provider, is_copilot);
+        }
+
         apply_local_proxy_header_overrides(
             &mut ordered_headers,
             provider
