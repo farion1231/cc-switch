@@ -105,11 +105,6 @@ Claude Code / Codex / Gemini 공식 채널을 정가의 38% / 2% / 9%에 제공�
 </tr>
 
 <tr>
-<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
-<td>이 프로젝트를 후원해 주신 V-API에 감사드립니다! V-API는 개인, 개발자, 기업에 고품질 LLM API 서비스를 위한 안정적이고 빠르며 안전한 플랫폼을 제공하는 데 전념해 온 3년 차 브랜드로, 정식 계약과 공식 세금계산서(일반 / 특별 부가가치세)를 지원합니다. V-API는 CC Switch 사용자에게 특별 혜택을 제공합니다. <a href="https://gpt.ge/signup?aff=URNP">이 링크</a>로 가입하면 ¥2 할인과 첫 주문 10% 할인을 받을 수 있습니다!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
 <td>이 프로젝트를 후원해 주신 FluxA &amp; Baidu AI Cloud에 감사드립니다! FluxA와 Baidu AI Cloud는 AI 에이전트가 모델, API, 도구를 스스로 구매하고 관리하며 사용할 수 있게 하는 AgenticPlan을 공동으로 출시했습니다. 최대 40% 할인된 Baidu Qianfan TokenPlan이 포함되어 있으며, DeepSeek V4, GLM 5.2, Kimi 등 주력 모델을 이용할 수 있습니다. 또한 FluxA AgentMarket API 보너스 크레딧으로 검색, 데이터 수집, 소셜 미디어, 금융, 암호화폐, 이미지 생성, 동영상 등 13,000개 이상의 유료 API를 사용할 수 있습니다.<br>사용자의 승인이 있으면 AI 에이전트가 공식 Visa 카드로 직접 결제하여 자원을 조달하고, API 키를 관리하며, 사용량을 모니터링하고 갱신을 계획할 수도 있습니다. 에이전트가 "스스로 작업을 완수하는 단계"에서 진정으로 "스스로 예산을 계획하고 작업을 완수하는 단계"로 나아가게 합니다. <a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">이 링크</a>로 구매하세요!</td>
 </tr>

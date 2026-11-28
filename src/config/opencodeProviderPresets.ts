@@ -447,7 +447,7 @@ const grooRouteProModels = (): OpenCodeProviderConfig["models"] => ({
   },
 });
 
-const vApiModels = (): OpenCodeProviderConfig["models"] => ({
+const claudeDashIdModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-fable-5-1": {
     name: "Claude Fable 5.1",
     reasoning: true,
@@ -1099,32 +1099,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "buytoken",
   },
   {
-    name: "V-API",
-    websiteUrl: "https://gpt.ge",
-    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
-    settingsConfig: {
-      npm: "@ai-sdk/anthropic",
-      name: "V-API",
-      options: {
-        baseURL: "https://api.gpt.ge/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: vApiModels(),
-    },
-    category: "aggregator",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    isPartner: true,
-    partnerPromotionKey: "vapi",
-    icon: "vapi",
-  },
-  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
@@ -1467,7 +1441,7 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         apiKey: "",
         setCacheKey: true,
       },
-      models: vApiModels(),
+      models: claudeDashIdModels(),
     },
     category: "aggregator",
     templateValues: {

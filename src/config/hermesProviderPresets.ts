@@ -177,7 +177,7 @@ const grooRouteProModels = (): HermesModel[] => [
   },
 ];
 
-const vApiModels = (): HermesModel[] => [
+const claudeDashIdModels = (): HermesModel[] => [
   {
     id: "claude-opus-5-5",
     name: "Claude Opus 5.5",
@@ -593,25 +593,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "buytoken",
   },
   {
-    name: "V-API",
-    websiteUrl: "https://gpt.ge",
-    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
-    settingsConfig: {
-      name: "vapi",
-      base_url: "https://api.gpt.ge",
-      api_key: "",
-      api_mode: "anthropic_messages",
-      models: vApiModels(),
-    },
-    category: "aggregator",
-    suggestedDefaults: {
-      model: { default: "claude-opus-5-5", provider: "vapi" },
-    },
-    isPartner: true,
-    partnerPromotionKey: "vapi",
-    icon: "vapi",
-  },
-  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
@@ -825,7 +806,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://open.ospreyai.cn",
       api_key: "",
       api_mode: "anthropic_messages",
-      models: vApiModels(),
+      models: claudeDashIdModels(),
     },
     category: "aggregator",
     suggestedDefaults: {
@@ -971,7 +952,7 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
       base_url: "https://api.teamorouter.com",
       api_key: "",
       api_mode: "anthropic_messages",
-      models: vApiModels(),
+      models: claudeDashIdModels(),
     },
     category: "aggregator",
     isPartner: true,

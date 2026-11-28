@@ -207,7 +207,7 @@ const grooRouteProModels = (): PiPresetModel[] => [
   piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
 ];
 
-const vApiModels = (): PiPresetModel[] => [
+const claudeDashIdModels = (): PiPresetModel[] => [
   piModel("anthropic/claude-opus-5.5", { id: "claude-opus-5-5" }),
   piModel("anthropic/claude-sonnet-5.5", { id: "claude-sonnet-5-5" }),
   piModel("anthropic/claude-fable-5.1", { id: "claude-fable-5-1" }),
@@ -610,23 +610,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "buytoken",
   },
   {
-    name: "V-API",
-    providerKey: "cc-switch-vapi",
-    websiteUrl: "https://gpt.ge",
-    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
-    settingsConfig: {
-      name: "V-API",
-      baseUrl: "https://api.gpt.ge",
-      api: "anthropic-messages",
-      apiKey: "",
-      models: vApiModels(),
-    },
-    category: "aggregator",
-    isPartner: true,
-    partnerPromotionKey: "vapi",
-    icon: "vapi",
-  },
-  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     providerKey: "cc-switch-tokenfactory",
@@ -844,7 +827,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://open.ospreyai.cn",
       api: "anthropic-messages",
       apiKey: "",
-      models: vApiModels(),
+      models: claudeDashIdModels(),
     },
     category: "aggregator",
     isPartner: true,
@@ -970,7 +953,7 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
       baseUrl: "https://api.teamorouter.com",
       api: "anthropic-messages",
       apiKey: "",
-      models: vApiModels(),
+      models: claudeDashIdModels(),
     },
     category: "aggregator",
     isPartner: true,

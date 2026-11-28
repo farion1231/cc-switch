@@ -722,33 +722,6 @@ requires_openai_auth = true`,
     icon: "buytoken",
   },
   {
-    name: "V-API",
-    websiteUrl: "https://gpt.ge",
-    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
-    category: "aggregator",
-    auth: generateThirdPartyAuth(""),
-    // gpt-5.6-sol 支持 /v1/responses，令牌选 codex 或 default 分组
-    // （gpt.ge/models/gpt-5.6-sol，2026-10-23）；默认已上调 gpt-6.1-sol
-    // （2026-10-24 按官方阵容，站点目录需 Key 才可见，未实测）
-    config: generateThirdPartyConfig(
-      "vapi",
-      "https://api.gpt.ge/v1",
-      "gpt-6.1-sol",
-    ),
-    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
-    endpointCandidates: [
-      "https://api.gpt.ge/v1",
-      "https://api.vveai.com/v1",
-      "https://run.v3.cm/v1",
-      "https://api1.v3.cm/v1",
-      "https://api2.v3.cm/v1",
-      "https://us.gpt.ge/v1",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "vapi",
-    icon: "vapi",
-  },
-  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",

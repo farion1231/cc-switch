@@ -105,11 +105,6 @@ Claude Code / Codex / Gemini 官方通道分別低至原價的 38% / 2% / 9%，�
 </tr>
 
 <tr>
-<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
-<td>感謝 V-API 贊助本專案！V-API 是一個已營運三年的品牌，致力於為個人、開發者與企業提供穩定、快速、安全的高品質 LLM API 服務平台，並支援正式合約與正規發票（一般 / 專用增值稅發票）。V-API 為 CC Switch 用戶提供專屬優惠：透過<a href="https://gpt.ge/signup?aff=URNP">此連結</a>註冊，首單即可立減 ¥2 並享 9 折！</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
 <td>感謝 FluxA 與百度智能雲贊助本專案！FluxA 與百度智能雲聯合推出 AgenticPlan，讓 AI Agent 具備自主購買、管理與使用模型、API 和工具的能力。其中包含最高 6 折的百度千帆 TokenPlan，可使用 DeepSeek V4、GLM 5.2、Kimi 等旗艦模型，另贈 FluxA AgentMarket API 額度，可解鎖 13,000+ 個涵蓋搜尋、資料擷取、社群媒體、金融、加密貨幣、圖像生成、影片等領域的付費 API。<br>在使用者授權下，AI Agent 還可使用官方 Visa 卡自主付款採購資源、管理 API Key、監控用量並規劃續訂，讓 Agent 從「自主完成任務」邁向真正的「自行規劃預算並完成任務」。透過<a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">此連結</a>購買！</td>
 </tr>

@@ -473,35 +473,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "buytoken",
   },
   {
-    name: "V-API",
-    websiteUrl: "https://gpt.ge",
-    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
-    category: "aggregator",
-    baseUrl: "https://api.gpt.ge",
-    mode: "direct",
-    apiFormat: "anthropic",
-    // 网关没有不带日期的 claude-haiku-4-5（gpt.ge/models，2026-10-23），透传会让
-    // Haiku 档失败，按 5.5 系列映射
-    modelRoutes: mappedRoutes(
-      "claude-sonnet-5-5",
-      "claude-opus-5-5",
-      "claude-haiku-5-5",
-      true,
-    ),
-    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
-    endpointCandidates: [
-      "https://api.gpt.ge",
-      "https://api.vveai.com",
-      "https://run.v3.cm",
-      "https://api1.v3.cm",
-      "https://api2.v3.cm",
-      "https://us.gpt.ge",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "vapi",
-    icon: "vapi",
-  },
-  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",

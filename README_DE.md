@@ -105,11 +105,6 @@ Die Plattform unterstützt außerdem Parallelität auf Unternehmensniveau, eine 
 </tr>
 
 <tr>
-<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
-<td>Danke an V-API für die Unterstützung dieses Projekts! V-API ist eine seit drei Jahren etablierte Marke, die Privatpersonen, Entwicklern und Unternehmen eine stabile, schnelle und sichere Plattform für hochwertige LLM-API-Dienste bietet – inklusive Vertragsabschluss und offizieller Rechnungen (normale / spezielle Mehrwertsteuerrechnung). Für CC Switch-Nutzer gibt es ein besonderes Angebot: Wer sich über <a href="https://gpt.ge/signup?aff=URNP">diesen Link</a> registriert, erhält bei der ersten Bestellung 2 ¥ Nachlass und zusätzlich 10 % Rabatt!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
 <td>Danke an FluxA &amp; Baidu AI Cloud für die Unterstützung dieses Projekts! FluxA und Baidu AI Cloud haben gemeinsam AgenticPlan gestartet: KI-Agenten erhalten damit die Fähigkeit, Modelle, APIs und Werkzeuge eigenständig zu kaufen, zu verwalten und zu nutzen. Enthalten ist der Baidu-Qianfan-TokenPlan mit bis zu 40 % Rabatt und Zugriff auf Spitzenmodelle wie DeepSeek V4, GLM 5.2 und Kimi. Dazu kommt Guthaben für die APIs des FluxA AgentMarket, das mehr als 13.000 kostenpflichtige APIs freischaltet – für Suche, Daten-Scraping, soziale Medien, Finanzen, Krypto, Bildgenerierung, Video und mehr.<br>Mit Zustimmung der Nutzerinnen und Nutzer kann ein KI-Agent außerdem mit der offiziellen Visa-Karte bezahlen, um selbstständig Ressourcen zu beschaffen, API-Schlüssel zu verwalten, die Nutzung zu überwachen und Verlängerungen zu planen. So entwickelt sich der Agent von „Aufgaben eigenständig erledigen“ zu „eigenständig Budgets planen und Aufgaben erledigen“. Kaufen Sie über <a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">diesen Link</a>!</td>
 </tr>

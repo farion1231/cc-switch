@@ -105,11 +105,6 @@ Platform ayrıca kurumsal düzeyde eşzamanlılığı, özel bir yönetim konsol
 </tr>
 
 <tr>
-<td width="180"><a href="https://gpt.ge/signup?aff=URNP"><img src="assets/partners/logos/vapi-banner.jpg" alt="V-API" width="150"></a></td>
-<td>Bu projeye sponsor olduğu için V-API'ye teşekkürler! V-API, bireylere, geliştiricilere ve işletmelere yüksek kaliteli LLM API hizmetleri için kararlı, hızlı ve güvenli bir platform sunmaya adanmış üç yıllık bir markadır; resmi sözleşmeleri ve resmi faturaları (genel / özel KDV) destekler. V-API, CC Switch kullanıcılarına özel bir fırsat sunar: <a href="https://gpt.ge/signup?aff=URNP">bu bağlantıdan</a> kayıt olarak ilk siparişinizde ¥2 indirim ve ayrıca %10 indirim kazanın!</td>
-</tr>
-
-<tr>
 <td width="180"><a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans"><img src="assets/partners/logos/fluxa-banner.png" alt="FluxA TokenPlan" width="150"></a></td>
 <td>Bu projeye sponsor olduğu için FluxA &amp; Baidu AI Cloud'a teşekkürler! FluxA ve Baidu AI Cloud, yapay zeka ajanlarına modelleri, API'leri ve araçları kendi başlarına satın alma, yönetme ve kullanma yeteneği kazandıran AgenticPlan'ı birlikte duyurdu. Bu plan, DeepSeek V4, GLM 5.2 ve Kimi gibi amiral gemisi modellere erişim sağlayan, %40'a varan indirimli Baidu Qianfan TokenPlan'ı ve ayrıca arama, veri kazıma, sosyal medya, finans, kripto, görsel üretimi, video ve daha fazlası için 13.000'den fazla ücretli API'nin kilidini açan bonus FluxA AgentMarket API kredilerini içerir.<br>Kullanıcının yetkilendirmesiyle bir yapay zeka ajanı, kaynak tedarik etmek için resmi Visa kartıyla ödeme yapabilir, API anahtarlarını yönetebilir, kullanımı izleyebilir ve plan yenilemelerini takip edebilir — ajanları "görevleri özerk biçimde tamamlamaktan" gerçekten "kendi bütçesini planlayıp görevleri tamamlamaya" taşır. <a href="https://agentmarket.fluxapay.xyz/marketplace/tokenplans">Bu bağlantıdan</a> satın alın!</td>
 </tr>

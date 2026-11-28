@@ -1153,38 +1153,6 @@ export const openclawProviderPresets: OpenClawProviderPreset[] = [
     icon: "buytoken",
   },
   {
-    name: "V-API",
-    websiteUrl: "https://gpt.ge",
-    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
-    settingsConfig: {
-      baseUrl: "https://api.gpt.ge",
-      apiKey: "",
-      api: "anthropic-messages",
-      models: grooRouteProModels(),
-    },
-    category: "aggregator",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-    suggestedDefaults: {
-      model: {
-        primary: "vapi/claude-opus-5-5",
-        fallbacks: ["vapi/claude-sonnet-5-5"],
-      },
-      modelCatalog: {
-        "vapi/claude-opus-5-5": { alias: "Opus" },
-        "vapi/claude-sonnet-5-5": { alias: "Sonnet" },
-      },
-    },
-    isPartner: true,
-    partnerPromotionKey: "vapi",
-    icon: "vapi",
-  },
-  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",

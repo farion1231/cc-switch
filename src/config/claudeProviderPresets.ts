@@ -428,33 +428,6 @@ export const providerPresets: ProviderPreset[] = [
     icon: "buytoken",
   },
   {
-    name: "V-API",
-    websiteUrl: "https://gpt.ge",
-    apiKeyUrl: "https://gpt.ge/signup?aff=URNP",
-    // 模型详情页 gpt.ge/models/<id>（2026-10-23 核对）：Claude 走 /v1/messages，
-    // haiku-5-5 / sonnet-5-5 / opus-5-5 都在，不用覆盖模型。令牌须选 Claude
-    // 分组，haiku-5-5 只在 claude_max 分组
-    settingsConfig: {
-      env: {
-        ANTHROPIC_BASE_URL: "https://api.gpt.ge",
-        ANTHROPIC_AUTH_TOKEN: "",
-      },
-    },
-    category: "aggregator",
-    // 备用线路取自 gpt.ge/api/status 的 api_list（2026-10-23）
-    endpointCandidates: [
-      "https://api.gpt.ge",
-      "https://api.vveai.com",
-      "https://run.v3.cm",
-      "https://api1.v3.cm",
-      "https://api2.v3.cm",
-      "https://us.gpt.ge",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "vapi",
-    icon: "vapi",
-  },
-  {
     name: "TokenFactory",
     nameKey: "providerForm.presets.tokenfactory",
     websiteUrl: "https://tokenfactory.cn",
