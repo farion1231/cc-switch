@@ -677,8 +677,16 @@ fn run_tool_lifecycle_silently(
 fn windows_lifecycle_command(bat_file: &Path, effective_path: &str) -> std::process::Command {
     let mut command = std::process::Command::new("cmd");
     command
-        .arg("/C")
-        .arg(bat_file)
+        // 用户目录含空格加括号、`&`、`^` 等字符时（%TEMP% 随之带上），`cmd /C "<路径>"`
+        // 按 `cmd /?` 的引号规则会剥掉首尾引号，把路径在空格处切开，报
+        // "'C:\Users\<名字前半>' 不是内部或外部命令"（#10067）。`/S` 固定只剥最外层一对，
+        // 内层引号原样保留；路径经子进程环境变量展开，展开结果不会再被解析 `%`/`^`。
+        .args(["/D", "/V:OFF", "/S", "/C"])
+        .raw_arg("\"\"%CC_SWITCH_LIFECYCLE_SCRIPT%\"\"")
+        .env(
+            "CC_SWITCH_LIFECYCLE_SCRIPT",
+            windows_shell_compatible_path(bat_file),
+        )
         // MSI 自动重启可能丢失用户 PATH（#8171）。执行与探测共用补全后的 PATH，
         // 让裸 npm 兜底及工具内部启动的 node/npm 都能找到；仅设置子进程环境。
         .env("PATH", effective_path)
@@ -1473,6 +1481,27 @@ mod tests {
             "restored-user-path"
         );
         assert_eq!(std::env::var_os("PATH"), parent_path);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_lifecycle_runs_script_under_path_with_spaces_and_special_chars() {
+        // %TEMP% 继承用户目录名，空格 + 括号会让 `cmd /C "<路径>"` 剥掉引号（#10067）。
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("Name With (Space) & 100% ^caret!");
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("tool_install.bat");
+        std::fs::write(&script, "@echo off\r\necho lifecycle-ran\r\nexit /b 0\r\n").unwrap();
+
+        let output = windows_lifecycle_command(&script, &effective_path_string())
+            .current_dir(std::env::var_os("SystemRoot").unwrap())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            decode_command_output(&output.stdout).trim(),
+            "lifecycle-ran"
+        );
     }
 
     #[cfg(target_os = "windows")]
