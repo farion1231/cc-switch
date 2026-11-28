@@ -9,7 +9,9 @@ use crate::commands::xai_oauth::XaiOAuthState;
 use crate::error::AppError;
 use crate::provider::{ClaudeDesktopMode, Provider, ProviderMeta};
 use crate::provider_kind::ProviderKind;
-use crate::services::provider::{agy_direct, EditorSave, EditorView};
+use crate::services::provider::{
+    agy_direct, BulkProviderImportResult, BulkProviderPreview, EditorSave, EditorView,
+};
 use crate::services::{
     EndpointLatency, ProviderService, ProviderSortUpdate, SpeedtestService, SwitchResult,
 };
@@ -22,6 +24,45 @@ const TEMPLATE_TYPE_TOKEN_PLAN: &str = "token_plan";
 const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const TEMPLATE_TYPE_OFFICIAL_SUBSCRIPTION: &str = "official_subscription";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
+
+#[tauri::command]
+pub async fn preview_provider_bulk_import(
+    app_handle: tauri::AppHandle,
+    app: String,
+    source: String,
+) -> Result<BulkProviderPreview, String> {
+    let app_type = AppType::from_str(&app)
+        .map_err(|_| "provider.bulkImport.errors.unsupportedApp".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "provider.bulkImport.errors.storageFailed".to_string())?;
+        ProviderService::preview_bulk_import(state.inner(), app_type, &source)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| "provider.bulkImport.errors.storageFailed".to_string())?
+}
+
+#[tauri::command]
+pub async fn import_provider_bulk(
+    app_handle: tauri::AppHandle,
+    app: String,
+    source: String,
+    preview_token: String,
+) -> Result<BulkProviderImportResult, String> {
+    let app_type = AppType::from_str(&app)
+        .map_err(|_| "provider.bulkImport.errors.unsupportedApp".to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_handle
+            .try_state::<AppState>()
+            .ok_or_else(|| "provider.bulkImport.errors.storageFailed".to_string())?;
+        ProviderService::import_bulk(state.inner(), app_type, &source, &preview_token)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| "provider.bulkImport.errors.storageFailed".to_string())?
+}
 
 #[tauri::command]
 pub async fn get_providers(
