@@ -653,6 +653,7 @@ export const handlers = [
       error: null,
     }),
   ),
+  http.post(`${TAURI_ENDPOINT}/agy_account_last_quota`, () => success(null)),
   // 授权中心的 CodeBuddy 分区一打开就读本机登录状态：默认没装 / 没登录
   http.post(`${TAURI_ENDPOINT}/codebuddy_account_live`, () =>
     success({

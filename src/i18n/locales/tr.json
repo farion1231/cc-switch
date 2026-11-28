@@ -5214,7 +5214,8 @@
       "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın.",
       "pendingNote": "agy bir terminalde açıldı. Oturum açık değilse yönergeleri izleyin; açıksa önce /logout, ardından eklenecek hesapla /login yazın. Tamamlandığında buraya otomatik olarak eklenir.",
       "reopenTerminal": "Terminali yeniden aç",
-      "quotaNotCurrent": "Kotasını görmek için bu hesaba geçin"
+      "quotaNotCurrent": "Kotasını görmek için bu hesaba geçin",
+      "quotaRefreshNotCurrent": "Güncel kotasını görmek için bu hesaba geçin"
     },
     "codebuddy": {
       "mainland": "Çin",

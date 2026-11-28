@@ -5285,7 +5285,8 @@
       "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。",
       "pendingNote": "已在終端機開啟 agy。未登入時依提示登入；已登入時先輸入 /logout，再輸入 /login 登入要新增的帳號。完成後這裡會自動收錄。",
       "reopenTerminal": "重新開啟終端機",
-      "quotaNotCurrent": "切換到這個帳號後才能查詢額度"
+      "quotaNotCurrent": "切換到這個帳號後才能查詢額度",
+      "quotaRefreshNotCurrent": "切換到這個帳號後才能查詢最新額度"
     },
     "codebuddy": {
       "mainland": "國內版",

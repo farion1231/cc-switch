@@ -4,15 +4,20 @@ import {
   useIsFetching,
   useQueryClient,
   type Query,
+  type QueryClient,
 } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { ManagedAuthStatus } from "@/lib/api/auth";
 import { DSH_ACCOUNT_STATUS_KEY } from "@/components/providers/DshAccount";
 import {
   WORKBUDDY_QUOTA_KEY,
   markWorkBuddyQuotaForceRefresh,
 } from "@/components/providers/workbuddyQuota";
-import { markCodebuddyQuotaForceRefresh } from "@/lib/query/subscription";
+import {
+  agyAuthStatusQuery,
+  markCodebuddyQuotaForceRefresh,
+} from "@/lib/query/subscription";
 
 /** 授权中心各组账号行的额度缓存：`[服务, "quota", 账号]` */
 const QUOTA_SERVICES = new Set([
@@ -29,8 +34,29 @@ const QUOTA_SERVICES = new Set([
  * 当前页面上（有组件在用）的账号额度。只手动查询时这些 query 是 disabled 的，
  * `queryClient.refetchQueries` 会把 disabled 的过滤掉，所以要直接对 query 调 `fetch()`。
  */
-function isShownAccountQuotaQuery(query: Query): boolean {
-  return query.getObserversCount() > 0 && isAccountQuotaQuery(query);
+function isShownAccountQuotaQuery(
+  query: Query,
+  queryClient: QueryClient,
+): boolean {
+  return (
+    query.getObserversCount() > 0 &&
+    isAccountQuotaQuery(query) &&
+    !isNonCurrentAgyQuotaQuery(query, queryClient)
+  );
+}
+
+/** Antigravity 只能查 agy 当前登着的号；登录状态已知时，非当前号直接跳过，免得多读钥匙串。 */
+function isNonCurrentAgyQuotaQuery(
+  query: Query,
+  queryClient: QueryClient,
+): boolean {
+  const [service, kind, accountId] = query.queryKey;
+  if (service !== "agy_oauth" || kind !== "quota") return false;
+  const status = queryClient.getQueryData<ManagedAuthStatus>(
+    agyAuthStatusQuery.queryKey,
+  );
+  if (!status) return false;
+  return status.default_account_id !== accountId;
 }
 
 function isAccountQuotaQuery({ queryKey }: Query): boolean {
@@ -65,7 +91,10 @@ export function RefreshAllQuotaButton() {
         void Promise.all(
           queryClient
             .getQueryCache()
-            .findAll({ predicate: isShownAccountQuotaQuery })
+            .findAll({
+              predicate: (query) =>
+                isShownAccountQuotaQuery(query, queryClient),
+            })
             .map((query) => query.fetch().catch(() => undefined)),
         );
       }}

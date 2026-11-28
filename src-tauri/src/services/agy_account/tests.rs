@@ -8,6 +8,7 @@ use super::*;
 #[derive(Default)]
 struct MemoryLogin {
     value: StdMutex<Option<String>>,
+    reads: StdMutex<usize>,
     writes: StdMutex<usize>,
     locked: StdMutex<bool>,
     post_write_read_failures: StdMutex<usize>,
@@ -15,6 +16,7 @@ struct MemoryLogin {
 
 impl AgyLoginStore for MemoryLogin {
     fn read(&self) -> Result<Option<String>, AppError> {
+        *self.reads.lock().unwrap() += 1;
         if *self.locked.lock().unwrap() {
             return Err(AppError::Config("test keychain is locked".into()));
         }
@@ -650,4 +652,48 @@ async fn an_unreadable_account_file_is_kept_instead_of_overwritten() {
         crate::test_support::dir_holds_file_with(dir.path(), &unreadable),
         "the unreadable account file was overwritten"
     );
+}
+
+#[tokio::test]
+async fn last_quota_reads_stored_snapshot_without_touching_keychain() {
+    use crate::services::subscription::{CredentialStatus, QuotaTier};
+
+    let (_dir, login, manager) = manager();
+    add(&manager, "alice").await;
+    add(&manager, "bob").await;
+    *login.locked.lock().unwrap() = true;
+
+    let saved = SubscriptionQuota {
+        tool: "agy".into(),
+        credential_status: CredentialStatus::Valid,
+        credential_message: None,
+        success: true,
+        tiers: vec![QuotaTier {
+            name: "agy_gemini_five_hour".into(),
+            utilization: 35.0,
+            resets_at: Some("2026-10-21T04:16:37Z".into()),
+            used_value_usd: None,
+            max_value_usd: None,
+        }],
+        extra_usage: None,
+        reset_credits: None,
+        credits_balance: None,
+        plan_name: None,
+        error: None,
+        queried_at: Some(1_700_000_000_000),
+    };
+    manager.record_quota("alice", &saved).await;
+
+    let alice = manager.last_quota("alice").await.expect("stored snapshot");
+    assert!(alice.success);
+    assert_eq!(alice.queried_at, Some(1_700_000_000_000));
+    assert_eq!(alice.tiers.len(), 1);
+    assert!(manager.last_quota("bob").await.is_none());
+    assert!(manager.last_quota("missing").await.is_none());
+    assert_eq!(
+        *login.reads.lock().unwrap(),
+        0,
+        "读取本地快照不应触发钥匙串读取"
+    );
+    assert_eq!(*login.writes.lock().unwrap(), 0);
 }
