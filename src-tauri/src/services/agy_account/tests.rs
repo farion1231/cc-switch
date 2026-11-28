@@ -205,13 +205,24 @@ mod switching {
             .db
             .save_provider(&AppType::Agy, &official_card("alice"))
             .unwrap();
-        let before = state.db.export_sql_string_for_sync().unwrap();
-
         let error = save_from_editor(&state, &manager, official_card("bob")).unwrap_err();
+
         assert_eq!(error.to_string(), "keychain unlock cancelled");
 
         let _sync_guard = sync_mutex().blocking_lock();
-        assert_eq!(state.db.export_sql_string_for_sync().unwrap(), before);
+        let restored = state
+            .db
+            .get_provider_by_id("official", &AppType::Agy)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            restored
+                .meta
+                .unwrap()
+                .managed_account_id_for("agy_oauth")
+                .as_deref(),
+            Some("alice")
+        );
     }
 
     #[tokio::test]

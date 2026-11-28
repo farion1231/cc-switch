@@ -1254,6 +1254,38 @@ fn windows_opencode_desktop_sidecar_resolution() {
 
 #[cfg(target_os = "windows")]
 #[test]
+fn tern_managed_omp_is_excluded_but_standalone_omp_remains_default() {
+    let root = tempfile::tempdir().unwrap();
+    let managed_bin = root.path().join("managed").join("bin");
+    let standalone_bin = root.path().join("standalone");
+    std::fs::create_dir_all(&managed_bin).unwrap();
+    std::fs::create_dir_all(&standalone_bin).unwrap();
+
+    let managed = managed_bin.join("omp.exe");
+    let standalone = standalone_bin.join("omp.exe");
+    std::fs::write(&managed, "").unwrap();
+    std::fs::write(&standalone, "").unwrap();
+    std::fs::write(
+        root.path().join("managed").join("manager.json"),
+        r#"{"manager":"tern"}"#,
+    )
+    .unwrap();
+
+    assert!(tool_executable_candidates("omp", &managed_bin).is_empty());
+    assert_eq!(windows_preferred_tool_executable("omp", &managed), None);
+    assert_eq!(
+        windows_preferred_tool_executable("omp", &standalone),
+        Some(standalone.clone())
+    );
+    let raw = format!("{}\r\n{}\r\n", managed.display(), standalone.display());
+    assert_eq!(
+        windows_preferred_path_default("omp", &raw, None),
+        Some(standalone)
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
 fn windows_executable_candidates_filter_foreign_and_shadowed_shims() {
     let root = tempfile::tempdir().unwrap();
     let scripts = root.path().join("Python311").join("Scripts");
