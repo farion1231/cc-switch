@@ -376,6 +376,9 @@ pub struct RequestLogDetail {
     pub output_tokens: u32,
     pub cache_read_tokens: u32,
     pub cache_creation_tokens: u32,
+    /// Internal 1h cache-write token count for cost backfill; omitted from the UI/API payload.
+    #[serde(skip)]
+    pub cache_creation_1h_tokens: u32,
     /// Internal storage semantics; omitted from the UI/API payload.
     #[serde(skip)]
     pub input_token_semantics: i64,
@@ -399,18 +402,22 @@ pub struct RequestLogDetail {
     pub pricing_model: Option<String>,
 }
 
-/// 把 27 列的查询结果映射为 `RequestLogDetail`。
+/// 把 28 列的查询结果映射为 `RequestLogDetail`。
 ///
-/// 调用方的 SELECT **必须**按以下顺序返回 27 列：
+/// 调用方的 SELECT **必须**按以下顺序返回 28 列：
 /// `request_id, provider_id, provider_name, app_type, model, request_model,
 ///  cost_multiplier, input_tokens, output_tokens, cache_read_tokens,
 ///  cache_creation_tokens, input_cost_usd, output_cost_usd, cache_read_cost_usd,
 ///  cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
 ///  first_token_ms, duration_ms, status_code, error_message, created_at,
-///  data_source, pricing_model, input_token_semantics, fresh_input_sql(..)`
+///  data_source, pricing_model, input_token_semantics, fresh_input_sql(..),
+///  cache_creation_1h_tokens`
 ///
 /// 不需要 provider_name 时（如 backfill）SELECT `NULL AS provider_name` 占位即可。
 fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<RequestLogDetail> {
+    let cache_creation_tokens = row.get::<_, i64>(10)?.max(0) as u32;
+    let cache_creation_1h_tokens =
+        (row.get::<_, i64>(27)?.max(0) as u32).min(cache_creation_tokens);
     Ok(RequestLogDetail {
         request_id: row.get(0)?,
         provider_id: row.get(1)?,
@@ -424,7 +431,8 @@ fn row_to_request_log_detail(row: &rusqlite::Row<'_>) -> rusqlite::Result<Reques
         input_tokens: row.get::<_, i64>(7)? as u32,
         output_tokens: row.get::<_, i64>(8)? as u32,
         cache_read_tokens: row.get::<_, i64>(9)? as u32,
-        cache_creation_tokens: row.get::<_, i64>(10)? as u32,
+        cache_creation_tokens,
+        cache_creation_1h_tokens,
         input_cost_usd: row.get(11)?,
         output_cost_usd: row.get(12)?,
         cache_read_cost_usd: row.get(13)?,
@@ -2260,7 +2268,8 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics, {logs_fresh_input} AS fresh_input_tokens
+                    l.input_token_semantics, {logs_fresh_input} AS fresh_input_tokens,
+                    l.cache_creation_1h_tokens
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              {where_clause}
@@ -2305,7 +2314,8 @@ impl Database {
                     l.input_cost_usd, l.output_cost_usd, l.cache_read_cost_usd, l.cache_creation_cost_usd, l.total_cost_usd,
                     l.is_streaming, l.latency_ms, l.first_token_ms, l.duration_ms,
                     l.status_code, l.error_message, l.created_at, l.data_source, l.pricing_model,
-                    l.input_token_semantics, {detail_fresh_input} AS fresh_input_tokens
+                    l.input_token_semantics, {detail_fresh_input} AS fresh_input_tokens,
+                    l.cache_creation_1h_tokens
              FROM proxy_request_logs l
              LEFT JOIN providers p ON l.provider_id = p.id AND l.app_type = p.app_type
              WHERE l.request_id = ?"
@@ -2361,7 +2371,7 @@ impl Database {
                         cache_creation_cost_usd, total_cost_usd, is_streaming, latency_ms,
                         first_token_ms, duration_ms, status_code, error_message, created_at,
                         data_source, pricing_model, input_token_semantics,
-                        {fresh_input} AS fresh_input_tokens
+                        {fresh_input} AS fresh_input_tokens, cache_creation_1h_tokens
              FROM proxy_request_logs
              WHERE CAST(total_cost_usd AS REAL) <= 0
                AND (input_tokens > 0 OR output_tokens > 0
@@ -2471,7 +2481,13 @@ impl Database {
         let cache_read_cost = rust_decimal::Decimal::from(log.cache_read_tokens as u64)
             * pricing.cache_read
             / million;
-        let cache_creation_cost = rust_decimal::Decimal::from(log.cache_creation_tokens as u64)
+        let cache_creation_1h_tokens =
+            log.cache_creation_1h_tokens.min(log.cache_creation_tokens) as u64;
+        let cache_creation_5m_tokens =
+            (log.cache_creation_tokens as u64) - cache_creation_1h_tokens;
+        let cache_creation_cost = (rust_decimal::Decimal::from(cache_creation_5m_tokens)
+            + rust_decimal::Decimal::from(cache_creation_1h_tokens)
+                * rust_decimal::Decimal::new(16, 1))
             * pricing.cache_creation
             / million;
         // 总成本 = 基础成本之和 × 倍率

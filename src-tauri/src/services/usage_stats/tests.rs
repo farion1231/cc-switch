@@ -5081,6 +5081,237 @@ fn test_merged_reasoning_models_keep_totals_filters_and_pooled_medians() -> Resu
 }
 
 #[test]
+fn test_backfill_1h_cache_creation_matches_live_calculation() -> Result<(), AppError> {
+    use crate::proxy::usage::calculator::{CostCalculator, ModelPricing};
+    use crate::proxy::usage::logger::UsageLogger;
+    use crate::proxy::usage::parser::TokenUsage;
+
+    let pricing = ModelPricing::from_strings("8", "24", "0.8", "10").expect("valid custom pricing");
+    let cases = [
+        // (case_id, input, output, cache_read, cache_creation_total, cache_creation_1h)
+        ("pure-1h-1000", 0u32, 0u32, 0u32, 1000u32, 1000u32),
+        ("mixed-5m-1h", 500, 200, 1000, 600, 400),
+        ("pure-5m", 0, 0, 0, 600, 0),
+        ("zero-cache-write", 1000, 250, 400, 0, 0),
+    ];
+
+    // 1) 即时计价数据库：先落库定价，再通过 UsageLogger::log_with_calculation 写入
+    let live_db = Database::memory()?;
+    {
+        let conn = lock_conn!(live_db.conn);
+        conn.execute(
+            "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES ('custom-1h-model', 'Custom 1H Model', '8', '24', '0.8', '10')",
+            [],
+        )?;
+    }
+    let live_logger = UsageLogger::new(&live_db);
+    for (id, input, output, cache_read, cache_creation, cache_creation_1h) in cases {
+        let usage = TokenUsage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+            cache_creation_1h_tokens: cache_creation_1h,
+            model: Some("custom-1h-model".to_string()),
+            message_id: None,
+        };
+        live_logger.log_with_calculation(
+            id.to_string(),
+            "provider-1".to_string(),
+            rust_decimal::Decimal::ONE,
+            "claude".to_string(),
+            "custom-1h-model".to_string(),
+            "custom-1h-model".to_string(),
+            "custom-1h-model".to_string(),
+            usage,
+            50,
+            None,
+            200,
+            None,
+            Some("claude".to_string()),
+            true,
+        )?;
+    }
+
+    // 2) 缺价补算数据库：先在缺价态落库（0 成本），再补入自定义定价并执行 backfill
+    let backfill_db = Database::memory()?;
+    let backfill_logger = UsageLogger::new(&backfill_db);
+    for (id, input, output, cache_read, cache_creation, cache_creation_1h) in cases {
+        let usage = TokenUsage {
+            input_tokens: input,
+            output_tokens: output,
+            cache_read_tokens: cache_read,
+            cache_creation_tokens: cache_creation,
+            cache_creation_1h_tokens: cache_creation_1h,
+            model: Some("custom-1h-model".to_string()),
+            message_id: None,
+        };
+        backfill_logger.log_with_calculation(
+            id.to_string(),
+            "provider-1".to_string(),
+            rust_decimal::Decimal::ONE,
+            "claude".to_string(),
+            "custom-1h-model".to_string(),
+            "custom-1h-model".to_string(),
+            "custom-1h-model".to_string(),
+            usage,
+            50,
+            None,
+            200,
+            None,
+            Some("claude".to_string()),
+            true,
+        )?;
+    }
+
+    // 额外插入一条未显式写入 cache_creation_1h_tokens 的历史行（DEFAULT 0，全按 5m 计）
+    {
+        let conn = lock_conn!(backfill_db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model, pricing_model,
+                    input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens,
+                    latency_ms, status_code, created_at
+                ) VALUES (
+                    'legacy-default-0', 'provider-1', 'claude',
+                    'custom-1h-model', 'custom-1h-model', 'custom-1h-model',
+                    0, 0, 0, 600, 50, 200, 1000
+                )",
+            [],
+        )?;
+        let pre_cost: String = conn.query_row(
+            "SELECT total_cost_usd FROM proxy_request_logs WHERE request_id = 'pure-1h-1000'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(pre_cost, "0");
+
+        conn.execute(
+            "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES ('custom-1h-model', 'Custom 1H Model', '8', '24', '0.8', '10')",
+            [],
+        )?;
+    }
+
+    assert_eq!(backfill_db.backfill_missing_usage_costs()?, 5);
+
+    // 1000 个 1h 缓存写入 token，单价 10/1M：1000 * 1.6 * 10 / 1_000_000 = 0.016
+    let pure_1h_live = live_db
+        .get_request_detail("pure-1h-1000")?
+        .expect("live pure-1h-1000");
+    let pure_1h_backfilled = backfill_db
+        .get_request_detail("pure-1h-1000")?
+        .expect("backfilled pure-1h-1000");
+    assert_eq!(pure_1h_live.cache_creation_1h_tokens, 1000);
+    assert_eq!(pure_1h_backfilled.cache_creation_1h_tokens, 1000);
+    assert_eq!(
+        rust_decimal::Decimal::from_str(&pure_1h_live.total_cost_usd).unwrap(),
+        rust_decimal::Decimal::new(16, 3)
+    );
+    assert_eq!(
+        rust_decimal::Decimal::from_str(&pure_1h_backfilled.total_cost_usd).unwrap(),
+        rust_decimal::Decimal::new(16, 3)
+    );
+    assert_eq!(pure_1h_backfilled.total_cost_usd, "0.016000");
+    let serialized = serde_json::to_value(&pure_1h_backfilled).unwrap();
+    assert!(serialized.get("cacheCreation1hTokens").is_none());
+
+    // 所有用例：缺价回填结果必须与 CostCalculator 即时计价完全一致
+    for (id, input, output, cache_read, cache_creation, cache_creation_1h) in cases {
+        let expected = CostCalculator::calculate_for_app(
+            "claude",
+            &TokenUsage {
+                input_tokens: input,
+                output_tokens: output,
+                cache_read_tokens: cache_read,
+                cache_creation_tokens: cache_creation,
+                cache_creation_1h_tokens: cache_creation_1h,
+                model: None,
+                message_id: None,
+            },
+            &pricing,
+            rust_decimal::Decimal::ONE,
+        );
+        let live_detail = live_db.get_request_detail(id)?.expect(id);
+        let backfilled_detail = backfill_db.get_request_detail(id)?.expect(id);
+        assert_eq!(
+            rust_decimal::Decimal::from_str(&live_detail.cache_creation_cost_usd).unwrap(),
+            expected.cache_creation_cost,
+            "{id} live cache_creation_cost"
+        );
+        assert_eq!(
+            rust_decimal::Decimal::from_str(&backfilled_detail.cache_creation_cost_usd).unwrap(),
+            expected.cache_creation_cost,
+            "{id} backfilled cache_creation_cost"
+        );
+        assert_eq!(
+            rust_decimal::Decimal::from_str(&backfilled_detail.total_cost_usd).unwrap(),
+            rust_decimal::Decimal::from_str(&live_detail.total_cost_usd).unwrap(),
+            "{id} backfilled total_cost must match live calculation"
+        );
+    }
+
+    // 历史行（DEFAULT 0）按纯 5m 标准缓存写入计价：600 * 10 / 1M = 0.006
+    let legacy = backfill_db
+        .get_request_detail("legacy-default-0")?
+        .expect("legacy-default-0");
+    assert_eq!(legacy.cache_creation_1h_tokens, 0);
+    assert_eq!(legacy.total_cost_usd, "0.006000");
+
+    Ok(())
+}
+
+#[test]
+fn test_pre_rollup_backfill_preserves_1h_cache_creation_cost() -> Result<(), AppError> {
+    let db = Database::memory()?;
+    let old_ts = chrono::Utc::now().timestamp() - 40 * 86400;
+
+    {
+        let conn = lock_conn!(db.conn);
+        conn.execute(
+            "INSERT INTO proxy_request_logs (
+                    request_id, provider_id, app_type, model, request_model, pricing_model,
+                    input_tokens, output_tokens, cache_read_tokens,
+                    cache_creation_tokens, cache_creation_1h_tokens,
+                    total_cost_usd, latency_ms, status_code, created_at
+                ) VALUES (
+                    'old-1h-unpriced', 'provider-1', 'claude',
+                    'custom-rollup-1h', 'custom-rollup-1h', 'custom-rollup-1h',
+                    0, 0, 0, 1000, 1000, '0', 80, 200, ?1
+                )",
+            params![old_ts],
+        )?;
+        conn.execute(
+            "INSERT INTO model_pricing (
+                    model_id, display_name, input_cost_per_million, output_cost_per_million,
+                    cache_read_cost_per_million, cache_creation_cost_per_million
+                ) VALUES ('custom-rollup-1h', 'Custom Rollup 1H', '8', '24', '0.8', '10')",
+            [],
+        )?;
+    }
+
+    assert_eq!(db.rollup_and_prune(30)?, 1);
+
+    let conn = lock_conn!(db.conn);
+    let rollup_cost: f64 = conn.query_row(
+        "SELECT CAST(total_cost_usd AS REAL) FROM usage_daily_rollups
+             WHERE model = 'custom-rollup-1h'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(
+        (rollup_cost - 0.016).abs() < 1e-9,
+        "rollup 前回填应按 1h 1.6x 计出 0.016，实际为 {rollup_cost}"
+    );
+    Ok(())
+}
+
+#[test]
 fn selection_median_matches_sort_for_duplicates_and_extreme_values() {
     for len in 1..100 {
         let input: Vec<_> = (0..len)
