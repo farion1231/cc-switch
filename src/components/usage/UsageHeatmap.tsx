@@ -1,23 +1,46 @@
-import { Fragment, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useUsageFirstDate, useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
-import type { UsageRangeSelection } from "@/types/usage";
+import type {
+  DailyStats,
+  RuntimeTrendStats,
+  UsageRangeSelection,
+} from "@/types/usage";
 import {
+  formatHitRatePercent,
   formatTokensShort,
   getLocaleFromLanguage,
-  parseFiniteNumber,
 } from "./format";
-import { hitRateOf, type UsageTrendStatLike } from "./UsageTrendChart";
+import { trendMetricsOf } from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { UsageMetric } from "./rememberedChoice";
+import { runtimeColor, runtimeName } from "./runtimePalette";
+import { buildModelTrendSeries, modelTrendMetric } from "./modelTrendSeries";
+import {
+  UsageBreakdownControl,
+  type UsageBreakdown,
+} from "./UsageBreakdownControl";
+
+type HeatModel = ReturnType<typeof buildModelTrendSeries>[number] & {
+  label: string;
+};
+type BreakdownRow = { label: string; color: string; value: number | null };
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** 0 档用底色，1–4 档是 --heat-1…4（与趋势图同一色相，色阶在 index.css 按深浅色分别定） */
+/** 0 档用底色；1–4 档由主题色和深浅共同决定。 */
 const LEVELS = [0, 1, 2, 3, 4];
 
 interface UsageHeatmapProps {
@@ -40,6 +63,9 @@ interface DayCell {
   requests: number;
   cost: number;
   future: boolean;
+  color?: string;
+  runtimeStats: RuntimeTrendStats[];
+  models: BreakdownRow[];
 }
 
 /** 一段 53 周：最新一段右端是今天，更早的段首尾相接往前排 */
@@ -53,10 +79,11 @@ interface SpanGrid {
 }
 
 interface HoverState {
-  cell: DayCell;
-  /** 相对热力图卡片的格子顶部中点 */
+  day: string;
+  /** Viewport coordinates of the cell. */
   x: number;
-  y: number;
+  top: number;
+  bottom: number;
 }
 
 function startOfDay(date: Date): Date {
@@ -110,29 +137,29 @@ function spanCountFor(
   return before > 0 ? 1 + Math.ceil(before / (WEEKS * 7)) : 1;
 }
 
-function metricValue(
-  stat: UsageTrendStatLike,
-  metric: Exclude<UsageMetric, "hitRate">,
-): number {
-  if (metric === "requests") return stat.requestCount ?? 0;
-  if (metric === "cost") return parseFiniteNumber(stat.totalCost) ?? 0;
-  return (
-    stat.totalInputTokens +
-    stat.totalOutputTokens +
-    stat.totalCacheCreationTokens +
-    stat.totalCacheReadTokens
-  );
-}
-
-/** 格子分档用的值：用量类指标 0 就是没用；命中率 0% 是真实数据，只有没有输入时才是空 */
-function heatValue(
-  stat: UsageTrendStatLike | undefined,
+function dominantRuntime(
+  runtimes: RuntimeTrendStats[],
   metric: UsageMetric,
-): number | null {
-  if (!stat) return null;
-  if (metric === "hitRate") return hitRateOf(stat);
-  const value = metricValue(stat, metric);
-  return value > 0 ? value : null;
+): string | undefined {
+  let app: string | undefined;
+  let largest = 0;
+  for (const runtime of runtimes) {
+    // For cache hit rate, choose the app with the most cacheable input.
+    const value =
+      metric === "hitRate"
+        ? runtime.totalInputTokens +
+          runtime.totalCacheCreationTokens +
+          runtime.totalCacheReadTokens
+        : (trendMetricsOf(runtime)[metric] ?? 0);
+    if (
+      value > largest ||
+      (value === largest && app && runtime.appType < app)
+    ) {
+      app = runtime.appType;
+      largest = value;
+    }
+  }
+  return app;
 }
 
 /** 按有数据的天的四分位分档，避免个别高峰日把其余格子都压成最浅 */
@@ -154,12 +181,12 @@ function levelOf(value: number | null, thresholds: number[]): number {
   return 4;
 }
 
-function cellStyle(level: number) {
-  return level === 0
-    ? undefined
-    : {
-        backgroundColor: `var(--heat-${level})`,
-      };
+function heatFillStyle(level: number, color?: string): CSSProperties {
+  return {
+    "--heat-fill": color
+      ? `color-mix(in srgb, ${color} var(--heat-strength-${level}), transparent)`
+      : `var(--heat-${level})`,
+  } as CSSProperties;
 }
 
 /**
@@ -169,6 +196,7 @@ function cellStyle(level: number) {
 function useAllSpansDailyTrends(
   filters: { appType?: string; providerName?: string; model?: string },
   refreshIntervalMs: number,
+  includeModels: boolean,
 ) {
   const refetchInterval = refreshIntervalMs > 0 ? refreshIntervalMs : false;
   const firstDateQuery = useUsageFirstDate(filters, { refetchInterval });
@@ -191,21 +219,27 @@ function useAllSpansDailyTrends(
   );
   const trendsQuery = useUsageTrends(selection, filters, {
     enabled: spanCount != null,
+    includeModels,
     refetchInterval,
   });
   return {
     spanCount: spanCount ?? 1,
-    trends: trendsQuery.data,
-    isLoading: firstDateQuery.isPending || trendsQuery.isLoading,
+    trends: trendsQuery.isPlaceholderData ? undefined : trendsQuery.data,
+    isLoading:
+      firstDateQuery.isPending ||
+      trendsQuery.isLoading ||
+      trendsQuery.isPlaceholderData,
   };
 }
 
 /** 把后端按天的数据铺成一段 53 周 × 7 天的格子（周一开头，未来的日子标记出来）。 */
 function buildSpan(
   index: number,
-  byDay: Map<string, UsageTrendStatLike>,
+  byDay: Map<string, DailyStats>,
   metric: UsageMetric,
   today: Date,
+  mode: UsageBreakdown,
+  models: HeatModel[],
 ): SpanGrid {
   const start = spanStart(today, index);
   const end = index === 0 ? today : addDays(spanStart(today, index - 1), -1);
@@ -215,16 +249,45 @@ function buildSpan(
     const column: DayCell[] = [];
     for (let d = 0; d < 7; d++) {
       const date = addDays(start, w * 7 + d);
-      const stat = byDay.get(dayKey(date));
+      const key = dayKey(date);
+      const stat = byDay.get(key);
+      const metrics = stat ? trendMetricsOf(stat) : undefined;
+      const value = metrics?.[metric] ?? null;
+      const runtimeStats = mode === "app" ? (stat?.runtimeStats ?? []) : [];
+      const app = dominantRuntime(runtimeStats, metric);
+      let color = app ? runtimeColor(app) : undefined;
+      const modelRows: BreakdownRow[] = [];
+      let largestModelValue = 0;
+      if (stat?.modelStats?.length) {
+        const point = { xKey: key, modelStats: stat.modelStats };
+        for (const model of models) {
+          const amount = model.value(point);
+          if (amount === 0) continue;
+          modelRows.push({
+            label: model.label,
+            color: model.color,
+            value: amount,
+          });
+          if (amount > largestModelValue) {
+            largestModelValue = amount;
+            color = model.color;
+          }
+        }
+      }
       const cell: DayCell = {
-        key: dayKey(date),
+        key,
         date,
-        value: heatValue(stat, metric),
-        hitRate: stat ? hitRateOf(stat) : null,
-        tokens: stat ? metricValue(stat, "tokens") : 0,
-        requests: stat?.requestCount ?? 0,
-        cost: stat ? metricValue(stat, "cost") : 0,
+        // Zero is a real cache hit rate, but an empty usage bucket.
+        value:
+          metric === "hitRate" || (value != null && value > 0) ? value : null,
+        hitRate: metrics?.hitRate ?? null,
+        tokens: metrics?.tokens ?? 0,
+        requests: metrics?.requests ?? 0,
+        cost: metrics?.cost ?? 0,
         future: date.getTime() > today.getTime(),
+        color,
+        runtimeStats,
+        models: modelRows,
       };
       totals.tokens += cell.tokens;
       totals.requests += cell.requests;
@@ -267,39 +330,83 @@ export function UsageHeatmap({
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
   const { money } = useMoneyFormat();
-  const sectionRef = useRef<HTMLElement>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<HoverState | null>(null);
+  const [breakdownMode, setBreakdownMode] = useState<UsageBreakdown>("app");
+  const selectedModelMetric = modelTrendMetric[metric];
+  const mode =
+    breakdownMode === "model" && !selectedModelMetric ? "total" : breakdownMode;
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
   const [showEarlier, setShowEarlier] = useState(false);
 
   const showTooltip = (cell: DayCell, target: HTMLElement) => {
-    const section = sectionRef.current;
-    if (!section) return;
-    const box = section.getBoundingClientRect();
     const rect = target.getBoundingClientRect();
     setHover({
-      cell,
-      x: rect.left + rect.width / 2 - box.left,
-      y: rect.top - box.top,
+      day: cell.key,
+      x: rect.left + rect.width / 2,
+      top: rect.top,
+      bottom: rect.bottom,
     });
   };
+  useLayoutEffect(() => {
+    const tooltip = tooltipRef.current;
+    if (!hover || !tooltip) return;
+    const margin = 8;
+    const { width, height } = tooltip.getBoundingClientRect();
+    const left = Math.min(
+      hover.x - width / 2,
+      window.innerWidth - width - margin,
+    );
+    const above = hover.top - height - margin;
+    const below = Math.min(
+      hover.bottom + margin,
+      window.innerHeight - height - margin,
+    );
+    tooltip.style.left = `${Math.max(margin, left)}px`;
+    tooltip.style.top = `${Math.max(margin, above >= margin ? above : below)}px`;
+
+    const close = () => setHover(null);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [hover, metric]);
   const language = i18n.resolvedLanguage || i18n.language || "en";
   const locale = getLocaleFromLanguage(language);
 
   const { spanCount, trends, isLoading } = useAllSpansDailyTrends(
     { appType, providerName, model },
     refreshIntervalMs,
+    mode === "model",
   );
 
   const heat = useMemo(() => {
-    const byDay = new Map<string, UsageTrendStatLike>();
+    const byDay = new Map<string, DailyStats>();
     for (const stat of trends ?? []) {
       byDay.set(dayKey(new Date(stat.date)), stat);
     }
+    const models: HeatModel[] =
+      mode === "model" && selectedModelMetric
+        ? buildModelTrendSeries(
+            Array.from(byDay, ([xKey, { modelStats }]) => ({
+              xKey,
+              modelStats,
+            })),
+            selectedModelMetric,
+          ).map((series) => ({
+            ...series,
+            label:
+              series.model === null
+                ? t("usage.trend.otherModels")
+                : series.model || t("usage.trend.unknownModel"),
+          }))
+        : [];
     const today = startOfDay(new Date());
     // 最新的一段在上
     const spans = Array.from({ length: spanCount }, (_, index) =>
-      buildSpan(index, byDay, metric, today),
+      buildSpan(index, byDay, metric, today, mode, models),
     );
     // 深浅按所有段一起分档，上下几段才能直接比
     const days = spans
@@ -307,17 +414,41 @@ export function UsageHeatmap({
       .filter((cell) => !cell.future);
     const thresholds = buildThresholds(days.map((cell) => cell.value));
 
-    return { spans, thresholds };
-  }, [trends, metric, spanCount]);
+    return { spans, thresholds, models };
+  }, [trends, metric, spanCount, mode, selectedModelMetric, t]);
 
   const earlierCount = heat.spans.length - 1;
   const visibleSpans = showEarlier ? heat.spans : heat.spans.slice(0, 1);
-  const formatDay = (date: Date) =>
-    date.toLocaleDateString(locale, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
+  const visibleApps = Array.from(
+    new Set(
+      visibleSpans.flatMap((span) =>
+        span.weeks.flatMap((week) =>
+          week.flatMap((cell) =>
+            cell.future
+              ? []
+              : cell.runtimeStats.map((runtime) => runtime.appType),
+          ),
+        ),
+      ),
+    ),
+  ).sort();
+  const legend =
+    mode === "model"
+      ? heat.models
+      : visibleApps.map((app) => ({
+          key: app,
+          label: runtimeName(app),
+          color: runtimeColor(app),
+        }));
+  const { format: formatDay } = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      }),
+    [locale],
+  );
 
   const weekdayLabels = useMemo(() => {
     // 2024-01-01 是周一
@@ -328,23 +459,69 @@ export function UsageHeatmap({
     );
   }, [locale]);
 
+  const activeCell =
+    !isLoading && hover
+      ? visibleSpans
+          .flatMap((span) => span.weeks)
+          .flat()
+          .find((cell) => cell.key === hover.day)
+      : undefined;
+  const rows =
+    mode === "model"
+      ? activeCell?.models
+      : activeCell?.runtimeStats.map((runtime) => ({
+          label: runtimeName(runtime.appType),
+          color: runtimeColor(runtime.appType),
+          value: trendMetricsOf(runtime)[metric],
+        }));
+  const breakdown = rows?.map(({ label, color, value }) => ({
+    label,
+    color,
+    value:
+      value == null
+        ? "—"
+        : metric === "cost"
+          ? money(value, 4)
+          : metric === "hitRate"
+            ? formatHitRatePercent(value)
+            : formatTokensShort(value, language),
+  }));
+
   return (
     <section
-      ref={sectionRef}
       aria-labelledby="usage-heatmap-title"
       className="relative px-4 pb-3 pt-5"
     >
-      <div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
         <h2
           id="usage-heatmap-title"
           className="m-0 text-body font-semibold text-fg-1"
         >
           {t("usage.heatmap.title")}
         </h2>
-        <p className="m-0 text-caption text-fg-3">
-          {t("usage.heatmap.subtitle")}
-        </p>
+        <UsageBreakdownControl
+          value={mode}
+          onValueChange={(next) => {
+            setHover(null);
+            setBreakdownMode(next);
+          }}
+          canBreakDownByModel={selectedModelMetric != null}
+        />
       </div>
+      {!isLoading && legend.length > 0 && (
+        <ul className="mb-0 mt-1 flex flex-wrap gap-x-3 gap-y-1 p-0 text-badge text-fg-3">
+          {legend.map(({ key, label, color }) => (
+            <li key={key} className="flex min-w-0 items-center gap-1.5">
+              <span
+                aria-hidden="true"
+                className="usage-heat-fill h-2.5 w-2.5 shrink-0 rounded-[2px]"
+                style={heatFillStyle(4, color)}
+              />
+              <span className="min-w-0 break-words">{label}</span>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {isLoading ? (
         <div className="flex h-[150px] items-center justify-center">
@@ -397,9 +574,23 @@ export function UsageHeatmap({
                   {span.weeks.map((column) => {
                     const cell = column[d];
                     const level = levelOf(cell.value, heat.thresholds);
+                    const labels =
+                      mode === "model"
+                        ? cell.models.map(({ label }) => label)
+                        : cell.runtimeStats.map(({ appType }) =>
+                            runtimeName(appType),
+                          );
+                    const hasUsage =
+                      !cell.future && (level > 0 || labels.length > 0);
                     return (
                       <div
                         key={cell.key}
+                        role={hasUsage ? "img" : undefined}
+                        aria-label={
+                          hasUsage
+                            ? [formatDay(cell.date), ...labels].join(" · ")
+                            : undefined
+                        }
                         onMouseEnter={
                           cell.future
                             ? undefined
@@ -407,11 +598,18 @@ export function UsageHeatmap({
                         }
                         onMouseLeave={() => setHover(null)}
                         className={cn(
-                          "aspect-square w-full rounded-[3px]",
+                          "flex aspect-square w-full overflow-hidden rounded-[3px]",
                           !cell.future && level === 0 && "bg-subtle",
                         )}
-                        style={cell.future ? undefined : cellStyle(level)}
-                      />
+                      >
+                        {!cell.future && level > 0 && (
+                          <span
+                            aria-hidden="true"
+                            className="usage-heat-fill flex-1"
+                            style={heatFillStyle(level, cell.color)}
+                          />
+                        )}
+                      </div>
                     );
                   })}
                 </Fragment>
@@ -421,37 +619,30 @@ export function UsageHeatmap({
         ))
       )}
 
-      {hover && (
-        <div
-          role="tooltip"
-          className="pointer-events-none absolute z-20"
-          style={{
-            left: hover.x,
-            top: hover.y - 8,
-            // 靠近左右边缘时往里收，别被卡片裁掉
-            transform: `translate(${
-              hover.x < 110
-                ? "-15%"
-                : hover.x > (sectionRef.current?.clientWidth ?? 0) - 110
-                  ? "-85%"
-                  : "-50%"
-            }, -100%)`,
-          }}
-        >
-          <UsageTooltipCard
-            heading={hover.cell.date.toLocaleDateString(locale, {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-              weekday: "short",
-            })}
-            tokens={hover.cell.tokens}
-            requests={hover.cell.requests}
-            cost={hover.cell.cost}
-            hitRate={metric === "hitRate" ? hover.cell.hitRate : undefined}
-          />
-        </div>
-      )}
+      {hover &&
+        activeCell &&
+        createPortal(
+          <div
+            ref={tooltipRef}
+            role="tooltip"
+            className="pointer-events-none fixed z-20"
+          >
+            <UsageTooltipCard
+              heading={activeCell.date.toLocaleDateString(locale, {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+                weekday: "short",
+              })}
+              tokens={activeCell.tokens}
+              requests={activeCell.requests}
+              cost={activeCell.cost}
+              hitRate={metric === "hitRate" ? activeCell.hitRate : undefined}
+              breakdown={breakdown}
+            />
+          </div>,
+          document.body,
+        )}
 
       <div className="mt-2 flex items-center gap-1.5 text-badge text-fg-3">
         {!isLoading && earlierCount > 0 && (
@@ -481,9 +672,12 @@ export function UsageHeatmap({
             key={level}
             className={cn(
               "h-2.5 w-2.5 rounded-[2px]",
-              level === 0 && "bg-subtle",
+              level === 0 ? "bg-subtle" : "usage-heat-fill",
             )}
-            style={cellStyle(level)}
+            aria-hidden="true"
+            style={
+              level === 0 ? undefined : heatFillStyle(level, "var(--text-2)")
+            }
           />
         ))}
         {t("usage.heatmap.more")}

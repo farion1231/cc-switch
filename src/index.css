@@ -126,10 +126,25 @@
     --chart-usage: var(--chart-1);
     /* 热力图 1–4 档：前三档用 chart-usage 保住饱和度，最深档换同色相深一级的 #0e7490。
        chart-usage 是中等亮度，只按浓度混的话最深档不够深，整张图偏淡 */
+    --heat-strength-1: 32%;
+    --heat-strength-2: 62%;
+    --heat-strength-3: 84%;
+    --heat-strength-4: 100%;
     --heat-1: color-mix(in srgb, var(--chart-usage) 32%, transparent);
     --heat-2: color-mix(in srgb, var(--chart-usage) 62%, transparent);
     --heat-3: var(--chart-usage);
     --heat-4: #0e7490;
+    --heat-app-agy: #c22966;
+    --heat-app-codebuddy: #077a98;
+    --heat-app-copilot: #5848a8;
+    --heat-app-dsh: #1e40af;
+    --heat-app-grokbuild: #487021;
+    --heat-app-kimi: #783c83;
+    --heat-app-mcode: #be3036;
+    --heat-app-omp: #97650c;
+    --heat-app-workbuddy: #335d54;
+    --usage-runtime-openclaw: #9e344d;
+    --usage-runtime-hermes: #506773;
     --chart-2: #db2777;
     --chart-grid: #ececf0;
 
@@ -210,10 +225,25 @@
     --danger-soft: #3a1414;
     --chart-1: #38bdf8;
     /* 深色底上越亮越多，chart-usage 本身就是最亮档 */
+    --heat-strength-1: 30%;
+    --heat-strength-2: 50%;
+    --heat-strength-3: 75%;
+    --heat-strength-4: 100%;
     --heat-1: color-mix(in srgb, var(--chart-usage) 30%, transparent);
     --heat-2: color-mix(in srgb, var(--chart-usage) 50%, transparent);
     --heat-3: color-mix(in srgb, var(--chart-usage) 75%, transparent);
     --heat-4: var(--chart-usage);
+    --heat-app-agy: #f472b6;
+    --heat-app-codebuddy: #67e8f9;
+    --heat-app-copilot: #a5b4fc;
+    --heat-app-dsh: #5a80ff;
+    --heat-app-grokbuild: #a3e635;
+    --heat-app-kimi: #e879f9;
+    --heat-app-mcode: #f87171;
+    --heat-app-omp: #facc15;
+    --heat-app-workbuddy: #86efac;
+    --usage-runtime-openclaw: #ff8caa;
+    --usage-runtime-hermes: #96b3c2;
     --chart-2: #f472b6;
     --chart-grid: #2c2c31;
 
@@ -451,6 +481,10 @@ body {
 
 html.dark {
   color-scheme: dark;
+}
+
+.usage-heat-fill {
+  background-color: var(--heat-fill);
 }
 
 .status-heartbeat {

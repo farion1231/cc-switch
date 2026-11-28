@@ -13,7 +13,7 @@ use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::cell::OnceCell;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::str::FromStr;
 use std::sync::LazyLock;
 
@@ -112,6 +112,128 @@ pub struct DailyStats {
     pub total_output_tokens: u64,
     pub total_cache_creation_tokens: u64,
     pub total_cache_read_tokens: u64,
+    /// Usage by display app type; omitted for empty buckets.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_stats: Vec<TrendRuntimeStats>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_stats: Vec<TrendModelStats>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendRuntimeStats {
+    pub app_type: String,
+    pub request_count: u64,
+    pub total_cost: String,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_cache_creation_tokens: u64,
+    pub total_cache_read_tokens: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrendModelStats {
+    pub model: String,
+    pub request_count: u64,
+    pub total_cost: f64,
+    pub total_tokens: u64,
+}
+
+#[derive(Default)]
+struct TrendTotals {
+    request_count: u64,
+    cost: f64,
+    input: u64,
+    output: u64,
+    cache_creation: u64,
+    cache_read: u64,
+}
+
+impl TrendTotals {
+    fn add(&mut self, other: &Self) {
+        self.request_count += other.request_count;
+        self.cost += other.cost;
+        self.input += other.input;
+        self.output += other.output;
+        self.cache_creation += other.cache_creation;
+        self.cache_read += other.cache_read;
+    }
+}
+
+/// Trend queries return one aggregate per (bucket, display app type, optional model).
+fn trend_row<K: rusqlite::types::FromSql>(
+    row: &rusqlite::Row<'_>,
+) -> rusqlite::Result<(K, String, Option<String>, TrendTotals)> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(8)?,
+        TrendTotals {
+            request_count: row.get::<_, i64>(2)? as u64,
+            cost: row.get(3)?,
+            input: row.get::<_, i64>(4)? as u64,
+            output: row.get::<_, i64>(5)? as u64,
+            cache_creation: row.get::<_, i64>(6)? as u64,
+            cache_read: row.get::<_, i64>(7)? as u64,
+        },
+    ))
+}
+
+#[derive(Default)]
+struct TrendBucket {
+    runtimes: BTreeMap<String, TrendTotals>,
+    models: BTreeMap<String, TrendTotals>,
+}
+
+impl TrendBucket {
+    fn add(&mut self, app_type: String, model: Option<String>, totals: TrendTotals) {
+        self.runtimes.entry(app_type).or_default().add(&totals);
+        if let Some(model) = model {
+            self.models.entry(model).or_default().add(&totals);
+        }
+    }
+
+    fn into_stats(self, date: String) -> DailyStats {
+        let mut totals = TrendTotals::default();
+        let mut runtime_stats = Vec::with_capacity(self.runtimes.len());
+        for (app_type, runtime) in self.runtimes {
+            totals.add(&runtime);
+            runtime_stats.push(TrendRuntimeStats {
+                app_type,
+                request_count: runtime.request_count,
+                total_cost: format!("{:.6}", runtime.cost),
+                total_input_tokens: runtime.input,
+                total_output_tokens: runtime.output,
+                total_cache_creation_tokens: runtime.cache_creation,
+                total_cache_read_tokens: runtime.cache_read,
+            });
+        }
+        DailyStats {
+            date,
+            request_count: totals.request_count,
+            total_cost: format!("{:.6}", totals.cost),
+            total_tokens: totals.input + totals.output,
+            total_input_tokens: totals.input,
+            total_output_tokens: totals.output,
+            total_cache_creation_tokens: totals.cache_creation,
+            total_cache_read_tokens: totals.cache_read,
+            runtime_stats,
+            model_stats: self
+                .models
+                .into_iter()
+                .map(|(model, stats)| TrendModelStats {
+                    model,
+                    request_count: stats.request_count,
+                    total_cost: stats.cost,
+                    total_tokens: stats.input
+                        + stats.output
+                        + stats.cache_creation
+                        + stats.cache_read,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Provider 统计
@@ -1485,6 +1607,7 @@ impl Database {
         app_type: Option<&str>,
         provider_name: Option<&str>,
         model: Option<&str>,
+        include_models: bool,
     ) -> Result<Vec<DailyStats>, AppError> {
         let conn = lock_conn!(self.conn);
         let filter = UsageFilter {
@@ -1501,259 +1624,156 @@ impl Database {
             start_ts = end_ts - 24 * 60 * 60;
         }
 
+        const BUCKET_SECONDS: i64 = 60 * 60;
         let duration = end_ts - start_ts;
-        if duration <= 24 * 60 * 60 {
-            let bucket_seconds: i64 = 60 * 60;
-            let mut bucket_count: i64 = if duration <= 0 {
-                1
+        let hourly = duration <= 24 * BUCKET_SECONDS;
+        let hourly_bucket_count = if hourly {
+            ((duration + BUCKET_SECONDS - 1) / BUCKET_SECONDS).max(1)
+        } else {
+            0
+        };
+        let bucket_expr = if hourly {
+            // The end timestamp is inclusive. Clamp before GROUP BY so a request
+            // at an exact hour boundary joins the final bucket without replacing it.
+            let last_bucket = hourly_bucket_count - 1;
+            format!("MIN((l.created_at - ?1) / {BUCKET_SECONDS}, {last_bucket})")
+        } else {
+            "date(l.created_at, 'unixepoch', 'localtime')".to_string()
+        };
+
+        let mut extra = SqlWhere::default();
+        filter.push_to(&conn, &mut extra, "l", "p")?;
+        let (extra_filter, extra_params) = extra.into_and();
+        let detail_join = filter.join("l", "p");
+        let effective_filter =
+            effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
+        let fresh_input = fresh_input_sql("l");
+        let trend_model_sql = |alias| {
+            if include_models {
+                effective_model_sql(alias)
             } else {
-                (duration + bucket_seconds - 1) / bucket_seconds
-            };
-
-            if bucket_count < 1 {
-                bucket_count = 1;
+                "NULL".to_string()
             }
+        };
+        // Reuse the model table's merge rules across detail and rollup rows.
+        let mut model_names: HashMap<String, String> = HashMap::new();
+        let mut display_model = |raw: Option<String>| -> Result<Option<String>, AppError> {
+            raw.map(|raw| match model_names.entry(raw) {
+                std::collections::hash_map::Entry::Occupied(entry) => Ok(entry.get().clone()),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    let name = statistics_model_with(filter.pricing(&conn)?, entry.key())?;
+                    entry.insert(name.clone());
+                    Ok(name)
+                }
+            })
+            .transpose()
+        };
+        let detail_app_type = folded_app_type_sql("l.app_type");
+        let detail_model = trend_model_sql("l");
+        let detail_sql = format!(
+            "SELECT
+                {bucket_expr} as bucket,
+                {detail_app_type} AS display_app,
+                COUNT(*),
+                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0),
+                COALESCE(SUM({fresh_input}), 0),
+                COALESCE(SUM(l.output_tokens), 0),
+                COALESCE(SUM(l.cache_creation_tokens), 0),
+                COALESCE(SUM(l.cache_read_tokens), 0),
+                {detail_model} AS trend_model
+             FROM proxy_request_logs l {detail_join}
+             WHERE l.created_at >= ?1 AND l.created_at <= ?2
+               AND {effective_filter} {extra_filter}
+             GROUP BY bucket, display_app, trend_model"
+        );
+        let mut detail_stmt = conn.prepare(&detail_sql)?;
+        let mut detail_params: Vec<Box<dyn rusqlite::ToSql>> =
+            vec![Box::new(start_ts), Box::new(end_ts)];
+        detail_params.extend(extra_params);
+        let detail_refs: Vec<&dyn rusqlite::ToSql> =
+            detail_params.iter().map(|param| param.as_ref()).collect();
 
-            let mut extra = SqlWhere::default();
-            filter.push_to(&conn, &mut extra, "l", "p")?;
-            let (extra_filter, extra_params) = extra.into_and();
-            let detail_join = filter.join("l", "p");
-
-            let effective_filter =
-                effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
-            let fresh_input = fresh_input_sql("l");
-            let sql = format!(
-                "SELECT
-                    CAST((l.created_at - ?1) / ?3 AS INTEGER) as bucket_idx,
-                    COUNT(*) as request_count,
-                    COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
-                    COALESCE(SUM({fresh_input} + l.output_tokens), 0) as total_tokens,
-                    COALESCE(SUM({fresh_input}), 0) as total_input_tokens,
-                    COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
-                    COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
-                    COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
-                FROM proxy_request_logs l {detail_join}
-                WHERE l.created_at >= ?1 AND l.created_at <= ?2
-                  AND {effective_filter} {extra_filter}
-                GROUP BY bucket_idx
-                ORDER BY bucket_idx ASC"
-            );
-
-            let mut stmt = conn.prepare(&sql)?;
-            let row_mapper = |row: &rusqlite::Row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    DailyStats {
-                        date: String::new(),
-                        request_count: row.get::<_, i64>(1)? as u64,
-                        total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
-                        total_tokens: row.get::<_, i64>(3)? as u64,
-                        total_input_tokens: row.get::<_, i64>(4)? as u64,
-                        total_output_tokens: row.get::<_, i64>(5)? as u64,
-                        total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
-                        total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
-                    },
-                ))
-            };
-
-            let mut map: HashMap<i64, DailyStats> = HashMap::new();
-
-            let mut all_params: Vec<Box<dyn rusqlite::ToSql>> = vec![
-                Box::new(start_ts),
-                Box::new(end_ts),
-                Box::new(bucket_seconds),
-            ];
-            all_params.extend(extra_params);
-            let param_refs: Vec<&dyn rusqlite::ToSql> =
-                all_params.iter().map(|p| p.as_ref()).collect();
-            let rows = stmt.query_map(param_refs.as_slice(), row_mapper)?;
+        if hourly {
+            let mut buckets: HashMap<i64, TrendBucket> = HashMap::new();
+            let rows = detail_stmt.query_map(detail_refs.as_slice(), trend_row::<i64>)?;
             for row in rows {
-                let (mut bucket_idx, stat) = row?;
-                if bucket_idx < 0 {
-                    continue;
-                }
-                if bucket_idx >= bucket_count {
-                    bucket_idx = bucket_count - 1;
-                }
-                map.insert(bucket_idx, stat);
+                let (bucket, app_type, model, totals) = row?;
+                buckets
+                    .entry(bucket)
+                    .or_default()
+                    .add(app_type, display_model(model)?, totals);
             }
 
-            let mut stats = Vec::with_capacity(bucket_count as usize);
-            for i in 0..bucket_count {
-                let bucket_start_ts = start_ts + i * bucket_seconds;
-                let bucket_start = local_datetime_from_timestamp(bucket_start_ts)?;
-                let date = bucket_start.to_rfc3339();
-
-                if let Some(mut stat) = map.remove(&i) {
-                    stat.date = date;
-                    stats.push(stat);
-                } else {
-                    stats.push(DailyStats {
-                        date,
-                        request_count: 0,
-                        total_cost: "0.000000".to_string(),
-                        total_tokens: 0,
-                        total_input_tokens: 0,
-                        total_output_tokens: 0,
-                        total_cache_creation_tokens: 0,
-                        total_cache_read_tokens: 0,
-                    });
-                }
+            let mut stats = Vec::with_capacity(hourly_bucket_count as usize);
+            for i in 0..hourly_bucket_count {
+                let date =
+                    local_datetime_from_timestamp(start_ts + i * BUCKET_SECONDS)?.to_rfc3339();
+                stats.push(buckets.remove(&i).unwrap_or_default().into_stats(date));
             }
-
             return Ok(stats);
         }
 
         let start_day = local_datetime_from_timestamp(start_ts)?.date_naive();
         let end_day = local_datetime_from_timestamp(end_ts)?.date_naive();
         let bucket_count = (end_day.signed_duration_since(start_day).num_days() + 1) as usize;
-
-        let mut extra = SqlWhere::default();
-        filter.push_to(&conn, &mut extra, "l", "p")?;
-        let (extra_filter, extra_params) = extra.into_and();
-        let detail_join = filter.join("l", "p");
-
-        let effective_filter =
-            effective_usage_log_filter_for_range(&conn, "l", Some(start_ts), Some(end_ts))?;
-        let fresh_input = fresh_input_sql("l");
-        let detail_sql = format!(
-            "SELECT
-                date(l.created_at, 'unixepoch', 'localtime') as bucket_date,
-                COUNT(*) as request_count,
-                COALESCE(SUM(CAST(l.total_cost_usd AS REAL)), 0) as total_cost,
-                COALESCE(SUM({fresh_input} + l.output_tokens), 0) as total_tokens,
-                COALESCE(SUM({fresh_input}), 0) as total_input_tokens,
-                COALESCE(SUM(l.output_tokens), 0) as total_output_tokens,
-                COALESCE(SUM(l.cache_creation_tokens), 0) as total_cache_creation_tokens,
-                COALESCE(SUM(l.cache_read_tokens), 0) as total_cache_read_tokens
-            FROM proxy_request_logs l {detail_join}
-            WHERE l.created_at >= ?1 AND l.created_at <= ?2
-              AND {effective_filter} {extra_filter}
-            GROUP BY bucket_date
-            ORDER BY bucket_date ASC"
-        );
-
-        let mut detail_stmt = conn.prepare(&detail_sql)?;
-        let detail_row_mapper = |row: &rusqlite::Row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                DailyStats {
-                    date: String::new(),
-                    request_count: row.get::<_, i64>(1)? as u64,
-                    total_cost: format!("{:.6}", row.get::<_, f64>(2)?),
-                    total_tokens: row.get::<_, i64>(3)? as u64,
-                    total_input_tokens: row.get::<_, i64>(4)? as u64,
-                    total_output_tokens: row.get::<_, i64>(5)? as u64,
-                    total_cache_creation_tokens: row.get::<_, i64>(6)? as u64,
-                    total_cache_read_tokens: row.get::<_, i64>(7)? as u64,
-                },
-            ))
+        let parse_bucket_date = |date: &str| {
+            NaiveDate::parse_from_str(date, "%Y-%m-%d")
+                .map_err(|err| AppError::Database(format!("解析趋势日期失败: {err}")))
         };
-
-        let mut map: HashMap<NaiveDate, DailyStats> = HashMap::new();
-        let mut detail_all_params: Vec<Box<dyn rusqlite::ToSql>> =
-            vec![Box::new(start_ts), Box::new(end_ts)];
-        detail_all_params.extend(extra_params);
-        let detail_param_refs: Vec<&dyn rusqlite::ToSql> =
-            detail_all_params.iter().map(|p| p.as_ref()).collect();
-        let detail_rows = detail_stmt.query_map(detail_param_refs.as_slice(), detail_row_mapper)?;
-
+        let mut buckets: HashMap<NaiveDate, TrendBucket> = HashMap::new();
+        let detail_rows = detail_stmt.query_map(detail_refs.as_slice(), trend_row::<String>)?;
         for row in detail_rows {
-            let (bucket_date, stat) = row?;
-            let date = NaiveDate::parse_from_str(&bucket_date, "%Y-%m-%d")
-                .map_err(|err| AppError::Database(format!("解析趋势日期失败: {err}")))?;
-            map.insert(date, stat);
+            let (bucket, app_type, model, totals) = row?;
+            buckets.entry(parse_bucket_date(&bucket)?).or_default().add(
+                app_type,
+                display_model(model)?,
+                totals,
+            );
         }
 
         let rollup_bounds = compute_rollup_date_bounds(Some(start_ts), Some(end_ts))?;
         let (rollup_where, rollup_params) =
             filter.rollup_where(&conn, &rollup_bounds)?.into_where();
         let rollup_join = filter.join("r", "p2");
-
         let fresh_input_rollup = fresh_input_sql("r");
+        let rollup_app_type = folded_app_type_sql("r.app_type");
+        let rollup_model = trend_model_sql("r");
         let rollup_sql = format!(
             "SELECT
                 r.date,
+                {rollup_app_type} AS display_app,
                 COALESCE(SUM(r.request_count), 0),
                 COALESCE(SUM(CAST(r.total_cost_usd AS REAL)), 0),
-                COALESCE(SUM({fresh_input_rollup} + r.output_tokens), 0),
                 COALESCE(SUM({fresh_input_rollup}), 0),
                 COALESCE(SUM(r.output_tokens), 0),
                 COALESCE(SUM(r.cache_creation_tokens), 0),
-                COALESCE(SUM(r.cache_read_tokens), 0)
-            FROM usage_daily_rollups r {rollup_join}
-            {rollup_where}
-            GROUP BY r.date
-            ORDER BY r.date ASC"
+                COALESCE(SUM(r.cache_read_tokens), 0),
+                {rollup_model} AS trend_model
+             FROM usage_daily_rollups r {rollup_join}
+             {rollup_where}
+             GROUP BY r.date, display_app, trend_model"
         );
-
         let mut rollup_stmt = conn.prepare(&rollup_sql)?;
-        let rollup_row_mapper = |row: &rusqlite::Row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                (
-                    row.get::<_, i64>(1)? as u64,
-                    row.get::<_, f64>(2)?,
-                    row.get::<_, i64>(3)? as u64,
-                    row.get::<_, i64>(4)? as u64,
-                    row.get::<_, i64>(5)? as u64,
-                    row.get::<_, i64>(6)? as u64,
-                    row.get::<_, i64>(7)? as u64,
-                ),
-            ))
-        };
-        let rollup_param_refs: Vec<&dyn rusqlite::ToSql> =
+        let rollup_refs: Vec<&dyn rusqlite::ToSql> =
             rollup_params.iter().map(|param| param.as_ref()).collect();
-        let rollup_rows = rollup_stmt.query_map(rollup_param_refs.as_slice(), rollup_row_mapper)?;
-
+        let rollup_rows = rollup_stmt.query_map(rollup_refs.as_slice(), trend_row::<String>)?;
         for row in rollup_rows {
-            let (bucket_date, (req, cost, tok, inp, out, cc, cr)) = row?;
-            let date = NaiveDate::parse_from_str(&bucket_date, "%Y-%m-%d")
-                .map_err(|err| AppError::Database(format!("解析 rollup 趋势日期失败: {err}")))?;
-            let entry = map.entry(date).or_insert_with(|| DailyStats {
-                date: String::new(),
-                request_count: 0,
-                total_cost: "0.000000".to_string(),
-                total_tokens: 0,
-                total_input_tokens: 0,
-                total_output_tokens: 0,
-                total_cache_creation_tokens: 0,
-                total_cache_read_tokens: 0,
-            });
-            entry.request_count += req;
-            let existing_cost: f64 = entry.total_cost.parse().unwrap_or(0.0);
-            entry.total_cost = format!("{:.6}", existing_cost + cost);
-            entry.total_tokens += tok;
-            entry.total_input_tokens += inp;
-            entry.total_output_tokens += out;
-            entry.total_cache_creation_tokens += cc;
-            entry.total_cache_read_tokens += cr;
+            let (bucket, app_type, model, totals) = row?;
+            buckets.entry(parse_bucket_date(&bucket)?).or_default().add(
+                app_type,
+                display_model(model)?,
+                totals,
+            );
         }
 
         let mut stats = Vec::with_capacity(bucket_count);
         let mut current_day = start_day;
         for _ in 0..bucket_count {
             let date = local_day_start_rfc3339(current_day);
-
-            if let Some(mut stat) = map.remove(&current_day) {
-                stat.date = date;
-                stats.push(stat);
-            } else {
-                stats.push(DailyStats {
-                    date,
-                    request_count: 0,
-                    total_cost: "0.000000".to_string(),
-                    total_tokens: 0,
-                    total_input_tokens: 0,
-                    total_output_tokens: 0,
-                    total_cache_creation_tokens: 0,
-                    total_cache_read_tokens: 0,
-                });
-            }
-
+            let bucket = buckets.remove(&current_day).unwrap_or_default();
+            stats.push(bucket.into_stats(date));
             current_day = current_day.succ_opt().unwrap_or(current_day);
         }
-
         Ok(stats)
     }
 

@@ -2716,7 +2716,6 @@
     },
     "heatmap": {
       "title": "Nutzungs-Heatmap",
-      "subtitle": "Tägliche Nutzung der letzten 53 Wochen; frühere Nutzung folgt in Abschnitten von 53 Wochen, die Schattierung ist abschnittsübergreifend vergleichbar",
       "spanSummary": "{{tokens}} Token · {{requests}} Anfragen · {{cost}}",
       "showMore": "Mehr anzeigen",
       "showLess": "Weniger anzeigen",
@@ -2731,6 +2730,11 @@
       "cost": "Kosten",
       "requestsLegend": "Anfragen",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "Trendaufschlüsselung",
+      "byModel": "Nach Modell",
+      "unknownModel": "Unbekanntes Modell",
+      "otherModels": "Andere Modelle",
+      "byApp": "Nach App",
       "hourly": "stündlich",
       "daily": "täglich"
     },

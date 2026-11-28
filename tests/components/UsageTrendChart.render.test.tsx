@@ -39,19 +39,41 @@ vi.mock("react-i18next", () => ({
   }),
 }));
 
+const { fixture } = vi.hoisted(() => ({ fixture: { mixed: false, days: 1 } }));
+
 vi.mock("@/lib/query/usage", () => ({
   useUsageTrends: () => ({
-    data: [
-      {
-        date: "2026-09-30T00:00:00Z",
-        requestCount: 12,
-        totalInputTokens: 100,
-        totalOutputTokens: 50,
-        totalCacheCreationTokens: 0,
-        totalCacheReadTokens: 0,
-        totalCost: "0.01",
-      },
-    ],
+    data: Array.from({ length: fixture.days }, (_, day) => ({
+      date: new Date(Date.UTC(2026, 8, day + 1)).toISOString(),
+      requestCount: 12,
+      totalInputTokens: fixture.mixed ? 25 : 100,
+      totalOutputTokens: fixture.mixed ? 55 : 50,
+      totalCacheCreationTokens: 0,
+      totalCacheReadTokens: fixture.mixed ? 70 : 0,
+      totalCost: "0.01",
+      ...(fixture.mixed && {
+        runtimeStats: [
+          {
+            appType: "claude",
+            requestCount: 8,
+            totalInputTokens: 15,
+            totalOutputTokens: 45,
+            totalCacheCreationTokens: 0,
+            totalCacheReadTokens: 60,
+            totalCost: "0.008",
+          },
+          {
+            appType: "dsh",
+            requestCount: 4,
+            totalInputTokens: 10,
+            totalOutputTokens: 10,
+            totalCacheCreationTokens: 0,
+            totalCacheReadTokens: 10,
+            totalCost: "0.002",
+          },
+        ],
+      }),
+    })),
     isLoading: false,
   }),
 }));
@@ -94,7 +116,9 @@ describe("UsageTrendChart styles", () => {
     metric: "cost" | "requests" | "tokens" | "hitRate" = "tokens",
   ) => {
     const props = {
-      range: { preset: "7d" as const },
+      range: {
+        preset: fixture.days === 30 ? ("30d" as const) : ("7d" as const),
+      },
       metric,
       refreshIntervalMs: 0,
     };
@@ -132,6 +156,54 @@ describe("UsageTrendChart styles", () => {
       expect(container.querySelector(".recharts-bar-rectangle")).toBeNull();
     },
   );
+
+  it("stacks actual token contributions and labels the runtime colors", () => {
+    fixture.mixed = true;
+    try {
+      const { container } = renderWithChartType();
+      const legend = screen.getByTestId("usage-trend-legend");
+      expect(legend).toHaveTextContent("Claude Code");
+      expect(legend).toHaveTextContent("DeepSeek Harness");
+      const colors = ["var(--agent-claude)", "var(--heat-app-dsh)"];
+      const bars = colors.map(
+        (color) =>
+          container.querySelector(`.recharts-rectangle[fill="${color}"]`)!,
+      );
+      const [claude, dsh] = bars.map((bar) =>
+        Number(bar.getAttribute("height")),
+      );
+      expect(dsh).toBeGreaterThan(0);
+      expect(claude / dsh).toBeCloseTo(4);
+      expect(bars[0].getAttribute("x")).toBe(bars[1].getAttribute("x"));
+    } finally {
+      fixture.mixed = false;
+    }
+  });
+
+  it("compares individual cache hit rates without stacking percentages", () => {
+    fixture.mixed = true;
+    fixture.days = 30;
+    try {
+      const { container } = renderWithChartType(undefined, "hitRate");
+      const claude = container.querySelector(
+        '.recharts-rectangle[fill="var(--agent-claude)"]',
+      )!;
+      const dsh = container.querySelector(
+        '.recharts-rectangle[fill="var(--heat-app-dsh)"]',
+      )!;
+      // Keep dense groups adjacent while sharing the same baseline.
+      const claudeX = Number(claude.getAttribute("x"));
+      const claudeWidth = Number(claude.getAttribute("width"));
+      expect(claudeWidth).toBeGreaterThan(0);
+      expect(Number(dsh.getAttribute("x"))).toBeCloseTo(claudeX + claudeWidth);
+      const baseline = (bar: Element) =>
+        Number(bar.getAttribute("y")) + Number(bar.getAttribute("height"));
+      expect(baseline(claude)).toBeCloseTo(baseline(dsh));
+    } finally {
+      fixture.mixed = false;
+      fixture.days = 1;
+    }
+  });
 
   it("falls back to a bar chart for an unknown saved style", () => {
     const { container } = renderWithChartType("unknown");

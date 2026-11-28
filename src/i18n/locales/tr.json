@@ -2645,7 +2645,6 @@
     },
     "heatmap": {
       "title": "Kullanım ısı haritası",
-      "subtitle": "Son 53 haftadaki günlük kullanım; Daha önceki kullanım 53 haftalık aralıklarla devam ediyor ve gölgeleme aralıklar arasında karşılaştırılabilir",
       "spanSummary": "{{tokens}} tokenleri · {{requests}} istekleri · {{cost}}",
       "showMore": "Daha fazlasını göster",
       "showLess": "Daha az göster",
@@ -2660,6 +2659,11 @@
       "cost": "Maliyet",
       "requestsLegend": "İstekler",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "Trend dökümü",
+      "byModel": "Modele göre",
+      "unknownModel": "Bilinmeyen model",
+      "otherModels": "Diğer modeller",
+      "byApp": "Uygulamaya göre",
       "hourly": "Saatlik",
       "daily": "Günlük"
     },

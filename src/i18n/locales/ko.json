@@ -2711,7 +2711,6 @@
     },
     "heatmap": {
       "title": "사용량 히트맵",
-      "subtitle": "최근 53주간의 일별 사용량입니다. 이전 기록은 53주 단위로 펼쳐 볼 수 있으며 각 구간의 색상 농도를 직접 비교할 수 있습니다.",
       "spanSummary": "{{tokens}} 토큰 · {{requests}} 요청 · {{cost}}",
       "showMore": "더 보기",
       "showLess": "간략히 보기",
@@ -2726,6 +2725,11 @@
       "cost": "비용",
       "requestsLegend": "요청 수",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "추세 세부 내역",
+      "byModel": "모델별",
+      "unknownModel": "알 수 없는 모델",
+      "otherModels": "기타 모델",
+      "byApp": "앱별",
       "hourly": "매시간",
       "daily": "일일"
     },

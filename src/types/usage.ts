@@ -89,15 +89,28 @@ export interface UsageSummaryByApp {
   summary: UsageSummary;
 }
 
-export interface DailyStats {
-  date: string;
+export interface RuntimeTrendStats {
+  appType: string;
   requestCount: number;
   totalCost: string;
-  totalTokens: number;
   totalInputTokens: number;
   totalOutputTokens: number;
   totalCacheCreationTokens: number;
   totalCacheReadTokens: number;
+}
+
+export interface ModelTrendStats {
+  model: string;
+  requestCount: number;
+  totalCost: number;
+  totalTokens: number;
+}
+
+export interface DailyStats extends Omit<RuntimeTrendStats, "appType"> {
+  date: string;
+  runtimeStats?: RuntimeTrendStats[];
+  modelStats?: ModelTrendStats[];
+  totalTokens: number;
 }
 
 export interface ProviderStats {

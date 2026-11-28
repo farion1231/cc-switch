@@ -2716,7 +2716,6 @@
     },
     "heatmap": {
       "title": "Usage heatmap",
-      "subtitle": "Daily usage over the last 53 weeks; earlier usage continues in 53-week spans, with shading comparable across spans",
       "spanSummary": "{{tokens}} tokens · {{requests}} requests · {{cost}}",
       "showMore": "Show more",
       "showLess": "Show less",
@@ -2731,6 +2730,11 @@
       "cost": "Cost",
       "requestsLegend": "Requests",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "Trend breakdown",
+      "byModel": "By model",
+      "unknownModel": "Unknown model",
+      "otherModels": "Other models",
+      "byApp": "By app",
       "hourly": "hourly",
       "daily": "daily"
     },

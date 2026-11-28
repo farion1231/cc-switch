@@ -2716,7 +2716,6 @@
     },
     "heatmap": {
       "title": "使用量ヒートマップ",
-      "subtitle": "過去 53 週間の日別使用量。展開すると 53 週間ずつさかのぼり、色の濃さは期間をまたいで比較できます",
       "spanSummary": "{{tokens}} トークン · {{requests}} リクエスト · {{cost}}",
       "showMore": "もっと見る",
       "showLess": "折りたたむ",
@@ -2731,6 +2730,11 @@
       "cost": "コスト",
       "requestsLegend": "リクエスト数",
       "titleMetric": "{{metric}} · {{granularity}}",
+      "breakdown": "トレンドの内訳",
+      "byModel": "モデル別",
+      "unknownModel": "不明なモデル",
+      "otherModels": "その他のモデル",
+      "byApp": "アプリ別",
       "hourly": "1 時間ごと",
       "daily": "1 日ごと"
     },
