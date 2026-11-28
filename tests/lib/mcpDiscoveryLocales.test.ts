@@ -17,11 +17,20 @@ describe("MCP discovery messages", () => {
       await i18n.init({ lng, resources: { [lng]: { translation } } });
       for (const key of [
         "available",
-        "import",
+        "review",
+        "ignore",
         "readOnly",
         "partial",
         "failed",
         "retry",
+        "dialogTitle",
+        "dialogLead",
+        "searchPlaceholder",
+        "searchAria",
+        "selectAll",
+        "selectNone",
+        "foundIn",
+        "submit",
       ]) {
         const fullKey = `mcpPage.discovery.${key}`;
         const message = i18n.t(fullKey, { count: 2, apps: "Codex" });
@@ -34,6 +43,10 @@ describe("MCP discovery messages", () => {
       expect(i18n.t("mcpPage.discovery.partial", { apps: "Codex" })).toContain(
         "Codex",
       );
+      expect(i18n.t("mcpPage.discovery.foundIn", { apps: "Codex" })).toContain(
+        "Codex",
+      );
+      expect(i18n.t("mcpPage.discovery.submit", { count: 2 })).toContain("2");
     },
   );
 });

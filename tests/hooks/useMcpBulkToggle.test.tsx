@@ -42,9 +42,7 @@ describe("MCP management mutation hooks", () => {
     upsertServerMock.mockReset();
     deleteServerMock.mockReset();
     importFromAppsMock.mockReset();
-    scanMock
-      .mockReset()
-      .mockResolvedValue({ unmanagedCount: 0, failedApps: [] });
+    scanMock.mockReset().mockResolvedValue({ servers: [], failedApps: [] });
   });
 
   it("runs bulk writes serially and invalidates the list once", async () => {
@@ -243,7 +241,7 @@ describe("MCP management mutation hooks", () => {
 
     let mutation!: Promise<unknown>;
     act(() => {
-      mutation = result.current.mutateAsync();
+      mutation = result.current.mutateAsync(undefined);
     });
 
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalledTimes(2));
@@ -262,7 +260,10 @@ describe("MCP management mutation hooks", () => {
 });
 
 it("only discovers when the MCP page enables it and reuses recent results", async () => {
-  scanMock.mockResolvedValue({ unmanagedCount: 2, failedApps: [] });
+  scanMock.mockResolvedValue({
+    servers: [{ id: "a", apps: ["claude"] }],
+    failedApps: [],
+  });
   const client = new QueryClient();
   const wrapper = createWrapper(client);
   const first = renderHook(({ enabled }) => useMcpDiscovery(enabled), {
@@ -272,12 +273,12 @@ it("only discovers when the MCP page enables it and reuses recent results", asyn
   expect(scanMock).not.toHaveBeenCalled();
   first.rerender({ enabled: true });
   await waitFor(() =>
-    expect(first.result.current.data?.unmanagedCount).toBe(2),
+    expect(first.result.current.data?.servers).toHaveLength(1),
   );
   expect(scanMock).toHaveBeenCalledTimes(1);
   first.unmount();
   const second = renderHook(() => useMcpDiscovery(), { wrapper });
-  expect(second.result.current.data?.unmanagedCount).toBe(2);
+  expect(second.result.current.data?.servers).toHaveLength(1);
   expect(scanMock).toHaveBeenCalledTimes(1);
   second.unmount();
   client.clear();

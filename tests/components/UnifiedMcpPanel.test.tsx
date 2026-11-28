@@ -15,7 +15,10 @@ import { server } from "../msw/server";
 import { waitForOverlayTransition } from "../utils/overlayTransition";
 
 const mocks = vi.hoisted(() => ({
-  discovery: { unmanagedCount: 0, failedApps: [] as string[] },
+  discovery: {
+    servers: [] as { id: string; apps: string[] }[],
+    failedApps: [] as string[],
+  },
   discoveryError: false,
   scan: vi.fn(),
   serversMap: {} as Record<string, McpServer>,
@@ -157,7 +160,7 @@ const rowNames = () =>
 
 describe("UnifiedMcpPanel", () => {
   beforeEach(() => {
-    mocks.discovery = { unmanagedCount: 0, failedApps: [] };
+    mocks.discovery = { servers: [], failedApps: [] };
     mocks.discoveryError = false;
     mocks.scan.mockReset().mockResolvedValue({ data: mocks.discovery });
     mocks.serversMap = {};
@@ -769,18 +772,23 @@ describe("UnifiedMcpPanel", () => {
 });
 
 describe("MCP local discovery", () => {
+  const unmanaged = [
+    { id: "alpha-local", apps: ["claude", "codex"] },
+    { id: "beta-local", apps: ["gemini"] },
+  ];
+
   beforeEach(() => {
     mocks.serversMap = { managed: makeServer("managed") };
     mocks.isLoading = false;
     mocks.isError = false;
     mocks.discoveryError = false;
-    mocks.discovery = { unmanagedCount: 2, failedApps: [] };
+    mocks.discovery = { servers: unmanaged, failedApps: [] };
     mocks.scan.mockReset().mockResolvedValue({ data: mocks.discovery });
-    mocks.importServers.mockReset().mockResolvedValue(2);
+    mocks.importServers.mockReset().mockResolvedValue(1);
     mocks.refetch.mockReset().mockResolvedValue({ data: mocks.serversMap });
   });
 
-  it("discovers local MCPs without importing until explicitly requested and keeps rows flat", async () => {
+  it("discovers local MCPs and imports only the ones ticked in the dialog", async () => {
     renderPanel();
     expect(screen.getByText("mcpPage.discovery.available")).toBeInTheDocument();
     expect(rowNames()).toEqual(["managed"]);
@@ -788,15 +796,48 @@ describe("MCP local discovery", () => {
       screen.queryByRole("button", { name: /expand|group/i }),
     ).not.toBeInTheDocument();
     expect(mocks.importServers).not.toHaveBeenCalled();
+
     await userEvent.click(
-      screen.getByRole("button", { name: "mcpPage.discovery.import" }),
+      screen.getByRole("button", { name: "mcpPage.discovery.review" }),
     );
-    await waitFor(() => expect(mocks.importServers).toHaveBeenCalledTimes(1));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("alpha-local")).toBeInTheDocument();
+    expect(within(dialog).getByText("beta-local")).toBeInTheDocument();
+    expect(mocks.importServers).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog).getByLabelText(/beta-local/));
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "mcpPage.discovery.submit" }),
+    );
+    await waitFor(() =>
+      expect(mocks.importServers).toHaveBeenCalledWith(["alpha-local"]),
+    );
     await waitFor(() => expect(mocks.refetch).toHaveBeenCalled());
   });
 
+  it("hides the notice after Ignore until the unmanaged list changes", async () => {
+    const view = renderPanel();
+    await userEvent.click(
+      screen.getByRole("button", { name: "mcpPage.discovery.ignore" }),
+    );
+    expect(
+      screen.queryByText("mcpPage.discovery.available"),
+    ).not.toBeInTheDocument();
+
+    mocks.discovery = {
+      servers: [...unmanaged, { id: "gamma-local", apps: ["claude"] }],
+      failedApps: [],
+    };
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <UnifiedMcpPanel />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("mcpPage.discovery.available")).toBeInTheDocument();
+  });
+
   it("shows partial source failures while keeping local discovery available", () => {
-    mocks.discovery = { unmanagedCount: 2, failedApps: ["codex"] };
+    mocks.discovery = { servers: unmanaged, failedApps: ["codex"] };
     renderPanel();
     expect(screen.getByText("mcpPage.discovery.available")).toBeInTheDocument();
     expect(screen.getByText("mcpPage.discovery.partial")).toBeInTheDocument();
@@ -806,7 +847,7 @@ describe("MCP local discovery", () => {
   });
 
   it("allows retrying a discovery failure without importing", async () => {
-    mocks.discovery = { unmanagedCount: 0, failedApps: [] };
+    mocks.discovery = { servers: [], failedApps: [] };
     mocks.discoveryError = true;
     renderPanel();
     expect(screen.getByText("mcpPage.discovery.failed")).toBeInTheDocument();
@@ -818,7 +859,7 @@ describe("MCP local discovery", () => {
   });
 
   it("does not add discovery notices when everything is already managed", () => {
-    mocks.discovery = { unmanagedCount: 0, failedApps: [] };
+    mocks.discovery = { servers: [], failedApps: [] };
     renderPanel();
     expect(
       screen.queryByText("mcpPage.discovery.available"),

@@ -716,7 +716,7 @@ mod capability_tests {
             original
         );
         McpService::upsert_server(&state, server).unwrap();
-        crate::mcp::mcode::import(&state).unwrap();
+        crate::mcp::mcode::import(&state, None).unwrap();
         assert!(!db.get_all_mcp_servers().unwrap()["keep"].apps.mcode);
         let path = crate::prompt_files::prompt_file_path(&AppType::Mcode).unwrap();
         fs::write(

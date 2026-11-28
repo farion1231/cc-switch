@@ -269,7 +269,7 @@ pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
         .collect())
 }
 
-pub fn import(state: &AppState) -> Result<usize, AppError> {
+pub fn import(state: &AppState, selection: super::ImportSelection<'_>) -> Result<usize, AppError> {
     let document = read(&crate::copilot_config::mcp_config_path())?;
     let disabled = disabled_servers();
     let (mut existing, unreadable) = state
@@ -279,6 +279,9 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
     let mut count = 0;
     let mut skipped = Vec::new();
     for (id, native) in document["mcpServers"].as_object().into_iter().flatten() {
+        if super::outside_selection(selection, id) {
+            continue;
+        }
         let spec = unified_spec(native);
         if super::validation::validate_server_spec(&spec).is_err() {
             skipped.push(format!("'{id}': invalid transport configuration"));

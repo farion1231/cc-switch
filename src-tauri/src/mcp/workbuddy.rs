@@ -120,7 +120,7 @@ pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
         .collect())
 }
 
-pub fn import(state: &AppState) -> Result<usize, AppError> {
+pub fn import(state: &AppState, selection: super::ImportSelection<'_>) -> Result<usize, AppError> {
     let document = read(&config_path())?;
     let (mut existing, unreadable) = state
         .db
@@ -134,6 +134,9 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         .into_iter()
         .flatten()
     {
+        if super::outside_selection(selection, id) {
+            continue;
+        }
         if unreadable.contains(id) {
             skipped.push(format!("'{id}': stored server is unreadable"));
             continue;

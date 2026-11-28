@@ -39,8 +39,8 @@ pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
         .collect())
 }
 
-pub fn import(state: &AppState) -> Result<usize, AppError> {
-    FILE.import(state)
+pub fn import(state: &AppState, selection: super::ImportSelection<'_>) -> Result<usize, AppError> {
+    FILE.import(state, selection)
 }
 
 #[cfg(test)]

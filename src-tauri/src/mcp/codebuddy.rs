@@ -187,7 +187,22 @@ fn sync_file(path: &Path, id: &str, spec: Option<&Value>) -> Result<(), AppError
     atomic_write_private(path, source.as_bytes())
 }
 
-pub fn import(state: &AppState) -> Result<usize, AppError> {
+/// 只读列出导入会收的名字，不改原生文件和数据库。
+pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
+    let document = read(&config_path())?;
+    Ok(document
+        .get("mcpServers")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter(|(_, native)| {
+            super::validation::validate_server_spec(&unified_spec(native)).is_ok()
+        })
+        .map(|(id, _)| id.clone())
+        .collect())
+}
+
+pub fn import(state: &AppState, selection: super::ImportSelection<'_>) -> Result<usize, AppError> {
     let document = read(&config_path())?;
     let disabled: Vec<&str> = document
         .get("disabledMcpServers")
@@ -208,6 +223,9 @@ pub fn import(state: &AppState) -> Result<usize, AppError> {
         .into_iter()
         .flatten()
     {
+        if super::outside_selection(selection, id) {
+            continue;
+        }
         if unreadable.contains(id) {
             skipped.push(format!("'{id}': stored server is unreadable"));
             continue;
@@ -470,7 +488,7 @@ mod tests {
             )
             .unwrap();
 
-        let error = import(&state).unwrap_err().to_string();
+        let error = import(&state, None).unwrap_err().to_string();
         assert!(
             error.contains("'shared': stored server is unreadable"),
             "{error}"

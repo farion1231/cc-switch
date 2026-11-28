@@ -20,13 +20,43 @@ pub struct McpAppSyncOutcome {
     pub error: Option<String>,
 }
 
-/// Read-only discovery result. Connection definitions and credentials stay native.
+/// 一个还没纳入 CC Switch 的本机 MCP：名字和在哪些应用里找到。连接定义和凭据留在原生文件里，不传给页面。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnmanagedMcpServer {
+    pub id: String,
+    pub apps: Vec<String>,
+}
+
+/// 只读发现的结果：按名字排序的未纳管条目，以及读失败的应用
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpDiscoveryResult {
-    pub unmanaged_count: usize,
+    pub servers: Vec<UnmanagedMcpServer>,
     pub failed_apps: Vec<String>,
 }
+
+/// 从应用导入 MCP 的范围和顺序，导入和发现共用这一张表。
+/// 新应用支持 MCP 时加在这里，再在 `import_from_app` / `discover_from_app` 的 match 里各补一支
+/// （两处都不写兜底分支，漏写编译不过）。
+const MCP_IMPORT_APPS: [AppType; 16] = [
+    AppType::Claude,
+    AppType::Codex,
+    AppType::Gemini,
+    AppType::GrokBuild,
+    AppType::OpenCode,
+    AppType::Hermes,
+    AppType::Mcode,
+    AppType::Kimi,
+    AppType::Codebuddy,
+    AppType::Dsh,
+    AppType::WorkBuddy,
+    AppType::Agy,
+    AppType::Pi,
+    AppType::Omp,
+    AppType::Copilot,
+    AppType::ZCode,
+];
 
 /// 这些应用的 live 写入和数据库提交在同一步完成（各自的 `sync_and_commit`），
 /// 保存/删除之后的逐应用同步和移除要跳过它们。
@@ -47,61 +77,76 @@ fn commits_with_db(app: &AppType) -> bool {
 }
 
 impl McpService {
-    /// Read the same user-level sources as import, without writing the database
-    /// or synchronizing any application. One broken source does not hide others.
+    /// 只读扫描导入会读的那些用户级配置，列出库里还没有的名字。不写数据库，不改任何应用的文件；
+    /// 一个应用读失败只记进 `failed_apps`，不影响其他应用。
     pub fn scan_unmanaged(state: &AppState) -> Result<McpDiscoveryResult, AppError> {
-        type ReadSource = fn(&mut crate::app_config::MultiAppConfig) -> Result<usize, AppError>;
         let rows = state.db.get_mcp_server_rows()?;
-        let managed: HashSet<_> = rows
+        let managed: HashSet<&str> = rows
             .readable
-            .into_keys()
-            .chain(rows.unreadable.into_iter().map(|entry| entry.id))
+            .keys()
+            .map(String::as_str)
+            .chain(rows.unreadable.iter().map(|entry| entry.id.as_str()))
             .collect();
-        let mut unmanaged = HashSet::new();
+        let mut found: IndexMap<String, Vec<String>> = IndexMap::new();
         let mut failed_apps = Vec::new();
-        let readers: [(&str, ReadSource); 6] = [
-            ("claude", mcp::import_from_claude),
-            ("codex", mcp::import_from_codex),
-            ("gemini", mcp::import_from_gemini),
-            ("grokbuild", mcp::import_from_grokbuild),
-            ("opencode", mcp::import_from_opencode),
-            ("hermes", mcp::import_from_hermes),
-        ];
-        for (app, read) in readers {
-            let mut config = crate::app_config::MultiAppConfig::default();
-            if read(&mut config).is_err() {
-                failed_apps.push(app.to_string());
-            }
-            for id in config
-                .mcp
-                .servers
-                .into_iter()
-                .flat_map(|servers| servers.into_keys())
-            {
-                if !managed.contains(&id) {
-                    unmanaged.insert(id);
+        for app in MCP_IMPORT_APPS {
+            match Self::discover_from_app(&app, &rows.readable) {
+                Ok(ids) => {
+                    for id in ids {
+                        if !managed.contains(id.as_str()) {
+                            found.entry(id).or_default().push(app.as_str().to_string());
+                        }
+                    }
+                }
+                Err(err) => {
+                    log::warn!("扫描 {} 的 MCP 配置失败: {err}", app.as_str());
+                    failed_apps.push(app.as_str().to_string());
                 }
             }
         }
-        for (app, result) in [
-            ("mcode", mcp::mcode::discover_ids()),
-            ("pi", mcp::pi::discover_ids()),
-            ("kimi", mcp::kimi::discover_ids()),
-            ("agy", mcp::agy::discover_ids()),
-            ("dsh", mcp::dsh::discover_ids()),
-            ("omp", mcp::omp::discover_ids()),
-            ("copilot", mcp::copilot::discover_ids()),
-            ("workbuddy", mcp::workbuddy::discover_ids()),
-        ] {
-            match result {
-                Ok(ids) => unmanaged.extend(ids.into_iter().filter(|id| !managed.contains(id))),
-                Err(_) => failed_apps.push(app.to_string()),
-            }
-        }
+        found.sort_keys();
         Ok(McpDiscoveryResult {
-            unmanaged_count: unmanaged.len(),
+            servers: found
+                .into_iter()
+                .map(|(id, apps)| UnmanagedMcpServer { id, apps })
+                .collect(),
             failed_apps,
         })
+    }
+
+    /// 单个应用里导入会收下的名字（只读）。规则与 [`Self::import_from_app`] 一致，
+    /// 否则提示「可导入」的条目导入时会被跳过，提示一直消不掉。
+    fn discover_from_app(
+        app: &AppType,
+        managed: &IndexMap<String, McpServer>,
+    ) -> Result<Vec<String>, AppError> {
+        let read_live: fn(&mut MultiAppConfig) -> Result<usize, AppError> = match app {
+            AppType::Claude => mcp::import_from_claude,
+            AppType::Codex => mcp::import_from_codex,
+            AppType::Gemini => mcp::import_from_gemini,
+            AppType::GrokBuild => mcp::import_from_grokbuild,
+            AppType::OpenCode => mcp::import_from_opencode,
+            AppType::Hermes => mcp::import_from_hermes,
+            AppType::ZCode => mcp::import_from_zcode,
+            AppType::Mcode => return mcp::mcode::discover_ids(),
+            AppType::Kimi => return mcp::kimi::discover_ids(),
+            AppType::Dsh => return mcp::dsh::discover_ids(),
+            AppType::WorkBuddy => return mcp::workbuddy::discover_ids(),
+            AppType::Agy => return mcp::agy::discover_ids(),
+            AppType::Pi => return mcp::pi::discover_ids(managed),
+            AppType::Omp => return mcp::omp::discover_ids(),
+            AppType::Copilot => return mcp::copilot::discover_ids(),
+            AppType::Codebuddy => return mcp::codebuddy::discover_ids(),
+            AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(Vec::new()),
+        };
+        // 这几个读取器只填内存里的临时结构，不碰原生文件和数据库
+        let mut config = MultiAppConfig::default();
+        read_live(&mut config)?;
+        Ok(config
+            .mcp
+            .servers
+            .map(|servers| servers.into_keys().collect())
+            .unwrap_or_default())
     }
 
     /// 获取所有 MCP 服务器（统一结构）
@@ -699,6 +744,15 @@ impl McpService {
     /// 已存在的服务器只启用该应用，不覆盖其他字段。导入只读 live 配置，
     /// 不反向写回任何应用；显式编辑、启用/禁用或手动同步时再写回。
     pub fn import_from_app(state: &AppState, app: &AppType) -> Result<usize, AppError> {
+        Self::import_selected_from_app(state, app, None)
+    }
+
+    /// 同 [`Self::import_from_app`]，`selection` 为 `Some` 时只导入其中列出的名字。
+    fn import_selected_from_app(
+        state: &AppState,
+        app: &AppType,
+        selection: Option<&HashSet<String>>,
+    ) -> Result<usize, AppError> {
         let read_live: fn(&mut MultiAppConfig) -> Result<usize, AppError> = match app {
             AppType::Claude => mcp::import_from_claude,
             AppType::Codex => mcp::import_from_codex,
@@ -707,15 +761,15 @@ impl McpService {
             AppType::OpenCode => mcp::import_from_opencode,
             AppType::Hermes => mcp::import_from_hermes,
             AppType::ZCode => mcp::import_from_zcode,
-            AppType::Mcode => return mcp::mcode::import(state),
-            AppType::Kimi => return mcp::kimi::import(state),
-            AppType::Dsh => return mcp::dsh::import(state),
-            AppType::WorkBuddy => return mcp::workbuddy::import(state),
-            AppType::Agy => return mcp::agy::import(state),
-            AppType::Pi => return mcp::pi::import(state),
-            AppType::Omp => return mcp::omp::import(state),
-            AppType::Copilot => return mcp::copilot::import(state),
-            AppType::Codebuddy => return mcp::codebuddy::import(state),
+            AppType::Mcode => return mcp::mcode::import(state, selection),
+            AppType::Kimi => return mcp::kimi::import(state, selection),
+            AppType::Dsh => return mcp::dsh::import(state, selection),
+            AppType::WorkBuddy => return mcp::workbuddy::import(state, selection),
+            AppType::Agy => return mcp::agy::import(state, selection),
+            AppType::Pi => return mcp::pi::import(state, selection),
+            AppType::Omp => return mcp::omp::import(state, selection),
+            AppType::Copilot => return mcp::copilot::import(state, selection),
+            AppType::Codebuddy => return mcp::codebuddy::import(state, selection),
             AppType::ClaudeDesktop | AppType::OpenClaw => return Ok(0),
         };
 
@@ -732,6 +786,9 @@ impl McpService {
             .into_readable_and_unreadable_ids();
         let mut new_count = 0;
         for server in servers.values() {
+            if mcp::outside_selection(selection, &server.id) {
+                continue;
+            }
             if unreadable.contains(&server.id) {
                 log::warn!(
                     "从 {} 导入 MCP 时跳过 '{}'：库里同名的这一行读不出来",
@@ -761,28 +818,20 @@ impl McpService {
     /// `unwrap_or(0)` 吞错，坏文件只会表现为"导入成功 0 个"，用户
     /// 无从得知哪个应用出了问题。
     pub fn import_from_all_apps(state: &AppState) -> Result<usize, AppError> {
+        Self::import_selected(state, None)
+    }
+
+    /// 同 [`Self::import_from_all_apps`]，`selection` 为 `Some` 时只导入其中列出的名字
+    /// （MCP 页上勾选导入）。没勾的条目一律不动，已有同名的也不会顺带勾上这个应用。
+    pub fn import_selected(
+        state: &AppState,
+        selection: Option<&HashSet<String>>,
+    ) -> Result<usize, AppError> {
         let mut total = 0;
         let mut failures: Vec<String> = Vec::new();
 
-        for app in [
-            AppType::Claude,
-            AppType::Codex,
-            AppType::Gemini,
-            AppType::GrokBuild,
-            AppType::OpenCode,
-            AppType::Hermes,
-            AppType::Mcode,
-            AppType::Kimi,
-            AppType::Codebuddy,
-            AppType::Dsh,
-            AppType::WorkBuddy,
-            AppType::Agy,
-            AppType::Pi,
-            AppType::Omp,
-            AppType::Copilot,
-            AppType::ZCode,
-        ] {
-            match Self::import_from_app(state, &app) {
+        for app in MCP_IMPORT_APPS {
+            match Self::import_selected_from_app(state, &app, selection) {
                 Ok(count) => total += count,
                 Err(err) => {
                     log::warn!("从 {} 导入 MCP 失败: {err}", app.as_str());

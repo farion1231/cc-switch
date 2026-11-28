@@ -4768,11 +4768,20 @@
   "mcpPage": {
     "discovery": {
       "available": "この端末に CC Switch で管理されていない MCP が {{count}} 件あります。",
-      "import": "ローカル MCP をインポート",
+      "review": "確認して取り込む",
+      "ignore": "無視",
       "readOnly": "検出はアプリのユーザー設定を読み取るだけです。インポートを選ぶまで管理対象には追加しません。",
       "partial": "次のアプリの MCP 設定を読み取れませんでした：{{apps}}。ほかの設定は確認済みです。",
       "failed": "ローカル MCP 設定を確認できませんでした。",
-      "retry": "再確認"
+      "retry": "再確認",
+      "dialogTitle": "ローカル MCP を取り込む",
+      "dialogLead": "取り込む MCP を選んでください。見つかったアプリで有効になり、元の設定ファイルは変更しません。",
+      "searchPlaceholder": "名前かアプリを検索",
+      "searchAria": "取り込む MCP を検索",
+      "selectAll": "すべて選択",
+      "selectNone": "選択を解除",
+      "foundIn": "見つかった場所：{{apps}}",
+      "submit": "{{count}} 件を取り込む"
     },
     "checkConnectivity": "接続を確認",
     "testConnection": "接続をテスト",

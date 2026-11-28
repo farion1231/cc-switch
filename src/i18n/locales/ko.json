@@ -4768,11 +4768,20 @@
   "mcpPage": {
     "discovery": {
       "available": "관리되지 않는 로컬 MCP 서버: {{count}}개.",
-      "import": "로컬 MCP 가져오기",
+      "review": "검토 후 가져오기",
+      "ignore": "무시",
       "readOnly": "검색은 앱의 사용자 수준 설정만 읽습니다. 가져오기를 선택해야 관리 목록에 추가됩니다.",
       "partial": "다음 앱의 MCP 설정을 읽지 못했습니다: {{apps}}. 다른 소스는 확인했습니다.",
       "failed": "로컬 MCP 설정을 확인하지 못했습니다.",
-      "retry": "다시 확인"
+      "retry": "다시 확인",
+      "dialogTitle": "로컬 MCP 가져오기",
+      "dialogLead": "가져올 MCP를 선택하세요. 각 항목은 발견된 앱에서 활성화되며 원래 설정 파일은 바뀌지 않습니다.",
+      "searchPlaceholder": "이름 또는 앱 검색",
+      "searchAria": "가져올 MCP 검색",
+      "selectAll": "모두 선택",
+      "selectNone": "모두 선택 해제",
+      "foundIn": "발견 위치: {{apps}}",
+      "submit": "{{count}}개 가져오기"
     },
     "checkConnectivity": "연결 상태 확인",
     "testConnection": "연결 테스트",

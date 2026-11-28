@@ -39,7 +39,10 @@ pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
         .collect())
 }
 
-pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
+pub(crate) fn import(
+    state: &AppState,
+    selection: super::ImportSelection<'_>,
+) -> Result<usize, AppError> {
     let (mut existing, unreadable) = state
         .db
         .get_mcp_server_rows()?
@@ -49,6 +52,9 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
         let Some(id) = entry["config"]["serverName"].as_str() else {
             continue;
         };
+        if super::outside_selection(selection, id) {
+            continue;
+        }
         if unreadable.iter().any(|stored| stored == id) {
             log::warn!("Skipping Dsh MCP import of '{id}': the stored server is unreadable");
             continue;

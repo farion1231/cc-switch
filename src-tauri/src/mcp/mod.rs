@@ -39,6 +39,14 @@ pub use opencode::{
 };
 pub use zcode::{import_from_zcode, remove_server_from_zcode, sync_single_server_to_zcode};
 
+/// 导入范围：`None` 导入文件里的全部条目，`Some` 只导入列出的名字（MCP 页勾选导入）
+pub(crate) type ImportSelection<'a> = Option<&'a std::collections::HashSet<String>>;
+
+/// 这个名字不在勾选范围里，导入时整条跳过（连「已有同名、只勾上这个应用」也不做）
+pub(crate) fn outside_selection(selection: ImportSelection<'_>, id: &str) -> bool {
+    selection.is_some_and(|ids| !ids.contains(id))
+}
+
 pub(crate) mod codebuddy;
 pub(crate) mod copilot;
 pub(crate) mod kimi;

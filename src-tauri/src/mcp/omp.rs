@@ -210,7 +210,10 @@ pub(crate) fn discover_ids() -> Result<Vec<String>, AppError> {
         .collect())
 }
 
-pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
+pub(crate) fn import(
+    state: &AppState,
+    selection: super::ImportSelection<'_>,
+) -> Result<usize, AppError> {
     let document = read_document()?;
     let (mut existing, unreadable) = state
         .db
@@ -220,6 +223,9 @@ pub(crate) fn import(state: &AppState) -> Result<usize, AppError> {
     let mut skipped = Vec::new();
     let servers = document.get("mcpServers").and_then(Value::as_object);
     for (id, native) in servers.into_iter().flatten() {
+        if super::outside_selection(selection, id) {
+            continue;
+        }
         if unreadable.contains(id) {
             skipped.push(format!("'{id}': stored server is unreadable"));
             continue;
