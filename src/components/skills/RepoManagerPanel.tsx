@@ -78,6 +78,23 @@ export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
   ).length;
 }
 
+/** 展示用分支名：存量哨兵值 HEAD / 空串优先显示发现结果里的真实分支。 */
+export function displayRepoBranch(
+  skills: DiscoverableSkill[],
+  repo: SkillRepo,
+): string {
+  const configured = repo.branch?.trim();
+  if (configured && configured.toUpperCase() !== "HEAD") return configured;
+  const resolved = skills.find(
+    (skill) =>
+      skill.repoOwner === repo.owner &&
+      skill.repoName === repo.name &&
+      skill.repoBranch &&
+      skill.repoBranch.toUpperCase() !== "HEAD",
+  )?.repoBranch;
+  return resolved || "main";
+}
+
 /** 仓库管理（右侧抽屉，宽 420）：添加、停用、删除 Skill 仓库。 */
 export function RepoManagerPanel({
   repos,
@@ -260,7 +277,7 @@ export function RepoManagerPanel({
                           {repo.host && repo.host !== GITHUB_HOST
                             ? `${repo.host} · `
                             : ""}
-                          {repo.branch || "main"}
+                          {displayRepoBranch(skills, repo)}
                           {" · "}
                           {!repo.enabled ? (
                             t("skillsPage.repos.disabled")

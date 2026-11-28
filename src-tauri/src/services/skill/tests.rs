@@ -662,10 +662,15 @@ async fn set_and_delete_repo_token_reprobe_the_platform() {
         .insert("git.example.com".into(), RepoPlatform::GitLab);
     let cached = |host: &str| (host.to_string(), "o".into(), "n".into(), "main".into());
     for host in ["git.example.com", "other.example.com"] {
-        service
-            .discovery_cache
-            .lock_recover()
-            .insert(cached(host), (Instant::now(), Vec::new()));
+        service.discovery_cache.lock_recover().insert(
+            cached(host),
+            CachedRepoDiscovery {
+                fetched_at: Some(Instant::now()),
+                commit_sha: Some("a".repeat(40)),
+                resolved_branch: "main".to_string(),
+                skills: Vec::new(),
+            },
+        );
     }
     // 匿名探测还在途中时保存了令牌
     let stale_epoch = service.credential_epoch.load(Ordering::SeqCst);
@@ -4144,6 +4149,265 @@ async fn discover_repo_reports_failure_and_skips_disabled_repo() {
         .await;
     assert!(disabled.skills.is_empty());
     assert!(disabled.failures.is_empty());
+}
+
+fn pkt_line(payload: &[u8]) -> Vec<u8> {
+    let mut out = format!("{:04x}", payload.len() + 4).into_bytes();
+    out.extend_from_slice(payload);
+    out
+}
+
+#[test]
+fn parse_git_info_refs_resolves_head_symref_and_stops_before_tags() {
+    use super::repo::GitRefParseOutcome;
+
+    let sha_main = "1111111111111111111111111111111111111111";
+    let sha_master = "2222222222222222222222222222222222222222";
+    let sha_dev = "3333333333333333333333333333333333333333";
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&pkt_line(b"# service=git-upload-pack\n"));
+    payload.extend_from_slice(b"0000");
+    payload.extend_from_slice(&pkt_line(
+        format!("{sha_master} HEAD\0multi_ack symref=HEAD:refs/heads/master agent=git/2.40\n")
+            .as_bytes(),
+    ));
+    payload.extend_from_slice(&pkt_line(format!("{sha_dev} refs/heads/dev\n").as_bytes()));
+    payload.extend_from_slice(&pkt_line(
+        format!("{sha_master} refs/heads/master\n").as_bytes(),
+    ));
+    // 越过 refs/heads/ 即应提前结束，无需读完后续 pull/tags
+    payload.extend_from_slice(&pkt_line(
+        format!("{sha_main} refs/pull/1/head\n").as_bytes(),
+    ));
+    payload.extend_from_slice(&pkt_line(b"not-reached-after-pull"));
+
+    // HEAD / 空串直接取 symref 默认分支，首行即可命中
+    assert_eq!(
+        SkillService::parse_git_info_refs(&payload, "HEAD", false),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "master".to_string(),
+            commit_sha: sha_master.to_string(),
+        }))
+    );
+    assert_eq!(
+        SkillService::parse_git_info_refs(&payload, "", false),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "master".to_string(),
+            commit_sha: sha_master.to_string(),
+        }))
+    );
+    // 显式分支命中即停
+    assert_eq!(
+        SkillService::parse_git_info_refs(&payload, "dev", false),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "dev".to_string(),
+            commit_sha: sha_dev.to_string(),
+        }))
+    );
+    // 配置 main 但仓库只有 master：越过 refs/heads/ 后回退到 master，不必等到 eof
+    assert_eq!(
+        SkillService::parse_git_info_refs(&payload, "main", false),
+        GitRefParseOutcome::Complete(Some(ProbedGitRef {
+            branch: "master".to_string(),
+            commit_sha: sha_master.to_string(),
+        }))
+    );
+    // 非法 pkt-line（如 HTML 登录页）立判 Invalid
+    assert_eq!(
+        SkillService::parse_git_info_refs(b"<!DOCTYPE html>", "main", true),
+        GitRefParseOutcome::Invalid
+    );
+    // 未读到 refs/heads/ 结束且未到 eof 时继续等下一块
+    let partial = pkt_line(b"# service=git-upload-pack\n");
+    assert_eq!(
+        SkillService::parse_git_info_refs(&partial, "main", false),
+        GitRefParseOutcome::NeedMore
+    );
+}
+
+#[test]
+fn build_git_info_refs_url_validates_host_and_path() {
+    assert_eq!(
+        SkillService::build_git_info_refs_url(&branch_fallback_repo("HEAD")).unwrap(),
+        "https://github.com/acme/skills.git/info/refs?service=git-upload-pack"
+    );
+    let gitlab = gitlab_repo("gitlab.example.com:8443", "group/sub", "skills", "main");
+    assert_eq!(
+        SkillService::build_git_info_refs_url(&gitlab).unwrap(),
+        "https://gitlab.example.com:8443/group/sub/skills.git/info/refs?service=git-upload-pack"
+    );
+    assert!(SkillService::build_git_info_refs_url(&repo("bad owner!", "skills", true)).is_err());
+}
+
+#[test]
+fn scan_skills_from_archive_reads_only_skill_md_and_respects_nesting_and_symlinks() {
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    let mut buf = Vec::new();
+    {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let opts = SimpleFileOptions::default();
+
+        zip.start_file("repo-main/README.md", opts).unwrap();
+        zip.write_all(b"ignored").unwrap();
+
+        // 正常技能
+        zip.start_file("repo-main/skills/alpha/SKILL.md", opts)
+            .unwrap();
+        zip.write_all(b"---\nname: Alpha\ndescription: top\n---\n")
+            .unwrap();
+        // 父目录已有 SKILL.md，子目录里的 SKILL.md 必须被忽略（与 scan_dir_recursive 一致）
+        zip.start_file("repo-main/skills/alpha/nested/SKILL.md", opts)
+            .unwrap();
+        zip.write_all(b"---\nname: Nested\n---\n").unwrap();
+        // 同安装名更深路径会被 keep_one_per_install_name 去重
+        zip.start_file("repo-main/plugins/p/skills/alpha/SKILL.md", opts)
+            .unwrap();
+        zip.write_all(b"---\nname: Alpha Dup\n---\n").unwrap();
+        // 越界条目必须跳过
+        zip.start_file("repo-main/../evil/SKILL.md", opts).unwrap();
+        zip.write_all(b"---\nname: Evil\n---\n").unwrap();
+        // 指向归档内文件的 symlink SKILL.md
+        zip.add_symlink(
+            "repo-main/skills/linked/SKILL.md",
+            "../alpha/SKILL.md",
+            opts,
+        )
+        .unwrap();
+        // 越出归档根的 symlink 必须跳过
+        zip.add_symlink(
+            "repo-main/skills/escape/SKILL.md",
+            "../../../etc/passwd",
+            opts,
+        )
+        .unwrap();
+
+        zip.finish().unwrap();
+    }
+
+    let r = branch_fallback_repo("main");
+    let skills =
+        SkillService::scan_skills_from_archive(std::io::Cursor::new(buf), &r, RepoPlatform::GitHub)
+            .expect("scan archive");
+
+    let dirs: Vec<&str> = skills.iter().map(|s| s.directory.as_str()).collect();
+    assert_eq!(dirs, vec!["skills/alpha", "skills/linked"]);
+    assert_eq!(skills[0].name, "Alpha");
+    assert_eq!(
+        skills[0].readme_url.as_deref(),
+        Some("https://github.com/acme/skills/blob/main/skills/alpha/SKILL.md")
+    );
+    assert_eq!(skills[1].name, "Alpha");
+}
+
+#[tokio::test]
+async fn discover_for_db_writes_back_resolved_branch_for_head_repo() {
+    let remote = tempdir().expect("remote repo");
+    write_skill(&remote.path().join("pdf"), "pdf");
+    let db = Database::memory().expect("memory db");
+    db.save_skill_repo(&SkillRepo {
+        host: default_repo_host(),
+        owner: "alibaba".to_string(),
+        name: "open-code-review".to_string(),
+        branch: "HEAD".to_string(),
+        enabled: true,
+    })
+    .unwrap();
+    db.save_skill_repo(&SkillRepo {
+        host: default_repo_host(),
+        owner: "acme".to_string(),
+        name: "custom".to_string(),
+        branch: "develop".to_string(),
+        enabled: true,
+    })
+    .unwrap();
+
+    let service = SkillService {
+        repo_fixture: Some(remote.path().to_path_buf()),
+        ..SkillService::new()
+    };
+
+    let report = service
+        .discover_available_for_db(&db, false)
+        .await
+        .expect("discover for db");
+    assert_eq!(report.skills.len(), 2);
+
+    let repos = db.get_skill_repos().expect("repos");
+    let head_repo = repos
+        .iter()
+        .find(|r| r.owner == "alibaba" && r.name == "open-code-review")
+        .unwrap();
+    let custom_repo = repos
+        .iter()
+        .find(|r| r.owner == "acme" && r.name == "custom")
+        .unwrap();
+    assert_eq!(head_repo.branch, "main");
+    assert_eq!(custom_repo.branch, "develop");
+}
+
+#[test]
+#[serial_test::serial]
+fn discovery_disk_cache_round_trips_and_scrubs_on_token_change() {
+    let home = tempdir().expect("home");
+    let _home = TestHomeGuard::set(home.path());
+    let target = gitlab_repo("git.example.com", "team", "skills", "main");
+    let other = branch_fallback_repo("main");
+    let sample_skill = DiscoverableSkill {
+        key: "team/skills:demo".to_string(),
+        name: "demo".to_string(),
+        description: "desc".to_string(),
+        directory: "demo".to_string(),
+        readme_url: None,
+        repo_host: "git.example.com".to_string(),
+        repo_owner: "team".to_string(),
+        repo_name: "skills".to_string(),
+        repo_branch: "main".to_string(),
+    };
+
+    let writer = SkillService::new();
+    let epoch = writer.credential_epoch.load(Ordering::SeqCst);
+    writer.store_discovery_cache(
+        &target,
+        Instant::now(),
+        epoch,
+        Some("a".repeat(40)),
+        "main".to_string(),
+        vec![sample_skill.clone()],
+        true,
+    );
+    writer.store_discovery_cache(
+        &other,
+        Instant::now(),
+        epoch,
+        Some("b".repeat(40)),
+        "main".to_string(),
+        Vec::new(),
+        true,
+    );
+
+    // 模拟重启：新实例从磁盘载入缓存，commit_sha 与技能列表保留
+    let reader = SkillService::new();
+    reader.ensure_discovery_cache_loaded();
+    {
+        let cache = reader.discovery_cache.lock_recover();
+        let loaded = cache
+            .get(&SkillService::discovery_cache_key(&target))
+            .expect("persisted entry");
+        assert_eq!(loaded.commit_sha.as_deref(), Some("a".repeat(40).as_str()));
+        assert_eq!(loaded.skills.len(), 1);
+        assert_eq!(loaded.skills[0].name, "demo");
+    }
+
+    // 该主机令牌变更后，内存与磁盘缓存均同步清除，别的主机不受影响
+    reader.forget_platform("git.example.com");
+    let after = SkillService::new();
+    after.ensure_discovery_cache_loaded();
+    let cache = after.discovery_cache.lock_recover();
+    assert!(!cache.contains_key(&SkillService::discovery_cache_key(&target)));
+    assert!(cache.contains_key(&SkillService::discovery_cache_key(&other)));
 }
 
 #[tokio::test]

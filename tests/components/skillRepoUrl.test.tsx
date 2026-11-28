@@ -1,6 +1,9 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { RepoManagerPanel } from "@/components/skills/RepoManagerPanel";
+import {
+  displayRepoBranch,
+  RepoManagerPanel,
+} from "@/components/skills/RepoManagerPanel";
 import {
   isInsecureRepoUrl,
   parseRepoUrl,
@@ -203,5 +206,45 @@ describe("RepoManagerPanel add form", () => {
     submit("http://10.22.36.105:8081/me_release/SkillList");
     expect(screen.getByText("skills.repo.httpsOnly")).toBeInTheDocument();
     expect(onAdd).not.toHaveBeenCalled();
+  });
+});
+
+describe("displayRepoBranch", () => {
+  it("replaces HEAD and empty sentinels with the resolved discovered branch", () => {
+    const skills = [
+      {
+        key: "alibaba/open-code-review:review",
+        name: "review",
+        description: "",
+        directory: "review",
+        repoOwner: "alibaba",
+        repoName: "open-code-review",
+        repoBranch: "master",
+      },
+    ];
+    expect(
+      displayRepoBranch(skills, {
+        owner: "alibaba",
+        name: "open-code-review",
+        branch: "HEAD",
+        enabled: true,
+      }),
+    ).toBe("master");
+    expect(
+      displayRepoBranch([], {
+        owner: "vercel-labs",
+        name: "skills",
+        branch: "HEAD",
+        enabled: true,
+      }),
+    ).toBe("main");
+    expect(
+      displayRepoBranch(skills, {
+        owner: "alibaba",
+        name: "open-code-review",
+        branch: "release",
+        enabled: true,
+      }),
+    ).toBe("release");
   });
 });

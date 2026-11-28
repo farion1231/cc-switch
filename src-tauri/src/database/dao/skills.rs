@@ -260,6 +260,23 @@ impl Database {
         Ok(())
     }
 
+    /// 当仓库配置分支为哨兵值（空串或 HEAD）时，回写已解析出的真实分支。
+    pub fn update_skill_repo_branch(
+        &self,
+        owner: &str,
+        name: &str,
+        branch: &str,
+    ) -> Result<bool, AppError> {
+        let conn = lock_conn!(self.conn);
+        let affected = conn
+            .execute(
+                "UPDATE skill_repos SET branch = ?1 WHERE owner = ?2 AND name = ?3 AND (branch = '' OR UPPER(branch) = 'HEAD')",
+                params![branch, owner, name],
+            )
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(affected > 0)
+    }
+
     /// 删除 Skill 仓库
     pub fn delete_skill_repo(&self, owner: &str, name: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);

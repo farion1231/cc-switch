@@ -48,7 +48,7 @@ import {
 import { cn } from "@/lib/utils";
 import { MatrixSearch } from "@/components/mcp/AppMatrix";
 import { CHECKBOX_CLASS } from "@/components/mcp/formBits";
-import { countRepoSkills } from "./RepoManagerPanel";
+import { countRepoSkills, displayRepoBranch } from "./RepoManagerPanel";
 import { describeRepoFailures, repoFailureKey } from "./repoFailures";
 import { GITHUB_HOST, repoWebUrl } from "./repoUrl";
 import { APP_IDS_WITH } from "@/config/appSpecs";
@@ -1063,7 +1063,7 @@ function RepoPopover({
                   {id}
                 </span>
                 <span className="shrink-0 text-caption text-fg-3">
-                  {repo.branch || "main"}
+                  {displayRepoBranch(discoverable, repo)}
                 </span>
                 {failure ? (
                   <span

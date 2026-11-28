@@ -264,16 +264,27 @@ impl SkillService {
     }
 
     /// 令牌变了，平台要按新身份重新探测：没令牌时强制登录的 Gitea 会被认成 GitLab。
-    /// 这台主机的发现缓存也作废：删了令牌，私有仓库的技能列表不该再显示 10 分钟。
+    /// 这台主机的发现缓存也作废：删了令牌，私有仓库的技能列表不该再显示或留在磁盘缓存里。
     pub(super) fn forget_platform(&self, host: &str) {
         {
             let mut cache = self.platform_cache.lock_recover();
             self.credential_epoch.fetch_add(1, Ordering::SeqCst);
             cache.remove(host);
         }
-        self.discovery_cache
-            .lock_recover()
-            .retain(|key, _| key.0 != host);
+        let had_disk_cache = self.discovery_cache_loaded.load(Ordering::Acquire)
+            || Self::discovery_cache_path().exists();
+        if had_disk_cache {
+            self.ensure_discovery_cache_loaded();
+        }
+        let snapshot = {
+            let mut cache = self.discovery_cache.lock_recover();
+            let before = cache.len();
+            cache.retain(|key, _| key.0 != host);
+            (had_disk_cache && cache.len() != before).then(|| cache.clone())
+        };
+        if let Some(snapshot) = snapshot {
+            Self::save_discovery_cache_to_disk(&snapshot);
+        }
     }
 
     #[cfg(test)]
@@ -292,14 +303,31 @@ impl SkillService {
         platform: RepoPlatform,
         authenticated: bool,
         temp_path: &Path,
-        mut attempt: F,
+        attempt: F,
     ) -> Result<String>
     where
         F: FnMut(String) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
+        let ((), branch) =
+            Self::try_repo_branches_with(repo, platform, authenticated, Some(temp_path), attempt)
+                .await?;
+        Ok(branch)
+    }
+
+    pub(super) async fn try_repo_branches_with<T, F, Fut>(
+        repo: &SkillRepo,
+        platform: RepoPlatform,
+        authenticated: bool,
+        cleanup_dir: Option<&Path>,
+        mut attempt: F,
+    ) -> Result<(T, String)>
+    where
+        F: FnMut(String) -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
         let mut branches = Vec::new();
-        if !repo.branch.is_empty() && !repo.branch.eq_ignore_ascii_case("HEAD") {
+        if !Self::is_default_branch_sentinel(&repo.branch) {
             branches.push(repo.branch.as_str());
         }
         if !branches.contains(&"main") {
@@ -314,12 +342,14 @@ impl SkillService {
             let url = Self::build_archive_url(repo, platform, branch, authenticated)?;
 
             match attempt(url).await {
-                Ok(()) => return Ok(branch.to_string()),
+                Ok(value) => return Ok((value, branch.to_string())),
                 Err(e) if Self::is_branch_not_found(&e) => {
                     // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
                     // 否则 N 个候选分支等于 N 倍的落盘量堆在同一个目录里。
-                    let _ = fs::remove_dir_all(temp_path);
-                    let _ = fs::create_dir_all(temp_path);
+                    if let Some(dir) = cleanup_dir {
+                        let _ = fs::remove_dir_all(dir);
+                        let _ = fs::create_dir_all(dir);
+                    }
                     last_error = Some(e);
                 }
                 Err(e) => return Err(Self::with_repo_context(e, repo)),
@@ -329,6 +359,81 @@ impl SkillService {
         Err(last_error
             .map(|e| Self::with_repo_context(e, repo))
             .unwrap_or_else(|| anyhow::anyhow!("所有分支下载失败")))
+    }
+
+    /// 探测仓库目标分支及最新 commit SHA（Git Smart HTTP `info/refs`）。
+    ///
+    /// 失败、非 200、超时或超过上限一律返回 `None`，由调用方无感回退到归档下载。
+    pub(super) async fn probe_repo_ref(
+        &self,
+        repo: &SkillRepo,
+        platform: RepoPlatform,
+        token: Option<&str>,
+    ) -> Option<ProbedGitRef> {
+        let url = Self::build_git_info_refs_url(repo).ok()?;
+        let client = Self::http_client(token.is_some()).ok()?;
+        let mut request = client
+            .get(&url)
+            .header(reqwest::header::USER_AGENT, SKILL_DOWNLOAD_USER_AGENT);
+        if let Some(token) = token {
+            let username = match platform {
+                RepoPlatform::GitLab => "oauth2",
+                RepoPlatform::GitHub | RepoPlatform::Gitea => "x-access-token",
+            };
+            request = Self::with_basic_auth(request, username, token).ok()?;
+        }
+        let mut response = timeout(PLATFORM_PROBE_TIMEOUT, request.send())
+            .await
+            .ok()?
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+
+        let mut buf = Vec::new();
+        loop {
+            match timeout(PLATFORM_PROBE_TIMEOUT, response.chunk()).await {
+                Ok(Ok(Some(chunk))) => {
+                    let remaining = GIT_INFO_REFS_MAX_BYTES.saturating_sub(buf.len());
+                    let take = chunk.len().min(remaining);
+                    buf.extend_from_slice(&chunk[..take]);
+                    let hit_cap = buf.len() >= GIT_INFO_REFS_MAX_BYTES;
+                    match Self::parse_git_info_refs(&buf, &repo.branch, hit_cap) {
+                        repo::GitRefParseOutcome::Complete(res) => return res,
+                        repo::GitRefParseOutcome::Invalid => return None,
+                        repo::GitRefParseOutcome::NeedMore if hit_cap => return None,
+                        repo::GitRefParseOutcome::NeedMore => {}
+                    }
+                }
+                Ok(Ok(None)) => {
+                    return match Self::parse_git_info_refs(&buf, &repo.branch, true) {
+                        repo::GitRefParseOutcome::Complete(res) => res,
+                        repo::GitRefParseOutcome::Invalid | repo::GitRefParseOutcome::NeedMore => {
+                            None
+                        }
+                    };
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// 仅下载仓库归档到匿名临时文件（不解压落盘），供发现阶段在内存中只读 `SKILL.md`。
+    pub(super) async fn download_repo_archive_bounded(
+        &self,
+        repo: &SkillRepo,
+        platform: RepoPlatform,
+        token: Option<&str>,
+    ) -> Result<(fs::File, String)> {
+        Self::validate_repo(repo)?;
+        timeout(
+            DOWNLOAD_TOTAL_TIMEOUT,
+            Self::try_repo_branches_with(repo, platform, token.is_some(), None, |url| async move {
+                self.download_archive_file(&url, token).await
+            }),
+        )
+        .await
+        .map_err(|_| anyhow!(Self::download_timeout_error(repo)))?
     }
 
     /// 归档地址返回 404，即这个分支（或整个仓库）不存在。
@@ -360,13 +465,12 @@ impl SkillService {
         anyhow::anyhow!(value.to_string())
     }
 
-    /// 下载并解压 ZIP。`token` 是这台主机的访问令牌，没设置为 `None`。
-    pub(super) async fn download_and_extract(
+    /// 流式下载归档到匿名临时文件，按实际字节数卡住上限。
+    pub(super) async fn download_archive_file(
         &self,
         url: &str,
-        dest: &Path,
         token: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<fs::File> {
         let client = Self::http_client(token.is_some())?;
         // 共享客户端不带默认 User-Agent；GitHub 归档下载对无 UA 请求更容易被限流成 429（#8813）
         let mut request = client
@@ -417,9 +521,26 @@ impl SkillService {
             std::io::Write::write_all(&mut body, &chunk)?;
         }
 
-        let file = body.into_inner().map_err(|e| e.into_error())?;
-        let archive = Self::open_downloaded_archive(file)?;
-        Self::extract_repo_archive(archive, dest)
+        body.into_inner()
+            .map_err(|e| anyhow::Error::from(e.into_error()))
+    }
+
+    /// 下载并解压 ZIP。`token` 是这台主机的访问令牌，没设置为 `None`。
+    pub(super) async fn download_and_extract(
+        &self,
+        url: &str,
+        dest: &Path,
+        token: Option<&str>,
+    ) -> Result<()> {
+        let file = self.download_archive_file(url, token).await?;
+        let dest = dest.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let archive = Self::open_downloaded_archive(file)?;
+            Self::extract_repo_archive(archive, &dest)
+        })
+        .await
+        .map_err(|e| anyhow!("解压归档任务异常中止: {e}"))??;
+        Ok(())
     }
 
     /// 打开下载到的归档。不兼容 GitHub / GitLab / Gitea 接口的站点（如 cnb.cool，#9812）

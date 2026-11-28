@@ -257,24 +257,70 @@ describe("repo mutation races", () => {
 });
 
 describe("useRefreshDiscoverableSkills", () => {
-  it("asks the backend to bypass its per-repo cache", async () => {
-    apiMocks.discoverAvailable.mockResolvedValue({ skills: [], failures: [] });
-    const { queryClient, wrapper } = setup();
-    // 需要一个活跃的 observer，refetchQueries 才会真正发请求；先等挂载时的
-    // 首次发现结束，否则刷新会直接复用那次在飞的请求
-    const discover = renderHook(() => useDiscoverableSkills(), { wrapper });
-    await vi.waitFor(() =>
-      expect(discover.result.current.isFetching).toBe(false),
+  beforeEach(() => {
+    localStorage.clear();
+    Object.values(apiMocks).forEach((mock) => mock.mockReset());
+  });
+
+  it("shows cached discovery without auto-refetching on mount, and refreshes on demand", async () => {
+    const cached: SkillDiscoveryResult = {
+      skills: [skill("b", "two", "beta")],
+      failures: [],
+    };
+    localStorage.setItem(
+      "cc-switch-cache:skills.discoverable.v1",
+      JSON.stringify(cached),
     );
-
-    const { result } = renderHook(() => useRefreshDiscoverableSkills(), {
-      wrapper,
+    apiMocks.discoverAvailable.mockResolvedValue({
+      skills: [skill("a", "one", "alpha")],
+      failures: [],
     });
+
+    const { queryClient, wrapper } = setup();
+    const discover = renderHook(() => useDiscoverableSkills(), { wrapper });
+
+    expect(discover.result.current.data).toEqual(cached.skills);
+    expect(apiMocks.discoverAvailable).not.toHaveBeenCalled();
+
+    const { result: refresh } = renderHook(
+      () => useRefreshDiscoverableSkills(),
+      { wrapper },
+    );
     await act(async () => {
-      await result.current();
+      await refresh.current();
     });
 
+    expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1);
     expect(apiMocks.discoverAvailable).toHaveBeenLastCalledWith(true);
+    queryClient.clear();
+  });
+
+  it("invalidates repos when a HEAD repo is resolved during discovery", async () => {
+    apiMocks.discoverAvailable.mockResolvedValue({
+      skills: [skill("alibaba", "open-code-review", "review")],
+      failures: [],
+    });
+    const { queryClient, wrapper } = setup();
+    queryClient.setQueryData<SkillRepo[]>(
+      ["skills", "repos"],
+      [
+        {
+          owner: "alibaba",
+          name: "open-code-review",
+          branch: "HEAD",
+          enabled: true,
+        },
+      ],
+    );
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+
+    renderHook(() => useDiscoverableSkills(), { wrapper });
+
+    await vi.waitFor(() =>
+      expect(invalidate).toHaveBeenCalledWith({
+        queryKey: ["skills", "repos"],
+      }),
+    );
     queryClient.clear();
   });
 });
