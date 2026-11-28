@@ -42,6 +42,10 @@ mod xai_oauth;
 mod s3_sync;
 mod usage;
 mod webdav_sync;
+#[cfg(target_os = "windows")]
+mod windows_console;
+#[cfg(target_os = "windows")]
+mod windows_terminal;
 mod workbuddy_account;
 mod workspace;
 mod zcode;

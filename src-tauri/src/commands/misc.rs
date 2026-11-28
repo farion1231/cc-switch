@@ -24,6 +24,8 @@ mod tool_uninstall;
 #[path = "tool_version.rs"]
 pub(super) mod tool_version;
 use tool_discovery::*;
+#[cfg(target_os = "windows")]
+pub(super) use tool_lifecycle_command::powershell_encoded_command;
 use tool_lifecycle_command::*;
 use tool_process::*;
 use tool_version::*;
