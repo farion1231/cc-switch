@@ -505,6 +505,114 @@ mod tests {
 
     #[test]
     #[serial]
+    fn allowed_apps_rejects_service_add_update_and_live_write_without_changes() {
+        with_test_home(|state, _| {
+            let mut provider = Provider::with_id("scoped".into(), "Scoped".into(), json!({}), None);
+            provider.meta = Some(ProviderMeta {
+                allowed_apps: Some(vec!["claude".into()]),
+                ..Default::default()
+            });
+            assert!(
+                ProviderService::add(state, AppType::OpenCode, provider.clone(), true).is_err()
+            );
+            assert!(
+                ProviderService::update(state, AppType::OpenCode, None, provider.clone()).is_err()
+            );
+            assert!(
+                super::live::write_live_for_state(state, &AppType::OpenCode, &provider).is_err()
+            );
+            assert!(state
+                .db
+                .get_all_providers(&AppType::OpenCode)
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn allowed_apps_universal_preflight_prevents_partial_sync() {
+        with_test_home(|state, _| {
+            let mut universal = UniversalProvider::new(
+                "scoped".into(),
+                "Scoped".into(),
+                "custom".into(),
+                "https://example.com".into(),
+                "public-test-key".into(),
+            );
+            universal.apps.claude = true;
+            universal.apps.codex = true;
+            universal.meta = Some(ProviderMeta {
+                allowed_apps: Some(vec!["claude".into()]),
+                ..Default::default()
+            });
+            assert!(ProviderService::upsert_universal(state, universal.clone()).is_err());
+            assert!(state.db.get_universal_provider("scoped").unwrap().is_none());
+            // Imported databases can contain a previously unchecked declaration.
+            state.db.save_universal_provider(&universal).unwrap();
+            assert!(ProviderService::sync_universal_to_apps(state, "scoped").is_err());
+            assert!(state
+                .db
+                .get_all_providers(&AppType::Claude)
+                .unwrap()
+                .is_empty());
+            assert!(state
+                .db
+                .get_all_providers(&AppType::Codex)
+                .unwrap()
+                .is_empty());
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn allowed_apps_universal_update_keeps_restriction_and_child_metadata() {
+        with_test_home(|state, _| {
+            let mut universal = UniversalProvider::new(
+                "scoped".into(),
+                "Scoped".into(),
+                "custom".into(),
+                "https://example.com".into(),
+                "public-test-key".into(),
+            );
+            universal.apps.claude = true;
+            ProviderService::upsert_universal(state, universal.clone()).unwrap();
+            ProviderService::sync_universal_to_apps(state, "scoped").unwrap();
+            let id = "universal-claude-scoped";
+            let mut child = state
+                .db
+                .get_provider_by_id(id, &AppType::Claude)
+                .unwrap()
+                .unwrap();
+            child
+                .meta
+                .get_or_insert_with(Default::default)
+                .endpoint_auto_select = Some(false);
+            state.db.save_provider(&AppType::Claude, &child).unwrap();
+            universal.meta = Some(ProviderMeta {
+                allowed_apps: Some(vec!["claude".into()]),
+                ..Default::default()
+            });
+            universal.api_key = "updated-test-key".into();
+            ProviderService::upsert_universal(state, universal).unwrap();
+            ProviderService::sync_universal_to_apps(state, "scoped").unwrap();
+            let after = state
+                .db
+                .get_provider_by_id(id, &AppType::Claude)
+                .unwrap()
+                .unwrap();
+            let meta = after.meta.unwrap();
+            assert_eq!(meta.allowed_apps, Some(vec!["claude".into()]));
+            assert_eq!(meta.endpoint_auto_select, Some(false));
+            assert_eq!(
+                after.settings_config["env"]["ANTHROPIC_AUTH_TOKEN"],
+                "updated-test-key"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
     fn codex_editor_view_preserves_draft_and_stored_copilot_metadata() {
         with_test_home(|state, _home| {
             crate::settings::reload_settings().expect("reload settings");
@@ -7524,6 +7632,7 @@ impl ProviderService {
         let _provider = rows
             .get(id)?
             .ok_or_else(|| AppError::Message(format!("供应商 {id} 不存在")))?;
+        _provider.validate_app_restriction(&app_type)?;
         let providers = &rows.readable;
         // WorkBuddy 官方登录卡不写 models.json，卡片的「添加」走账号切换（还原绑定账号的登录文件）
         if app_type == AppType::WorkBuddy
@@ -8649,6 +8758,7 @@ impl ProviderService {
     }
 
     fn validate_provider_settings(app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+        provider.validate_app_restriction(app_type)?;
         if let Some(raw) = provider
             .meta
             .as_ref()
@@ -8938,12 +9048,44 @@ impl ProviderService {
         state.db.get_all_universal_providers()
     }
 
+    fn validate_universal_app_restrictions(provider: &UniversalProvider) -> Result<(), AppError> {
+        let allowed = provider
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.allowed_apps.as_deref());
+        crate::provider::validate_allowed_app_ids(allowed)?;
+        for (app, enabled) in [
+            (AppType::Claude, provider.apps.claude),
+            (AppType::Codex, provider.apps.codex),
+            (AppType::Gemini, provider.apps.gemini),
+        ] {
+            if enabled {
+                crate::provider::validate_allowed_apps(allowed, &app)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn inherit_universal_app_restriction(parent: &UniversalProvider, child: &mut Provider) {
+        if let Some(allowed) = parent
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.allowed_apps.as_ref())
+        {
+            child
+                .meta
+                .get_or_insert_with(ProviderMeta::default)
+                .allowed_apps = Some(allowed.clone());
+        }
+    }
+
     /// 添加或更新统一供应商（不自动同步，需手动调用 sync_universal_to_apps）
     pub fn upsert_universal(
         state: &AppState,
         provider: UniversalProvider,
     ) -> Result<bool, AppError> {
         icon::validate_icon(provider.icon.as_deref())?;
+        Self::validate_universal_app_restrictions(&provider)?;
         // 保存统一供应商
         state.db.save_universal_provider(&provider)?;
 
@@ -8986,6 +9128,22 @@ impl ProviderService {
         // 子供应商经 save_provider 直接入库，不走保存校验，图标在这里把关
         icon::validate_icon(provider.icon.as_deref())?;
 
+        // Validate every destination before any child is saved, projected or removed.
+        Self::validate_universal_app_restrictions(&provider)?;
+        for (app, child) in [
+            (AppType::Claude, provider.to_claude_provider()),
+            (AppType::Codex, provider.to_codex_provider()),
+            (AppType::Gemini, provider.to_gemini_provider()),
+        ] {
+            if let Some(mut child) = child {
+                if let Some(existing) = state.db.get_provider_by_id(&child.id, &app)? {
+                    child.meta = existing.meta;
+                }
+                Self::inherit_universal_app_restriction(&provider, &mut child);
+                child.validate_app_restriction(&app)?;
+            }
+        }
+
         // Keep DB and live projections in sync independently per application:
         // one broken config file must not prevent the other two apps from being
         // updated, but it must still be reported instead of returning success.
@@ -9006,6 +9164,7 @@ impl ProviderService {
                 claude_provider.created_at = existing.created_at;
                 claude_provider.sort_index = existing.sort_index;
             }
+            Self::inherit_universal_app_restriction(&provider, &mut claude_provider);
             state.db.save_provider(&AppType::Claude, &claude_provider)?;
             Self::project_universal_child_to_live(
                 state,
@@ -9034,6 +9193,7 @@ impl ProviderService {
                 codex_provider.created_at = existing.created_at;
                 codex_provider.sort_index = existing.sort_index;
             }
+            Self::inherit_universal_app_restriction(&provider, &mut codex_provider);
             state.db.save_provider(&AppType::Codex, &codex_provider)?;
             Self::project_universal_child_to_live(
                 state,
@@ -9061,6 +9221,7 @@ impl ProviderService {
                 gemini_provider.created_at = existing.created_at;
                 gemini_provider.sort_index = existing.sort_index;
             }
+            Self::inherit_universal_app_restriction(&provider, &mut gemini_provider);
             state.db.save_provider(&AppType::Gemini, &gemini_provider)?;
             Self::project_universal_child_to_live(
                 state,

@@ -370,6 +370,7 @@ impl Database {
     }
 
     pub fn save_provider(&self, app_type: &AppType, provider: &Provider) -> Result<(), AppError> {
+        provider.validate_app_restriction(app_type)?;
         let mut conn = lock_conn!(self.conn);
         let tx = conn
             .transaction()

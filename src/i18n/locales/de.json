@@ -3722,6 +3722,8 @@
     "updatesIncomplete": "Keine Updates gefunden, aber {{count}} Repositories konnten nicht gelesen werden"
   },
   "deeplink": {
+    "allowedApps": "Zulässige Anwendungen",
+    "allowedAppsHint": "Diese Einschränkung gilt für die Konfiguration. Das Gateway prüft weiterhin die Zugriffsberechtigungen.",
     "confirmImport": "Anbieter-Import bestätigen",
     "confirmImportDescription": "Die folgende Konfiguration wird aus dem Deep Link in CC Switch importiert",
     "importPrompt": "Prompt importieren",

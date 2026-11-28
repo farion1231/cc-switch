@@ -3722,6 +3722,8 @@
     "updatesIncomplete": "업데이트를 찾지 못했지만, 저장소 {{count}}개를 읽지 못해 일부 스킬은 확인하지 못했습니다."
   },
   "deeplink": {
+    "allowedApps": "허용된 애플리케이션",
+    "allowedAppsHint": "이 제한은 구성에 적용됩니다. 접근 권한은 게이트웨이에서 확인합니다.",
     "confirmImport": "공급자 가져오기 확인",
     "confirmImportDescription": "다음 설정은 딥 링크에서 CC Switch로 가져옵니다.",
     "importPrompt": "프롬프트 가져오기",
