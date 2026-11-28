@@ -5215,6 +5215,19 @@
     "confirm": "Verstanden"
   },
   "authCenter": {
+    "apps": {
+      "manage": "Apps verwalten",
+      "summary": "{{visible}} / {{total}} Apps angezeigt",
+      "description": "Zum Sortieren ziehen oder den Schalter ausschalten, um eine App auszublenden. Bestehende Konten und Autorisierungen bleiben erhalten. Apps können jederzeit wieder eingeblendet werden.",
+      "reset": "Standard wiederherstellen",
+      "drag": "{{name}} zum Sortieren ziehen",
+      "moveUp": "{{name}} nach oben",
+      "moveDown": "{{name}} nach unten",
+      "show": "{{name}} anzeigen",
+      "temporary": "{{name}} wird vorübergehend angezeigt. Unter „Apps verwalten“ kann die App wieder eingeblendet werden.",
+      "keepVisible": "Weiterhin anzeigen",
+      "empty": "Alle Apps sind ausgeblendet. Unter „Apps verwalten“ können sie wieder eingeblendet werden."
+    },
     "helpTitle": "Was ist „Konten“?",
     "group": {
       "helpTitle": "Wie {{service}}-Konten verwendet werden",

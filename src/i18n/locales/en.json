@@ -5215,6 +5215,19 @@
     "confirm": "Got it"
   },
   "authCenter": {
+    "apps": {
+      "manage": "Manage apps",
+      "summary": "{{visible}} / {{total}} apps shown",
+      "description": "Drag to reorder or turn off a switch to hide an app. Existing accounts and authorizations are preserved. You can show apps again at any time.",
+      "reset": "Restore defaults",
+      "drag": "Drag to reorder {{name}}",
+      "moveUp": "Move {{name}} up",
+      "moveDown": "Move {{name}} down",
+      "show": "Show {{name}}",
+      "temporary": "{{name}} is temporarily shown. You can enable it again in Manage apps.",
+      "keepVisible": "Keep visible",
+      "empty": "All apps are hidden. Open Manage apps to show them again."
+    },
     "helpTitle": "What is Accounts?",
     "group": {
       "helpTitle": "How {{service}} accounts are used",

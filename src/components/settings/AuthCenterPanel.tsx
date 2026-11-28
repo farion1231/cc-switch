@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { CopilotAuthSection } from "@/components/providers/forms/CopilotAuthSection";
 import { CodexOAuthSection } from "@/components/providers/forms/CodexOAuthSection";
@@ -9,6 +9,8 @@ import { CodebuddyAccountSection } from "@/components/providers/forms/CodebuddyA
 import { KimiAccountLogin } from "@/components/providers/KimiAccountLogin";
 import { DshAccountLogin } from "@/components/providers/DshAccount";
 import { WorkBuddyAccountSection } from "@/components/settings/auth/WorkBuddyAccountSection";
+import { AuthCenterAppManager } from "@/components/settings/auth/AuthCenterAppManager";
+import { Button } from "@/components/ui/button";
 import { canSwitchAgyAccount } from "@/lib/authBinding";
 import { useAuthOpenBrowser, writeAuthOpenBrowser } from "@/lib/authLoginLink";
 import type { AuthCenterTarget } from "@/lib/api";
@@ -17,6 +19,11 @@ import { AutoQuotaToggle } from "@/components/settings/auth/AutoQuotaToggle";
 import type { AppId } from "@/lib/api/types";
 import { DEFAULT_VISIBLE_APPS, orderAppIds } from "@/config/appConfig";
 import { useSettingsQuery } from "@/lib/query";
+import {
+  AUTH_CENTER_APPS,
+  updateAuthCenterPreferences,
+  useAuthCenterPreferences,
+} from "@/lib/authCenterPreferences";
 
 interface AuthCenterPanelProps {
   authScrollTarget?: AuthCenterTarget | null;
@@ -78,6 +85,10 @@ interface AuthCard {
   available?: () => boolean;
 }
 
+interface OrderedAuthCard extends AuthCard {
+  sidebarVisible: boolean;
+}
+
 /** 没拖过侧栏顺序时按这张表的顺序排；排在同一位置的卡片之间也按它排 */
 const AUTH_CARDS: readonly AuthCard[] = [
   {
@@ -131,12 +142,9 @@ const AUTH_CARDS: readonly AuthCard[] = [
 ];
 
 /**
- * 跟侧栏走：按「应用」页拖出来的顺序排，对应的应用全部隐藏的卡片不显示。
- * 要定位的那张（供应商表单里点「管理账号」进来）总是显示，免得跳过去扑空。
+ * 默认跟随侧栏的顺序和显示设置；保留隐藏项供「管理应用」独立开启。
  */
-function useOrderedAuthCards(
-  pinned: AuthCenterTarget | null | undefined,
-): AuthCard[] {
+function useOrderedAuthCards(): OrderedAuthCard[] {
   const { data: settings } = useSettingsQuery();
   const appOrder = settings?.appOrder;
   const visibleApps = settings?.visibleApps;
@@ -148,24 +156,23 @@ function useOrderedAuthCards(
     return AUTH_CARDS.flatMap((card) => {
       if (card.available && !card.available()) return [];
       const shownApps = card.apps.filter((app) => visible[app]);
-      if (shownApps.length === 0 && card.target !== pinned) return [];
       return [
         {
-          card,
+          card: { ...card, sidebarVisible: shownApps.length > 0 },
           position: position(shownApps.length ? shownApps : card.apps),
         },
       ];
     })
       .sort((a, b) => a.position - b.position)
       .map(({ card }) => card);
-  }, [appOrder, visibleApps, pinned]);
+  }, [appOrder, visibleApps]);
 }
 
 /**
  * 授权中心：Claude 官方账号、GitHub Copilot、ChatGPT、xAI、Kimi Code、DeepSeek Harness、WorkBuddy、CodeBuddy，一组一张卡片；
  * macOS、Windows 上另有 Antigravity 一组（切 agy 的官方登录：macOS 钥匙串、Windows 凭据管理器）。
  * WorkBuddy 收录桌面端登录的快照再切换（macOS 已确认路径，Windows / Linux 按推断路径）。
- * 卡片的顺序和显示跟侧栏的应用设置走（见 `useOrderedAuthCards`）。
+ * 默认跟随侧栏的应用设置，也可在「管理应用」单独调整。
  * 侧栏的「授权中心」页和供应商表单里「管理账号」打开的全屏页共用。
  */
 export function AuthCenterPanel({
@@ -175,7 +182,44 @@ export function AuthCenterPanel({
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const sectionRefs = useRef(new Map<AuthCenterTarget, HTMLDivElement>());
-  const cards = useOrderedAuthCards(authScrollTarget);
+  const defaults = useOrderedAuthCards();
+  const preferences = useAuthCenterPreferences();
+  // 从供应商表单进入时临时显示目标，不改变用户保存的显示偏好。
+  const [navigationTarget, setNavigationTarget] = useState(authScrollTarget);
+  const cards = preferences.customOrder
+    ? preferences.order.flatMap((id) => {
+        const card = defaults.find(({ target }) => target === id);
+        return card ? [card] : [];
+      })
+    : defaults;
+  const isVisible = (card: OrderedAuthCard) =>
+    !preferences.hidden.includes(card.target) &&
+    (preferences.shown.includes(card.target) || card.sidebarVisible);
+  const visibleCards = cards.filter(
+    (card) => isVisible(card) || card.target === navigationTarget,
+  );
+  const temporaryCard = cards.find(
+    (card) => card.target === navigationTarget && !isVisible(card),
+  );
+  const temporarilyVisibleApp = AUTH_CENTER_APPS.find(
+    ({ id }) => id === temporaryCard?.target,
+  );
+  const setAppVisible = (id: AuthCenterTarget, visible: boolean) => {
+    if (!visible && navigationTarget === id) setNavigationTarget(null);
+    updateAuthCenterPreferences((current) => ({
+      ...current,
+      hidden: visible
+        ? current.hidden.filter((hiddenId) => hiddenId !== id)
+        : [...current.hidden, id],
+      shown: visible
+        ? [...current.shown, id]
+        : current.shown.filter((shownId) => shownId !== id),
+    }));
+  };
+
+  useEffect(() => {
+    setNavigationTarget(authScrollTarget);
+  }, [authScrollTarget]);
 
   useEffect(() => {
     if (!authScrollTarget) return;
@@ -251,7 +295,7 @@ export function AuthCenterPanel({
     });
 
     return stopPinning;
-  }, [authScrollTarget]);
+  }, [authScrollTarget, navigationTarget]);
 
   return (
     <div ref={rootRef} className="flex flex-col gap-3">
@@ -262,10 +306,42 @@ export function AuthCenterPanel({
       )}
       <OpenBrowserToggle />
       <AutoQuotaToggle />
-      {cards.map((card, index) => {
+      <AuthCenterAppManager
+        apps={cards.map(({ target }) => target)}
+        visibleApps={visibleCards.map(({ target }) => target)}
+        onVisibilityChange={setAppVisible}
+      />
+      {temporarilyVisibleApp && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-panel border border-border bg-surface p-3">
+          <p className="m-0 text-caption text-fg-2">
+            {t("authCenter.apps.temporary", {
+              defaultValue: "已临时显示 {{name}}，可在「管理应用」中重新开启。",
+              name: temporarilyVisibleApp.name,
+            })}
+          </p>
+          <Button
+            type="button"
+            variant="quiet"
+            size="compact"
+            onClick={() => setAppVisible(temporarilyVisibleApp.id, true)}
+          >
+            {t("authCenter.apps.keepVisible", { defaultValue: "保持显示" })}
+          </Button>
+        </div>
+      )}
+      {visibleCards.length === 0 && (
+        <p className="m-0 rounded-panel border border-dashed border-border p-6 text-center text-body text-fg-2">
+          {t("authCenter.apps.empty", {
+            defaultValue: "所有应用已隐藏，点击「管理应用」重新开启。",
+          })}
+        </p>
+      )}
+      {visibleCards.map((card, index) => {
         // 多张卡片时，最后一张贴近底部，说明卡向上弹；只有一张时贴近顶部，照常向下弹
         const helpSide: HelpSide =
-          cards.length > 1 && index === cards.length - 1 ? "top" : "bottom";
+          visibleCards.length > 1 && index === visibleCards.length - 1
+            ? "top"
+            : "bottom";
         return (
           <div
             key={card.target}

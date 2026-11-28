@@ -5215,6 +5215,19 @@
     "confirm": "OK"
   },
   "authCenter": {
+    "apps": {
+      "manage": "アプリを管理",
+      "summary": "{{total}} 個中 {{visible}} 個のアプリを表示",
+      "description": "ドラッグで順序を変更し、スイッチをオフにするとアプリを非表示にできます。既存のアカウントや認証は保持され、いつでも再表示できます。",
+      "reset": "既定に戻す",
+      "drag": "ドラッグして {{name}} の順序を変更",
+      "moveUp": "{{name}} を上へ",
+      "moveDown": "{{name}} を下へ",
+      "show": "{{name}} を表示",
+      "temporary": "{{name}} を一時的に表示しています。「アプリを管理」で再び有効にできます。",
+      "keepVisible": "表示を維持",
+      "empty": "すべてのアプリが非表示です。「アプリを管理」から再表示できます。"
+    },
     "helpTitle": "アカウントとは",
     "group": {
       "helpTitle": "{{service}} アカウントの使い方",
