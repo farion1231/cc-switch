@@ -222,11 +222,27 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn create_provider_with_mapping() -> Provider {
+    fn provider_with_settings(name: &str, settings_config: Value) -> Provider {
         Provider {
             id: "test".to_string(),
-            name: "Test".to_string(),
-            settings_config: json!({
+            name: name.to_string(),
+            settings_config,
+            website_url: None,
+            category: None,
+            created_at: None,
+            sort_index: None,
+            notes: None,
+            meta: None,
+            icon: None,
+            icon_color: None,
+            in_failover_queue: false,
+        }
+    }
+
+    fn full_mapping_provider() -> Provider {
+        provider_with_settings(
+            "Test",
+            json!({
                 "env": {
                     "ANTHROPIC_MODEL": "default-model",
                     "ANTHROPIC_DEFAULT_HAIKU_MODEL": "haiku-mapped",
@@ -235,249 +251,128 @@ mod tests {
                     "ANTHROPIC_DEFAULT_FABLE_MODEL": "fable-mapped"
                 }
             }),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        }
-    }
-
-    fn create_provider_without_mapping() -> Provider {
-        Provider {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            settings_config: json!({}),
-            website_url: None,
-            category: None,
-            created_at: None,
-            sort_index: None,
-            notes: None,
-            meta: None,
-            icon: None,
-            icon_color: None,
-            in_failover_queue: false,
-        }
+        )
     }
 
     #[test]
-    fn test_sonnet_mapping() {
-        let provider = create_provider_with_mapping();
-        let body = json!({"model": "claude-sonnet-4-5-20250929"});
-        let (result, original, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "sonnet-mapped");
-        assert_eq!(original, Some("claude-sonnet-4-5-20250929".to_string()));
-        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
-    }
+    fn apply_model_mapping_tiers_thinking_and_fallbacks() {
+        let provider = full_mapping_provider();
 
-    #[test]
-    fn test_haiku_mapping() {
-        let provider = create_provider_with_mapping();
-        let body = json!({"model": "claude-haiku-4-5"});
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "haiku-mapped");
-        assert_eq!(mapped, Some("haiku-mapped".to_string()));
-    }
-
-    #[test]
-    fn test_opus_mapping() {
-        let provider = create_provider_with_mapping();
-        let body = json!({"model": "claude-opus-4-5"});
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "opus-mapped");
-        assert_eq!(mapped, Some("opus-mapped".to_string()));
-    }
-
-    #[test]
-    fn test_fable_mapping() {
-        let provider = create_provider_with_mapping();
-        let body = json!({"model": "claude-fable-5"});
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "fable-mapped");
-        assert_eq!(mapped, Some("fable-mapped".to_string()));
-    }
-
-    #[test]
-    fn test_fable_with_one_m_suffix_mapping() {
-        // Claude Code 实际会发 claude-fable-5[1m] 形态（issue #3980）
-        let provider = create_provider_with_mapping();
-        let body = json!({"model": "claude-fable-5[1m]"});
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "fable-mapped");
-        assert_eq!(mapped, Some("fable-mapped".to_string()));
-    }
-
-    #[test]
-    fn test_fable_falls_back_to_opus_when_unset() {
-        let mut provider = create_provider_with_mapping();
-        provider.settings_config = json!({
-            "env": {
-                "ANTHROPIC_MODEL": "default-model",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped"
-            }
-        });
-        let body = json!({"model": "claude-fable-5"});
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "opus-mapped");
-        assert_eq!(mapped, Some("opus-mapped".to_string()));
-    }
-
-    #[test]
-    fn test_fable_falls_back_to_default_without_opus() {
-        let mut provider = create_provider_with_mapping();
-        provider.settings_config = json!({
-            "env": {
-                "ANTHROPIC_MODEL": "default-model"
-            }
-        });
-        let body = json!({"model": "claude-fable-5"});
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "default-model");
-        assert_eq!(mapped, Some("default-model".to_string()));
-    }
-
-    #[test]
-    fn test_thinking_does_not_affect_model_mapping() {
-        // Issue #2081: thinking 参数不应影响模型映射
-        let provider = create_provider_with_mapping();
-        let body = json!({
-            "model": "claude-sonnet-4-5",
-            "thinking": {"type": "enabled"}
-        });
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "sonnet-mapped");
-        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
-    }
-
-    #[test]
-    fn test_thinking_adaptive_does_not_affect_model_mapping() {
-        // Issue #2081: adaptive thinking 也不应影响模型映射
-        let provider = create_provider_with_mapping();
-        let body = json!({
-            "model": "claude-sonnet-4-5",
-            "thinking": {"type": "adaptive"}
-        });
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "sonnet-mapped");
-        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
-    }
-
-    #[test]
-    fn test_thinking_disabled() {
-        let provider = create_provider_with_mapping();
-        let body = json!({
-            "model": "claude-sonnet-4-5",
-            "thinking": {"type": "disabled"}
-        });
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "sonnet-mapped");
-        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
-    }
-
-    #[test]
-    fn test_unknown_model_uses_default() {
-        let provider = create_provider_with_mapping();
-        let body = json!({"model": "some-unknown-model"});
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "default-model");
-        assert_eq!(mapped, Some("default-model".to_string()));
-    }
-
-    #[test]
-    fn test_subagent_model_preserved_before_default_fallback() {
-        let mut provider = create_provider_with_mapping();
-        provider.settings_config = json!({
-            "env": {
-                "ANTHROPIC_MODEL": "default-model",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini"
-            }
-        });
-
-        let body = json!({"model": "gpt-5.4-mini"});
-        let (result, original, mapped) = apply_model_mapping(body, &provider);
-
-        assert_eq!(result["model"], "gpt-5.4-mini");
-        assert_eq!(original, Some("gpt-5.4-mini".to_string()));
-        assert!(mapped.is_none());
-    }
-
-    #[test]
-    fn test_subagent_model_preserved_with_one_m_suffix_before_default_fallback() {
-        let mut provider = create_provider_with_mapping();
-        provider.settings_config = json!({
-            "env": {
-                "ANTHROPIC_MODEL": "default-model",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini"
-            }
-        });
-
-        let body = json!({"model": "gpt-5.4-mini[1M]"});
-        let (result, original, mapped) = apply_model_mapping(body, &provider);
-
-        assert_eq!(result["model"], "gpt-5.4-mini[1M]");
-        assert_eq!(original, Some("gpt-5.4-mini[1M]".to_string()));
-        assert!(mapped.is_none());
-    }
-
-    #[test]
-    fn test_catalog_subagent_id_maps_back_when_tier_is_empty() {
-        // 接管把子代理 id 换成 Claude Code 目录形态后，opus/sonnet 档没配也不能被
-        // 默认模型吞掉：要送回行里配置的子代理模型。
-        let mut provider = create_provider_with_mapping();
-        provider.settings_config = json!({
-            "env": {
-                "ANTHROPIC_MODEL": "glm-5",
-                "CLAUDE_CODE_SUBAGENT_MODEL": "anthropic/claude-opus-5.5"
-            }
-        });
-
-        for incoming in [
-            "claude-opus-5-5",
-            "claude-opus-5-5[1M]",
-            "anthropic/claude-opus-5.5",
+        // 档位、大小写不敏感、fable[1m]（#3980）及未知模型回退默认
+        for (incoming, expected) in [
+            ("claude-sonnet-4-5-20250929", "sonnet-mapped"),
+            ("Claude-SONNET-4-5", "sonnet-mapped"),
+            ("claude-haiku-4-5", "haiku-mapped"),
+            ("claude-opus-4-5", "opus-mapped"),
+            ("claude-fable-5", "fable-mapped"),
+            ("claude-fable-5[1m]", "fable-mapped"),
+            ("some-unknown-model", "default-model"),
         ] {
-            let body = json!({"model": incoming});
-            let (result, _, _) = apply_model_mapping(body, &provider);
-            if incoming == "anthropic/claude-opus-5.5" {
-                assert_eq!(result["model"], incoming, "{incoming}");
-            } else {
-                assert_eq!(result["model"], "anthropic/claude-opus-5.5", "{incoming}");
-            }
+            let (result, original, mapped) =
+                apply_model_mapping(json!({ "model": incoming }), &provider);
+            assert_eq!(result["model"], expected, "{incoming}");
+            assert_eq!(original.as_deref(), Some(incoming), "{incoming}");
+            assert_eq!(mapped.as_deref(), Some(expected), "{incoming}");
         }
 
-        // 同一代际但不带小版本的 id 仍然走默认模型。
-        let body = json!({"model": "claude-opus-5"});
-        let (result, _, _) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "glm-5");
+        // Issue #2081: thinking 参数不影响模型映射
+        for thinking_type in ["enabled", "adaptive", "disabled"] {
+            let body = json!({
+                "model": "claude-sonnet-4-5",
+                "thinking": { "type": thinking_type }
+            });
+            let (result, _, mapped) = apply_model_mapping(body, &provider);
+            assert_eq!(result["model"], "sonnet-mapped", "{thinking_type}");
+            assert_eq!(mapped.as_deref(), Some("sonnet-mapped"), "{thinking_type}");
+        }
+
+        // fable 未单独配置时先回退 opus，再回退 default
+        let opus_only = provider_with_settings(
+            "Test",
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "default-model",
+                    "ANTHROPIC_DEFAULT_OPUS_MODEL": "opus-mapped"
+                }
+            }),
+        );
+        let (res, _, mapped) =
+            apply_model_mapping(json!({ "model": "claude-fable-5" }), &opus_only);
+        assert_eq!(res["model"], "opus-mapped");
+        assert_eq!(mapped.as_deref(), Some("opus-mapped"));
+
+        let default_only = provider_with_settings(
+            "Test",
+            json!({ "env": { "ANTHROPIC_MODEL": "default-model" } }),
+        );
+        let (res, _, mapped) =
+            apply_model_mapping(json!({ "model": "claude-fable-5" }), &default_only);
+        assert_eq!(res["model"], "default-model");
+        assert_eq!(mapped.as_deref(), Some("default-model"));
+
+        // 未配置任何映射时保持原样
+        let empty = provider_with_settings("Test", json!({}));
+        let (res, original, mapped) =
+            apply_model_mapping(json!({ "model": "claude-sonnet-4-5" }), &empty);
+        assert_eq!(res["model"], "claude-sonnet-4-5");
+        assert_eq!(original.as_deref(), Some("claude-sonnet-4-5"));
+        assert!(mapped.is_none());
     }
 
-    fn codex_provider(name: &str, settings_config: Value) -> Provider {
-        Provider {
-            name: name.to_string(),
-            settings_config,
-            ..create_provider_without_mapping()
+    #[test]
+    fn subagent_model_is_preserved_including_one_m_and_catalog_id() {
+        let provider = provider_with_settings(
+            "Test",
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "default-model",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "gpt-5.4-mini"
+                }
+            }),
+        );
+        for incoming in ["gpt-5.4-mini", "gpt-5.4-mini[1M]"] {
+            let (result, original, mapped) =
+                apply_model_mapping(json!({ "model": incoming }), &provider);
+            assert_eq!(result["model"], incoming, "{incoming}");
+            assert_eq!(original.as_deref(), Some(incoming), "{incoming}");
+            assert!(mapped.is_none(), "{incoming}");
+        }
+
+        // 接管将子代理 id 换成目录形态后，缺档位也不能被默认模型吞掉；同代非小版本仍走默认模型
+        let catalog_provider = provider_with_settings(
+            "Test",
+            json!({
+                "env": {
+                    "ANTHROPIC_MODEL": "glm-5",
+                    "CLAUDE_CODE_SUBAGENT_MODEL": "anthropic/claude-opus-5.5"
+                }
+            }),
+        );
+        for (incoming, expected) in [
+            ("claude-opus-5-5", "anthropic/claude-opus-5.5"),
+            ("claude-opus-5-5[1M]", "anthropic/claude-opus-5.5"),
+            ("anthropic/claude-opus-5.5", "anthropic/claude-opus-5.5"),
+            ("claude-opus-5", "glm-5"),
+        ] {
+            let (result, _, _) =
+                apply_model_mapping(json!({ "model": incoming }), &catalog_provider);
+            assert_eq!(result["model"], expected, "{incoming}");
         }
     }
 
     #[test]
-    fn codex_failover_swaps_in_the_targets_own_model_when_it_does_not_serve_the_request() {
-        let minimax = codex_provider(
+    fn map_codex_failover_model_swaps_only_unrecognized_models() {
+        // 目标行不发布请求模型 -> 换成目标行自己的 model，且保留其余字段
+        let minimax = provider_with_settings(
             "MiniMax",
             json!({"config": "model = \"MiniMax-M3\"\nmodel_provider = \"custom\"\n"}),
         );
-        let body = json!({"model": "kimi-k3", "input": []});
-        let result = map_codex_failover_model(body, &minimax);
+        let result = map_codex_failover_model(json!({"model": "kimi-k3", "input": []}), &minimax);
         assert_eq!(result["model"], "MiniMax-M3");
         assert_eq!(result["input"], json!([]));
-    }
 
-    #[test]
-    fn codex_failover_keeps_a_model_the_target_publishes() {
-        let kimi = codex_provider(
+        // 目标行或目录已发布的模型原样保留
+        let kimi = provider_with_settings(
             "Kimi",
             json!({
                 "config": "model = \"k3\"\n",
@@ -488,61 +383,33 @@ mod tests {
             let result = map_codex_failover_model(json!({ "model": model }), &kimi);
             assert_eq!(result["model"], model);
         }
-    }
 
-    #[test]
-    fn codex_failover_leaves_rows_without_a_model_alone() {
-        let official = codex_provider("OpenAI Official", json!({"config": ""}));
+        // 无模型的官方行原样保留
+        let official = provider_with_settings("OpenAI Official", json!({"config": ""}));
         let result = map_codex_failover_model(json!({"model": "gpt-6-astra"}), &official);
         assert_eq!(result["model"], "gpt-6-astra");
     }
 
     #[test]
-    fn test_no_mapping_configured() {
-        let provider = create_provider_without_mapping();
-        let body = json!({"model": "claude-sonnet-4-5"});
-        let (result, original, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "claude-sonnet-4-5");
-        assert_eq!(original, Some("claude-sonnet-4-5".to_string()));
-        assert!(mapped.is_none());
-    }
+    fn strip_one_m_suffix_for_upstream_cases() {
+        assert_eq!(
+            strip_one_m_suffix_for_upstream_from_body(json!({"model": "deepseek-v4-pro[1M]"}))
+                ["model"],
+            "deepseek-v4-pro"
+        );
+        assert_eq!(
+            strip_one_m_suffix_for_upstream_from_body(json!({"model": "deepseek-v4-pro"}))["model"],
+            "deepseek-v4-pro"
+        );
 
-    #[test]
-    fn test_case_insensitive() {
-        let provider = create_provider_with_mapping();
-        let body = json!({"model": "Claude-SONNET-4-5"});
-        let (result, _, mapped) = apply_model_mapping(body, &provider);
-        assert_eq!(result["model"], "sonnet-mapped");
-        assert_eq!(mapped, Some("sonnet-mapped".to_string()));
-    }
-
-    #[test]
-    fn strips_one_m_suffix_before_upstream() {
-        let body = json!({"model": "deepseek-v4-pro[1M]"});
-        let result = strip_one_m_suffix_for_upstream_from_body(body);
-        assert_eq!(result["model"], "deepseek-v4-pro");
-    }
-
-    #[test]
-    fn strips_one_m_suffix_after_mapping() {
-        let mut provider = create_provider_with_mapping();
-        provider.settings_config = json!({
-            "env": {
-                "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro [1M]"
-            }
-        });
-
-        let body = json!({"model": "claude-sonnet-4-6"});
-        let (mapped, _, _) = apply_model_mapping(body, &provider);
-        let result = strip_one_m_suffix_for_upstream_from_body(mapped);
-
-        assert_eq!(result["model"], "deepseek-v4-pro");
-    }
-
-    #[test]
-    fn keeps_model_without_one_m_suffix() {
-        let body = json!({"model": "deepseek-v4-pro"});
-        let result = strip_one_m_suffix_for_upstream_from_body(body);
-        assert_eq!(result["model"], "deepseek-v4-pro");
+        let provider = provider_with_settings(
+            "Test",
+            json!({ "env": { "ANTHROPIC_DEFAULT_SONNET_MODEL": "deepseek-v4-pro [1M]" } }),
+        );
+        let (mapped, _, _) = apply_model_mapping(json!({"model": "claude-sonnet-4-6"}), &provider);
+        assert_eq!(
+            strip_one_m_suffix_for_upstream_from_body(mapped)["model"],
+            "deepseek-v4-pro"
+        );
     }
 }
