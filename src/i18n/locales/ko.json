@@ -1376,6 +1376,10 @@
       "readFailed": "Pi의 공급자 설정을 읽을 수 없습니다.",
       "stateUnavailableHint": "CC Switch가 Pi의 공급자 설정을 읽을 수 있을 때까지 공급자 변경은 비활성화됩니다."
     },
+    "login": {
+      "configured": "/login으로 설정됨",
+      "managedHint": "Pi /login에서 관리합니다. Pi에서 /login 또는 /logout으로 변경하세요."
+    },
     "prompts": {
       "globalTab": "프롬프트 라이브러리",
       "systemTab": "시스템 프롬프트",

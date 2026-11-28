@@ -1,7 +1,10 @@
 //! Read-only Pi provider membership and global default reference.
 
 use crate::error::AppError;
-use crate::pi_config::{read_pi_native_defaults, read_pi_native_providers};
+use crate::pi_config::{
+    pi_provider_display_name, read_pi_auth_provider_ids, read_pi_native_defaults,
+    read_pi_native_providers,
+};
 use crate::store::AppState;
 use serde::Serialize;
 
@@ -9,9 +12,17 @@ const PI_APP: &str = "pi";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct PiLoginProvider {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct PiCurrentState {
     pub enabled_provider_ids: Vec<String>,
     pub default_provider_id: Option<String>,
+    pub login_providers: Vec<PiLoginProvider>,
 }
 
 pub(crate) struct PiStateService;
@@ -28,9 +39,27 @@ impl PiStateService {
                 None
             }
         };
+        // `/login` providers are a runtime-only view. They never enter SQLite,
+        // backups, cloud sync, or the explicit-provider CRUD paths. An enabled
+        // models.json provider wins over its matching login projection.
+        let login_providers = match read_pi_auth_provider_ids() {
+            Ok(provider_ids) => provider_ids
+                .into_iter()
+                .filter(|id| !native.contains_key(id))
+                .map(|id| PiLoginProvider {
+                    name: pi_provider_display_name(&id).to_string(),
+                    id,
+                })
+                .collect(),
+            Err(error) => {
+                log::warn!("Failed to read Pi auth provider ids for advisory UI: {error}");
+                Vec::new()
+            }
+        };
         Ok(PiCurrentState {
             enabled_provider_ids,
             default_provider_id,
+            login_providers,
         })
     }
 }
@@ -99,6 +128,79 @@ mod tests {
             current.default_provider_id.as_deref(),
             Some("cc-switch-managed")
         );
+    }
+
+    #[test]
+    #[serial]
+    fn login_providers_are_runtime_only_and_explicit_models_win() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        fs::write(
+            agent_dir.join("models.json"),
+            r#"{"providers":{"deepseek":{"name":"Explicit DeepSeek"},"5090":{"name":"5090"}}}"#,
+        )
+        .expect("write models");
+        fs::write(
+            agent_dir.join("auth.json"),
+            r#"{
+                "deepseek":{"type":"api_key","key":"sk-native"},
+                "kimi-coding":{"type":"api_key","key":"sk-kimi"},
+                "future-provider":{"oauth":{"access_token":"secret-token"}}
+            }"#,
+        )
+        .expect("write auth");
+
+        let current = PiStateService::current(&state).expect("read state");
+        assert_eq!(
+            current.enabled_provider_ids,
+            vec!["deepseek".to_string(), "5090".to_string()]
+        );
+        assert_eq!(
+            current.login_providers,
+            vec![
+                PiLoginProvider {
+                    id: "kimi-coding".to_string(),
+                    name: "Kimi For Coding".to_string(),
+                },
+                PiLoginProvider {
+                    id: "future-provider".to_string(),
+                    name: "future-provider".to_string(),
+                },
+            ]
+        );
+        assert!(
+            state
+                .db
+                .get_all_providers(&crate::app_config::AppType::Pi)
+                .expect("read saved providers")
+                .is_empty(),
+            "reading auth.json must not persist login projections"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn invalid_auth_hides_only_login_projection() {
+        let _agent = TestAgentDir::new();
+        let state = AppState::new(Arc::new(
+            Database::memory().expect("create in-memory database"),
+        ));
+        let agent_dir = crate::pi_config::get_pi_agent_dir().expect("agent directory");
+        fs::create_dir_all(&agent_dir).expect("create agent directory");
+        fs::write(
+            agent_dir.join("models.json"),
+            r#"{"providers":{"custom":{"name":"Custom"}}}"#,
+        )
+        .expect("write models");
+        fs::write(agent_dir.join("auth.json"), "{").expect("write invalid auth");
+
+        let current = PiStateService::current(&state).expect("read explicit state");
+        assert_eq!(current.enabled_provider_ids, vec!["custom"]);
+        assert!(current.login_providers.is_empty());
     }
 
     #[test]

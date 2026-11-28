@@ -1376,6 +1376,10 @@
       "readFailed": "Не удалось прочитать конфигурацию провайдера Pi",
       "stateUnavailableHint": "Изменения провайдера отключены, пока CC Switch не сможет прочитать конфигурацию провайдера Pi."
     },
+    "login": {
+      "configured": "Настроено через /login",
+      "managedHint": "Управляется через Pi /login. Для изменений используйте /login или /logout в Pi."
+    },
     "prompts": {
       "globalTab": "Библиотека",
       "systemTab": "Системный промпт",

@@ -2,9 +2,16 @@ import { invoke } from "@tauri-apps/api/core";
 import type { UsageScript } from "@/types";
 import type { AppIdWith } from "@/config/appSpecs";
 
+export interface PiLoginProvider {
+  id: string;
+  name: string;
+}
+
 export interface PiCurrentState {
   enabledProviderIds: string[];
   defaultProviderId: string | null;
+  /** Runtime-only Pi `/login` projection; always empty for Oh My Pi. */
+  loginProviders: PiLoginProvider[];
 }
 
 export type PiSessionDiscovery =

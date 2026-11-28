@@ -1376,6 +1376,10 @@
       "readFailed": "Die Anbieterkonfiguration von Pi konnte nicht gelesen werden",
       "stateUnavailableHint": "Anbieteränderungen sind deaktiviert, bis CC Switch die Anbieterkonfiguration von Pi lesen kann."
     },
+    "login": {
+      "configured": "Über /login konfiguriert",
+      "managedHint": "Von Pi /login verwaltet. Änderungen mit /login oder /logout in Pi vornehmen."
+    },
     "prompts": {
       "globalTab": "Bibliothek",
       "systemTab": "System-Prompt",

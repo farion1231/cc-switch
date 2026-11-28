@@ -1305,6 +1305,10 @@
       "readFailed": "Pi'nin sağlayıcı yapılandırması okunamadı",
       "stateUnavailableHint": "CC Switch, Pi'nin sağlayıcı yapılandırmasını okuyabilene kadar sağlayıcı değişiklikleri devre dışı bırakılır."
     },
+    "login": {
+      "configured": "/login ile yapılandırıldı",
+      "managedHint": "Pi /login tarafından yönetilir. Değişiklik yapmak için Pi içinde /login veya /logout kullanın."
+    },
     "prompts": {
       "globalTab": "Kütüphane",
       "systemTab": "Sistem istemi",
