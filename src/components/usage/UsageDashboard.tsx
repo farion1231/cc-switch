@@ -921,6 +921,7 @@ export function UsageDashboard({
           providerName={providerName}
           model={model}
           refreshIntervalMs={0}
+          onApplyRange={applyRange}
         />
       ) : (
         <UsageTrendChart

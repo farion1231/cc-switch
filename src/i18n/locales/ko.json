@@ -2717,7 +2717,15 @@
       "showMore": "더 보기",
       "showLess": "간략히 보기",
       "less": "적음",
-      "more": "많음"
+      "more": "많음",
+      "rangeSelect": "연속 범위 선택",
+      "pickRangeEnd": "다른 날짜를 클릭해 범위를 완료하세요",
+      "dayCount": "{{count}}일",
+      "applyRange": "필터에 적용",
+      "closeDetail": "세부 정보 닫기",
+      "archivedTitle": "일별 집계만 보관됨",
+      "archivedBody": "{{days}}일이 지난 원본 요청은 일별 집계로 보관되어 시간별 추이를 볼 수 없습니다. 여러 날의 추이를 보려면 '연속 범위 선택'을 켜세요.",
+      "cellAriaSingle": "{{date}}: {{tokens}} 토큰, {{requests}} 요청, {{cost}}"
     },
     "trend": {
       "title": "사용량 추이 · {{range}}",

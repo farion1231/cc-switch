@@ -2722,7 +2722,15 @@
       "showMore": "顯示更多",
       "showLess": "收起",
       "less": "少",
-      "more": "多"
+      "more": "多",
+      "rangeSelect": "連續多選",
+      "pickRangeEnd": "再點一天完成區間",
+      "dayCount": "{{count}} 天",
+      "applyRange": "套用到主篩選",
+      "closeDetail": "收起詳情",
+      "archivedTitle": "僅保留每日彙總",
+      "archivedBody": "超過 {{days}} 天的原始請求已歸檔為按日彙總，暫不支援按小時曲線；開啟「連續多選」可查看多日趨勢。",
+      "cellAriaSingle": "{{date}}：{{tokens}} Token，{{requests}} 次請求，{{cost}}"
     },
     "trend": {
       "title": "使用趨勢 · {{range}}",

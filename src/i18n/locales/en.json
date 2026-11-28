@@ -2722,7 +2722,15 @@
       "showMore": "Show more",
       "showLess": "Show less",
       "less": "Less",
-      "more": "More"
+      "more": "More",
+      "rangeSelect": "Range select",
+      "pickRangeEnd": "Click another day to complete range",
+      "dayCount": "{{count}} days",
+      "applyRange": "Apply to filter",
+      "closeDetail": "Close details",
+      "archivedTitle": "Daily rollup only",
+      "archivedBody": "Raw requests older than {{days}} days are rolled up into daily totals, so hourly trends are unavailable. Enable Range select to inspect multi-day trends.",
+      "cellAriaSingle": "{{date}}: {{tokens}} tokens, {{requests}} requests, {{cost}}"
     },
     "trend": {
       "title": "Usage trend · {{range}}",

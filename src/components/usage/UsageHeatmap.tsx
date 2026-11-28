@@ -1,22 +1,33 @@
-import { Fragment, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ChevronDown, Loader2 } from "lucide-react";
+import { ChevronDown, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Notice } from "@/components/ui/notice";
+import { Switch } from "@/components/ui/switch";
 import { useUsageFirstDate, useUsageTrends } from "@/lib/query/usage";
 import { cn } from "@/lib/utils";
 import type { UsageRangeSelection } from "@/types/usage";
 import {
+  fmtInt,
+  formatHitRatePercent,
+  formatTokensCompact,
   formatTokensShort,
   getLocaleFromLanguage,
   parseFiniteNumber,
 } from "./format";
-import { hitRateOf, type UsageTrendStatLike } from "./UsageTrendChart";
+import {
+  UsageTrendChart,
+  hitRateOf,
+  type UsageTrendStatLike,
+} from "./UsageTrendChart";
 import { UsageTooltipCard } from "./UsageTooltipCard";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
 import type { UsageMetric } from "./rememberedChoice";
 
 const WEEKS = 53;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** 后端 `rollup_and_prune(30)` 会在 30 天后合并原始请求明细并仅保留每日汇总 */
+export const HEATMAP_RAW_RETENTION_DAYS = 30;
 /** 0 档用底色，1–4 档是 --heat-1…4（与趋势图同一色相，色阶在 index.css 按深浅色分别定） */
 const LEVELS = [0, 1, 2, 3, 4];
 
@@ -27,6 +38,8 @@ interface UsageHeatmapProps {
   providerName?: string;
   model?: string;
   refreshIntervalMs: number;
+  /** 可选：把热力图当前选中的单日或连续区间同步应用到主仪表盘筛选器 */
+  onApplyRange?: (selection: UsageRangeSelection) => void;
 }
 
 interface DayCell {
@@ -122,6 +135,162 @@ function metricValue(
     stat.totalCacheCreationTokens +
     stat.totalCacheReadTokens
   );
+}
+
+/** 热力图选中的连续本地日期闭区间 `[start, end]`（均为本地零点） */
+export interface HeatmapDayRange {
+  start: Date;
+  end: Date;
+}
+
+export interface HeatmapRangeSummary {
+  days: number;
+  activeDays: number;
+  tokens: number;
+  requests: number;
+  cost: number;
+  hitRate: number | null;
+}
+
+/** 把任意顺序的两个日期归一化为闭区间 `[较早, 较晚]`（本地日历零点） */
+export function normalizeHeatmapRange(a: Date, b: Date): HeatmapDayRange {
+  const start = startOfDay(a);
+  const end = startOfDay(b);
+  return start.getTime() <= end.getTime()
+    ? { start, end }
+    : { start: end, end: start };
+}
+
+export function isDayInHeatmapRange(
+  date: Date,
+  range: HeatmapDayRange | null,
+): boolean {
+  if (!range) return false;
+  const target = startOfDay(date).getTime();
+  return (
+    target >= startOfDay(range.start).getTime() &&
+    target <= startOfDay(range.end).getTime()
+  );
+}
+
+export function isHeatmapRangeEndpoint(
+  date: Date,
+  range: HeatmapDayRange | null,
+): boolean {
+  if (!range) return false;
+  const target = startOfDay(date).getTime();
+  return (
+    target === startOfDay(range.start).getTime() ||
+    target === startOfDay(range.end).getTime()
+  );
+}
+
+/**
+ * 转为后端 `get_usage_trends` / 主筛选器识别的闭区间秒级时间戳：
+ * 起点必须严格对齐本地 00:00:00、终点对齐 23:59:59，后端 `compute_rollup_date_bounds`
+ * 才会将超过 30 天的每日汇总行（usage_daily_rollups）纳入统计。
+ */
+export function buildHeatmapUsageSelection(
+  range: HeatmapDayRange,
+): UsageRangeSelection {
+  const { start, end } = normalizeHeatmapRange(range.start, range.end);
+  const customStartDate = Math.floor(
+    new Date(
+      start.getFullYear(),
+      start.getMonth(),
+      start.getDate(),
+      0,
+      0,
+      0,
+    ).getTime() / 1000,
+  );
+  const customEndDate = Math.floor(
+    new Date(
+      end.getFullYear(),
+      end.getMonth(),
+      end.getDate(),
+      23,
+      59,
+      59,
+    ).getTime() / 1000,
+  );
+  return {
+    preset: "custom",
+    customStartDate,
+    customEndDate,
+    liveEndTime: false,
+  };
+}
+
+/**
+ * 判断选中的单日是否已跨过 30 天原始明细保留期。
+ * 单日区间时长 <= 24h，后端走按小时分支且仅查 proxy_request_logs；30 天及更早的日期
+ * 原始请求已被清理并归档至每日汇总，需要提示用户改看汇总或开启多日趋势。
+ */
+export function isSingleDayArchived(
+  range: HeatmapDayRange,
+  today: Date = startOfDay(new Date()),
+): boolean {
+  const normalized = normalizeHeatmapRange(range.start, range.end);
+  if (daysBetween(normalized.start, normalized.end) !== 0) return false;
+  return (
+    daysBetween(normalized.start, startOfDay(today)) >=
+    HEATMAP_RAW_RETENTION_DAYS
+  );
+}
+
+/** 按热力图已加载的按天趋势汇总选中区间的核心指标，与卡片上方 KPI 和工具提示同口径 */
+export function summarizeHeatmapRange(
+  range: HeatmapDayRange,
+  byDay: ReadonlyMap<string, UsageTrendStatLike>,
+  today: Date = startOfDay(new Date()),
+): HeatmapRangeSummary {
+  const normalized = normalizeHeatmapRange(range.start, range.end);
+  const normalizedToday = startOfDay(today);
+  const limit =
+    normalized.end.getTime() <= normalizedToday.getTime()
+      ? normalized.end
+      : normalizedToday;
+
+  let days = 0;
+  let activeDays = 0;
+  let tokens = 0;
+  let requests = 0;
+  let cost = 0;
+  let cacheRead = 0;
+  let cacheable = 0;
+
+  for (
+    let cursor = normalized.start;
+    cursor.getTime() <= limit.getTime();
+    cursor = addDays(cursor, 1)
+  ) {
+    days += 1;
+    const stat = byDay.get(dayKey(cursor));
+    if (!stat) continue;
+    const dayTokens = metricValue(stat, "tokens");
+    const dayRequests = stat.requestCount ?? 0;
+    tokens += dayTokens;
+    requests += dayRequests;
+    cost += metricValue(stat, "cost");
+    cacheRead += stat.totalCacheReadTokens;
+    cacheable +=
+      stat.totalInputTokens +
+      stat.totalCacheCreationTokens +
+      stat.totalCacheReadTokens;
+    if (dayRequests > 0 || dayTokens > 0) {
+      activeDays += 1;
+    }
+  }
+
+  return {
+    days: Math.max(days, 1),
+    activeDays,
+    tokens,
+    requests,
+    cost,
+    hitRate: cacheable > 0 ? cacheRead / cacheable : null,
+  };
 }
 
 /** 格子分档用的值：用量类指标 0 就是没用；命中率 0% 是真实数据，只有没有输入时才是空 */
@@ -264,6 +433,7 @@ export function UsageHeatmap({
   providerName,
   model,
   refreshIntervalMs,
+  onApplyRange,
 }: UsageHeatmapProps) {
   const { t, i18n } = useTranslation();
   const { money } = useMoneyFormat();
@@ -271,6 +441,22 @@ export function UsageHeatmap({
   const [hover, setHover] = useState<HoverState | null>(null);
   // 默认只画最近 53 周，点「显示更多」才把更早的段全部展开；不记住，每次进来都是收起
   const [showEarlier, setShowEarlier] = useState(false);
+  // 行内详情与连续区间多选：默认点击单日行内展开，开启开关后可连续点选起止日期
+  const [multiSelect, setMultiSelect] = useState(false);
+  const [rangeAnchor, setRangeAnchor] = useState<Date | null>(null);
+  const [selectedRange, setSelectedRange] = useState<HeatmapDayRange | null>(
+    null,
+  );
+  // 收起抽屉时短暂保留上一次内容直到 CSS 高度动画（1fr -> 0fr）完成，避免文字/图表瞬间跳没
+  const [closingRange, setClosingRange] = useState<HeatmapDayRange | null>(
+    null,
+  );
+
+  useEffect(() => {
+    if (selectedRange != null || closingRange == null) return;
+    const timer = window.setTimeout(() => setClosingRange(null), 240);
+    return () => window.clearTimeout(timer);
+  }, [selectedRange, closingRange]);
 
   const showTooltip = (cell: DayCell, target: HTMLElement) => {
     const section = sectionRef.current;
@@ -307,18 +493,32 @@ export function UsageHeatmap({
       .filter((cell) => !cell.future);
     const thresholds = buildThresholds(days.map((cell) => cell.value));
 
-    return { spans, thresholds };
+    return { spans, thresholds, byDay, today };
   }, [trends, metric, spanCount]);
 
-  const earlierCount = heat.spans.length - 1;
-  const visibleSpans = showEarlier ? heat.spans : heat.spans.slice(0, 1);
-  const formatDay = (date: Date) =>
-    date.toLocaleDateString(locale, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    });
-
+  const shortDayFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      }),
+    [locale],
+  );
+  const fullDayFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        weekday: "short",
+      }),
+    [locale],
+  );
+  const monthFormatter = useMemo(
+    () => new Intl.DateTimeFormat(locale, { month: "short" }),
+    [locale],
+  );
   const weekdayLabels = useMemo(() => {
     // 2024-01-01 是周一
     return Array.from({ length: 7 }, (_, d) =>
@@ -328,22 +528,130 @@ export function UsageHeatmap({
     );
   }, [locale]);
 
+  const clearSelection = () => {
+    if (selectedRange) {
+      setClosingRange(selectedRange);
+    }
+    setSelectedRange(null);
+    setRangeAnchor(null);
+  };
+
+  const handleMultiSelectChange = (checked: boolean) => {
+    setMultiSelect(checked);
+    if (checked) {
+      // 如果当前已展开某一天，切换为多选时自动把它延续为区间起点，用户再点一天就能完成区间
+      setRangeAnchor(
+        selectedRange &&
+          daysBetween(selectedRange.start, selectedRange.end) === 0
+          ? selectedRange.start
+          : null,
+      );
+      return;
+    }
+    setRangeAnchor(null);
+  };
+
+  const handleDayClick = (rawDate: Date) => {
+    const clicked = startOfDay(rawDate);
+    setClosingRange(null);
+    if (!multiSelect) {
+      if (
+        selectedRange &&
+        daysBetween(selectedRange.start, selectedRange.end) === 0 &&
+        dayKey(selectedRange.start) === dayKey(clicked)
+      ) {
+        clearSelection();
+        return;
+      }
+      setRangeAnchor(null);
+      setSelectedRange({ start: clicked, end: clicked });
+      return;
+    }
+
+    if (!rangeAnchor) {
+      setRangeAnchor(clicked);
+      setSelectedRange({ start: clicked, end: clicked });
+      return;
+    }
+
+    if (dayKey(clicked) === dayKey(rangeAnchor)) {
+      clearSelection();
+      return;
+    }
+
+    setSelectedRange(normalizeHeatmapRange(rangeAnchor, clicked));
+    setRangeAnchor(null);
+  };
+
+  const earlierCount = heat.spans.length - 1;
+  const visibleSpans = showEarlier ? heat.spans : heat.spans.slice(0, 1);
+
+  const isDrawerOpen = selectedRange != null;
+  const displayedRange = selectedRange ?? closingRange;
+  const previewRange =
+    multiSelect && rangeAnchor && hover && !hover.cell.future
+      ? normalizeHeatmapRange(rangeAnchor, hover.cell.date)
+      : null;
+
+  const drawerSelection = useMemo(
+    () => (displayedRange ? buildHeatmapUsageSelection(displayedRange) : null),
+    [displayedRange],
+  );
+  const drawerSummary = useMemo(
+    () =>
+      displayedRange
+        ? summarizeHeatmapRange(displayedRange, heat.byDay, heat.today)
+        : null,
+    [displayedRange, heat.byDay, heat.today],
+  );
+  const drawerArchivedSingleDay = displayedRange
+    ? isSingleDayArchived(displayedRange, heat.today)
+    : false;
+  const drawerHeading =
+    displayedRange && drawerSummary
+      ? drawerSummary.days === 1
+        ? fullDayFormatter.format(displayedRange.start)
+        : `${shortDayFormatter.format(displayedRange.start)} – ${shortDayFormatter.format(displayedRange.end)}`
+      : "";
+  const drawerCostDigits =
+    drawerSummary && drawerSummary.cost > 0 && drawerSummary.cost < 0.01
+      ? 4
+      : 2;
+
   return (
     <section
       ref={sectionRef}
       aria-labelledby="usage-heatmap-title"
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && selectedRange != null) {
+          event.preventDefault();
+          event.stopPropagation();
+          clearSelection();
+        }
+      }}
       className="relative px-4 pb-3 pt-5"
     >
-      <div>
-        <h2
-          id="usage-heatmap-title"
-          className="m-0 text-body font-semibold text-fg-1"
-        >
-          {t("usage.heatmap.title")}
-        </h2>
-        <p className="m-0 text-caption text-fg-3">
-          {t("usage.heatmap.subtitle")}
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h2
+            id="usage-heatmap-title"
+            className="m-0 text-body font-semibold text-fg-1"
+          >
+            {t("usage.heatmap.title")}
+          </h2>
+          <p className="m-0 text-caption text-fg-3">
+            {t("usage.heatmap.subtitle")}
+          </p>
+        </div>
+        <label className="inline-flex cursor-pointer select-none items-center gap-2 text-caption text-fg-2">
+          <span>{t("usage.heatmap.rangeSelect")}</span>
+          <Switch
+            size="sm"
+            checked={multiSelect}
+            onCheckedChange={handleMultiSelectChange}
+            aria-label={t("usage.heatmap.rangeSelect")}
+          />
+        </label>
       </div>
 
       {isLoading ? (
@@ -358,7 +666,7 @@ export function UsageHeatmap({
           >
             <div className="flex flex-wrap items-baseline gap-x-2">
               <h3 className="m-0 text-body font-semibold tabular-nums text-fg-1">
-                {`${formatDay(span.start)} – ${formatDay(span.end)}`}
+                {`${shortDayFormatter.format(span.start)} – ${shortDayFormatter.format(span.end)}`}
               </h3>
               <span className="text-caption tabular-nums text-fg-3">
                 {t("usage.heatmap.spanSummary", {
@@ -381,11 +689,9 @@ export function UsageHeatmap({
                   className="h-4 overflow-visible whitespace-nowrap text-badge leading-4 text-fg-3"
                 >
                   {span.monthLabels[w] != null
-                    ? new Date(
-                        2024,
-                        span.monthLabels[w]! - 1,
-                        1,
-                      ).toLocaleDateString(locale, { month: "short" })
+                    ? monthFormatter.format(
+                        new Date(2024, span.monthLabels[w]! - 1, 1),
+                      )
                     : ""}
                 </span>
               ))}
@@ -396,21 +702,63 @@ export function UsageHeatmap({
                   </span>
                   {span.weeks.map((column) => {
                     const cell = column[d];
+                    if (cell.future) {
+                      return (
+                        <div
+                          key={cell.key}
+                          aria-hidden="true"
+                          className="aspect-square w-full rounded-[3px]"
+                        />
+                      );
+                    }
                     const level = levelOf(cell.value, heat.thresholds);
+                    const isSelected = isDayInHeatmapRange(
+                      cell.date,
+                      selectedRange,
+                    );
+                    const isEndpoint = isHeatmapRangeEndpoint(
+                      cell.date,
+                      selectedRange,
+                    );
+                    const isPreview =
+                      previewRange != null &&
+                      isDayInHeatmapRange(cell.date, previewRange) &&
+                      !isSelected;
+                    const cellCostDigits =
+                      cell.cost > 0 && cell.cost < 0.01 ? 4 : 2;
                     return (
-                      <div
+                      <button
                         key={cell.key}
-                        onMouseEnter={
-                          cell.future
-                            ? undefined
-                            : (event) => showTooltip(cell, event.currentTarget)
+                        type="button"
+                        data-day-key={cell.key}
+                        aria-pressed={isSelected}
+                        aria-label={t("usage.heatmap.cellAriaSingle", {
+                          date: fullDayFormatter.format(cell.date),
+                          tokens: formatTokensShort(cell.tokens, language),
+                          requests: fmtInt(cell.requests, locale),
+                          cost: money(cell.cost, cellCostDigits),
+                        })}
+                        onClick={() => handleDayClick(cell.date)}
+                        onMouseEnter={(event) =>
+                          showTooltip(cell, event.currentTarget)
                         }
                         onMouseLeave={() => setHover(null)}
+                        onFocus={(event) =>
+                          showTooltip(cell, event.currentTarget)
+                        }
+                        onBlur={() => setHover(null)}
                         className={cn(
-                          "aspect-square w-full rounded-[3px]",
-                          !cell.future && level === 0 && "bg-subtle",
+                          "relative block aspect-square w-full cursor-pointer appearance-none rounded-[3px] border-0 p-0 transition-transform duration-100 hover:scale-110 focus-visible:z-10 motion-reduce:transition-none",
+                          level === 0 && "bg-subtle",
+                          isEndpoint &&
+                            "z-10 after:pointer-events-none after:absolute after:-inset-[1px] after:rounded-[4px] after:border-2 after:border-action",
+                          isSelected &&
+                            !isEndpoint &&
+                            "after:pointer-events-none after:absolute after:inset-0 after:rounded-[3px] after:border after:border-action",
+                          isPreview &&
+                            "after:pointer-events-none after:absolute after:inset-0 after:rounded-[3px] after:border after:border-dashed after:border-action",
                         )}
-                        style={cell.future ? undefined : cellStyle(level)}
+                        style={cellStyle(level)}
                       />
                     );
                   })}
@@ -439,12 +787,7 @@ export function UsageHeatmap({
           }}
         >
           <UsageTooltipCard
-            heading={hover.cell.date.toLocaleDateString(locale, {
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-              weekday: "short",
-            })}
+            heading={fullDayFormatter.format(hover.cell.date)}
             tokens={hover.cell.tokens}
             requests={hover.cell.requests}
             cost={hover.cell.cost}
@@ -487,6 +830,149 @@ export function UsageHeatmap({
           />
         ))}
         {t("usage.heatmap.more")}
+      </div>
+
+      {/* 行内折叠抽屉：复用 grid-template-rows (0fr ↔ 1fr) 动画在热力图原地展开单日或连续区间详情 */}
+      <div
+        data-testid="usage-heatmap-drawer"
+        data-state={isDrawerOpen ? "open" : "closed"}
+        aria-hidden={!isDrawerOpen}
+        className={cn(
+          "grid transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
+          isDrawerOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+        )}
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && !isDrawerOpen) {
+            setClosingRange(null);
+          }
+        }}
+        {...(isDrawerOpen ? {} : { inert: "" })}
+      >
+        <div className="min-h-0 overflow-hidden">
+          {displayedRange && drawerSelection && drawerSummary && (
+            <div className="mt-3 border-t border-border pt-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h3 className="m-0 text-body font-semibold tabular-nums text-fg-1">
+                    {drawerHeading}
+                  </h3>
+                  {drawerSummary.days > 1 && (
+                    <span className="rounded-control bg-subtle px-2 py-0.5 text-badge font-medium tabular-nums text-fg-2">
+                      {t("usage.heatmap.dayCount", {
+                        count: drawerSummary.days,
+                      })}
+                    </span>
+                  )}
+                  {multiSelect && rangeAnchor && (
+                    <span className="rounded-control bg-action-soft px-2 py-0.5 text-badge font-medium text-action-text">
+                      {t("usage.heatmap.pickRangeEnd")}
+                    </span>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {onApplyRange && (
+                    <Button
+                      type="button"
+                      variant="neutral"
+                      size="compact"
+                      onClick={() => onApplyRange(drawerSelection)}
+                    >
+                      {t("usage.heatmap.applyRange")}
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    size="icon-compact"
+                    aria-label={t("usage.heatmap.closeDetail")}
+                    onClick={clearSelection}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+
+              <dl className="mt-2.5 grid grid-cols-2 gap-2 rounded-control bg-subtle px-3 py-2 sm:grid-cols-4">
+                <div className="min-w-0">
+                  <dt className="text-badge text-fg-3">
+                    {t("usage.trend.tokens")}
+                  </dt>
+                  <dd
+                    className={cn(
+                      "m-0 truncate text-body font-semibold tabular-nums",
+                      metric === "tokens" ? "text-action-text" : "text-fg-1",
+                    )}
+                  >
+                    {formatTokensCompact(drawerSummary.tokens, locale)}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-badge text-fg-3">
+                    {t("usage.trend.requestsLegend")}
+                  </dt>
+                  <dd
+                    className={cn(
+                      "m-0 truncate text-body font-semibold tabular-nums",
+                      metric === "requests" ? "text-action-text" : "text-fg-1",
+                    )}
+                  >
+                    {fmtInt(drawerSummary.requests, locale)}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-badge text-fg-3">
+                    {t("usage.trend.cost")}
+                  </dt>
+                  <dd
+                    className={cn(
+                      "m-0 truncate text-body font-semibold tabular-nums",
+                      metric === "cost" ? "text-action-text" : "text-fg-1",
+                    )}
+                  >
+                    {money(drawerSummary.cost, drawerCostDigits)}
+                  </dd>
+                </div>
+                <div className="min-w-0">
+                  <dt className="text-badge text-fg-3">
+                    {t("usage.cacheHitRate")}
+                  </dt>
+                  <dd
+                    className={cn(
+                      "m-0 truncate text-body font-semibold tabular-nums",
+                      metric === "hitRate" ? "text-action-text" : "text-fg-1",
+                    )}
+                  >
+                    {drawerSummary.hitRate == null
+                      ? "—"
+                      : formatHitRatePercent(drawerSummary.hitRate)}
+                  </dd>
+                </div>
+              </dl>
+
+              {drawerArchivedSingleDay ? (
+                <Notice
+                  tone="neutral"
+                  title={t("usage.heatmap.archivedTitle")}
+                  className="mt-2.5"
+                >
+                  {t("usage.heatmap.archivedBody", {
+                    days: HEATMAP_RAW_RETENTION_DAYS,
+                  })}
+                </Notice>
+              ) : (
+                <UsageTrendChart
+                  embedded
+                  range={drawerSelection}
+                  metric={metric}
+                  appType={appType}
+                  providerName={providerName}
+                  model={model}
+                  refreshIntervalMs={refreshIntervalMs}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </section>
   );
