@@ -1217,4 +1217,114 @@ describe("buildLaunchSections", () => {
     );
     expect(section.items[1].presentation.chips).toEqual([]);
   });
+
+  it("shows inUse or switch on bound Antigravity official cards and blocks switching when running or invalid", () => {
+    const boundA = provider("bound-a", { category: "official" });
+    const boundB = provider("bound-b", { category: "official" });
+    const boundMissing = provider("bound-missing", { category: "official" });
+    const boundExpired = provider("bound-expired", { category: "official" });
+    const openTerminal = vi.fn();
+    const onSwitch = vi.fn();
+
+    const [sections] = buildLaunchSections({
+      app: "agy",
+      t,
+      providers: [boundA, boundB, boundMissing, boundExpired, official, relay],
+      openTerminal,
+      accounts: {
+        currentProviderIds: new Set(["bound-a"]),
+        switchableProviderIds: new Set([
+          "bound-a",
+          "bound-b",
+          "bound-missing",
+          "bound-expired",
+        ]),
+        missingProviderIds: new Set(["bound-missing"]),
+        requiresReauth: new Set(["bound-expired"]),
+        switching: false,
+        onSwitch,
+      },
+    });
+
+    expect(item(sections ? [sections] : [], "bound-a")).toMatchObject({
+      tone: "direct",
+      status: { label: "providerCard.status.inUse", dot: "direct" },
+      buttons: [],
+    });
+
+    const switchBtn = button([sections], "bound-b", "switch");
+    expect(switchBtn.disabledReason).toBeUndefined();
+    switchBtn.onClick();
+    expect(onSwitch).toHaveBeenCalledWith(boundB);
+
+    expect(item([sections], "bound-missing").chips.map((c) => c.key)).toContain(
+      "accountMissing",
+    );
+    expect(button([sections], "bound-missing", "switch").disabledReason).toBe(
+      "agy.official.accountMissing",
+    );
+    expect(button([sections], "bound-expired", "switch").disabledReason).toBe(
+      "authCenter.agy.reauthNote",
+    );
+
+    // Unbound official and third-party relay cards keep Open Terminal.
+    expect(button([sections], "official", "openTerminal")).toBeTruthy();
+    expect(button([sections], "relay", "openTerminal")).toBeTruthy();
+
+    // When Antigravity is running, switch button is disabled with runningReason.
+    const [runningSection] = buildLaunchSections({
+      app: "agy",
+      t,
+      providers: [boundA, boundB],
+      openTerminal,
+      accounts: {
+        currentProviderIds: new Set(["bound-a"]),
+        switchableProviderIds: new Set(["bound-a", "bound-b"]),
+        requiresReauth: new Set(),
+        runningReason: "agy.official.quitDesktopFirst",
+        switching: false,
+        onSwitch,
+      },
+    });
+    expect(button([runningSection], "bound-b", "switch").disabledReason).toBe(
+      "agy.official.quitDesktopFirst",
+    );
+
+    // Loading and error account states disable switching until resolved.
+    const [loadingSection] = buildLaunchSections({
+      app: "agy",
+      t,
+      providers: [boundB],
+      openTerminal,
+      accounts: {
+        status: "loading",
+        currentProviderIds: new Set(),
+        switchableProviderIds: new Set(["bound-b"]),
+        requiresReauth: new Set(),
+        switching: false,
+        onSwitch,
+      },
+    });
+    expect(button([loadingSection], "bound-b", "switch").disabledReason).toBe(
+      "common.loading",
+    );
+
+    const [errorSection] = buildLaunchSections({
+      app: "agy",
+      t,
+      providers: [boundB],
+      openTerminal,
+      accounts: {
+        status: "error",
+        currentProviderIds: new Set(),
+        switchableProviderIds: new Set(["bound-b"]),
+        requiresReauth: new Set(),
+        switching: false,
+        onSwitch,
+      },
+    });
+    expect(button([errorSection], "bound-b", "switch").disabledReason).toBe(
+      "authCenter.agy.statusLoadFailed",
+    );
+  });
 });

@@ -22,6 +22,7 @@ pub mod keychain;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -38,6 +39,44 @@ const STORE_FILENAME: &str = "agy_accounts.json";
 const STASH_FILENAME: &str = "agy-login-stash.json";
 /// 在 agy 里登录最多等这么久，过了就当放弃。
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// Antigravity 桌面端或 `agy` CLI 是否正在运行。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgyRunningState {
+    pub cli: bool,
+    pub desktop: bool,
+}
+
+impl AgyRunningState {
+    pub fn any(self) -> bool {
+        self.cli || self.desktop
+    }
+}
+
+pub type RunningCheck = Arc<dyn Fn() -> AgyRunningState + Send + Sync>;
+
+/// 正在进行的登录/切号互斥操作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgyAuthOp {
+    Switching,
+    LoginPending,
+}
+
+struct SwitchGuard(Arc<AtomicBool>);
+
+impl SwitchGuard {
+    fn enter(flag: &Arc<AtomicBool>) -> Self {
+        flag.store(true, Ordering::SeqCst);
+        Self(Arc::clone(flag))
+    }
+}
+
+impl Drop for SwitchGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 
 /// 最近一次读到的账号表和 agy 当前登录，见 [`last_known_status`]。
 static LAST_KNOWN: std::sync::Mutex<Option<AgyAccountStatus>> = std::sync::Mutex::new(None);
@@ -100,6 +139,10 @@ struct StoreFile {
     /// 切走时也能按原 `sub` 收回。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     dismissed_emails: BTreeMap<String, String>,
+    /// 写钥匙串前落盘；只有核验、回退文件同步和桌面缓存清理都完成后才清除。
+    /// 失败后即使钥匙串已是目标账号，重试（含重启后）也不能直接当成成功。
+    #[serde(default)]
+    switch_incomplete: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -147,14 +190,16 @@ pub struct AgyAccountStatus {
     pub supported: bool,
 }
 
+#[derive(Debug)]
 pub struct LoginStart {
     pub flow_id: String,
     pub expires_in: u64,
 }
 
-/// 一次「添加账号」：记着开始时钥匙串里那份登录，变了就是用户在 agy 里登录了新的。
+/// 一次「添加账号」：记着开始时钥匙串里那份登录，变了（或观察到登出后重新登录）就是用户在 agy 里登录了新的。
 struct PendingLogin {
     baseline: Option<String>,
+    saw_logged_out: bool,
     deadline: Instant,
 }
 
@@ -183,35 +228,100 @@ impl LiveLogin {
 pub struct AgyAccountManager {
     data_dir: PathBuf,
     login: Arc<dyn AgyLoginStore>,
+    running: RunningCheck,
+    desktop_user_data_dir: Option<PathBuf>,
     /// 账号表；同时充当所有改动（含写钥匙串）的互斥锁
     store: Mutex<StoreFile>,
     pending: Mutex<HashMap<String, PendingLogin>>,
+    switching: Arc<AtomicBool>,
 }
 
 impl AgyAccountManager {
     pub fn new(data_dir: PathBuf) -> Self {
-        Self::with_login_store(data_dir, Arc::new(keychain::SystemKeychain::agy()))
+        let standalone_token = crate::config::get_home_dir()
+            .join(".gemini")
+            .join(keychain::STANDALONE_TOKEN_FILENAME);
+        Self::with_parts(
+            data_dir,
+            Arc::new(keychain::AgyLogin::new(standalone_token)),
+            Arc::new(agy_running_state),
+            keychain::default_desktop_user_data_dir(),
+        )
     }
 
     pub fn with_login_store(data_dir: PathBuf, login: Arc<dyn AgyLoginStore>) -> Self {
+        Self::with_parts(data_dir, login, Arc::new(AgyRunningState::default), None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_env(
+        data_dir: PathBuf,
+        login: Arc<dyn AgyLoginStore>,
+        running: RunningCheck,
+        desktop_user_data_dir: Option<PathBuf>,
+    ) -> Self {
+        Self::with_parts(data_dir, login, running, desktop_user_data_dir)
+    }
+
+    fn with_parts(
+        data_dir: PathBuf,
+        login: Arc<dyn AgyLoginStore>,
+        running: RunningCheck,
+        desktop_user_data_dir: Option<PathBuf>,
+    ) -> Self {
         let path = data_dir.join(STORE_FILENAME);
         let store = crate::config::load_json_or_set_aside(&path, "AgyAccount");
         remember(&store, None);
         Self {
             data_dir,
             login,
+            running,
+            desktop_user_data_dir,
             store: Mutex::new(store),
             pending: Mutex::new(HashMap::new()),
+            switching: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn is_switching(&self) -> bool {
+        self.switching.load(Ordering::SeqCst)
+    }
+
+    pub async fn has_pending_login(&self) -> bool {
+        let now = Instant::now();
+        let mut pending = self.pending.lock().await;
+        pending.retain(|_, entry| now < entry.deadline);
+        !pending.is_empty()
+    }
+
+    pub async fn active_auth_operation(&self) -> Option<AgyAuthOp> {
+        if self.is_switching() {
+            Some(AgyAuthOp::Switching)
+        } else if self.has_pending_login().await {
+            Some(AgyAuthOp::LoginPending)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_switching_for_test(&self, active: bool) {
+        self.switching.store(active, Ordering::SeqCst);
     }
 
     // ---------- 在 agy 里登录 ----------
 
-    /// 开始「添加账号」：先把 agy 现在登着的号收进来（用户接着在 agy 里 `/logout`，
-    /// 原来的登录就只剩 CC Switch 这份），再记下钥匙串现在的样子。终端由调用方打开。
+    /// 开始「添加账号」：先检查 Antigravity 桌面端与 CLI 是否已退出，再把 agy 现在登着的号收进来
+    /// （用户接着在 agy 里 `/logout`，原来的登录就只剩 CC Switch 这份），再记下钥匙串现在的样子。
+    /// 终端由调用方打开。
     pub async fn start_login(&self) -> Result<LoginStart, AppError> {
         if !keychain::supported() {
             return Err(keychain::unsupported_error());
+        }
+        let check = Arc::clone(&self.running);
+        let running = run_blocking(move || Ok(check())).await?;
+        if running.any() {
+            return Err(running_login_error(running));
         }
         let baseline = {
             let mut store = self.store.lock().await;
@@ -235,6 +345,7 @@ impl AgyAccountManager {
             flow_id.clone(),
             PendingLogin {
                 baseline,
+                saw_logged_out: false,
                 deadline: Instant::now() + LOGIN_TIMEOUT,
             },
         );
@@ -244,9 +355,10 @@ impl AgyAccountManager {
         })
     }
 
-    /// 钥匙串里还是开始时那份（或没登录）时返回 `Ok(None)`；换成认得出的登录就收录并返回它。
+    /// 钥匙串里还是开始时那份（或没登录）时返回 `Ok(None)`；换成认得出的登录（或观察到登出后
+    /// 重新登录同一账号）就收录、同步回退文件与 Desktop scope 并返回它。
     pub async fn poll_login(&self, flow_id: &str) -> Result<Option<AgyAccount>, AppError> {
-        let baseline = {
+        let (baseline, saw_logged_out) = {
             let mut pending = self.pending.lock().await;
             let Some(entry) = pending.get(flow_id) else {
                 return Err(login_ended());
@@ -255,9 +367,9 @@ impl AgyAccountManager {
                 pending.remove(flow_id);
                 return Err(login_ended());
             }
-            entry.baseline.clone()
+            (entry.baseline.clone(), entry.saw_logged_out)
         };
-        let account = {
+        let result = {
             let mut store = self.store.lock().await;
             let live = match self.read_live(&store, false).await {
                 Ok(live) => live,
@@ -266,21 +378,39 @@ impl AgyAccountManager {
                     return Ok(None);
                 }
             };
-            if !matches!(live, LiveLogin::Known { .. }) || live.fingerprint() == baseline {
+            if matches!(live, LiveLogin::None) {
+                drop(store);
+                let mut pending = self.pending.lock().await;
+                if let Some(entry) = pending.get_mut(flow_id) {
+                    entry.saw_logged_out = true;
+                }
                 return Ok(None);
             }
-            let (id, changed) = absorb(&mut store, live, true);
+            if !matches!(live, LiveLogin::Known { .. })
+                || (!saw_logged_out && live.fingerprint() == baseline)
+            {
+                return Ok(None);
+            }
+            let (id, _) = absorb(&mut store, live, true);
             let Some(id) = id else {
                 return Ok(None);
             };
-            if changed {
-                self.persist(&store)?;
-            }
-            remember(&store, Some(Some(id.clone())));
-            store.accounts.get(&id).map(AgyAccount::from)
+            let data = store
+                .accounts
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| account_not_found(&id))?;
+            // 登录确认也会更新 Desktop 的凭据与缓存；失败后允许切换当前号补齐。
+            store.switch_incomplete = true;
+            self.persist(&store)?;
+            let login = Arc::clone(&self.login);
+            let credential = data.credential.clone();
+            run_blocking(move || login.sync_fallback(&credential)).await?;
+            self.finish_switch(&mut store, &id)?;
+            Some(AgyAccount::from(&data))
         };
         self.pending.lock().await.remove(flow_id);
-        Ok(account)
+        Ok(result)
     }
 
     pub async fn cancel_login(&self, flow_id: &str) -> bool {
@@ -313,11 +443,12 @@ impl AgyAccountManager {
         })
     }
 
-    /// 把 agy 的全局登录换成这个账号。已经是它时什么都不写。
+    /// 把 agy 的全局登录换成这个账号。已经是它且没有未完成的切换时什么都不写。
     pub async fn switch_to(&self, account_id: &str) -> Result<(), AppError> {
         if !keychain::supported() {
             return Err(keychain::unsupported_error());
         }
+        let _switch_guard = SwitchGuard::enter(&self.switching);
         let mut store = self.store.lock().await;
         let target = store
             .accounts
@@ -340,24 +471,43 @@ impl AgyAccountManager {
         if changed {
             self.persist(&store)?;
         }
-        if current.as_deref() == Some(account_id) {
+        let already_current = current.as_deref() == Some(account_id);
+        if already_current && !store.switch_incomplete {
             remember(&store, Some(current));
             return Ok(());
         }
 
+        let check = Arc::clone(&self.running);
+        let running = run_blocking(move || Ok(check())).await?;
+        if running.any() {
+            return Err(running_switch_error(running));
+        }
+
+        if already_current {
+            // read_live/absorb 已拿到当前凭据，重试时不能拿切换前的副本覆盖它。
+            let credential = store.accounts[account_id].credential.clone();
+            let login = Arc::clone(&self.login);
+            run_blocking(move || login.sync_fallback(&credential)).await?;
+            return self.finish_switch(&mut store, account_id);
+        }
+
+        store.switch_incomplete = true;
+        self.persist(&store)?;
         let credential = target.credential;
         let expected = refresh_token_of(&credential).map(str::to_string);
-        let encoded = keychain::encode(&credential)?;
         let login = Arc::clone(&self.login);
-        run_blocking(move || login.write(&encoded)).await?;
+        let credential_for_write = credential.clone();
+        run_blocking(move || login.write_credential(&credential_for_write)).await?;
 
         // 核验失败时只重读，避免再次覆盖 agy 可能已经更新过的登录。
         for _ in 0..2 {
             if let Ok(LiveLogin::Known { credential, .. }) = self.read_live(&store, false).await {
                 let written = refresh_token_of(&credential);
                 if written.is_some() && written == expected.as_deref() {
-                    log::info!("[AgyAccount] 已切换 agy 登录");
-                    remember(&store, Some(Some(account_id.to_string())));
+                    let login = Arc::clone(&self.login);
+                    run_blocking(move || login.sync_fallback(&credential)).await?;
+                    self.finish_switch(&mut store, account_id)?;
+                    log::info!("[AgyAccount] 已切换 Antigravity 登录");
                     return Ok(());
                 }
             }
@@ -499,12 +649,75 @@ impl AgyAccountManager {
             accounts: store.accounts.clone(),
             dismissed: store.dismissed.clone(),
             dismissed_emails: store.dismissed_emails.clone(),
+            switch_incomplete: store.switch_incomplete,
         };
         let content = serde_json::to_vec_pretty(&snapshot)
             .map_err(|source| AppError::JsonSerialize { source })?;
         crate::config::atomic_write_private(&self.data_dir.join(STORE_FILENAME), &content)?;
         remember(store, None);
         Ok(())
+    }
+
+    fn finish_switch(&self, store: &mut StoreFile, account_id: &str) -> Result<(), AppError> {
+        self.clear_desktop_credential_scope()?;
+        store.switch_incomplete = false;
+        if let Err(error) = self.persist(store) {
+            store.switch_incomplete = true;
+            return Err(error);
+        }
+        remember(store, Some(Some(account_id.to_string())));
+        Ok(())
+    }
+
+    fn clear_desktop_credential_scope(&self) -> Result<(), AppError> {
+        if let Some(dir) = &self.desktop_user_data_dir {
+            keychain::clear_desktop_user_scope_in(dir)?;
+        }
+        Ok(())
+    }
+}
+
+fn running_switch_error(running: AgyRunningState) -> AppError {
+    if running.desktop && running.cli {
+        AppError::localized(
+            "agy.account.running_both",
+            "请先完全退出 Antigravity 桌面端和 agy CLI 再切换账号，否则运行中的进程不会刷新且可能把旧登录写回去。",
+            "Quit Antigravity Desktop and agy CLI completely before switching accounts, or running sessions will keep the previous sign-in and may write it back.",
+        )
+    } else if running.desktop {
+        AppError::localized(
+            "agy.account.running_desktop",
+            "请先完全退出 Antigravity 桌面端（含托盘/后台进程）再切换账号，否则它不会刷新且可能把旧登录写回去。",
+            "Quit Antigravity Desktop completely (including tray/background processes) before switching accounts, or it will not refresh and may write its current sign-in back.",
+        )
+    } else {
+        AppError::localized(
+            "agy.account.running_cli",
+            "请先退出正在运行的 agy CLI 再切换账号，否则运行中的会话仍会使用旧账号并可能把它写回去。",
+            "Quit running agy CLI sessions before switching accounts, or they will keep using the previous sign-in and may write it back.",
+        )
+    }
+}
+
+fn running_login_error(running: AgyRunningState) -> AppError {
+    if running.desktop && running.cli {
+        AppError::localized(
+            "agy.account.login_running_both",
+            "请先完全退出 Antigravity 桌面端和 agy CLI 再添加或重新登录账号，否则运行中的进程可能把旧登录写回去。",
+            "Quit Antigravity Desktop and agy CLI completely before adding or re-signing in, or running sessions may write the previous sign-in back.",
+        )
+    } else if running.desktop {
+        AppError::localized(
+            "agy.account.login_running_desktop",
+            "请先完全退出 Antigravity 桌面端（含托盘/后台进程）再添加或重新登录账号，否则它可能把旧登录写回去。",
+            "Quit Antigravity Desktop completely (including tray/background processes) before adding or re-signing in, or it may write its current sign-in back.",
+        )
+    } else {
+        AppError::localized(
+            "agy.account.login_running_cli",
+            "请先退出正在运行的 agy CLI 再添加或重新登录账号，否则运行中的会话可能把旧登录写回去。",
+            "Quit running agy CLI sessions before adding or re-signing in, or they may write the previous sign-in back.",
+        )
     }
 }
 
@@ -610,7 +823,7 @@ fn refresh_token_of(credential: &Value) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
-/// agy 1.5 起写进钥匙串的邮箱（替代了 id_token）。
+/// agy 1.5 起写进钥匙串的邮箱（替代了 id_token）；没有 `id_token_email` 时兜底从 `id_token` 解出 `email`。
 fn live_email(credential: &Value) -> Option<String> {
     credential
         .get("id_token_email")
@@ -618,6 +831,14 @@ fn live_email(credential: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|email| !email.is_empty())
         .map(str::to_string)
+        .or_else(|| {
+            credential["id_token"]
+                .as_str()
+                .and_then(identity::identity)
+                .and_then(|claims| claims.email)
+                .map(|email| email.trim().to_string())
+                .filter(|email| !email.is_empty())
+        })
 }
 
 /// 这份登录对应哪个已收录（或已删但仍在钥匙串里）的号：同一个 refresh token 优先，
@@ -659,11 +880,18 @@ fn match_stored(store: &StoreFile, credential: &Value) -> Option<identity::Ident
     })
 }
 
-/// 钥匙串里这份登录是谁：先对已收录（或已删）的号——同一个 refresh token、再同一个邮箱，
-/// 账号 id 沿用已有的；对不上时看 id_token 的 `sub`（agy 1.5 以前）；再没有就用
-/// `id_token_email` 当 id（agy 1.5 起只存邮箱）。都没有的认不出。
+/// 钥匙串里这份登录是谁：新凭据自带 `id_token.sub` 且仓库已有（或已删）对应 `sub` 键时优先精确匹配，
+/// 消除 `sub` 与 `email:` 混用产生的重复账号；否则再按已收录（或已删）的 refresh token / 邮箱对回，
+/// 再没有就用 `id_token` 或 `id_token_email` 当 id。都没有的认不出。
 fn identify(store: &StoreFile, credential: &Value) -> Option<identity::IdentityClaims> {
     let token_claims = credential["id_token"].as_str().and_then(identity::identity);
+    if let Some(claims) = token_claims.as_ref() {
+        if let Some(sub) = claims.sub.as_deref() {
+            if store.accounts.contains_key(sub) || store.dismissed.iter().any(|id| id == sub) {
+                return Some(claims.clone());
+            }
+        }
+    }
     match (match_stored(store, credential), token_claims) {
         (Some(stored), Some(mut claims)) => {
             claims.sub = stored.sub;
@@ -701,27 +929,220 @@ fn account_not_found(account_id: &str) -> AppError {
     AppError::Message(format!("找不到这个 Antigravity 账号: {account_id}"))
 }
 
-/// agy 有没有在跑。在跑的 agy 会继续用切换前的账号，续期时还可能把旧登录写回钥匙串。
-pub fn agy_running() -> bool {
-    #[cfg(unix)]
+/// Antigravity 桌面端或 `agy` CLI 有没有在跑。在跑的进程会继续用切换前的账号，续期时还可能把旧登录写回钥匙串。
+pub fn agy_running_state() -> AgyRunningState {
+    #[cfg(target_os = "macos")]
     {
         let Ok(output) = std::process::Command::new("ps")
             .args(["-axo", "comm="])
             .stdin(std::process::Stdio::null())
             .output()
         else {
-            return false;
+            return AgyRunningState::default();
         };
-        String::from_utf8_lossy(&output.stdout).lines().any(|line| {
-            std::path::Path::new(line.trim())
-                .file_name()
-                .is_some_and(|name| name == "agy")
-        })
+        let text = String::from_utf8_lossy(&output.stdout);
+        classify_unix_process_lines(text.lines())
     }
-    #[cfg(not(unix))]
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
-        false
+        // Linux 的 `ps -axo comm=` 会把进程名截断到 15 字节（`language_server_linux_x64` 会变成 `language_server`），
+        // 改用 `args=` 保留完整可执行路径。
+        let Ok(output) = std::process::Command::new("ps")
+            .args(["-axo", "args="])
+            .stdin(std::process::Stdio::null())
+            .output()
+        else {
+            return AgyRunningState::default();
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        classify_unix_process_lines(text.lines().map(unix_executable_token))
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let Ok(output) = std::process::Command::new("tasklist")
+            .args(["/FO", "CSV", "/NH"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .output()
+        else {
+            return AgyRunningState::default();
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        classify_windows_processes(
+            parse_windows_tasklist_entries(&text),
+            windows_process_image_path,
+        )
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        AgyRunningState::default()
+    }
+}
+
+pub fn agy_running() -> bool {
+    agy_running_state().any()
+}
+
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
+fn is_antigravity_ide_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("antigravity-ide") || lower.contains("antigravity ide")
+}
+
+#[cfg_attr(not(any(unix, windows)), allow(dead_code))]
+fn is_antigravity_desktop_language_server_path(path: &str) -> bool {
+    if is_antigravity_ide_path(path) {
+        return false;
+    }
+    path.to_ascii_lowercase()
+        .split(['\\', '/'])
+        .any(|segment| segment == "antigravity" || segment == "antigravity.app")
+}
+
+#[cfg(any(test, all(unix, not(target_os = "macos"))))]
+fn unix_executable_token(line: &str) -> &str {
+    let trimmed = line.trim();
+    if let Some(app_idx) = trimmed.find(".app/") {
+        let after_app = &trimmed[app_idx + 5..];
+        let end_rel = after_app.find(" --").or_else(|| after_app.find(" -"));
+        return match end_rel {
+            Some(rel) => trimmed[..app_idx + 5 + rel].trim_end(),
+            None => trimmed,
+        };
+    }
+    trimmed.split_whitespace().next().unwrap_or(trimmed)
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+// 只接收可执行文件路径。macOS 的 ps comm= 已是完整路径，不能再按空格拆分。
+fn classify_unix_process_lines<'a>(lines: impl Iterator<Item = &'a str>) -> AgyRunningState {
+    let mut state = AgyRunningState::default();
+    for raw in lines {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let exe = trimmed;
+        let path = std::path::Path::new(exe);
+        let file_name = path.file_name().and_then(|name| name.to_str());
+        if file_name == Some("agy") {
+            state.cli = true;
+            continue;
+        }
+        if is_antigravity_ide_path(exe) {
+            continue;
+        }
+        let in_desktop_bundle = path
+            .components()
+            .any(|part| part.as_os_str() == "Antigravity.app");
+        let is_antigravity_bin =
+            file_name.is_some_and(|name| name.eq_ignore_ascii_case("antigravity"));
+        let is_antigravity_ls = file_name
+            .is_some_and(|name| name == "language_server" || name.starts_with("language_server_"))
+            && is_antigravity_desktop_language_server_path(exe);
+        if in_desktop_bundle || is_antigravity_bin || is_antigravity_ls {
+            state.desktop = true;
+        }
+    }
+    state
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowsProcessKind {
+    Cli,
+    Desktop,
+    LanguageServer,
+    Other,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn classify_windows_image_name(image: &str) -> WindowsProcessKind {
+    if image.eq_ignore_ascii_case("agy.exe") {
+        WindowsProcessKind::Cli
+    } else if image.eq_ignore_ascii_case("Antigravity.exe") {
+        WindowsProcessKind::Desktop
+    } else {
+        let lower = image.to_ascii_lowercase();
+        if lower == "language_server.exe"
+            || (lower.starts_with("language_server_windows") && lower.ends_with(".exe"))
+        {
+            WindowsProcessKind::LanguageServer
+        } else {
+            WindowsProcessKind::Other
+        }
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn classify_windows_processes(
+    entries: impl IntoIterator<Item = (String, u32)>,
+    mut image_path: impl FnMut(u32) -> Option<String>,
+) -> AgyRunningState {
+    let mut state = AgyRunningState::default();
+    let mut language_server_pids = Vec::new();
+    for (image, pid) in entries {
+        match classify_windows_image_name(&image) {
+            WindowsProcessKind::Cli => state.cli = true,
+            WindowsProcessKind::Desktop => {
+                // IDE 与 Desktop 都可能叫 Antigravity.exe，必须按实际路径区分。
+                // 无法读取路径时仍保留运行态保护，不能贸然覆盖登录。
+                state.desktop |= image_path(pid).is_none_or(|path| !is_antigravity_ide_path(&path));
+            }
+            WindowsProcessKind::LanguageServer => language_server_pids.push(pid),
+            WindowsProcessKind::Other => {}
+        }
+    }
+    if !state.desktop {
+        state.desktop = language_server_pids
+            .into_iter()
+            .filter_map(&mut image_path)
+            .any(|path| is_antigravity_desktop_language_server_path(&path));
+    }
+    state
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_windows_tasklist_entries(output: &str) -> Vec<(String, u32)> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut cols = line.split("\",\"").map(|col| col.trim_matches('"').trim());
+            let image = cols.next()?;
+            let pid = cols.next()?.parse::<u32>().ok()?;
+            if image.is_empty() {
+                None
+            } else {
+                Some((image.to_string(), pid))
+            }
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn windows_process_image_path(pid: u32) -> Option<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+
+    // SAFETY: OpenProcess opens a handle with limited query rights; we always close it before returning.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+    let mut buf = vec![0u16; 1024];
+    let mut len = buf.len() as u32;
+    // SAFETY: buf is valid for len u16 elements and len receives the written character count.
+    let ok = unsafe { QueryFullProcessImageNameW(handle, 0, buf.as_mut_ptr(), &mut len) };
+    // SAFETY: handle is non-null and no longer needed.
+    unsafe { CloseHandle(handle) };
+    if ok == 0 || len == 0 {
+        return None;
+    }
+    Some(String::from_utf16_lossy(&buf[..len as usize]))
 }
 
 #[cfg(test)]

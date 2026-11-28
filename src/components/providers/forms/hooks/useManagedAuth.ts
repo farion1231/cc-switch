@@ -25,6 +25,11 @@ type LoginRequest = {
   loginMethod?: ManagedLoginMethod;
 };
 
+export interface CompletedManagedLogin {
+  account: ManagedAuthAccount;
+  created: boolean;
+}
+
 export interface ManagedAuthOptions {
   /** 登录完成、账号已收录（状态已刷新）后回调，参数是这次登上的账号 */
   onLoginComplete?: (account: ManagedAuthAccount) => void;
@@ -44,6 +49,8 @@ export function useManagedAuth(
   const [deviceCode, setDeviceCode] =
     useState<ManagedAuthDeviceCodeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastCompletedLogin, setLastCompletedLogin] =
+    useState<CompletedManagedLogin | null>(null);
 
   const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
     null,
@@ -72,13 +79,17 @@ export function useManagedAuth(
     // WorkBuddy auto-absorbs the desktop app's current sign-in on every status
     // read, so poll while the Auth Center is open to surface a freshly logged-in
     // account (and refresh its snapshot) without a manual "import" click.
-    // CodeBuddy 的当前账号可能在 CLI 里被换掉（/login、/logout），同样定期刷新。
+    // CodeBuddy 与 Antigravity 的当前账号可能在终端/外部被换掉，定期本地刷新状态（不发网络请求）。
     refetchInterval:
-      authProvider === "xai_oauth" || authProvider === "codebuddy_oauth"
-        ? 15_000
-        : authProvider === "workbuddy_account"
-          ? 5_000
-          : false,
+      pollingState === "polling"
+        ? false
+        : authProvider === "xai_oauth" ||
+            authProvider === "codebuddy_oauth" ||
+            authProvider === "agy_oauth"
+          ? 15_000
+          : authProvider === "workbuddy_account"
+            ? 5_000
+            : false,
   });
 
   const stopPolling = useCallback(() => {
@@ -225,9 +236,20 @@ export function useManagedAuth(
             activeDeviceCodeRef.current = null;
             flowGenerationRef.current += 1;
             const completionGeneration = flowGenerationRef.current;
+            const previousIds = new Set(
+              (
+                queryClient.getQueryData<ManagedAuthStatus>(queryKey)
+                  ?.accounts ?? []
+              ).map((item) => item.id),
+            );
+            const created = !previousIds.has(newAccount.id);
+            setLastCompletedLogin({ account: newAccount, created });
             setPollingState("success");
             await refetchStatus();
             await queryClient.invalidateQueries({ queryKey });
+            if (authProvider === "agy_oauth") {
+              await invalidateAgyLoginCaches(queryClient);
+            }
             if (completionGeneration !== flowGenerationRef.current) return;
             onLoginCompleteRef.current?.(newAccount);
             setPollingState("idle");
@@ -288,6 +310,7 @@ export function useManagedAuth(
       setPollingState("idle");
       setDeviceCode(null);
       setError(null);
+      setLastCompletedLogin(null);
       queryClient.setQueryData(queryKey, {
         provider: authProvider,
         authenticated: false,
@@ -358,23 +381,12 @@ export function useManagedAuth(
     mutationFn: (accountId: string) =>
       authApi.authSetDefaultAccount(authProvider, accountId),
     onSuccess: async () => {
-      // Antigravity 的「默认」就是 agy 的全局登录：切完提醒已经开着的 agy 还用原来的号
       if (authProvider === "agy_oauth") {
-        const running = await authApi.agyAccountIsRunning().catch(() => false);
-        if (running) {
-          toast.warning(
-            t("authCenter.agy.switchedWhileRunning", {
-              defaultValue:
-                "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。",
-            }),
-          );
-        } else {
-          toast.success(
-            t("authCenter.agy.switched", {
-              defaultValue: "已切换，新开的 agy 会使用这个账号。",
-            }),
-          );
-        }
+        toast.success(
+          t("authCenter.agy.switched", {
+            defaultValue: "已切换，重新打开 Antigravity 即可使用这个账号。",
+          }),
+        );
         return;
       }
       await refetchStatus();
@@ -404,6 +416,7 @@ export function useManagedAuth(
       setPollingState("idle");
       setDeviceCode(null);
       setError(null);
+      setLastCompletedLogin(null);
       stopPolling();
       void queueBackendCancellation(previousDeviceCode).then(() => {
         if (generation !== flowGenerationRef.current) return;
@@ -452,6 +465,7 @@ export function useManagedAuth(
     setPollingState("idle");
     setDeviceCode(null);
     setError(null);
+    setLastCompletedLogin(null);
     return queueBackendCancellation(previousDeviceCode);
   }, [queueBackendCancellation, stopPolling]);
 
@@ -494,6 +508,7 @@ export function useManagedAuth(
     pollingState,
     deviceCode,
     error,
+    lastCompletedLogin,
     isPolling: pollingState === "polling",
     isAddingAccount: startLoginMutation.isPending || pollingState === "polling",
     isRemovingAccount: removeAccountMutation.isPending,

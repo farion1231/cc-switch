@@ -163,6 +163,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
     pollingState,
     deviceCode,
     error,
+    lastCompletedLogin,
     isPolling,
     isAddingAccount,
     isRemovingAccount,
@@ -297,6 +298,7 @@ export const ClaudeOfficialSection: React.FC<ClaudeOfficialSectionProps> = ({
         pollingState,
         deviceCode,
         error,
+        completedLogin: lastCompletedLogin,
         onCancel: cancelAuth,
         onRetry: addAccount,
         extra: deviceCode ? (

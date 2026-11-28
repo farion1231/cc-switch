@@ -16,6 +16,7 @@ export type { ProviderSwitchEvent } from "./providers";
 export type { Prompt } from "./prompts";
 export type { GitHubAccount } from "./copilot";
 export type {
+  AgyRunningState,
   AuthCenterTarget,
   ManagedAuthProvider,
   ManagedAuthAccount,

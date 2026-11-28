@@ -3892,7 +3892,7 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
                         .map(|_| ())
                     }
                     TrayUsageSource::Subscription => {
-                        crate::commands::get_subscription_quota(app_clone, state, app_str)
+                        crate::commands::get_subscription_quota(app_clone, state, app_str, None)
                             .await
                             .map(|_| ())
                     }
@@ -3922,15 +3922,11 @@ pub(crate) async fn refresh_all_usage_in_tray(app: &tauri::AppHandle) {
     futures::join!(join_all(usage_futures), agy);
 }
 
-/// 托盘替 agy 当前登录的号查额度时，这么久内查过就不再起 agy（`/usage` 要启动 agy，七八秒）。
-const AGY_TRAY_QUOTA_REUSE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
-
-/// 托盘的 Antigravity 账号区：先读一次钥匙串（agy 现在登着哪个号、有没有收进新号），
-/// 再取每个号的额度：在用的号问 agy 的 `/usage`，别的号用切走前最后一次查到的（不发请求）。
-/// 没收录过账号时什么都不做，不碰钥匙串。
+/// 托盘的 Antigravity 账号区：先读一次本地钥匙串（agy 现在登着哪个号、有没有收进新号），
+/// 再从本地 `last_quota` 缓存同步各账号额度到托盘缓存。
+/// 托盘悬停 / 打开面板绝不自动拉起 `agy --print /usage`（也遵守 `official_quota_manual_only`）；
+/// 仅在用户手动点刷新时查询 `/usage`。没收录过账号时什么都不做，不碰钥匙串。
 async fn refresh_agy_accounts(app: &tauri::AppHandle) {
-    use futures::future::join_all;
-
     if !crate::services::agy_account::keychain::supported()
         || crate::services::agy_account::last_known_status()
             .is_none_or(|status| status.accounts.is_empty())
@@ -3954,21 +3950,25 @@ async fn refresh_agy_accounts(app: &tauri::AppHandle) {
     let Some(app_state) = app.try_state::<AppState>() else {
         return;
     };
-    let queries = status.accounts.into_iter().map(|account| {
-        let manager = std::sync::Arc::clone(&manager);
-        let app_state = app_state.inner();
-        async move {
-            match crate::commands::agy_quota(&manager, Some(&account.id), AGY_TRAY_QUOTA_REUSE)
-                .await
-            {
-                Ok(quota) => {
-                    crate::commands::remember_account_quota(app, app_state, account.id, &quota)
-                }
-                Err(e) => log::debug!("[Tray] 刷新 Antigravity 账号 {} 额度失败: {e}", account.id),
-            }
+    if sync_agy_accounts_cached_quota(&manager, &app_state.usage_cache, &status.accounts).await {
+        schedule_tray_refresh(app);
+    }
+}
+
+/// 仅从本地 `last_quota` 同步 Antigravity 账号额度到托盘缓存（不触发 `/usage` 子进程）。
+async fn sync_agy_accounts_cached_quota(
+    manager: &crate::services::agy_account::AgyAccountManager,
+    usage_cache: &UsageCache,
+    accounts: &[crate::services::agy_account::AgyAccount],
+) -> bool {
+    let mut updated = false;
+    for account in accounts {
+        if let Some(quota) = manager.last_quota(&account.id).await {
+            usage_cache.put_agy_account(account.id.clone(), quota);
+            updated = true;
         }
-    });
-    join_all(queries).await;
+    }
+    updated
 }
 
 /// 这一路额度查询打的是不是官方账号的接口。托管 Codex、Claude 账号、客户端订阅都是；

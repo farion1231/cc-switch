@@ -23,7 +23,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ManagedAccountUsage } from "@/components/providers/forms/ManagedAccountRemoveDialog";
 import type { ManagedAccountUser } from "@/lib/managedAccountUsage";
-import type { ManagedAuthDeviceCodeResponse } from "@/lib/api";
+import type {
+  ManagedAuthAccount,
+  ManagedAuthDeviceCodeResponse,
+} from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
 import { settingsApi } from "@/lib/api";
 import { readAuthOpenBrowser } from "@/lib/authLoginLink";
@@ -70,6 +73,11 @@ export interface GroupLoginFlow {
   onReopen?: () => void;
   /** 等待块里浏览器说明下面的附加内容（Claude 官方账号：浏览器回不到本机时粘贴代码） */
   extra?: React.ReactNode;
+  /** 最近一次完成的登录（用于校验重登是否登回目标账号） */
+  completedLogin?: {
+    account: Pick<ManagedAuthAccount, "id" | "login">;
+    created: boolean;
+  } | null;
 }
 
 interface ManagedAccountsGroupProps {
@@ -87,8 +95,10 @@ interface ManagedAccountsGroupProps {
   onRetryStatus: () => void;
   /** 标题行下面的提示（Copilot 旧数据迁移失败） */
   notice?: React.ReactNode;
-  /** 不能登录的原因（Claude 官方账号：配置目录在 WSL 里）：「添加账号」「重新登录」置灰，原因显示在标题行下面 */
+  /** 不能登录的原因（Claude 官方账号：配置目录在 WSL 里；Antigravity 运行中）：「添加账号」「重新登录」置灰，原因显示在标题行下面 */
   loginDisabledReason?: string;
+  /** 不能登录提示条的补充说明正文 */
+  loginDisabledBody?: React.ReactNode;
   emptyText: string;
   /** 标题行的「添加账号」，有没有账号都在（Copilot 先打开部署类型选择） */
   onAdd: () => void;
@@ -134,6 +144,7 @@ export function ManagedAccountsGroup({
   onRetryStatus,
   notice,
   loginDisabledReason,
+  loginDisabledBody,
   emptyText,
   onAdd,
   chooser,
@@ -153,13 +164,16 @@ export function ManagedAccountsGroup({
   const { t } = useTranslation();
   const pendingId = `auth-pending-${slug}`;
   // 正在重新登录哪个账号（等待块的标题、成功后的 toast 用）
-  const [reauthTarget, setReauthTarget] = useState<string | null>(null);
+  const [reauthTarget, setReauthTarget] = useState<{
+    id: string;
+    login: string;
+  } | null>(null);
   const busy = login.starting || login.polling;
   const blockedId = `auth-blocked-${slug}`;
   const loginBlocked = Boolean(loginDisabledReason);
 
   const targetAccount = reauthTarget
-    ? accounts.find((account) => account.id === reauthTarget)
+    ? accounts.find((account) => account.id === reauthTarget.id)
     : undefined;
 
   // 登录成功的 toast：pollingState 走到 success 时报一次
@@ -168,19 +182,54 @@ export function ManagedAccountsGroup({
     const prev = prevPolling.current;
     prevPolling.current = login.pollingState;
     if (prev === "success" || login.pollingState !== "success") return;
-    toast.success(
-      targetAccount
-        ? t("authCenter.toast.reauthed", {
+    const completed = login.completedLogin;
+    if (reauthTarget) {
+      if (!completed || completed.account.id === reauthTarget.id) {
+        toast.success(
+          t("authCenter.toast.reauthed", {
             defaultValue: "{{login}} 已重新登录。",
-            login: targetAccount.login,
-          })
-        : t("authCenter.toast.added", {
-            defaultValue: "已添加 {{service}} 账号。",
-            service: name,
+            login:
+              completed?.account.login ??
+              targetAccount?.login ??
+              reauthTarget.login,
           }),
-    );
+        );
+      } else {
+        const values = {
+          target: targetAccount?.login ?? reauthTarget.login,
+          login: completed.account.login,
+        };
+        toast.warning(
+          completed.created
+            ? t("authCenter.toast.reauthOtherAdded", {
+                defaultValue:
+                  "登录的不是 {{target}}，已把 {{login}} 作为新账号收录。",
+                ...values,
+              })
+            : t("authCenter.toast.reauthOtherUpdated", {
+                defaultValue:
+                  "登录的不是 {{target}}，{{login}} 已在列表里，副本已更新。",
+                ...values,
+              }),
+        );
+      }
+    } else {
+      toast.success(
+        t("authCenter.toast.added", {
+          defaultValue: "已添加 {{service}} 账号。",
+          service: name,
+        }),
+      );
+    }
     setReauthTarget(null);
-  }, [login.pollingState, name, t, targetAccount]);
+  }, [
+    login.completedLogin,
+    login.pollingState,
+    name,
+    reauthTarget,
+    t,
+    targetAccount,
+  ]);
 
   const add = () => {
     if (busy || loginBlocked) return;
@@ -190,14 +239,20 @@ export function ManagedAccountsGroup({
 
   const reauth = (accountId: string) => {
     if (busy || loginBlocked) return;
-    setReauthTarget(accountId);
+    const account = accounts.find((item) => item.id === accountId);
+    setReauthTarget({ id: accountId, login: account?.login ?? accountId });
     onReauth(accountId);
   };
 
-  const pendingTitle = targetAccount
+  const cancel = () => {
+    setReauthTarget(null);
+    login.onCancel();
+  };
+
+  const pendingTitle = reauthTarget
     ? t("authCenter.pending.reauth", {
         defaultValue: "重新登录 {{login}} · 等待授权中…",
-        login: targetAccount.login,
+        login: targetAccount?.login ?? reauthTarget.login,
       })
     : t("authCenter.pending.add", {
         defaultValue: "添加 {{service}} 账号 · 等待授权中…",
@@ -296,7 +351,9 @@ export function ManagedAccountsGroup({
       {notice && <div className="px-3 pb-3">{notice}</div>}
       {loginDisabledReason && (
         <div id={blockedId} className="px-3 pb-3">
-          <Notice tone="warning" title={loginDisabledReason} />
+          <Notice tone="warning" title={loginDisabledReason}>
+            {loginDisabledBody}
+          </Notice>
         </div>
       )}
 
@@ -376,7 +433,7 @@ export function ManagedAccountsGroup({
                 type="button"
                 variant="neutral"
                 size="compact"
-                onClick={login.onCancel}
+                onClick={cancel}
               >
                 {login.cancelLabel ??
                   t("common.cancel", { defaultValue: "取消" })}
@@ -535,7 +592,7 @@ export function ManagedAccountsGroup({
                     type="button"
                     variant="quiet"
                     size="compact"
-                    onClick={login.onCancel}
+                    onClick={cancel}
                   >
                     {t("common.close", { defaultValue: "关闭" })}
                   </Button>

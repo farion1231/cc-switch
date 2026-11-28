@@ -6,8 +6,11 @@ import type {
 } from "@/types/subscription";
 
 export const subscriptionApi = {
-  getQuota: (tool: string): Promise<SubscriptionQuota> =>
-    invoke("get_subscription_quota", { tool }),
+  getQuota: (tool: string, manual?: boolean): Promise<SubscriptionQuota> =>
+    invoke(
+      "get_subscription_quota",
+      manual === undefined ? { tool } : { tool, manual },
+    ),
   getCodexOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
     invoke("get_codex_oauth_quota", { accountId }),
   getXaiOauthQuota: (accountId: string | null): Promise<SubscriptionQuota> =>
@@ -18,8 +21,11 @@ export const subscriptionApi = {
   /** Claude Code 默认登录的套餐（没绑账号的官方卡显示） */
   getClaudeDefaultPlan: (): Promise<ClaudeAccountPlan | null> =>
     invoke("get_claude_default_plan"),
-  getAgyAccountQuota: (accountId: string): Promise<SubscriptionQuota> =>
-    invoke("agy_account_quota", { accountId }),
+  getAgyAccountQuota: (
+    accountId: string,
+    manual = false,
+  ): Promise<SubscriptionQuota> =>
+    invoke("agy_account_quota", { accountId, manual }),
   getCodingPlanQuota: (
     baseUrl: string,
     apiKey: string,

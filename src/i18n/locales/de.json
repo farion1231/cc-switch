@@ -207,7 +207,7 @@
       "agyBindingMissing": "Das mit dieser Karte verknüpfte Antigravity-Konto fehlt auf diesem Computer. Füge es unter „Konten“ hinzu oder verwende für diesen Start die aktuelle agy-Anmeldung.",
       "agyUseCurrentLogin": "Aktuelle agy-Anmeldung für diesen Start verwenden",
       "agySwitchBody": "Vor dem Öffnen wechselt die Anmeldung von agy zu {{account}}; danach gestartete agy-Sitzungen verwenden dieses Konto.",
-      "agySwitchRunning": "agy läuft: Geöffnete agy-Sitzungen behalten das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie sie nach Möglichkeit zuerst.",
+      "agySwitchRunning": "Antigravity Desktop oder agy CLI läuft: Beenden Sie beide vollständig, bevor Sie das Konto wechseln.",
       "isolationBodyCopilot": "copilot startet in diesem Terminal mit --model auf das erste Modell von „{{name}}“, nur für diese Sitzung. Endpunkt und Schlüssel stammen aus der providers.json von Copilot, daher können andere Terminals es ebenfalls mit /model auswählen."
     },
     "name": "Name",
@@ -235,7 +235,7 @@
         "account": "Konto",
         "accountFollow": "Aktueller Anmeldung von agy folgen",
         "accountMissing": "Ein Konto, das nicht auf diesem Computer vorhanden ist",
-        "accountHelp": "Wenn Sie eine neue Kontoverknüpfung speichern, verwenden neue agy-Sitzungen dieses Konto. Auch beim Öffnen eines Terminals über diese Karte wechselt agy zum verknüpften Konto. Konten können Sie in der Kontoverwaltung hinzufügen."
+        "accountHelp": "Beenden Sie laufende Antigravity-Desktop- und agy-CLI-Prozesse, bevor Sie eine neue Kontoverknüpfung speichern. Öffnen Sie Antigravity danach neu. Konten können Sie in der Kontoverwaltung hinzufügen."
       },
       "gemini": {
         "model": "Modell",
@@ -5222,7 +5222,7 @@
       "copilotHelp": "Wird von GitHub-Copilot-Vorlagen in Claude Code, Claude Desktop und Codex sowie von der Bindung an die offizielle Copilot-CLI-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "chatgptHelp": "Wird von ChatGPT-Vorlagen in Claude Code und Claude Desktop sowie von der Bindung an die offizielle Codex-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
       "xaiHelp": "Wird von xAI-Vorlagen in Claude Code, Claude Desktop und Codex sowie von der Bindung an die offizielle Grok-Build-Anmeldung verwendet. Anbieter ohne ausgewähltes Konto verwenden das Standardkonto.",
-      "agyHelp": "Die offizielle Anmeldung der Antigravity CLI (agy). agy kann nur mit einem Konto gleichzeitig angemeldet sein; „Wechseln“ ersetzt die Anmeldung von agy durch das ausgewählte Konto, und danach gestartete agy-Sitzungen verwenden es. Das Konto, mit dem agy bereits angemeldet war, wird hier automatisch hinzugefügt, sodass es beim Wechseln nie verloren geht. „Konto hinzufügen“ öffnet ein Terminal mit agy; melde dich dort an, dann wird das Konto hier automatisch hinzugefügt. Das Kontingent stammt aus agys eigenem /usage, daher lässt sich nur das Konto prüfen, mit dem agy gerade angemeldet ist; andere Konten zeigen das zuletzt vor dem Wechsel abgefragte Kontingent.",
+      "agyHelp": "Die gemeinsame offizielle Anmeldung für Antigravity Desktop und CLI (agy). Es kann nur ein Konto gleichzeitig angemeldet sein. Beenden Sie Antigravity Desktop und agy CLI vollständig vor dem Wechsel oder Hinzufügen eines Kontos. „Konto hinzufügen“ öffnet ein Terminal mit agy; melden Sie sich dort an, dann wird das Konto automatisch hinzugefügt. Das Kontingent wird nur beim manuellen Aktualisieren über agys /usage abgefragt; andere Konten zeigen das zuletzt zwischengespeicherte Kontingent.",
       "codebuddyHelp": "Die offizielle Anmeldung für CodeBuddy (China- und internationale Website). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „CodeBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „CodeBuddy-Offizielle-Anmeldung“ hinzu. „Konto hinzufügen“ öffnet ein Terminal mit codebuddy und fügt das Konto hier hinzu, sobald Sie fertig sind; ist CodeBuddy bereits angemeldet, wird es vorübergehend abgemeldet und kann wiederhergestellt werden, falls Sie abbrechen. CodeBuddy erneuert seine Tokens selbst.",
       "workbuddyHelp": "Die offizielle Anmeldung der WorkBuddy-Desktop-App. CC Switch kann sich nicht für Sie bei WorkBuddy anmelden; es kann nur das Konto speichern, mit dem WorkBuddy angemeldet ist (ein Snapshot seiner Anmeldedateien). Um das Konto zu wechseln, wählen Sie im …-Menü des Kontos „WorkBuddy auf dieses Konto umstellen“ oder fügen Sie in der Anbieterliste die damit verknüpfte Karte „WorkBuddy Official Sign-in“ hinzu (es wird jeweils nur eine offizielle Karte hinzugefügt). Snapshots funktionieren nur auf diesem Computer und werden nicht synchronisiert.",
       "claudeHelpTerminal": "Offizielle Claude-Code-Abonnementkonten (Pro / Max / Team). Der Claude-Konfigurationsordner ist in den Optionen überschrieben, daher ändert der Kartenwechsel die Anmeldung von Claude Code nicht. Wählen Sie ein Konto auf einer offiziellen Karte und verwenden Sie „Terminal öffnen“ auf der Karte.",
@@ -5267,7 +5267,9 @@
     },
     "toast": {
       "added": "{{service}}-Konto hinzugefügt.",
-      "reauthed": "Erneut als {{login}} angemeldet."
+      "reauthed": "Erneut als {{login}} angemeldet.",
+      "reauthOtherAdded": "Sie haben sich mit einem anderen Konto als {{target}} angemeldet. {{login}} wurde als neues Konto hinzugefügt.",
+      "reauthOtherUpdated": "Sie haben sich mit einem anderen Konto als {{target}} angemeldet. {{login}} ist bereits in der Liste; seine Kopie wurde aktualisiert."
     },
     "quota": {
       "loading": "Kontingent wird geprüft …",
@@ -5279,13 +5281,15 @@
       "reauthNote": "Anmeldung abgelaufen, Wechsel dorthin nicht möglich",
       "addedOn": "Hinzugefügt am {{date}}",
       "statusLoadFailed": "Antigravity-Konten konnten nicht gelesen werden. Versuchen Sie es erneut.",
-      "empty": "Noch keine Antigravity-Konten. Das Konto, mit dem agy angemeldet ist, erscheint hier automatisch; oder klicke auf „Konto hinzufügen“, um dich in agy anzumelden.",
+      "empty": "Noch keine Antigravity-Konten. Das aktuell in Antigravity angemeldete Konto erscheint hier automatisch, oder klicken Sie auf „Konto hinzufügen“, um sich in agy anzumelden.",
       "removeNote": "agy bleibt angemeldet: Wenn agy dieses Konto verwendet, funktioniert es nach dem Entfernen weiter.",
-      "switched": "Gewechselt. Neue agy-Sitzungen verwenden dieses Konto.",
-      "switchedWhileRunning": "Gewechselt. agy läuft: Geöffnete agy-Sitzungen verwenden weiter das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie agy und öffnen Sie es erneut.",
+      "switched": "Gewechselt. Öffnen Sie Antigravity neu, um dieses Konto zu verwenden.",
+      "switchedWhileRunning": "Antigravity läuft. Beenden Sie Antigravity Desktop und agy CLI vollständig, bevor Sie das Konto wechseln.",
       "pendingNote": "agy ist in einem Terminal geöffnet. Ist es nicht angemeldet, folge den Hinweisen; ist es angemeldet, gib /logout und dann /login mit dem hinzuzufügenden Konto ein. Danach wird es hier automatisch hinzugefügt.",
       "reopenTerminal": "Terminal erneut öffnen",
-      "quotaNotCurrent": "Wechsle zu diesem Konto, um sein Kontingent abzufragen"
+      "quotaNotCurrent": "Wechsle zu diesem Konto, um sein Kontingent abzufragen",
+      "runningNoticeTitle": "Antigravity läuft derzeit",
+      "runningNoticeBody": "Beenden Sie Antigravity Desktop (inkl. Tray-/Hintergrundprozessen) und laufende agy-CLI-Sitzungen vollständig, bevor Sie das Konto wechseln oder hinzufügen."
     },
     "codebuddy": {
       "mainland": "China",
@@ -5590,5 +5594,19 @@
     "providerNamePlaceholder": "Mein Anbieter",
     "toggleModelDetails": "Modelldetails ein-/ausblenden",
     "activationHint": "In ZCode sind alle Anbieter gleichzeitig eingetragen: Beim Speichern wird dieser Anbieter in die Liste von ZCode aufgenommen. Damit er wirkt, wählen Sie ihn in ZCode in der Anbieterauswahl aus."
+  },
+  "agy": {
+    "official": {
+      "quitDesktopFirst": "Beenden Sie Antigravity Desktop vollständig, bevor Sie das Konto wechseln",
+      "quitDesktopFirstBody": "Beenden Sie Antigravity Desktop vollständig (inkl. Tray-/Hintergrundprozessen), bevor Sie wechseln, da es sonst nicht aktualisiert wird und die alte Anmeldung zurückschreiben kann.",
+      "quitCliFirst": "Beenden Sie laufende agy-CLI-Sitzungen, bevor Sie das Konto wechseln",
+      "quitCliFirstBody": "Schließen Sie laufende agy-CLI-Sitzungen vor dem Wechsel, da sie sonst das alte Konto weiterverwenden und zurückschreiben können.",
+      "quitBothFirst": "Beenden Sie Antigravity Desktop und agy CLI, bevor Sie das Konto wechseln",
+      "quitBothFirstBody": "Beenden Sie Antigravity Desktop (inkl. Tray-/Hintergrundprozessen) und laufende agy-CLI-Sitzungen vollständig, bevor Sie wechseln.",
+      "switched": "Zu „{{name}}“ gewechselt. Öffnen Sie Antigravity neu, um dieses Konto zu verwenden.",
+      "switchFailed": "Antigravity-Konto konnte nicht gewechselt werden",
+      "accountMissing": "Das verknüpfte Antigravity-Konto ist auf diesem Computer nicht vorhanden. Fügen Sie es im Auth Center hinzu oder wählen Sie ein anderes Konto.",
+      "accountMissingChip": "Konto fehlt"
+    }
   }
 }

@@ -207,7 +207,7 @@
       "agyBindingMissing": "Bu karta bağlı Antigravity hesabı bu bilgisayarda yok. Hesabı Hesaplar bölümünden ekleyin veya bu başlatma için agy'nin mevcut oturumunu kullanın.",
       "agyUseCurrentLogin": "Bu başlatma için agy'nin mevcut oturumunu kullan",
       "agySwitchBody": "Terminal açılmadan önce agy'nin oturumu {{account}} hesabına geçirilir; bundan sonra başlatılan agy oturumları bu hesabı kullanır.",
-      "agySwitchRunning": "agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. Mümkünse önce agy oturumlarını kapatın.",
+      "agySwitchRunning": "Antigravity Desktop veya agy CLI çalışıyor: hesap değiştirmeden önce tamamen kapatın.",
       "isolationBodyCopilot": "Bu terminaldeki copilot, yalnızca bu oturum için --model ile \"{{name}}\" sağlayıcısının ilk modeliyle başlar. Uç nokta ve anahtar Copilot'un providers.json dosyasından okunur; diğer terminaller de /model ile seçebilir."
     },
     "name": "İsim",
@@ -235,7 +235,7 @@
         "account": "Hesap",
         "accountFollow": "agy'nin mevcut oturum açma hesabını kullan",
         "accountMissing": "Bu bilgisayarda bulunmayan hesap",
-        "accountHelp": "Yeni bir hesap bağlantısı kaydedildiğinde yeni agy oturumları bu hesabı kullanır. Bu karttan terminal açıldığında da bağlı hesaba geçilir. Hesapları Kimlik Doğrulama Merkezi'nden ekleyin."
+        "accountHelp": "Yeni hesap bağlantısı kaydetmeden önce çalışan Antigravity Desktop ve agy CLI oturumlarını kapatın. Ardından Antigravity uygulamasını yeniden açın. Hesapları Yetkilendirme Merkezinden ekleyin."
       },
       "gemini": {
         "model": "Model",
@@ -5151,7 +5151,7 @@
       "copilotHelp": "Claude Code, Claude Desktop ve Codex'deki GitHub Copilot ön ayarları ve Copilot CLI'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "chatgptHelp": "Claude Code ve Claude Desktop'deki ChatGPT ön ayarları ve Codex'nin resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
       "xaiHelp": "Claude Code, Claude Desktop ve Codex'deki xAI ön ayarları ve Grok Build'in resmi oturum açma bağlaması tarafından kullanılır. Seçilmiş bir hesaba sahip olmayan sağlayıcılar Varsayılan hesabı kullanır.",
-      "agyHelp": "Antigravity CLI (agy) için resmî oturum açma yöntemi. agy aynı anda yalnızca tek bir hesapta oturum açabilir. Hesabı Değiştir seçeneği agy'nin oturumunu seçilen hesapla değiştirir ve bundan sonra başlatılan agy oturumları bu hesabı kullanır. agy'nin hâlihazırda oturum açtığı hesap buraya otomatik olarak eklenir; böylece başka hesaba geçerken önceki hesabı kaybetmezsiniz. Hesap ekle, agy çalıştıran bir terminal açar; agy içinde oturum açtığınızda hesap buraya otomatik olarak eklenir. Kota agy'nin kendi /usage komutuyla sorgulanır; bu yüzden yalnızca agy'nin şu anda oturum açtığı hesap kontrol edilebilir, diğer hesaplar geçişten önce en son görülen kotayı gösterir.",
+      "agyHelp": "Antigravity Desktop ve CLI (agy) için ortak resmî oturum açma. Aynı anda yalnızca bir hesap oturum açabilir. Hesap değiştirmeden veya eklemeden önce çalışan Antigravity Desktop ve agy CLI oturumlarını tamamen kapatın. Hesap ekle, agy çalıştıran bir terminal açar; orada oturum açtığınızda hesap otomatik olarak eklenir. Kota yalnızca elle yenilendiğinde agy'nin kendi /usage komutuyla sorgulanır; diğer hesaplar önbellekteki son kotayı gösterir.",
       "codebuddyHelp": "CodeBuddy'un resmi oturumu (Çin ve uluslararası siteler). Hesap değiştirmek için hesabın … menüsünden \"CodeBuddy için bu hesaba geç\" seçeneğini kullanın ya da sağlayıcı listesinde bu hesaba bağlı \"CodeBuddy Resmi Oturum\" kartını ekleyin. \"Hesap ekle\" codebuddy'yi bir terminalde açar ve bitince hesabı buraya ekler; CodeBuddy zaten oturum açmışsa oturum geçici olarak kapatılır, vazgeçerseniz geri yüklenebilir. Belirteçleri CodeBuddy kendisi yeniler.",
       "claudeHelpTerminal": "Official Claude Code subscription accounts (Pro / Max / Team). The Claude config folder is overridden in Settings, so switching cards doesn't change Claude Code's sign-in. Pick an account on an official card and use Open Terminal on the card.",
       "claudeHelpWsl": "Official Claude Code subscription accounts (Pro / Max / Team). Not supported yet while the Claude config folder is in WSL.",
@@ -5196,7 +5196,9 @@
     },
     "toast": {
       "added": "{{service}} hesabı eklendi.",
-      "reauthed": "{{login}} olarak tekrar oturum açıldı."
+      "reauthed": "{{login}} olarak tekrar oturum açıldı.",
+      "reauthOtherAdded": "{{target}} yerine başka bir hesapla oturum açtınız. {{login}} yeni hesap olarak eklendi.",
+      "reauthOtherUpdated": "{{target}} yerine başka bir hesapla oturum açtınız. {{login}} zaten listede; kopyası güncellendi."
     },
     "quota": {
       "loading": "Kota kontrol ediliyor…",
@@ -5208,13 +5210,15 @@
       "reauthNote": "Oturum süresi doldu, bu hesaba geçilemiyor",
       "addedOn": "{{date}} tarihinde eklendi",
       "statusLoadFailed": "Antigravity hesapları okunamadı. Yeniden deneyin.",
-      "empty": "Henüz Antigravity hesabı yok. agy'nin oturum açtığı hesap burada otomatik olarak görünür; agy içinde oturum açmak için Hesap ekle'ye de tıklayabilirsiniz.",
+      "empty": "Henüz Antigravity hesabı yok. Antigravity içinde oturum açılmış hesap burada otomatik olarak görünür; agy içinde oturum açmak için Hesap ekle'ye de tıklayabilirsiniz.",
       "removeNote": "agy'nin oturumu açık kalır: agy bu hesabı kullanıyorsa kaldırdıktan sonra da çalışmaya devam eder.",
-      "switched": "Hesap değiştirildi. Yeni agy oturumları bu hesabı kullanacak.",
-      "switchedWhileRunning": "Hesap değiştirildi. agy çalışıyor: açık agy oturumları önceki hesabı kullanmaya devam eder ve hesabı yeniden kaydedebilir. agy'yi kapatıp yeniden açın.",
+      "switched": "Değiştirildi. Bu hesabı kullanmak için Antigravity uygulamasını yeniden açın.",
+      "switchedWhileRunning": "Antigravity çalışıyor. Hesap değiştirmeden önce Antigravity Desktop ve agy CLI oturumlarını tamamen kapatın.",
       "pendingNote": "agy bir terminalde açıldı. Oturum açık değilse yönergeleri izleyin; açıksa önce /logout, ardından eklenecek hesapla /login yazın. Tamamlandığında buraya otomatik olarak eklenir.",
       "reopenTerminal": "Terminali yeniden aç",
-      "quotaNotCurrent": "Kotasını görmek için bu hesaba geçin"
+      "quotaNotCurrent": "Kotasını görmek için bu hesaba geçin",
+      "runningNoticeTitle": "Antigravity şu anda çalışıyor",
+      "runningNoticeBody": "Hesap değiştirmeden veya eklemeden önce Antigravity Desktop (sistem tepsisi/arka plan dahil) ve çalışan agy CLI oturumlarını tamamen kapatın."
     },
     "codebuddy": {
       "mainland": "Çin",
@@ -5590,5 +5594,19 @@
     "providerNamePlaceholder": "Sağlayıcım",
     "toggleModelDetails": "Model ayrıntılarını aç/kapat",
     "activationHint": "ZCode tüm sağlayıcıları aynı anda kayıtlı tutar: kaydettiğinizde bu sağlayıcı ZCode'un listesine eklenir; etkili olması için ZCode'un sağlayıcı seçicisinden ona geçmeniz gerekir."
+  },
+  "agy": {
+    "official": {
+      "quitDesktopFirst": "Hesap değiştirmeden önce Antigravity Desktop uygulamasını tamamen kapatın",
+      "quitDesktopFirstBody": "Değiştirmeden önce Antigravity Desktop uygulamasını (sistem tepsisi ve arka plan işlemleri dahil) tamamen kapatın; aksi halde yenilenmez ve eski oturumu geri yazabilir.",
+      "quitCliFirst": "Hesap değiştirmeden önce çalışan agy CLI oturumlarını kapatın",
+      "quitCliFirstBody": "Değiştirmeden önce çalışan agy CLI oturumlarını kapatın; aksi halde eski hesabı kullanmaya devam edip geri yazabilirler.",
+      "quitBothFirst": "Hesap değiştirmeden önce Antigravity Desktop ve agy CLI oturumlarını kapatın",
+      "quitBothFirstBody": "Değiştirmeden önce Antigravity Desktop uygulamasını (sistem tepsisi/arka plan dahil) ve çalışan agy CLI oturumlarını tamamen kapatın.",
+      "switched": "「{{name}}」 hesabına geçildi. Bu hesabı kullanmak için Antigravity uygulamasını yeniden açın.",
+      "switchFailed": "Antigravity hesabı değiştirilemedi",
+      "accountMissing": "Bağlı Antigravity hesabı bu bilgisayarda yok. Yetkilendirme Merkezinden ekleyin veya kartı düzenleyip başka bir hesap seçin.",
+      "accountMissingChip": "Hesap yok"
+    }
   }
 }

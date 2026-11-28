@@ -207,7 +207,7 @@
       "agyBindingMissing": "這張卡片綁定的 Antigravity 帳號不在本機。你可以在授權中心新增該帳號，或本次使用 agy 目前的登入帳號。",
       "agyUseCurrentLogin": "本次使用 agy 目前的登入帳號",
       "agySwitchBody": "開啟前把 agy 的登入切換到 {{account}}，之後新開的 agy 都用這個帳號。",
-      "agySwitchRunning": "偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，最好先結束它們。",
+      "agySwitchRunning": "偵測到 Antigravity 桌面版或 agy CLI 正在執行：請先完全退出再切換帳號，否則不會重新整理且可能把舊登入寫回去。",
       "isolationBodyCopilot": "這個終端機裡的 copilot 以 --model 選中「{{name}}」的第一個模型，只對這次工作階段生效；位址和 Key 讀自 Copilot 的 providers.json，在別的終端機裡也能用 /model 選到它。"
     },
     "name": "名稱",
@@ -235,7 +235,7 @@
         "account": "帳號",
         "accountFollow": "跟隨 agy 目前登入",
         "accountMissing": "不在這台電腦上的帳號",
-        "accountHelp": "儲存新的綁定帳號後，新開啟的 agy 會使用它。用這張卡片開啟終端機時也會切回綁定帳號。帳號可在授權中心新增。"
+        "accountHelp": "儲存新的綁定帳號前需先退出執行中的 Antigravity 桌面版與 agy CLI；切換後重新開啟 Antigravity 即使用該帳號。帳號在授權中心新增。"
       },
       "gemini": {
         "model": "模型",
@@ -5222,7 +5222,7 @@
       "copilotHelp": "用於 Claude Code、Claude Desktop、Codex 的 GitHub Copilot 預設，以及 Copilot CLI 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "chatgptHelp": "用於 Claude Code、Claude Desktop 的 ChatGPT 預設，以及 Codex 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
       "xaiHelp": "用於 Claude Code、Claude Desktop、Codex 的 xAI 預設，以及 Grok Build 官方登入綁定。沒指定帳號的供應商用「預設」帳號。",
-      "agyHelp": "Antigravity CLI（agy）的官方登入。agy 同時只能登入一個帳號，「切換」會把 agy 的登入換成選中的帳號，之後新開的 agy 都用它。agy 裡原本登入的帳號會自動收進這裡，切走也不會遺失。「新增帳號」會開啟終端機執行 agy，在 agy 裡登入後這裡會自動收錄。額度用 agy 自己的 /usage 查詢，只查得到 agy 目前登入的帳號，其他帳號顯示切走前最後一次查到的。",
+      "agyHelp": "Antigravity 桌面版與 CLI（agy）共用的官方登入。同時只能登入一個帳號，切號或新增前需完全退出執行中的 Antigravity 桌面版與 agy CLI，「切換」會寫入選中的帳號並清理桌面端狀態，重新開啟後即生效。「新增帳號」會開啟終端機執行 agy，在 agy 裡登入後這裡會自動收錄。額度僅在手動重新整理時用 agy 自己的 /usage 查詢，只查得到目前登入的帳號，其他帳號顯示切走前最後一次查到的。",
       "codebuddyHelp": "CodeBuddy 的官方登入（國內版、國際版都在這裡）。要切換帳號，請在帳號的「…」裡選「將 CodeBuddy 切換到這個帳號」，或在供應商列表裡新增綁定它的「CodeBuddy 官方登入」卡。「新增帳號」會開啟終端機執行 codebuddy，登入後這裡自動收錄；已登入時會先讓 CodeBuddy 暫時登出原來的帳號，放棄可恢復。權杖由 CodeBuddy 自己續期。",
       "workbuddyHelp": "WorkBuddy 桌面端的官方登入。CC Switch 不能替 WorkBuddy 登入，只能收錄它目前登入的帳號（整組登入檔案的快照）。要切換帳號，請在帳號的「…」裡選「將 WorkBuddy 切換到這個帳號」，或在供應商列表裡加入綁定它的「WorkBuddy 官方登入」卡（同一時間只有一張在「已加入」）。快照只在這台電腦上有效，不會隨雲端同步。",
       "claudeHelpTerminal": "Claude Code 的官方訂閱帳號（Pro / Max / Team）。設定裡覆寫了 Claude 設定目錄，切卡不會切換 Claude Code 的登入；在官方卡上選一個帳號，再從卡片「開啟終端機」使用。",
@@ -5267,7 +5267,9 @@
     },
     "toast": {
       "added": "已新增 {{service}} 帳號。",
-      "reauthed": "{{login}} 已重新登入。"
+      "reauthed": "{{login}} 已重新登入。",
+      "reauthOtherAdded": "登入的不是 {{target}}，已將 {{login}} 收錄為新帳號。",
+      "reauthOtherUpdated": "登入的不是 {{target}}，{{login}} 已在清單裡，副本已更新。"
     },
     "quota": {
       "loading": "正在查詢額度…",
@@ -5279,13 +5281,15 @@
       "reauthNote": "登入憑證已失效，無法切換過去",
       "addedOn": "{{date}}新增",
       "statusLoadFailed": "無法讀取 Antigravity 帳號，請重試。",
-      "empty": "還沒有 Antigravity 帳號。agy 裡已登入的帳號會自動出現在這裡，也可以點「新增帳號」在 agy 裡登入。",
+      "empty": "還沒有 Antigravity 帳號。Antigravity 裡已登入的帳號會自動出現在這裡，也可以點「新增帳號」在終端機的 agy 裡登入。",
       "removeNote": "不會讓 agy 登出：agy 目前登入的帳號刪除後仍然可用。",
-      "switched": "已切換，新開的 agy 會使用這個帳號。",
-      "switchedWhileRunning": "已切換。偵測到 agy 正在執行：已開啟的 agy 仍使用原帳號，還可能把原帳號寫回去，請結束後重新開啟。",
+      "switched": "已切換，重新開啟 Antigravity 即可使用這個帳號。",
+      "switchedWhileRunning": "偵測到 Antigravity 正在執行，請先完全退出 Antigravity 桌面版與 agy CLI 再切換帳號。",
       "pendingNote": "已在終端機開啟 agy。未登入時依提示登入；已登入時先輸入 /logout，再輸入 /login 登入要新增的帳號。完成後這裡會自動收錄。",
       "reopenTerminal": "重新開啟終端機",
-      "quotaNotCurrent": "切換到這個帳號後才能查詢額度"
+      "quotaNotCurrent": "切換到這個帳號後才能查詢額度",
+      "runningNoticeTitle": "偵測到 Antigravity 正在執行",
+      "runningNoticeBody": "請先完全退出 Antigravity 桌面版（含系統匣/背景程序）與執行中的 agy CLI 再切換或新增帳號，否則不會重新整理且可能把舊登入寫回去。"
     },
     "codebuddy": {
       "mainland": "國內版",
@@ -5590,5 +5594,19 @@
     "providerNamePlaceholder": "我的供應商",
     "toggleModelDetails": "切換模型詳情",
     "activationHint": "ZCode 的供應商是疊加式的：儲存後寫入 ZCode 的供應商清單，但需要在 ZCode 應用的供應商選擇器中手動切換到該供應商才會實際生效。"
+  },
+  "agy": {
+    "official": {
+      "quitDesktopFirst": "請先完全退出 Antigravity 桌面版再切換帳號",
+      "quitDesktopFirstBody": "完全退出 Antigravity 桌面版（含系統匣/背景程序）後再切換，否則不會重新整理且可能把舊登入寫回去。",
+      "quitCliFirst": "請先退出執行中的 agy CLI 再切換帳號",
+      "quitCliFirstBody": "退出執行中的 agy CLI 工作階段後再切換，否則已開啟的工作階段仍會使用舊帳號並可能將其寫回。",
+      "quitBothFirst": "請先退出 Antigravity 桌面版與 agy CLI 再切換帳號",
+      "quitBothFirstBody": "完全退出 Antigravity 桌面版（含系統匣/背景程序）以及執行中的 agy CLI 後再切換，否則它們不會重新整理且可能把舊登入寫回去。",
+      "switched": "已切換到「{{name}}」，重新開啟 Antigravity 即可使用該帳號。",
+      "switchFailed": "切換 Antigravity 帳號失敗",
+      "accountMissing": "綁定的 Antigravity 帳號不在此電腦上，請先在授權中心新增或編輯卡片改選。",
+      "accountMissingChip": "帳號不在本機"
+    }
   }
 }

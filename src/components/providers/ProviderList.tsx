@@ -58,6 +58,7 @@ import { isOfficialAccount } from "@/utils/providerCapabilities";
 import { isHermesReadOnlyProvider } from "@/config/hermesProviderMeta";
 import { isWorkBuddyOfficial } from "@/components/providers/workbuddyOfficial";
 import { useWorkBuddyOfficial } from "@/components/providers/useWorkBuddyOfficial";
+import { useAgyOfficial } from "@/components/providers/useAgyOfficial";
 import {
   DshAccountCard,
   accountName as dshAccountName,
@@ -201,6 +202,7 @@ export function ProviderList({
     );
   const { state: codebuddyAccounts, switchAccount: switchCodebuddyAccount } =
     useCodebuddyOfficialCards(hasCodebuddyOfficial);
+  const agyAccounts = useAgyOfficial(appId === "agy", providers);
   // 累加式应用要等 live 里有哪些供应商读回来（成功或失败）才知道卡片该进哪个分区；
   // 在那之前按加载中画骨架，不然卡片先全落进「可添加」，读回来再整体搬到「已添加」。
   // 一张卡都没有时不用等，直接出空状态
@@ -407,6 +409,7 @@ export function ProviderList({
         t,
         providers: filteredProviders,
         openTerminal: (provider) => onOpenTerminal?.(provider),
+        accounts: agyAccounts,
       });
     }
     const defaultPrimary =
@@ -503,6 +506,7 @@ export function ProviderList({
     onSetAsDefault,
     workbuddyOfficial,
     switchWorkBuddyAccount,
+    agyAccounts,
   ]);
 
   const piStateRawError =
@@ -627,9 +631,12 @@ export function ProviderList({
         onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
       }
       onOpenWebsite={onOpenWebsite}
-      // Antigravity 和 Copilot CLI 官方卡的「打开终端」已经是主按钮，「更多」菜单里不再重复
+      // 卡片主操作已经是「打开终端」时不再重复放一个终端图标按钮
       onOpenTerminal={
-        appId === "agy" ||
+        (appId === "agy" &&
+          presentation.buttons.some(
+            (button) => button.key === "openTerminal",
+          )) ||
         (appId === "copilot" && isOfficialAccount(appId, provider))
           ? undefined
           : onOpenTerminal

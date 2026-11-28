@@ -687,4 +687,61 @@ describe("useManagedAuth", () => {
     );
     expect(queryClient.getQueryState(quotaKey)?.isInvalidated).toBe(false);
   });
+
+  it("tracks lastCompletedLogin (created vs existing) and invalidates agy caches on agy_oauth completion", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    queryClient.setQueryData(["agy_oauth", "quota", "acct-1"], {
+      success: true,
+    });
+    queryClient.setQueryData(["subscription", "quota", "agy"], {
+      success: true,
+    });
+    apiMocks.authStartLogin.mockResolvedValue({
+      provider: "agy_oauth",
+      device_code: "flow-agy",
+      user_code: "",
+      verification_uri: "",
+      expires_in: 600,
+      interval: 2,
+    });
+    apiMocks.authPollForAccount
+      .mockResolvedValueOnce({ id: "acct-1", login: "user@example.com" })
+      .mockResolvedValueOnce({ id: "acct-2", login: "new@example.com" });
+
+    const { result } = renderHook(() => useManagedAuth("agy_oauth"), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(result.current.isStatusSuccess).toBe(true));
+
+    // Existing account reauth -> created: false
+    act(() => result.current.reauthAccount("acct-1"));
+    await waitFor(() =>
+      expect(result.current.lastCompletedLogin).toEqual({
+        account: { id: "acct-1", login: "user@example.com" },
+        created: false,
+      }),
+    );
+    expect(
+      queryClient.getQueryState(["agy_oauth", "quota", "acct-1"])
+        ?.isInvalidated,
+    ).toBe(true);
+    expect(
+      queryClient.getQueryState(["subscription", "quota", "agy"])
+        ?.isInvalidated,
+    ).toBe(true);
+
+    // New account -> created: true
+    act(() => result.current.reauthAccount("acct-1"));
+    await waitFor(() =>
+      expect(result.current.lastCompletedLogin).toEqual({
+        account: { id: "acct-2", login: "new@example.com" },
+        created: true,
+      }),
+    );
+  });
 });

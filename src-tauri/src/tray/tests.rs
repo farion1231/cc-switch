@@ -2524,3 +2524,47 @@ fn agy_switch_failures_point_to_the_auth_center_and_feedback_names_the_account()
         "Antigravity 已切换到账号 b@x.com，已打开的 Antigravity 重启后生效"
     );
 }
+
+#[tokio::test]
+async fn tray_agy_refresh_syncs_only_cached_last_quota_without_running_usage() {
+    use crate::services::agy_account::keychain::AgyLoginStore;
+    use crate::services::agy_account::AgyAccountManager;
+    use std::sync::{Arc, Mutex as StdMutex};
+
+    #[derive(Default)]
+    struct EmptyStore(StdMutex<Option<String>>);
+    impl AgyLoginStore for EmptyStore {
+        fn read(&self) -> Result<Option<String>, crate::error::AppError> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn write(&self, value: &str) -> Result<(), crate::error::AppError> {
+            *self.0.lock().unwrap() = Some(value.to_string());
+            Ok(())
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let manager = AgyAccountManager::with_login_store(
+        dir.path().to_path_buf(),
+        Arc::new(EmptyStore::default()),
+    );
+    let cache = UsageCache::new();
+    let missing_accounts = vec![agy_account("missing", Some("missing@x.com"))];
+    assert!(!sync_agy_accounts_cached_quota(&manager, &cache, &missing_accounts).await);
+    assert!(cache.with_agy_account("missing", |_| ()).is_none());
+
+    // Simulate a recorded last_quota snapshot in agy_accounts.json.
+    let cred = serde_json::json!({"token": {"refresh_token": "r-a"}, "id_token_email": "a@x.com"});
+    let encoded = crate::services::agy_account::keychain::encode(&cred).unwrap();
+    let store = Arc::new(EmptyStore(StdMutex::new(Some(encoded))));
+    let manager = AgyAccountManager::with_login_store(dir.path().to_path_buf(), store);
+    let status = manager.status().await.unwrap();
+    let quota = make_quota("agy", true, vec![tier("agy_gemini_five_hour", 20.0)]);
+    manager.record_quota(&status.accounts[0].id, &quota).await;
+
+    assert!(sync_agy_accounts_cached_quota(&manager, &cache, &status.accounts).await);
+    let cached_left = cache
+        .with_agy_account(&status.accounts[0].id, |q| q.tiers[0].utilization)
+        .unwrap();
+    assert_eq!(cached_left, 20.0);
+}

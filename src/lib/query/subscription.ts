@@ -34,16 +34,26 @@ export const subscriptionKeys = {
 };
 
 export const agyAuthStatusQuery = managedAuthStatusQuery("agy_oauth");
+export const AGY_RUNNING_STATE_KEY = ["agy-running-state"] as const;
+
+let agyManualRefreshEpoch = 0;
+
+/** 授权中心「全部刷新」时调用：允许下一次 Antigravity 额度查询触发手动 `/usage`。 */
+export function markAgyQuotaManualRefresh() {
+  agyManualRefreshEpoch += 1;
+}
 
 /**
- * Refresh the actual agy login and every Antigravity quota: only the account agy is
- * signed in with can be queried, so a switch changes which one shows live numbers.
+ * Refresh the actual agy login, running state, and cached Antigravity quota snapshots.
+ * Because non-manual quota queries read local `last_quota` cache only, this never spawns `/usage`.
  */
 export async function invalidateAgyLoginCaches(queryClient: QueryClient) {
   await Promise.all([
     queryClient.invalidateQueries({ queryKey: agyAuthStatusQuery.queryKey }),
     queryClient.invalidateQueries({ queryKey: subscriptionKeys.quota("agy") }),
     queryClient.invalidateQueries({ queryKey: ["agy_oauth", "quota"] }),
+    queryClient.invalidateQueries({ queryKey: AGY_RUNNING_STATE_KEY }),
+    queryClient.invalidateQueries({ queryKey: ["agy-running"] }),
   ]);
 }
 
@@ -151,21 +161,56 @@ export function useSubscriptionQuota(
   autoQuery = false,
   autoQueryIntervalMinutes = 5,
 ) {
+  const isAgy = appId === "agy";
+  const manualRef = useRef(false);
+  const seenManualEpoch = useRef(agyManualRefreshEpoch);
   const policy = useQuotaPolicy();
   const autoAllowed = policy.autoAllowed;
   const query = useQuery({
     queryKey: subscriptionKeys.quota(appId),
-    queryFn: () => subscriptionApi.getQuota(appId),
-    enabled: autoAllowed && enabled && appHas(appId, "officialSubscription"),
-    ...autoRefetch(autoAllowed && autoQuery, autoQueryIntervalMinutes),
+    queryFn: () => {
+      if (!isAgy) {
+        return subscriptionApi.getQuota(appId);
+      }
+      const manual =
+        manualRef.current || seenManualEpoch.current !== agyManualRefreshEpoch;
+      manualRef.current = false;
+      seenManualEpoch.current = agyManualRefreshEpoch;
+      return subscriptionApi.getQuota(appId, manual);
+    },
+    enabled:
+      (isAgy ? true : autoAllowed) &&
+      enabled &&
+      appHas(appId, "officialSubscription"),
+    ...(isAgy
+      ? {
+          refetchInterval: false as const,
+          refetchIntervalInBackground: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+          retry: false,
+        }
+      : {
+          ...autoRefetch(autoAllowed && autoQuery, autoQueryIntervalMinutes),
+          retry: 1,
+        }),
     staleTime:
-      autoQueryIntervalMinutes > 0
+      !isAgy && autoQueryIntervalMinutes > 0
         ? Math.max(autoQueryIntervalMinutes, 1) * 60 * 1000
         : REFETCH_INTERVAL,
-    retry: 1,
   });
 
-  return useQuotaKeepLastGood(query, appId, policy);
+  const refresh = () => {
+    if (isAgy) {
+      manualRef.current = true;
+    }
+    return query.refetch();
+  };
+
+  return {
+    ...useQuotaKeepLastGood(query, appId, policy),
+    refresh,
+  };
 }
 
 export interface UseCodexOauthQuotaOptions {
@@ -270,31 +315,46 @@ export function useXaiOauthQuotaByAccountId(
 }
 
 /**
- * Antigravity 账号的剩余额度（按账号 ID）。agy 当前登着的号问 agy 的 `/usage`，
- * 别的号返回切走前最后一次查到的（没有时为 not_found）。
+ * Antigravity 账号的剩余额度（按账号 ID）。
+ * 默认（`manual = false`）仅读取本地 `last_quota` 缓存，不启动 `agy --print /usage`；
+ * 仅在用户点击 `↻` 或授权中心「全部刷新」调用 `refresh()` 时触发手动 `/usage`。
  * 授权中心逐个账号、以及绑了这个账号的官方卡共用同一份缓存。
  */
 export function useAgyAccountQuota(
   accountId: string,
   options: UseCodexOauthQuotaOptions = {},
 ) {
-  const {
-    enabled = true,
-    autoQuery = false,
-    autoQueryIntervalMinutes = 5,
-  } = options;
+  const { enabled = true } = options;
+  const manualRef = useRef(false);
+  const seenManualEpoch = useRef(agyManualRefreshEpoch);
   const policy = useQuotaPolicy();
-  const autoAllowed = policy.autoAllowed;
   const query = useQuery({
     queryKey: ["agy_oauth", "quota", accountId],
-    queryFn: () => subscriptionApi.getAgyAccountQuota(accountId),
-    enabled: autoAllowed && enabled,
-    ...autoRefetch(autoAllowed && autoQuery, autoQueryIntervalMinutes),
+    queryFn: () => {
+      const manual =
+        manualRef.current || seenManualEpoch.current !== agyManualRefreshEpoch;
+      manualRef.current = false;
+      seenManualEpoch.current = agyManualRefreshEpoch;
+      return subscriptionApi.getAgyAccountQuota(accountId, manual);
+    },
+    enabled,
+    refetchInterval: false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
     staleTime: REFETCH_INTERVAL,
-    retry: 1,
+    retry: false,
   });
 
-  return useQuotaKeepLastGood(query, accountId, policy);
+  const refresh = () => {
+    manualRef.current = true;
+    return query.refetch();
+  };
+
+  return {
+    ...useQuotaKeepLastGood(query, accountId, policy),
+    refresh,
+  };
 }
 
 /**

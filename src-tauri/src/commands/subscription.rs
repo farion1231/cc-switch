@@ -15,21 +15,25 @@ use crate::store::AppState;
 /// `Err`（瞬时传输失败）不写快照、不 emit：保留上一份托盘快照，与前端
 /// react-query reject 保留上次 data 的语义一致（emit 失败快照会经
 /// `useUsageCacheBridge` 盲写回 query 缓存，抹掉本该保留的旧值）。
-#[tauri::command]
+#[tauri::command(rename_all = "camelCase")]
 pub async fn get_subscription_quota(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     tool: String,
+    manual: Option<bool>,
 ) -> Result<SubscriptionQuota, String> {
+    let manual = manual.unwrap_or(false);
     let inner = match app.try_state::<crate::commands::AgyAccountState>() {
         Some(agy) if tool == "agy" => {
             crate::commands::agy_account::agy_quota(
                 &agy.0,
                 None,
                 crate::commands::agy_account::QUOTA_REUSE_INTERACTIVE,
+                manual,
             )
             .await
         }
+        _ if tool == "agy" && !manual => Ok(SubscriptionQuota::not_found("agy")),
         _ if tool == "grokbuild" => {
             let xai = app.try_state::<crate::commands::XaiOAuthState>();
             crate::commands::xai_oauth::query_grokbuild_quota_with_managed_fallback(

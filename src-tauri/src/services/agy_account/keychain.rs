@@ -11,8 +11,13 @@
 //! 认账号的办法见 `AgyAccountManager::read_live`。旧格式 agy 1.5 照样能读（切过去的号 agy
 //! 续期后会改写成新格式），这里不转换，原样读写。
 //!
-//! 只做切换要用的两件事：读出整条、整条写入。不删除条目，也不碰 `~/.gemini` 下的文件
+//! 只做切换要用的两件事：读出整条、整条写入。不删除条目，也不碰 `~/.gemini` 下的 Gemini CLI 文件
 //! （`oauth_creds.json` 那些是 Gemini CLI 的登录，agy 1.4.3 切号只看钥匙串）。
+//! 优先读写系统钥匙串里的整条凭据；钥匙串没有凭据或不可用时，回退到 Desktop standalone
+//! language server 使用的 `~/.gemini/jetski-standalone-oauth-token`。
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::Value;
@@ -23,6 +28,8 @@ use crate::error::AppError;
 mod linux;
 
 const GO_KEYRING_PREFIX: &str = "go-keyring-base64:";
+pub const STANDALONE_TOKEN_FILENAME: &str = "jetski-standalone-oauth-token";
+pub const DESKTOP_CREDENTIAL_SCOPE_FILENAME: &str = "credential-user-scope";
 
 /// 钥匙串里那一条的读写。测试换成内存实现，别碰真实钥匙串。
 pub trait AgyLoginStore: Send + Sync {
@@ -34,6 +41,167 @@ pub trait AgyLoginStore: Send + Sync {
     }
     /// 整条覆盖写入（条目不存在时新建）。
     fn write(&self, value: &str) -> Result<(), AppError>;
+    /// 按结构化凭据覆盖写入（由具体存储决定编码方式与回退逻辑）。
+    fn write_credential(&self, credential: &Value) -> Result<(), AppError> {
+        self.write(&encode(credential)?)
+    }
+    /// 写入核验或新登录确认后，同步更新已存在的 standalone 回退凭据文件。
+    fn sync_fallback(&self, _credential: &Value) -> Result<(), AppError> {
+        Ok(())
+    }
+}
+
+/// Antigravity 原生登录存储：优先读写系统钥匙串，被动读取时可回退到
+/// `~/.gemini/jetski-standalone-oauth-token`（Desktop standalone language server 的凭据文件）。
+pub(crate) struct AgyLogin {
+    keychain: Arc<dyn AgyLoginStore>,
+    file: PathBuf,
+}
+
+impl AgyLogin {
+    pub(crate) fn new(file: PathBuf) -> Self {
+        Self {
+            keychain: Arc::new(SystemKeychain::agy()),
+            file,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_keychain(file: PathBuf, keychain: Arc<dyn AgyLoginStore>) -> Self {
+        Self { keychain, file }
+    }
+
+    fn read_file(&self) -> Result<Option<String>, AppError> {
+        match std::fs::read_to_string(&self.file) {
+            Ok(raw) => {
+                let trimmed = raw.trim();
+                Ok((!trimmed.is_empty()).then(|| trimmed.to_string()))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(AppError::io(&self.file, error)),
+        }
+    }
+
+    fn read_with(&self, allow_unlock: bool) -> Result<Option<String>, AppError> {
+        let primary = if allow_unlock {
+            self.keychain.read_for_switch()
+        } else {
+            self.keychain.read()
+        };
+        match primary {
+            Ok(Some(raw)) => Ok(Some(raw)),
+            Ok(None) => self.read_file(),
+            Err(error) if allow_unlock => Err(error),
+            Err(error) => match self.read_file()? {
+                Some(raw) => Ok(Some(raw)),
+                None => Err(error),
+            },
+        }
+    }
+}
+
+fn encode_fallback_file(credential: &Value) -> Result<Vec<u8>, AppError> {
+    serde_json::to_vec(credential).map_err(|source| AppError::JsonSerialize { source })
+}
+
+impl AgyLoginStore for AgyLogin {
+    fn read(&self) -> Result<Option<String>, AppError> {
+        self.read_with(false)
+    }
+
+    fn read_for_switch(&self) -> Result<Option<String>, AppError> {
+        self.read_with(true)
+    }
+
+    fn write(&self, value: &str) -> Result<(), AppError> {
+        let credential = decode(value)?;
+        self.write_credential(&credential)
+    }
+
+    fn write_credential(&self, credential: &Value) -> Result<(), AppError> {
+        // agy CLI 只读钥匙串：写入失败必须报错，回退文件在核验成功后才同步。
+        self.keychain.write(&encode(credential)?)
+    }
+
+    fn sync_fallback(&self, credential: &Value) -> Result<(), AppError> {
+        let sync = || {
+            // 不把权限错误当成「文件不存在」；已有的失效软链接也交给原子写入修复。
+            match std::fs::symlink_metadata(&self.file) {
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(error) => return Err(AppError::io(&self.file, error)),
+            }
+            crate::config::atomic_write_private(&self.file, &encode_fallback_file(credential)?)
+        };
+        sync().map_err(|error| AppError::localized(
+            "agy.account.fallback_sync_failed",
+            format!("登录已写入钥匙串，但 Antigravity 桌面端回退凭据同步失败，请修复文件访问问题后重试切换：{error}"),
+            format!("The sign-in was saved to the keychain, but Antigravity Desktop's fallback credentials could not be synced. Fix file access and retry switching: {error}"),
+        ))
+    }
+}
+
+/// 返回 Antigravity Desktop 的跨平台用户数据目录。
+pub fn default_desktop_user_data_dir() -> Option<PathBuf> {
+    let home = crate::config::get_home_dir();
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+            .or_else(dirs::config_dir)
+            .unwrap_or_else(|| home.join("AppData").join("Roaming"));
+        Some(appdata.join("Antigravity"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Some(home.join("Library/Application Support/Antigravity"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let config_dir = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+            .unwrap_or_else(|| home.join(".config"));
+        Some(config_dir.join("Antigravity"))
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        let _ = home;
+        None
+    }
+}
+
+/// 清理指定 Desktop 用户数据目录下的 `credential-user-scope` 缓存文件。
+pub fn clear_desktop_user_scope_in(dir: &Path) -> Result<(), AppError> {
+    let path = dir.join(DESKTOP_CREDENTIAL_SCOPE_FILENAME);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {
+            log::info!(
+                "[AgyAccount] 已清理 Antigravity Desktop scope 文件: {}",
+                path.display()
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            let error = AppError::io(&path, error);
+            return Err(AppError::localized(
+                "agy.account.desktop_scope_cleanup_failed",
+                format!("登录已写入钥匙串，但 Antigravity 桌面端登录缓存清理失败，请修复文件访问问题后重试切换：{error}"),
+                format!("The sign-in was saved to the keychain, but Antigravity Desktop's credential cache could not be cleared. Fix file access and retry switching: {error}"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 清理本机 Antigravity Desktop 的 `credential-user-scope` 缓存文件。
+#[allow(dead_code)]
+pub fn clear_desktop_user_scope() -> Result<(), AppError> {
+    if let Some(dir) = default_desktop_user_data_dir() {
+        clear_desktop_user_scope_in(&dir)?;
+    }
+    Ok(())
 }
 
 /// 按 go-keyring 的格式解出登录 JSON；没有前缀的当成裸 JSON（Windows / Linux 上就是这样存的）。
@@ -437,5 +605,125 @@ mod tests {
         let credential = json!({"token": {"refresh_token": "x".repeat(3000)}});
         let encoded = encode(&credential).unwrap();
         assert_eq!(serde_json::from_str::<Value>(&encoded).unwrap(), credential);
+    }
+
+    #[derive(Default)]
+    struct StubKeychain {
+        value: std::sync::Mutex<Option<String>>,
+        unavailable: std::sync::Mutex<bool>,
+        locked: std::sync::Mutex<bool>,
+        write_fails: std::sync::Mutex<bool>,
+    }
+
+    impl AgyLoginStore for StubKeychain {
+        fn read(&self) -> Result<Option<String>, AppError> {
+            if *self.unavailable.lock().unwrap() {
+                return Err(AppError::Config("keychain unavailable".into()));
+            }
+            if *self.locked.lock().unwrap() {
+                return Err(AppError::Config("keychain locked".into()));
+            }
+            Ok(self.value.lock().unwrap().clone())
+        }
+
+        fn read_for_switch(&self) -> Result<Option<String>, AppError> {
+            if *self.unavailable.lock().unwrap() {
+                return Err(AppError::Config("keychain unavailable".into()));
+            }
+            Ok(self.value.lock().unwrap().clone())
+        }
+
+        fn write(&self, value: &str) -> Result<(), AppError> {
+            if *self.unavailable.lock().unwrap() || *self.write_fails.lock().unwrap() {
+                return Err(AppError::Config("keychain write failed".into()));
+            }
+            *self.value.lock().unwrap() = Some(value.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn agy_login_does_not_fall_back_to_file_when_keychain_is_locked_or_writable_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("jetski-standalone-oauth-token");
+        let keychain = Arc::new(StubKeychain::default());
+        let alice =
+            json!({"token": {"refresh_token": "r-alice"}, "id_token_email": "alice@example.com"});
+        let bob = json!({"token": {"refresh_token": "r-bob"}, "id_token_email": "bob@example.com"});
+
+        *keychain.value.lock().unwrap() = Some(encode(&alice).unwrap());
+        *keychain.locked.lock().unwrap() = true;
+        *keychain.write_fails.lock().unwrap() = true;
+
+        let login = AgyLogin::with_keychain(file.clone(), keychain.clone());
+        assert!(login.write_credential(&bob).is_err());
+        assert!(!file.exists());
+        assert_eq!(
+            decode(&keychain.value.lock().unwrap().clone().unwrap()).unwrap(),
+            alice
+        );
+    }
+
+    #[test]
+    fn agy_login_falls_back_to_standalone_file_and_syncs_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("jetski-standalone-oauth-token");
+        let keychain = Arc::new(StubKeychain::default());
+        let login = AgyLogin::with_keychain(file.clone(), keychain.clone());
+
+        let alice =
+            json!({"token": {"refresh_token": "r-alice"}, "id_token_email": "alice@example.com"});
+        let bob = json!({"token": {"refresh_token": "r-bob"}, "id_token_email": "bob@example.com"});
+
+        // Empty keychain falls back to file.
+        std::fs::write(&file, serde_json::to_vec(&alice).unwrap()).unwrap();
+        assert_eq!(decode(&login.read().unwrap().unwrap()).unwrap(), alice);
+
+        // Keychain takes precedence when populated.
+        *keychain.value.lock().unwrap() = Some(encode(&bob).unwrap());
+        assert_eq!(decode(&login.read().unwrap().unwrap()).unwrap(), bob);
+
+        // Writing via keychain leaves file alone until sync_fallback is called after verification.
+        login.write_credential(&alice).unwrap();
+        assert_eq!(
+            decode(&keychain.value.lock().unwrap().clone().unwrap()).unwrap(),
+            alice
+        );
+        assert_eq!(
+            decode(&std::fs::read_to_string(&file).unwrap()).unwrap(),
+            alice
+        );
+        login.sync_fallback(&bob).unwrap();
+        assert_eq!(
+            decode(&std::fs::read_to_string(&file).unwrap()).unwrap(),
+            bob
+        );
+
+        // sync_fallback does not create the standalone file if it did not exist.
+        std::fs::remove_file(&file).unwrap();
+        login.sync_fallback(&alice).unwrap();
+        assert!(!file.exists());
+
+        // Passive reads may use the file; switching must report an unavailable keychain.
+        *keychain.unavailable.lock().unwrap() = true;
+        std::fs::write(&file, serde_json::to_vec(&alice).unwrap()).unwrap();
+        assert_eq!(decode(&login.read().unwrap().unwrap()).unwrap(), alice);
+        assert!(login.read_for_switch().is_err());
+        assert!(login.write_credential(&bob).is_err());
+        assert_eq!(
+            decode(&std::fs::read_to_string(&file).unwrap()).unwrap(),
+            alice
+        );
+    }
+
+    #[test]
+    fn clear_desktop_user_scope_in_removes_file_and_ignores_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let scope = dir.path().join(DESKTOP_CREDENTIAL_SCOPE_FILENAME);
+        clear_desktop_user_scope_in(dir.path()).unwrap();
+        std::fs::write(&scope, "scope-value").unwrap();
+        assert!(scope.exists());
+        clear_desktop_user_scope_in(dir.path()).unwrap();
+        assert!(!scope.exists());
     }
 }
