@@ -357,7 +357,11 @@ impl SkillService {
     }
 
     /// 更新单个 Skill（重新下载并替换本地文件）
-    pub async fn update_skill(&self, db: &Arc<Database>, skill_id: &str) -> Result<InstalledSkill> {
+    pub async fn update_skill(
+        &self,
+        db: &Arc<Database>,
+        skill_id: &str,
+    ) -> Result<SkillUpdateOutcome> {
         let mut skill = db
             .get_installed_skill(skill_id)?
             .ok_or_else(|| anyhow!("Skill not found: {skill_id}"))?;
@@ -597,7 +601,9 @@ impl SkillService {
         updated_skill.apps.pi = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Pi);
         updated_skill.apps.omp = Self::skill_exists_in_app(&updated_skill.directory, &AppType::Omp);
 
-        // 同步到所有已启用的应用目录
+        // 同步到所有已启用的应用目录，收集逐应用同步失败详情
+        let mut failed_apps = Vec::new();
+        let mut sync_warnings = Vec::new();
         for app in updated_skill.apps.enabled_apps() {
             if matches!(
                 app,
@@ -614,12 +620,47 @@ impl SkillService {
                 continue;
             }
             if let Err(e) = Self::sync_to_app_dir(&updated_skill.directory, &app) {
-                log::warn!("同步更新后的 skill 到 {:?} 失败: {e}", app);
+                let app_id = app.as_str().to_string();
+                let sanitized = Self::sanitize_sync_error(&e);
+                log::warn!("同步更新后的 skill 到 {app_id} 失败: {sanitized}");
+                sync_warnings.push(format!("{app_id}: {sanitized}"));
+                failed_apps.push(app_id);
             }
         }
 
         log::info!("Skill {} 更新成功", updated_skill.name);
-        Ok(updated_skill)
+        Ok(SkillUpdateOutcome {
+            skill: updated_skill,
+            failed_apps,
+            sync_warnings,
+        })
+    }
+
+    pub(super) fn sanitize_sync_error(err: &anyhow::Error) -> String {
+        let mut msg = format!("{err:#}")
+            .chars()
+            .map(|ch| if ch.is_control() { ' ' } else { ch })
+            .collect::<String>();
+        let home = crate::config::get_home_dir();
+        // 规范化的 Windows 路径可能在原路径前带有 \\?\，应优先替换。
+        if let Ok(canonical_home) = home.canonicalize() {
+            let canonical_str = canonical_home.to_string_lossy();
+            if !canonical_str.is_empty() && canonical_str != "." && canonical_str != "/" {
+                msg = msg.replace(canonical_str.as_ref(), "~");
+            }
+        }
+        let home_str = home.to_string_lossy();
+        if !home_str.is_empty() && home_str != "." && home_str != "/" {
+            msg = msg.replace(home_str.as_ref(), "~");
+        }
+        let collapsed = msg.split_whitespace().collect::<Vec<_>>().join(" ");
+        const MAX_CHARS: usize = 240;
+        if collapsed.chars().count() > MAX_CHARS {
+            let truncated: String = collapsed.chars().take(MAX_CHARS).collect();
+            format!("{truncated}…")
+        } else {
+            collapsed
+        }
     }
 
     /// Copy `source` into a sibling staging directory first and only then swap it

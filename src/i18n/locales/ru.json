@@ -5030,7 +5030,9 @@
       "noUpdatesInSelection": "Для выбранных навыков нет обновлений",
       "selectionAlreadyOn": "Выбранные навыки ({{count}}) уже включены в {{app}}",
       "selectionAlreadyOff": "Ни один из выбранных навыков ({{count}}) не включён в {{app}}",
-      "disabledSelection": "Отключено в {{app}}: {{count}} {{noun}}"
+      "disabledSelection": "Отключено в {{app}}: {{count}} {{noun}}",
+      "updateSyncPartial": "Основная копия {{name}} обновлена, но синхронизация с {{apps}} не удалась; проверьте права доступа и повторите или пересинхронизируйте",
+      "updateAllSyncPartial": "Обновлено навыков: {{updatedCount}}, но {{failedCount}} не удалось синхронизировать с {{apps}}; проверьте права доступа и повторите или пересинхронизируйте"
     },
     "installTo": {
       "prefix": "Установить в: ",

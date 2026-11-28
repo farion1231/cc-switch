@@ -4307,3 +4307,124 @@ fn resync_all_apps_leaves_openclaw_skills_dir_alone() {
     SkillService::sync_to_app(&db, &AppType::OpenClaw).expect("no-op sync");
     assert!(own_skill.exists());
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn update_skill_reports_failed_apps_and_sanitized_warnings_until_resync_converges() {
+    let home = tempdir().expect("home");
+    let config_dir = home.path().join(".cc-switch");
+    fs::create_dir_all(&config_dir).expect("isolated config directory");
+    fs::File::create(config_dir.join("cc-switch.db")).expect("isolated database sentinel");
+    let _home = TestHomeGuard::set(home.path());
+    assert_eq!(crate::config::get_app_config_dir(), config_dir);
+    let _storage = StorageLocationGuard::set(&_home, SkillStorageLocation::CcSwitch);
+    let _pi_dir = crate::pi_config::test_support::TestAgentDir::new();
+
+    let relative_path = Path::new("~").join(".codex").join("skills");
+    let home_str = home.path().to_string_lossy();
+    let canonical_home = home.path().canonicalize().expect("canonical home");
+    for home_path in [home.path(), canonical_home.as_path()] {
+        let sanitized_sample = SkillService::sanitize_sync_error(&anyhow!(
+            "failed writing {}\n\tpermission denied",
+            home_path.join(".codex").join("skills").display()
+        ));
+        assert_eq!(
+            sanitized_sample,
+            format!(
+                "failed writing {} permission denied",
+                relative_path.display()
+            )
+        );
+    }
+
+    let remote = tempdir().expect("remote");
+    let db = Arc::new(Database::memory().expect("memory db"));
+    let service = SkillService {
+        repo_fixture: Some(remote.path().to_path_buf()),
+        ..SkillService::new()
+    };
+
+    let ssot_dir = SkillService::get_ssot_dir().expect("ssot dir");
+    let dest = ssot_dir.join("sync-skill");
+    write_skill(&dest, "v1");
+
+    let mut skill = poisoned_skill("owner/repo:sync-skill", "sync-skill");
+    skill.name = "v1".to_string();
+    skill.repo_owner = Some("owner".to_string());
+    skill.repo_name = Some("repo".to_string());
+    skill.repo_branch = Some("main".to_string());
+    skill.apps = SkillApps::only(&AppType::Claude);
+    skill.apps.codex = true;
+    skill.content_hash = Some(SkillService::compute_dir_hash(&dest).unwrap());
+    db.save_skill(&skill).expect("seed skill");
+
+    SkillService::sync_to_app_dir(&skill.directory, &AppType::Claude).expect("seed claude");
+    SkillService::sync_to_app_dir(&skill.directory, &AppType::Codex).expect("seed codex");
+
+    let claude_skills_dir = SkillService::get_app_skills_dir(&AppType::Claude).expect("claude dir");
+    let codex_skills_dir = SkillService::get_app_skills_dir(&AppType::Codex).expect("codex dir");
+
+    write_skill(&remote.path().join("sync-skill"), "v2");
+
+    // 将 Codex skills 父路径替换为普通文件，在任意平台/权限（含 root/Windows）下确定性触发 sync_to_app_dir 失败
+    fs::remove_dir_all(&codex_skills_dir).expect("remove codex skills dir");
+    fs::write(&codex_skills_dir, b"not-a-directory").expect("block codex skills dir");
+
+    let outcome = service
+        .update_skill(&db, &skill.id)
+        .await
+        .expect("SSOT and DB commit succeed despite partial client sync failure");
+
+    assert_eq!(outcome.name, "v2");
+    assert_eq!(outcome.failed_apps, vec!["codex".to_string()]);
+    assert_eq!(outcome.sync_warnings.len(), 1);
+    assert!(
+        outcome.sync_warnings[0].starts_with("codex: "),
+        "unexpected warning: {:?}",
+        outcome.sync_warnings
+    );
+    assert!(
+        !outcome.sync_warnings[0].contains(home_str.as_ref()),
+        "sync warning must sanitize raw home path: {:?}",
+        outcome.sync_warnings[0]
+    );
+
+    let json = serde_json::to_value(&outcome).expect("serialize SkillUpdateOutcome");
+    assert_eq!(json["id"], skill.id);
+    assert_eq!(json["name"], "v2");
+    assert_eq!(json["failedApps"], serde_json::json!(["codex"]));
+    assert_eq!(json["syncWarnings"].as_array().unwrap().len(), 1);
+
+    assert!(
+        fs::read_to_string(claude_skills_dir.join("sync-skill/SKILL.md"))
+            .unwrap()
+            .contains("name: v2"),
+        "Claude copy must be updated to v2"
+    );
+
+    // 修复目录阻碍后执行重新同步，Codex 客户端副本收敛到 v2；再次更新时 failedApps 为空且省略序列化
+    fs::remove_file(&codex_skills_dir).expect("unblock codex skills dir");
+    let resync_outcomes = SkillService::resync_all_apps(&db);
+    assert!(
+        resync_outcomes.iter().all(|o| o.ok),
+        "resync after fixing target directory must succeed: {resync_outcomes:?}"
+    );
+    assert!(
+        fs::read_to_string(codex_skills_dir.join("sync-skill/SKILL.md"))
+            .unwrap()
+            .contains("name: v2"),
+        "Codex copy must converge to v2 after resync"
+    );
+
+    write_skill(&remote.path().join("sync-skill"), "v3");
+    let clean_outcome = service
+        .update_skill(&db, &skill.id)
+        .await
+        .expect("clean update succeeds");
+    assert_eq!(clean_outcome.name, "v3");
+    assert!(clean_outcome.failed_apps.is_empty());
+    assert!(clean_outcome.sync_warnings.is_empty());
+    let clean_json = serde_json::to_value(&clean_outcome).expect("serialize clean outcome");
+    assert!(clean_json.get("failedApps").is_none());
+    assert!(clean_json.get("syncWarnings").is_none());
+}

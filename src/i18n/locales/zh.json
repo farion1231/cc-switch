@@ -5032,7 +5032,9 @@
       "noUpdatesInSelection": "选中的 Skill 没有可用的更新",
       "selectionAlreadyOn": "选中的 {{count}} 个 Skill 已经在 {{app}} 启用",
       "selectionAlreadyOff": "选中的 {{count}} 个 Skill 都没有在 {{app}} 启用",
-      "disabledSelection": "已在 {{app}} 停用 {{count}} 个 {{noun}}"
+      "disabledSelection": "已在 {{app}} 停用 {{count}} 个 {{noun}}",
+      "updateSyncPartial": "Skill {{name}} 主副本已更新，但同步到 {{apps}} 失败；请检查目录权限后重试更新或立即重新同步",
+      "updateAllSyncPartial": "已更新 {{updatedCount}} 个 Skill 主副本，其中 {{failedCount}} 个同步到 {{apps}} 失败；请检查目录权限后重试更新或立即重新同步"
     },
     "installTo": {
       "prefix": "安装到：",

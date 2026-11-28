@@ -270,6 +270,26 @@ pub struct SkillUpdateCheckResult {
     pub failures: Vec<SkillRepoFailure>,
 }
 
+/// 单个 Skill 更新结果：顶层平铺 `InstalledSkill` 字段以保持向后兼容，并携带客户端副本同步失败详情
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUpdateOutcome {
+    #[serde(flatten)]
+    pub skill: InstalledSkill,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_apps: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sync_warnings: Vec<String>,
+}
+
+impl std::ops::Deref for SkillUpdateOutcome {
+    type Target = InstalledSkill;
+
+    fn deref(&self) -> &Self::Target {
+        &self.skill
+    }
+}
+
 /// ZIP 里因为目录名已被占用而跳过的 Skill（#3749）
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

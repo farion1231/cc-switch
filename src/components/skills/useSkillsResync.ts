@@ -44,14 +44,17 @@ export function useSkillsResync() {
     );
   };
 
-  const resync = async () => {
-    if (isPending) return;
+  const resync = async (): Promise<SkillAppSyncOutcome[] | undefined> => {
+    if (isPending) return undefined;
     try {
-      reportResync(await resyncMutation.mutateAsync());
+      const outcomes = await resyncMutation.mutateAsync();
+      reportResync(outcomes);
+      return outcomes;
     } catch (error) {
       toast.error(t("common.error"), {
         description: extractErrorMessage(error) || String(error),
       });
+      return undefined;
     }
   };
 

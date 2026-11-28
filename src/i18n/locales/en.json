@@ -5032,7 +5032,9 @@
       "noUpdatesInSelection": "None of the selected Skills have updates",
       "selectionAlreadyOn": "The {{count}} selected Skills are already enabled in {{app}}",
       "selectionAlreadyOff": "None of the {{count}} selected Skills are enabled in {{app}}",
-      "disabledSelection": "Turned off {{count}} {{noun}} in {{app}}"
+      "disabledSelection": "Turned off {{count}} {{noun}} in {{app}}",
+      "updateSyncPartial": "Updated main copy of {{name}}, but syncing to {{apps}} failed; check folder permissions and retry or resync",
+      "updateAllSyncPartial": "Updated {{updatedCount}} Skills, but {{failedCount}} failed to sync to {{apps}}; check folder permissions and retry or resync"
     },
     "installTo": {
       "prefix": "Install to: ",
