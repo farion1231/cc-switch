@@ -6,11 +6,13 @@ use crate::app_config::AppType;
 use crate::config::{get_claude_settings_path, read_json_file};
 use crate::database::Database;
 use crate::provider::Provider;
+use crate::proxy::failover_switch::HeadlessAppStateHandle;
 use crate::proxy::server::ProxyServer;
 use crate::proxy::switch_lock::SwitchLockManager;
 use crate::proxy::types::*;
+use crate::store::{AppState, WeakAppState};
 use serde_json::{json, Value};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use tauri::Emitter;
 use tokio::sync::RwLock;
 
@@ -22,7 +24,30 @@ pub struct ProxyService {
     server: Arc<RwLock<Option<ProxyServer>>>,
     /// AppHandle，用于传递给 ProxyServer 以支持故障转移时的 UI 更新
     app_handle: Arc<RwLock<Option<tauri::AppHandle>>>,
+    /// AppState 弱引用：让故障转移路由写回在无桌面 AppHandle 时也能执行，且不形成强引用环
+    app_state: Arc<OnceLock<WeakAppState>>,
     switch_locks: SwitchLockManager,
+}
+
+#[derive(Clone)]
+pub(crate) struct WeakProxyService {
+    db: Weak<Database>,
+    server: Weak<RwLock<Option<ProxyServer>>>,
+    app_handle: Weak<RwLock<Option<tauri::AppHandle>>>,
+    app_state: Weak<OnceLock<WeakAppState>>,
+    switch_locks: SwitchLockManager,
+}
+
+impl WeakProxyService {
+    pub(crate) fn upgrade(&self) -> Option<ProxyService> {
+        Some(ProxyService {
+            db: self.db.upgrade()?,
+            server: self.server.upgrade()?,
+            app_handle: self.app_handle.upgrade()?,
+            app_state: self.app_state.upgrade()?,
+            switch_locks: self.switch_locks.clone(),
+        })
+    }
 }
 
 /// 客户端连接代理用的地址。`host` 是设置里的客户端地址，没设时是监听地址，后者可能是
@@ -46,8 +71,25 @@ impl ProxyService {
             db,
             server: Arc::new(RwLock::new(None)),
             app_handle: Arc::new(RwLock::new(None)),
+            app_state: Arc::new(OnceLock::new()),
             switch_locks: SwitchLockManager::new(),
         }
+    }
+
+    pub(crate) fn bind_app_state(&self, state: &AppState) {
+        let _ = self.app_state.set(WeakAppState::from_state(state));
+    }
+
+    fn headless_app_state_handle(&self) -> Option<HeadlessAppStateHandle> {
+        let weak_state = self.app_state.get()?.clone();
+        let weak_proxy = WeakProxyService {
+            db: Arc::downgrade(&self.db),
+            server: Arc::downgrade(&self.server),
+            app_handle: Arc::downgrade(&self.app_handle),
+            app_state: Arc::downgrade(&self.app_state),
+            switch_locks: self.switch_locks.clone(),
+        };
+        Some(HeadlessAppStateHandle::new(weak_state, weak_proxy))
     }
 
     /// 设置 AppHandle（在应用初始化时调用）
@@ -121,7 +163,12 @@ impl ProxyService {
 
         // 4. 创建并启动服务器
         let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let server = ProxyServer::new_with_failover_state(
+            config.clone(),
+            self.db.clone(),
+            app_handle,
+            self.headless_app_state_handle(),
+        );
         let info = server
             .start()
             .await
@@ -509,7 +556,12 @@ impl ProxyService {
     /// 按 `config` 起一个新服务，动态端口回写进库。
     async fn start_with(&self, config: &ProxyConfig) -> Result<ProxyServer, String> {
         let app_handle = self.app_handle.read().await.clone();
-        let server = ProxyServer::new(config.clone(), self.db.clone(), app_handle);
+        let server = ProxyServer::new_with_failover_state(
+            config.clone(),
+            self.db.clone(),
+            app_handle,
+            self.headless_app_state_handle(),
+        );
         let info = server.start().await.map_err(|e| e.to_string())?;
         if let Err(e) = self
             .persist_ephemeral_listen_port_if_needed(config, info.port)

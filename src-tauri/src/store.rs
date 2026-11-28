@@ -2,7 +2,38 @@ use crate::database::Database;
 use crate::proxy::providers::codex_oauth_auth::CodexOAuthManager;
 use crate::proxy::providers::xai_oauth_auth::XaiOAuthManager;
 use crate::services::{ProxyService, UsageCache};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+
+/// `AppState` 的弱引用视图，供后台服务（如故障转移路由回写）在无 `tauri::AppHandle`
+/// 时安全还原 `AppState` 而不形成强引用环。
+#[derive(Clone)]
+pub(crate) struct WeakAppState {
+    db: Weak<Database>,
+    usage_cache: Weak<UsageCache>,
+    codex_oauth_manager: Weak<CodexOAuthManager>,
+    xai_oauth_manager: Weak<tokio::sync::RwLock<XaiOAuthManager>>,
+}
+
+impl WeakAppState {
+    pub(crate) fn from_state(state: &AppState) -> Self {
+        Self {
+            db: Arc::downgrade(&state.db),
+            usage_cache: Arc::downgrade(&state.usage_cache),
+            codex_oauth_manager: Arc::downgrade(&state.codex_oauth_manager),
+            xai_oauth_manager: Arc::downgrade(&state.xai_oauth_manager),
+        }
+    }
+
+    pub(crate) fn upgrade(&self, proxy_service: ProxyService) -> Option<AppState> {
+        Some(AppState {
+            db: self.db.upgrade()?,
+            proxy_service,
+            usage_cache: self.usage_cache.upgrade()?,
+            codex_oauth_manager: self.codex_oauth_manager.upgrade()?,
+            xai_oauth_manager: self.xai_oauth_manager.upgrade()?,
+        })
+    }
+}
 
 /// 全局应用状态
 #[derive(Clone)]
@@ -27,12 +58,14 @@ impl AppState {
         )));
         let proxy_service = ProxyService::new(db.clone());
 
-        Self {
+        let state = Self {
             db,
             proxy_service,
             usage_cache: Arc::new(UsageCache::new()),
             codex_oauth_manager,
             xai_oauth_manager,
-        }
+        };
+        state.proxy_service.bind_app_state(&state);
+        state
     }
 }
