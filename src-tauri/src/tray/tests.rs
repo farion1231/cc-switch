@@ -2524,3 +2524,206 @@ fn agy_switch_failures_point_to_the_auth_center_and_feedback_names_the_account()
         "Antigravity 已切换到账号 b@x.com，已打开的 Antigravity 重启后生效"
     );
 }
+
+fn agy_quota_at(ts: Option<i64>) -> SubscriptionQuota {
+    let mut q = make_quota("agy", true, vec![]);
+    q.queried_at = ts;
+    q
+}
+
+#[test]
+fn agy_tray_refresh_respects_manual_only_and_skips_reauth_accounts() {
+    let active = agy_account("1", Some("a@x.com"));
+    let idle = agy_account("2", Some("b@x.com"));
+    let mut expired = agy_account("3", Some("c@x.com"));
+    expired.requires_reauth = true;
+
+    let cases = [
+        (&active, Some("1"), false, Some(AgyTrayQuotaAction::Live)),
+        (
+            &idle,
+            Some("1"),
+            false,
+            Some(AgyTrayQuotaAction::CachedOnly),
+        ),
+        (&active, None, false, Some(AgyTrayQuotaAction::CachedOnly)),
+        (
+            &active,
+            Some("1"),
+            true,
+            Some(AgyTrayQuotaAction::CachedOnly),
+        ),
+        (&idle, Some("1"), true, Some(AgyTrayQuotaAction::CachedOnly)),
+        (&active, None, true, Some(AgyTrayQuotaAction::CachedOnly)),
+        (&expired, Some("3"), false, None),
+        (&expired, Some("3"), true, None),
+        (&expired, Some("1"), false, None),
+        (&expired, None, true, None),
+    ];
+    for (account, current, manual_only, expected) in cases {
+        assert_eq!(
+            agy_tray_quota_action(account, current, manual_only),
+            expected
+        );
+    }
+}
+
+#[test]
+fn agy_cached_quota_hydrates_only_when_missing_or_newer() {
+    let cache = UsageCache::new();
+    let saved_1000 = agy_quota_at(Some(1000));
+    let saved_2000 = agy_quota_at(Some(2000));
+    let saved_no_ts = agy_quota_at(None);
+    let mut saved_failure =
+        SubscriptionQuota::error("agy", CredentialStatus::Valid, "bad disk".to_string());
+    saved_failure.queried_at = Some(9999);
+
+    // 冷启动缓存为空时，成功快照（含无时间戳旧快照）补进去，失败快照绝不回填
+    assert!(should_hydrate_agy_cached_quota(&cache, "1", &saved_1000));
+    assert!(should_hydrate_agy_cached_quota(&cache, "1", &saved_no_ts));
+    assert!(!should_hydrate_agy_cached_quota(
+        &cache,
+        "1",
+        &saved_failure
+    ));
+
+    // 已有缓存时同时间戳/无时间戳不重复写入，更新的本地快照才同步覆盖
+    cache.put_agy_account("1".to_string(), saved_1000.clone());
+    assert!(!should_hydrate_agy_cached_quota(&cache, "1", &saved_1000));
+    assert!(!should_hydrate_agy_cached_quota(&cache, "1", &saved_no_ts));
+    assert!(should_hydrate_agy_cached_quota(&cache, "1", &saved_2000));
+
+    // 刚手动刷新出来的失败结果更新于本地旧快照：不能被旧快照盖掉
+    let mut newer_failure =
+        SubscriptionQuota::error("agy", CredentialStatus::Valid, "boom".to_string());
+    newer_failure.queried_at = Some(2000);
+    cache.put_agy_account("1".to_string(), newer_failure);
+    assert!(!should_hydrate_agy_cached_quota(&cache, "1", &saved_1000));
+
+    // 缓存里只是 not_found（无时间戳）：有保存过的快照就补上（含无时间戳旧快照）
+    cache.put_agy_account("1".to_string(), SubscriptionQuota::not_found("agy"));
+    assert!(should_hydrate_agy_cached_quota(&cache, "1", &saved_1000));
+    assert!(should_hydrate_agy_cached_quota(&cache, "1", &saved_no_ts));
+
+    // 无时间戳成功快照补进缓存后幂等，但遇到带时间戳的新快照会更新
+    cache.put_agy_account("1".to_string(), saved_no_ts.clone());
+    assert!(!should_hydrate_agy_cached_quota(&cache, "1", &saved_no_ts));
+    assert!(should_hydrate_agy_cached_quota(&cache, "1", &saved_1000));
+}
+
+#[tokio::test]
+async fn agy_tray_quota_refresh_respects_manual_only_skips_reauth_and_is_idempotent() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    async fn run(
+        cache: &UsageCache,
+        saved: &HashMap<String, SubscriptionQuota>,
+        status: crate::services::agy_account::AgyAccountStatus,
+        manual_only: bool,
+        live_result: Result<SubscriptionQuota, String>,
+    ) -> (Vec<String>, Vec<String>, usize) {
+        let saved_reads = std::sync::Mutex::new(Vec::new());
+        let live_calls = std::sync::Mutex::new(Vec::new());
+        let updates = AtomicUsize::new(0);
+        refresh_agy_account_quotas(
+            cache,
+            status,
+            manual_only,
+            |id| {
+                saved_reads.lock().unwrap().push(id.clone());
+                let q = saved.get(&id).cloned();
+                async move { q }
+            },
+            |id| {
+                live_calls.lock().unwrap().push(id);
+                let res = live_result.clone();
+                async move { res }
+            },
+            || {
+                updates.fetch_add(1, Ordering::Relaxed);
+            },
+        )
+        .await;
+        let mut reads = saved_reads.into_inner().unwrap();
+        reads.sort();
+        (
+            reads,
+            live_calls.into_inner().unwrap(),
+            updates.into_inner(),
+        )
+    }
+
+    let mut expired = agy_account("3", Some("c@x.com"));
+    expired.requires_reauth = true;
+    let status = agy_status(
+        vec![
+            agy_account("1", Some("a@x.com")),
+            agy_account("2", Some("b@x.com")),
+            expired.clone(),
+        ],
+        Some("1"),
+    );
+    let saved = HashMap::from([
+        ("1".to_string(), agy_quota_at(Some(1000))),
+        ("2".to_string(), agy_quota_at(Some(1500))),
+        ("3".to_string(), agy_quota_at(Some(2000))),
+    ]);
+    let cache = UsageCache::new();
+    let ts_of = |id: &str| cache.with_agy_account(id, |q| q.queried_at);
+
+    // 1. 关掉「自动查询额度」：当前号和空闲号只读本地快照，失效号跳过
+    let (reads, live, updates) = run(
+        &cache,
+        &saved,
+        status.clone(),
+        true,
+        Ok(agy_quota_at(Some(9999))),
+    )
+    .await;
+    assert_eq!(
+        (reads, live, updates),
+        (vec!["1".into(), "2".into()], vec![], 2)
+    );
+    assert_eq!(
+        (ts_of("1"), ts_of("2"), ts_of("3")),
+        (Some(Some(1000)), Some(Some(1500)), None)
+    );
+
+    // 2. 再次悬停（快照没变）：幂等，不触发托盘刷新
+    let (_, live, updates) = run(
+        &cache,
+        &saved,
+        status.clone(),
+        true,
+        Ok(agy_quota_at(Some(9999))),
+    )
+    .await;
+    assert_eq!((live, updates), (vec![], 0));
+
+    // 3. 打开「自动查询额度」但实时查询超时：只问当前号，保留已有缓存
+    let (_, live, updates) =
+        run(&cache, &saved, status.clone(), false, Err("timeout".into())).await;
+    assert_eq!(
+        (live, updates, ts_of("1")),
+        (vec!["1".into()], 0, Some(Some(1000)))
+    );
+
+    // 4. 打开「自动查询额度」且实时查询成功：只更新当前号，空闲号与失效号不动
+    let (_, live, updates) = run(&cache, &saved, status, false, Ok(agy_quota_at(Some(3000)))).await;
+    assert_eq!((live, updates), (vec!["1".into()], 1));
+    assert_eq!(
+        (ts_of("1"), ts_of("2"), ts_of("3")),
+        (Some(Some(3000)), Some(Some(1500)), None)
+    );
+
+    // 5. 当前登录本身就是 requires_reauth 账号：即使开着自动查询也绝不调实时查询
+    let (_, live, updates) = run(
+        &cache,
+        &saved,
+        agy_status(vec![expired], Some("3")),
+        false,
+        Ok(agy_quota_at(Some(4000))),
+    )
+    .await;
+    assert_eq!((live, updates, ts_of("3")), (vec![], 0, None));
+}
