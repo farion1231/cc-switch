@@ -370,6 +370,19 @@ describe("display currency", () => {
     ).toEqual({ currency: "KRW", rate: 1325 });
   });
 
+  it("converts baht with preset or saved rates", () => {
+    expect(resolveMoneyDisplay({ currency: "THB" })).toEqual({
+      currency: "THB",
+      rate: 33.5,
+    });
+    const thb = resolveMoneyDisplay({
+      currency: "THB",
+      exchangeRates: { THB: 34 },
+    });
+    expect(thb).toEqual({ currency: "THB", rate: 34 });
+    expect(formatMoney(2, 2, thb)).toBe("฿68.00");
+  });
+
   it("falls back to USD and the preset rate for unusable settings", () => {
     expect(resolveMoneyDisplay(undefined)).toEqual(USD_DISPLAY);
     expect(resolveMoneyDisplay({ currency: "GBP" })).toEqual(USD_DISPLAY);

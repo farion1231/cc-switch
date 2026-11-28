@@ -38,6 +38,7 @@ export const DISPLAY_CURRENCIES = [
   "TWD",
   "TRY",
   "KRW",
+  "THB",
 ] as const;
 
 export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
@@ -46,12 +47,22 @@ export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
  * 用户没填汇率、也还没自动取到时用的起点，按 2026-07~09 的报价取整。
  * KRW 按 2026-10-23 的参考报价取整（1 USD ≈ 1325 KRW）。
  * https://wise.com/au/currency-converter/usd-to-krw-rate/history/23-10-2026
+ * THB 按 2026-11-06 的美联储 H.10 报价取整（1 USD ≈ 33.5 THB）。
+ * https://fred.stlouisfed.org/series/DEXTHUS
  * 改这里只影响手填和自动都没值的用户。
  */
 export const DEFAULT_EXCHANGE_RATES: Record<
   Exclude<DisplayCurrency, "USD">,
   number
-> = { CNY: 6.8, EUR: 0.87, JPY: 158, TWD: 32, TRY: 48, KRW: 1325 };
+> = {
+  CNY: 6.8,
+  EUR: 0.87,
+  JPY: 158,
+  TWD: 32,
+  TRY: 48,
+  KRW: 1325,
+  THB: 33.5,
+};
 
 /** 汇率来源：自动获取（每日更新）或手动填写 */
 export const RATE_SOURCES = ["auto", "manual"] as const;
@@ -162,6 +173,7 @@ const CURRENCY_SYMBOL: Record<DisplayCurrency, string> = {
   TWD: "NT$",
   TRY: "₺",
   KRW: "₩",
+  THB: "฿",
 };
 
 /** 日元和韩元面额大，同一处少显示两位小数：$0.0012 → ¥0.19 */

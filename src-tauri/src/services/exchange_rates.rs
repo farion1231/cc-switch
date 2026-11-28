@@ -10,7 +10,7 @@ use std::time::Duration;
 
 /// 界面「币种」下拉里除美元以外的币种，也是这里要保留的键
 /// （前端 `src/components/usage/format.ts` 的 `DISPLAY_CURRENCIES` 去掉 USD，两边要一起改）
-pub const TARGET_CURRENCIES: [&str; 6] = ["CNY", "EUR", "JPY", "TWD", "TRY", "KRW"];
+pub const TARGET_CURRENCIES: [&str; 7] = ["CNY", "EUR", "JPY", "TWD", "TRY", "KRW", "THB"];
 
 const OPEN_ER_API_URL: &str = "https://open.er-api.com/v6/latest/USD";
 const FLOATRATES_URL: &str = "https://www.floatrates.com/daily/usd.json";
@@ -143,10 +143,11 @@ mod tests {
     #[test]
     fn parses_open_er_api_and_keeps_only_target_currencies() {
         let body = r#"{"result":"success","base_code":"USD","rates":{
-            "USD":1,"CNY":6.67,"EUR":0.89,"JPY":158.1,"TWD":32.4,"TRY":49.6,"KRW":1398.5,"GBP":0.74
+            "USD":1,"CNY":6.67,"EUR":0.89,"JPY":158.1,"TWD":32.4,"TRY":49.6,"KRW":1398.5,"THB":33.5,"GBP":0.74
         }}"#;
         let rates = parse_open_er_api(body).expect("应解析成功");
-        assert_eq!(rates.len(), 6);
+        assert_eq!(rates.len(), 7);
+        assert_eq!(rates.get("THB"), Some(&33.5));
         assert_eq!(rates.get("CNY"), Some(&6.67));
         assert_eq!(rates.get("TWD"), Some(&32.4));
         assert_eq!(rates.get("KRW"), Some(&1398.5));
