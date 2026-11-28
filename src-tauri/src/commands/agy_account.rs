@@ -95,7 +95,7 @@ pub(crate) async fn agy_quota(
         }
     }
 
-    let (quota, should_record) = query_live_with_cache(
+    let outcome = query_live_with_cache(
         &LAST_LIVE_QUERY,
         current.as_deref(),
         reuse,
@@ -103,12 +103,27 @@ pub(crate) async fn agy_quota(
         || async { manager.current_account_id().await == current },
     )
     .await?;
-    if should_record {
-        if let Some(account_id) = current.as_deref() {
-            manager.record_quota(account_id, &quota).await;
+    if !outcome.still_current {
+        // 查询期间已切到别的号：这份实时结果不能归到指定账号上，改回它已保存的上次快照
+        if let Some(account_id) = account_id {
+            return Ok(manager
+                .last_quota(account_id)
+                .await
+                .unwrap_or_else(|| SubscriptionQuota::not_found(TOOL)));
         }
     }
-    Ok(quota)
+    if outcome.should_record {
+        if let Some(account_id) = current.as_deref() {
+            manager.record_quota(account_id, &outcome.quota).await;
+        }
+    }
+    Ok(outcome.quota)
+}
+
+struct LiveQueryResult {
+    quota: SubscriptionQuota,
+    should_record: bool,
+    still_current: bool,
 }
 
 async fn query_live_with_cache<F, Fut, C, CFut>(
@@ -117,7 +132,7 @@ async fn query_live_with_cache<F, Fut, C, CFut>(
     reuse: Duration,
     fetch: F,
     is_still_current: C,
-) -> Result<(SubscriptionQuota, bool), String>
+) -> Result<LiveQueryResult, String>
 where
     F: FnOnce() -> Fut,
     Fut: Future<Output = Result<SubscriptionQuota, String>>,
@@ -132,7 +147,11 @@ where
             reuse.min(QUOTA_FAILURE_REUSE)
         };
         if query.account_id.as_deref() == current && query.at.elapsed() < effective_reuse {
-            return Ok((query.quota.clone(), false));
+            return Ok(LiveQueryResult {
+                quota: query.quota.clone(),
+                should_record: false,
+                still_current: true,
+            });
         }
     }
     let quota = fetch().await?;
@@ -146,7 +165,11 @@ where
             quota: quota.clone(),
         });
     }
-    Ok((quota, should_record))
+    Ok(LiveQueryResult {
+        quota,
+        should_record,
+        still_current,
+    })
 }
 
 /// 终端里跑的命令：agy 没登录时会直接进登录界面；已登录时用户在里面 `/logout` 再 `/login`。
@@ -244,7 +267,7 @@ mod tests {
         let tray_reuse = Duration::from_secs(300);
 
         // 1. 失败在短 TTL（20s）内复用，防止并发/托盘反复拉起 agy
-        let (first, record_first) = query_live_with_cache(
+        let first = query_live_with_cache(
             &cache,
             Some("alice"),
             tray_reuse,
@@ -256,11 +279,12 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!first.success);
-        assert!(!record_first);
+        assert!(!first.quota.success);
+        assert!(!first.should_record);
+        assert!(first.still_current);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-        let (cached_fail, record_cached_fail) = query_live_with_cache(
+        let cached_fail = query_live_with_cache(
             &cache,
             Some("alice"),
             tray_reuse,
@@ -272,13 +296,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!cached_fail.success);
-        assert!(!record_cached_fail);
+        assert!(!cached_fail.quota.success);
+        assert!(!cached_fail.should_record);
+        assert!(cached_fail.still_current);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         // 2. 超过 20s 后失败过期（即使 tray_reuse = 300s），重新触发查询
         cache.lock().await.as_mut().unwrap().at = Instant::now() - Duration::from_secs(25);
-        let (retried_fail, record_retried_fail) = query_live_with_cache(
+        let retried_fail = query_live_with_cache(
             &cache,
             Some("alice"),
             tray_reuse,
@@ -294,13 +319,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!retried_fail.success);
-        assert!(!record_retried_fail);
+        assert!(!retried_fail.quota.success);
+        assert!(!retried_fail.should_record);
+        assert!(retried_fail.still_current);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
 
-        // 3. 查询期间切号：不覆盖缓存也不记录
+        // 3. 查询期间切号：不覆盖缓存、不记录，并标记 still_current = false 供调用方回退 last_quota
         cache.lock().await.as_mut().unwrap().at = Instant::now() - Duration::from_secs(25);
-        let (_switched, record_switched) = query_live_with_cache(
+        let switched = query_live_with_cache(
             &cache,
             Some("alice"),
             tray_reuse,
@@ -312,13 +338,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(!record_switched);
+        assert!(!switched.should_record);
+        assert!(!switched.still_current);
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert!(!cache.lock().await.as_ref().unwrap().quota.success);
 
         // 4. 同一账号查询成功写入缓存，25s 后在 300s 复用窗口内仍命中
         cache.lock().await.as_mut().unwrap().at = Instant::now() - Duration::from_secs(25);
-        let (ok, record_ok) = query_live_with_cache(
+        let ok = query_live_with_cache(
             &cache,
             Some("alice"),
             tray_reuse,
@@ -330,12 +357,13 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(ok.success);
-        assert!(record_ok);
+        assert!(ok.quota.success);
+        assert!(ok.should_record);
+        assert!(ok.still_current);
         assert_eq!(calls.load(Ordering::SeqCst), 4);
 
         cache.lock().await.as_mut().unwrap().at = Instant::now() - Duration::from_secs(25);
-        let (cached, record_cached) = query_live_with_cache(
+        let cached = query_live_with_cache(
             &cache,
             Some("alice"),
             tray_reuse,
@@ -347,8 +375,9 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(cached.tiers[0].utilization, 35.0);
-        assert!(!record_cached);
+        assert_eq!(cached.quota.tiers[0].utilization, 35.0);
+        assert!(!cached.should_record);
+        assert!(cached.still_current);
         assert_eq!(calls.load(Ordering::SeqCst), 4);
     }
 
