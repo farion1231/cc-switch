@@ -153,25 +153,28 @@ where
 /// 去掉 GUI 进程环境里可能残留的 Key，免得 agy 改走 Key 模式。
 #[cfg_attr(not(windows), allow(dead_code))]
 fn format_windows_login_command(bin: Option<&Path>) -> String {
-    let invocation = match bin {
-        Some(path) => {
-            let is_batch = path
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| {
-                    ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
-                });
-            if is_batch {
-                // `.bat` 启动器自身和 `call` 都会展开一次 `%`，需要翻倍保留字面 `%`
-                let escaped = path.to_string_lossy().replace('%', "%%%%");
-                format!("call \"{escaped}\"")
-            } else {
-                let escaped = path.to_string_lossy().replace('%', "%%");
-                format!("\"{escaped}\"")
+    // `.bat` 以 UTF-8 写入且不切代码页，cmd 按控制台代码页（如 CP936）解码会弄乱非 ASCII 路径（#8034）；
+    // 非 ASCII 路径或未定位到二进制时改经纯 ASCII 的 `%LOCALAPPDATA%\agy\bin` 补齐 PATH 后调裸 `agy`。
+    let invocation =
+        match bin.and_then(|path| path.to_str().filter(|s| s.is_ascii()).map(|s| (path, s))) {
+            Some((path, ascii)) => {
+                let is_batch = path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| {
+                        ext.eq_ignore_ascii_case("cmd") || ext.eq_ignore_ascii_case("bat")
+                    });
+                if is_batch {
+                    // `.bat` 启动器自身和 `call` 都会展开一次 `%`，需要翻倍保留字面 `%`
+                    let escaped = ascii.replace('%', "%%%%");
+                    format!("call \"{escaped}\"")
+                } else {
+                    let escaped = ascii.replace('%', "%%");
+                    format!("\"{escaped}\"")
+                }
             }
-        }
-        None => TOOL.to_string(),
-    };
+            None => format!("set \"PATH=%LOCALAPPDATA%\\agy\\bin;%PATH%\" & {TOOL}"),
+        };
     format!("set \"GEMINI_API_KEY=\" & set \"GOOGLE_GEMINI_BASE_URL=\" & {invocation}")
 }
 
@@ -353,7 +356,16 @@ mod tests {
     fn login_command_resolves_binary_path_and_escapes_special_chars() {
         assert_eq!(
             format_windows_login_command(None),
-            "set \"GEMINI_API_KEY=\" & set \"GOOGLE_GEMINI_BASE_URL=\" & agy"
+            r#"set "GEMINI_API_KEY=" & set "GOOGLE_GEMINI_BASE_URL=" & set "PATH=%LOCALAPPDATA%\agy\bin;%PATH%" & agy"#
+        );
+        // 非 ASCII 路径（如中文 Windows 用户名）不写进 UTF-8 `.bat`，退回纯 ASCII 补齐 PATH（#8034）
+        let non_ascii = format_windows_login_command(Some(Path::new(
+            r"C:\Users\林增文\AppData\Local\agy\bin\agy.exe",
+        )));
+        assert!(non_ascii.is_ascii());
+        assert_eq!(
+            non_ascii,
+            r#"set "GEMINI_API_KEY=" & set "GOOGLE_GEMINI_BASE_URL=" & set "PATH=%LOCALAPPDATA%\agy\bin;%PATH%" & agy"#
         );
         assert_eq!(
             format_windows_login_command(Some(Path::new(
