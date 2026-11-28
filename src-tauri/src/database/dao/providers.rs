@@ -22,11 +22,11 @@ type OmoProviderRow = (
     String,
 );
 
-const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
+pub(super) const PROVIDER_SELECT: &str = "SELECT id, name, settings_config, website_url, category, created_at, sort_index, notes, icon, icon_color, meta, in_failover_queue FROM providers";
 
 /// 按 [`PROVIDER_SELECT`] 的列序（`id, name, settings_config, website_url, category, created_at, sort_index, notes, icon,
 /// icon_color, meta, in_failover_queue`）读一行供应商。
-fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
+pub(super) fn row_to_provider(row: &rusqlite::Row<'_>) -> rusqlite::Result<Provider> {
     let id: String = row.get(0)?;
     let entry = format!("供应商 {id}");
     Ok(Provider {
@@ -375,6 +375,9 @@ impl Database {
             .transaction()
             .map_err(|e| AppError::Database(e.to_string()))?;
 
+        if !crate::proxy::provider_router::provider_supports_failover(app_type, provider) {
+            super::failover::guard_failover_queue_removal(&tx, app_type, &provider.id)?;
+        }
         let mut meta_clone = provider.meta.clone().unwrap_or_default();
         let endpoints = std::mem::take(&mut meta_clone.custom_endpoints);
         let mut meta_json = serde_json::to_string(&meta_clone)
@@ -497,6 +500,7 @@ impl Database {
 
     pub fn delete_provider(&self, app_type: &AppType, id: &str) -> Result<(), AppError> {
         let conn = lock_conn!(self.conn);
+        super::failover::guard_failover_queue_removal(&conn, app_type, id)?;
         conn.execute(
             "DELETE FROM providers WHERE id = ?1 AND app_type = ?2",
             params![id, app_type],

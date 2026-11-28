@@ -605,19 +605,63 @@ async fn failover_moves_the_route_without_writing_client_files() {
     .await;
     enter(&state, &AppType::Claude, false).await.expect("enter");
     let app = AppType::Claude;
+    state.db.add_to_failover_queue(&app, "b").unwrap();
     let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
     config.auto_failover_enabled = true;
     state.db.update_proxy_config_for_app(config).await.unwrap();
-    let revision = state.db.route_revision(&app);
+    let queue_revision = state.db.failover_queue_revision();
+    let route_revision = state.db.route_revision(&app);
     let before = settled_bytes();
-
-    assert!(record_failover_route(&state, &app, "b", revision)
-        .await
-        .expect("record failover"));
+    assert!(
+        record_failover_route(&state, &app, "b", queue_revision, route_revision)
+            .await
+            .expect("record failover")
+    );
     assert_eq!(settled_bytes(), before);
     assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("b"));
     assert_eq!(direct(&state, &AppType::Claude).as_deref(), Some("a"));
     exit(&state, &AppType::Claude).await.expect("exit");
+}
+
+#[tokio::test]
+#[serial]
+async fn an_old_failover_response_cannot_restore_a_removed_queue_member() {
+    let _home = Home::new();
+    seed_settings(USER_SETTINGS);
+    let app = &AppType::Claude;
+    let state = state_with(AppType::Claude, &stack_rows(), "a").await;
+    enter(&state, app, false).await.unwrap();
+    for id in ["a", "kimi"] {
+        state.db.add_to_failover_queue(app, id).unwrap();
+    }
+    state.db.set_auto_failover_enabled_sync(app, true).unwrap();
+    let old_queue_revision = state.db.failover_queue_revision();
+    let route_revision = state.db.route_revision(app);
+    state
+        .proxy_service
+        .remove_from_failover_queue(app, "kimi")
+        .await
+        .unwrap();
+    assert!(
+        !record_failover_route(&state, app, "kimi", old_queue_revision, route_revision)
+            .await
+            .unwrap()
+    );
+    assert_eq!(in_use(&state, app).as_deref(), Some("a"));
+    state.db.add_to_failover_queue(app, "kimi").unwrap();
+    assert!(
+        !record_failover_route(&state, app, "kimi", old_queue_revision, route_revision)
+            .await
+            .unwrap()
+    );
+    let fresh_queue_revision = state.db.failover_queue_revision();
+    assert!(
+        record_failover_route(&state, app, "kimi", fresh_queue_revision, route_revision)
+            .await
+            .unwrap()
+    );
+    assert_eq!(in_use(&state, app).as_deref(), Some("kimi"));
+    exit(&state, app).await.unwrap();
 }
 
 #[tokio::test]
@@ -634,8 +678,7 @@ async fn in_flight_failover_cannot_override_a_manual_route_after_disabling() {
 
 async fn check_in_flight_failover_preserves_manual_route(disable_failover: bool) {
     use crate::proxy::{
-        failover_switch::FailoverSwitchManager, forwarder::ForwardBody,
-        handler_context::RequestContext, server::ProxyState,
+        forwarder::ForwardBody, handler_context::RequestContext, server::ProxyState,
     };
     use axum::{http::StatusCode, routing::post, Json, Router};
     use std::time::Duration;
@@ -687,10 +730,9 @@ async fn check_in_flight_failover_preserves_manual_route(disable_failover: bool)
     config.auto_failover_enabled = true;
     config.max_retries = 1;
     state.db.update_proxy_config_for_app(config).await.unwrap();
-
-    let (manager, mut completed) = FailoverSwitchManager::for_test(state.clone());
-    let mut proxy = ProxyState::for_test(state.db.clone());
-    proxy.failover_manager = Arc::new(manager);
+    let queue_revision = state.db.failover_queue_revision();
+    let route_revision = state.db.route_revision(&app);
+    let proxy = ProxyState::for_test(state.db.clone());
     let body = json!({"model":"claude-sonnet-4-6","messages":[]});
     let headers = axum::http::HeaderMap::new();
     let context = || {
@@ -741,20 +783,16 @@ async fn check_in_flight_failover_preserves_manual_route(disable_failover: bool)
     assert_eq!(old_response.provider.id, "b");
     assert_eq!(old_response.response.status(), StatusCode::OK);
 
-    let mut writeback = async || {
-        tokio::time::timeout(Duration::from_secs(10), completed.recv())
+    assert!(
+        !record_failover_route(&state, &app, "b", queue_revision, route_revision)
             .await
-            .expect("the forwarder runs the background route writeback")
-            .expect("writeback completion channel is open")
-            .expect("record failover route")
-    };
-    let changed = writeback().await;
+            .unwrap()
+    );
     assert_eq!(
         mode(&app).proxy_route.as_deref(),
         Some("c"),
         "B's success cannot replace C"
     );
-    assert!(!changed);
 
     let new_context = context().await.unwrap();
     assert_eq!(
@@ -762,7 +800,6 @@ async fn check_in_flight_failover_preserves_manual_route(disable_failover: bool)
         !disable_failover
     );
     if !disable_failover {
-        // A fresh request may still fail over to B and persist its route.
         release_b.notify_one();
     }
     let next = tokio::time::timeout(Duration::from_secs(10), forward(&new_context))
@@ -772,8 +809,6 @@ async fn check_in_flight_failover_preserves_manual_route(disable_failover: bool)
         assert_eq!(next.provider.id, "c");
     } else {
         assert_eq!(next.provider.id, "b");
-        assert!(writeback().await, "fresh failover persists B");
-        assert_eq!(mode(&app).proxy_route.as_deref(), Some("b"));
     }
     exit(&state, &app).await.unwrap();
     upstream.abort();
@@ -4530,14 +4565,16 @@ async fn a_failover_finishing_after_entering_stack_mode_is_dropped() {
     let mut config = state.db.get_proxy_config_for_app(&app).await.unwrap();
     config.auto_failover_enabled = true;
     state.db.update_proxy_config_for_app(config).await.unwrap();
-    let revision = state.db.route_revision(&app);
+    state.db.add_to_failover_queue(&app, "kimi").unwrap();
+    let queue_revision = state.db.failover_queue_revision();
+    let route_revision = state.db.route_revision(&app);
     enter(&state, &app, true).await.expect("enter Stack");
     let before = settled_bytes();
-
-    // 进入 Stack 模式之前发出的路由请求，这时才转移到 kimi 成功。
-    assert!(!record_failover_route(&state, &app, "kimi", revision)
-        .await
-        .expect("record failover"));
+    assert!(
+        !record_failover_route(&state, &app, "kimi", queue_revision, route_revision)
+            .await
+            .expect("record failover")
+    );
     assert_eq!(in_use(&state, &AppType::Claude).as_deref(), Some("a"));
     assert_eq!(stack_state().members, vec!["a"]);
     assert_eq!(settled_bytes(), before);

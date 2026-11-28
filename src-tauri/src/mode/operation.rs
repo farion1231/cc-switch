@@ -462,11 +462,7 @@ pub fn mirror_proxy_flag(
     else {
         return Ok(());
     };
-    let (enabled, auto_failover) = db.get_proxy_flags_sync(&app);
-    if enabled == proxy {
-        return Ok(());
-    }
-    db.set_proxy_flags_sync(&app, proxy, auto_failover)
+    db.mirror_proxy_enabled_sync(&app, proxy)
 }
 
 /// 启动时调用：补完上次崩溃留下的客户端文件写入。要在任何写客户端文件的启动步骤之前。

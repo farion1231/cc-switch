@@ -207,6 +207,7 @@ fn test_forwarder(
         max_attempts: 1,
         stack_request: false,
         failover_chain: false,
+        queue_revision: None,
         last_outbound_model: std::sync::Mutex::new(None),
         privacy_filter: PrivacyFilterConfig::default(),
         test_copilot_auth: None,
@@ -5080,6 +5081,55 @@ mod bookkeeping {
         );
         assert_eq!(breaker(&fwd, "p1").await, Some((1, 1)));
         assert_eq!(breaker(&fwd, "p2").await, Some((1, 0)));
+    }
+
+    #[tokio::test]
+    async fn failover_request_skips_a_backup_removed_during_its_first_attempt() {
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let first = Upstream {
+            base_url: serve_upstream(axum::Router::new().fallback({
+                let arrived = arrived.clone();
+                let resume = resume.clone();
+                move || async move {
+                    arrived.notify_one();
+                    resume.notified().await;
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(error(500, "boom").1),
+                    )
+                }
+            }))
+            .await,
+            requests: Arc::default(),
+        };
+        let removed = upstream(vec![ok()]).await;
+        let kept = upstream(vec![ok()]).await;
+        let providers = vec![
+            provider("p1", &first),
+            provider("p2", &removed),
+            provider("p3", &kept),
+        ];
+        let app = &AppType::Claude;
+        let db = Arc::new(Database::memory().unwrap());
+        for provider in &providers {
+            db.save_provider(app, provider).unwrap();
+            db.add_to_failover_queue(app, &provider.id).unwrap();
+        }
+        db.set_auto_failover_enabled_sync(app, true).unwrap();
+        let mut fwd = forwarder(2, "p1").queue_revision(Some(db.failover_queue_revision()));
+        fwd.router = Arc::new(ProviderRouter::new(db.clone()));
+        let edit = async {
+            tokio::time::timeout(Duration::from_secs(5), arrived.notified())
+                .await
+                .unwrap();
+            db.remove_from_failover_queue(app, "p2").unwrap();
+            resume.notify_one();
+        };
+        let (result, ()) = tokio::join!(send(&fwd, providers, plain_body()), edit);
+        assert_eq!(result.ok().map(|r| r.provider.id).as_deref(), Some("p3"));
+        assert!(removed.requests.lock().await.is_empty());
+        assert_eq!(kept.requests.lock().await.len(), 1);
     }
 
     /// 原生 Anthropic 供应商走 hyper 发送；第一家 500 后换第二家重发，两次发送都经过过滤，

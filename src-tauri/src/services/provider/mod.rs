@@ -7232,6 +7232,7 @@ impl ProviderService {
             return Ok(());
         }
 
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, &app_type)?;
         // For other apps: 本地记录、DB、代理路由任何一处指着它都不能删。Antigravity 没有
         // 「启用」，旧版留下的直连指针不拦删除。
         if !matches!(app_type, AppType::Agy)
@@ -7245,10 +7246,11 @@ impl ProviderService {
         // Stack 名单里的先移出（和客户端文件同一个操作提交，key 留在登记簿里），成功了再删行。
         // 删行失败时它已经不在名单里，重新加入即可。
         if crate::mode::stack::is_member(&app_type, id)? {
-            futures::executor::block_on(crate::mode::controller::set_stack_member(
+            state.db.check_failover_queue_removal(&app_type, id)?;
+            futures::executor::block_on(crate::mode::controller::set_stack_member_locked(
                 state, &app_type, id, false,
             ))
-            .map_err(|error| AppError::Message(error.message))?;
+            .map_err(AppError::Message)?;
         }
 
         state.db.delete_provider(&app_type, id)?;
@@ -7258,6 +7260,7 @@ impl ProviderService {
     /// 读不出来的行只删库里这一行：不知道它往 live 写过什么，所以不碰 live，也不写回任何东西。
     /// 正被使用的照样不能删。
     fn delete_unreadable(state: &AppState, app_type: &AppType, id: &str) -> Result<(), AppError> {
+        let _switch_guard = crate::mode::controller::lock_settled_blocking(state, app_type)?;
         if !app_type.spec().additive
             && !matches!(app_type, AppType::Agy)
             && crate::mode::current::is_referenced(&state.db, app_type, id)?
@@ -8952,28 +8955,13 @@ impl ProviderService {
 
     /// 删除统一供应商
     pub fn delete_universal(state: &AppState, id: &str) -> Result<bool, AppError> {
-        // 获取统一供应商（用于删除生成的子供应商）
-        let provider = state.db.get_universal_provider(id)?;
-
-        // 删除统一供应商
+        use crate::mode::controller::lock_settled_blocking;
+        let _guards = [
+            lock_settled_blocking(state, &AppType::Claude)?,
+            lock_settled_blocking(state, &AppType::Codex)?,
+            lock_settled_blocking(state, &AppType::Gemini)?,
+        ];
         state.db.delete_universal_provider(id)?;
-
-        // 删除生成的子供应商
-        if let Some(p) = provider {
-            if p.apps.claude {
-                let claude_id = format!("universal-claude-{id}");
-                let _ = state.db.delete_provider(&AppType::Claude, &claude_id);
-            }
-            if p.apps.codex {
-                let codex_id = format!("universal-codex-{id}");
-                let _ = state.db.delete_provider(&AppType::Codex, &codex_id);
-            }
-            if p.apps.gemini {
-                let gemini_id = format!("universal-gemini-{id}");
-                let _ = state.db.delete_provider(&AppType::Gemini, &gemini_id);
-            }
-        }
-
         Ok(true)
     }
 
@@ -9015,8 +9003,7 @@ impl ProviderService {
             );
         } else {
             // 如果禁用了 Claude，删除对应的子供应商
-            let claude_id = format!("universal-claude-{id}");
-            let _ = state.db.delete_provider(&AppType::Claude, &claude_id);
+            Self::delete_universal_child(state, AppType::Claude, id)?;
         }
 
         // 同步到 Codex
@@ -9042,8 +9029,7 @@ impl ProviderService {
                 &mut live_failures,
             );
         } else {
-            let codex_id = format!("universal-codex-{id}");
-            let _ = state.db.delete_provider(&AppType::Codex, &codex_id);
+            Self::delete_universal_child(state, AppType::Codex, id)?;
         }
 
         // 同步到 Gemini
@@ -9069,8 +9055,7 @@ impl ProviderService {
                 &mut live_failures,
             );
         } else {
-            let gemini_id = format!("universal-gemini-{id}");
-            let _ = state.db.delete_provider(&AppType::Gemini, &gemini_id);
+            Self::delete_universal_child(state, AppType::Gemini, id)?;
         }
 
         if live_failures.is_empty() {
@@ -9081,6 +9066,13 @@ impl ProviderService {
                 live_failures.join("、")
             )))
         }
+    }
+
+    fn delete_universal_child(state: &AppState, app: AppType, id: &str) -> Result<(), AppError> {
+        let _guard = crate::mode::controller::lock_settled_blocking(state, &app)?;
+        state
+            .db
+            .delete_provider(&app, &format!("universal-{app}-{id}"))
     }
 
     /// Re-project a generated universal child only when it is the effective

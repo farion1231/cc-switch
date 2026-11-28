@@ -31,6 +31,10 @@ impl<V> Default for ReadCache<V> {
 }
 
 impl<V: Clone> ReadCache<V> {
+    pub(super) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
     pub(super) fn invalidate(&self) {
         self.generation.fetch_add(1, Ordering::AcqRel);
     }
@@ -108,6 +112,11 @@ impl ProxyReadCache {
 }
 
 impl Database {
+    /// A snapshot of provider rows is obsolete after any provider write or database replacement.
+    pub(crate) fn failover_queue_revision(&self) -> u64 {
+        self.read_cache.failover.generation()
+    }
+
     pub(crate) fn cached_model_pricing(
         &self,
         model: &str,
@@ -380,7 +389,14 @@ mod tests {
         };
         let (_, result) = tokio::join!(
             heartbeat,
-            db.update_provider_health_with_threshold("fixture", &AppType::Claude, true, None, 3)
+            db.update_provider_health_with_threshold(
+                "fixture",
+                &AppType::Claude,
+                true,
+                None,
+                3,
+                None
+            )
         );
         holder.join().unwrap();
         result.unwrap();

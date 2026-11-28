@@ -295,11 +295,9 @@ pub async fn update_proxy_config_for_app(
     let guard = crate::mode::controller::lock_settled(state.inner(), &app)
         .await
         .map_err(|e| e.to_string())?;
-    // `enabled` 是模式的镜像，只由进入 / 退出代理改写。
     let mut config = config;
     config.enabled = crate::mode::current::is_proxy(&app);
-
-    db.update_proxy_config_for_app(config).await?;
+    db.update_proxy_tuning_for_app(config).await?;
     drop(guard);
 
     state

@@ -45,6 +45,7 @@ pub struct RequestContext {
     pub provider: Provider,
     /// 完整的 Provider 列表（用于故障转移）
     providers: Vec<Provider>,
+    queue_revision: Option<u64>,
     /// 请求开始时的"当前供应商"（用于判断是否需要同步 UI/托盘）
     ///
     /// 这里使用本地 settings 的设备级 current provider。
@@ -104,6 +105,7 @@ impl RequestContext {
         stack: Option<StackTarget>,
     ) -> Result<Self, ProxyError> {
         let start_time = Instant::now();
+        let queue_revision = state.db.failover_queue_revision();
         let route_revision = state.db.route_revision(&app_type);
 
         // 从数据库读取应用级代理配置（per-app）
@@ -236,11 +238,15 @@ impl RequestContext {
             }
         };
 
+        app_config.auto_failover_enabled &= provider.in_failover_queue
+            && super::provider_router::provider_supports_failover(&app_type, &provider);
+        let queue_revision = app_config.auto_failover_enabled.then_some(queue_revision);
         Ok(Self {
             start_time,
             app_config,
             provider,
             providers,
+            queue_revision,
             current_provider_id,
             route_revision,
             request_model,
@@ -326,6 +332,7 @@ impl RequestContext {
         )
         .stack_request(self.is_stack)
         .failover_chain(self.app_config.auto_failover_enabled)
+        .queue_revision(self.queue_revision)
         .route_revision(self.route_revision)
         .privacy_filter(self.privacy_filter_config.clone())
         .copilot_auto_sessions(state.copilot_auto_sessions.clone())

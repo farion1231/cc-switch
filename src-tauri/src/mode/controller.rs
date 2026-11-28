@@ -1168,7 +1168,7 @@ pub async fn switch_route_locked(
     })
 }
 
-/// 开启故障转移时切到队列 P1。调用方持有切换锁，直到开关写入完成。
+/// 开启故障转移时切到队列 P1；调用方持有应用切换锁直到开关写入完成。
 pub(crate) async fn switch_route_for_failover_locked(
     state: &AppState,
     app: &AppType,
@@ -1345,7 +1345,7 @@ pub async fn set_stack_member(
     })
 }
 
-async fn set_stack_member_locked(
+pub(crate) async fn set_stack_member_locked(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
@@ -1710,6 +1710,7 @@ pub async fn record_failover_route(
     state: &AppState,
     app: &AppType,
     provider_id: &str,
+    queue_revision: u64,
     route_revision: u64,
 ) -> Result<bool, String> {
     let _guard = lock_settled(state, app).await.map_err(|e| e.to_string())?;
@@ -1725,6 +1726,7 @@ pub async fn record_failover_route(
         return Ok(false);
     }
     if state.db.route_revision(app) != route_revision
+        || state.db.failover_queue_revision() != queue_revision
         || !state
             .db
             .get_proxy_config_for_app(app)
@@ -1734,8 +1736,13 @@ pub async fn record_failover_route(
         return Ok(false);
     }
     let Some(target) = provider(state, app, provider_id)? else {
-        return Err(format!("供应商不存在: {provider_id}"));
+        return Ok(false);
     };
+    if !target.in_failover_queue
+        || !crate::proxy::provider_router::provider_supports_failover(app, &target)
+    {
+        return Ok(false);
+    }
     commit_state(
         state,
         app,
