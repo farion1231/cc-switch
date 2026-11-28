@@ -5,6 +5,12 @@ use url::{Host, Url};
 
 use crate::error::AppError;
 
+/// 用量查询响应体最大字节数（2 MiB），防止恶意或异常端点导致 OOM 并绕过 QuickJS 16 MiB 内存上限
+const MAX_USAGE_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
+
+/// 非 2xx 错误响应最多展示的预览字节数（避免为构造错误摘要而读取超大错误页）
+const ERROR_PREVIEW_BYTE_LIMIT: usize = 200;
+
 /// 执行用量查询脚本
 pub async fn execute_usage_script(
     script_code: &str,
@@ -14,6 +20,30 @@ pub async fn execute_usage_script(
     access_token: Option<&str>,
     user_id: Option<&str>,
     template_type: Option<&str>,
+) -> Result<Value, AppError> {
+    execute_usage_script_with_max_bytes(
+        script_code,
+        api_key,
+        base_url,
+        timeout_secs,
+        access_token,
+        user_id,
+        template_type,
+        MAX_USAGE_RESPONSE_BYTES,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn execute_usage_script_with_max_bytes(
+    script_code: &str,
+    api_key: &str,
+    base_url: &str,
+    timeout_secs: u64,
+    access_token: Option<&str>,
+    user_id: Option<&str>,
+    template_type: Option<&str>,
+    max_response_bytes: usize,
 ) -> Result<Value, AppError> {
     // 检测是否为自定义模板模式
     // 优先使用前端传递的 template_type
@@ -100,7 +130,11 @@ pub async fn execute_usage_script(
             )
         })?;
         validate_request_url(&request.url, &base_url, is_custom_template)?;
-        let response_data = executor.block_on(send_http_request(&request, timeout_secs))?;
+        let response_data = executor.block_on(send_http_request(
+            &request,
+            timeout_secs,
+            max_response_bytes,
+        ))?;
 
         // Network latency does not consume the extractor's CPU time budget.
         reset_script_deadline(&runtime)?;
@@ -226,9 +260,6 @@ fn reset_script_deadline(runtime: &Runtime) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 用量查询响应体最大字节数（2 MiB），防止恶意或异常端点导致 OOM
-const MAX_USAGE_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
-
 /// 请求配置结构
 #[derive(Debug, serde::Deserialize)]
 struct RequestConfig {
@@ -240,45 +271,12 @@ struct RequestConfig {
     body: Option<String>,
 }
 
-/// 流式读取响应文本并强制执行字节数上限
-async fn read_response_text_limited(
-    mut resp: reqwest::Response,
-    max_bytes: usize,
+/// 发送 HTTP 请求（带自转发拦截、禁重定向、总超时与响应体大小上限）
+async fn send_http_request(
+    config: &RequestConfig,
+    timeout_secs: u64,
+    max_response_bytes: usize,
 ) -> Result<String, AppError> {
-    if resp
-        .content_length()
-        .is_some_and(|len| len > max_bytes as u64)
-    {
-        return Err(AppError::localized(
-            "usage_script.response_too_large",
-            format!("响应体过大，超过 {max_bytes} 字节上限"),
-            format!("Response body exceeds limit of {max_bytes} bytes"),
-        ));
-    }
-
-    let mut buf = Vec::new();
-    while let Some(chunk) = resp.chunk().await.map_err(|e| {
-        AppError::localized(
-            "usage_script.read_response_failed",
-            format!("读取响应失败: {e}"),
-            format!("Failed to read response: {e}"),
-        )
-    })? {
-        if buf.len().saturating_add(chunk.len()) > max_bytes {
-            return Err(AppError::localized(
-                "usage_script.response_too_large",
-                format!("响应体过大，超过 {max_bytes} 字节上限"),
-                format!("Response body exceeds limit of {max_bytes} bytes"),
-            ));
-        }
-        buf.extend_from_slice(&chunk);
-    }
-
-    Ok(String::from_utf8_lossy(&buf).into_owned())
-}
-
-/// 发送 HTTP 请求
-async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<String, AppError> {
     // 禁止用量脚本访问 CC Switch 自身的本地代理监听端口，防止回打消耗其他供应商额度
     for (listen_address, listen_port) in crate::proxy::http_client::active_proxy_listeners() {
         crate::proxy::upstream_guard::reject_self_forwarding(
@@ -308,6 +306,15 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     })?;
     // 约束超时范围，防止异常配置导致长时间阻塞（最小 2 秒，最大 30 秒）
     let request_timeout = std::time::Duration::from_secs(timeout_secs.clamp(2, 30));
+    let deadline = std::time::Instant::now()
+        .checked_add(request_timeout)
+        .ok_or_else(|| {
+            AppError::localized(
+                "usage_script.invalid_timeout",
+                "无法计算 HTTP 请求超时截止时间",
+                "Unable to compute HTTP request timeout deadline",
+            )
+        })?;
 
     // 严格校验 HTTP 方法，非法值不回退为 GET
     let method: reqwest::Method = config.method.parse().map_err(|_| {
@@ -342,18 +349,8 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
     })?;
 
     let status = resp.status();
-    let text = read_response_text_limited(resp, MAX_USAGE_RESPONSE_BYTES).await?;
-
     if !status.is_success() {
-        let preview = if text.len() > 200 {
-            let mut safe_cut = 200usize;
-            while !text.is_char_boundary(safe_cut) {
-                safe_cut = safe_cut.saturating_sub(1);
-            }
-            format!("{}...", &text[..safe_cut])
-        } else {
-            text.clone()
-        };
+        let preview = read_bounded_error_preview(resp, max_response_bytes, deadline).await?;
         return Err(AppError::localized(
             "usage_script.http_error",
             format!("HTTP {status} : {preview}"),
@@ -361,7 +358,169 @@ async fn send_http_request(config: &RequestConfig, timeout_secs: u64) -> Result<
         ));
     }
 
-    Ok(text)
+    read_bounded_response_text(resp, max_response_bytes, deadline).await
+}
+
+fn remaining_read_timeout(deadline: std::time::Instant) -> Result<std::time::Duration, AppError> {
+    let now = std::time::Instant::now();
+    if now >= deadline {
+        return Err(AppError::localized(
+            "usage_script.read_response_failed",
+            "读取响应超时".to_string(),
+            "Timed out while reading response".to_string(),
+        ));
+    }
+    Ok(deadline.saturating_duration_since(now))
+}
+
+async fn next_chunk_with_deadline(
+    resp: &mut reqwest::Response,
+    deadline: std::time::Instant,
+) -> Result<Option<bytes::Bytes>, AppError> {
+    let read_timeout = remaining_read_timeout(deadline)?;
+    tokio::time::timeout(read_timeout, resp.chunk())
+        .await
+        .map_err(|_| {
+            AppError::localized(
+                "usage_script.read_response_failed",
+                "读取响应超时".to_string(),
+                "Timed out while reading response".to_string(),
+            )
+        })?
+        .map_err(|e| {
+            AppError::localized(
+                "usage_script.read_response_failed",
+                format!("读取响应失败: {e}"),
+                format!("Failed to read response: {e}"),
+            )
+        })
+}
+
+fn response_too_large_error(max_bytes: usize, declared_len: Option<u64>) -> AppError {
+    match declared_len {
+        Some(len) => AppError::localized(
+            "usage_script.response_too_large",
+            format!("用量接口响应体过大（声明 {len} 字节，上限 {max_bytes} 字节）"),
+            format!(
+                "Usage response body exceeds limit (declared {len} bytes, max {max_bytes} bytes)"
+            ),
+        ),
+        None => AppError::localized(
+            "usage_script.response_too_large",
+            format!("用量接口响应体超过大小上限（{max_bytes} 字节）"),
+            format!("Usage response body exceeds size limit ({max_bytes} bytes)"),
+        ),
+    }
+}
+
+async fn read_bounded_response_text(
+    mut resp: reqwest::Response,
+    max_response_bytes: usize,
+    deadline: std::time::Instant,
+) -> Result<String, AppError> {
+    if let Some(declared_len) = resp.content_length() {
+        if declared_len > max_response_bytes as u64 {
+            return Err(response_too_large_error(
+                max_response_bytes,
+                Some(declared_len),
+            ));
+        }
+    }
+    for header_val in resp.headers().get_all(reqwest::header::CONTENT_LENGTH) {
+        if let Ok(raw) = header_val.to_str() {
+            for part in raw.split(',') {
+                if let Ok(parsed_len) = part.trim().parse::<u128>() {
+                    if parsed_len > max_response_bytes as u128 {
+                        let reported = u64::try_from(parsed_len).ok();
+                        return Err(response_too_large_error(max_response_bytes, reported));
+                    }
+                }
+            }
+        }
+    }
+
+    let initial_cap = resp
+        .content_length()
+        .and_then(|len| usize::try_from(len).ok())
+        .unwrap_or(0)
+        .min(max_response_bytes)
+        .min(64 * 1024);
+    let mut buf = Vec::with_capacity(initial_cap);
+
+    while let Some(chunk) = next_chunk_with_deadline(&mut resp, deadline).await? {
+        if buf.len().saturating_add(chunk.len()) > max_response_bytes {
+            return Err(response_too_large_error(max_response_bytes, None));
+        }
+        buf.extend_from_slice(&chunk);
+    }
+
+    let body = buf.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&buf);
+    Ok(String::from_utf8_lossy(body).into_owned())
+}
+
+async fn read_bounded_error_preview(
+    mut resp: reqwest::Response,
+    max_response_bytes: usize,
+    deadline: std::time::Instant,
+) -> Result<String, AppError> {
+    let preview_byte_budget = max_response_bytes.min(ERROR_PREVIEW_BYTE_LIMIT + 4);
+    let declared_exceeds_budget = resp
+        .content_length()
+        .is_some_and(|len| len > preview_byte_budget as u64);
+    let mut buf = Vec::with_capacity(preview_byte_budget);
+    let mut truncated = declared_exceeds_budget;
+
+    if preview_byte_budget > 0 {
+        while buf.len() < preview_byte_budget {
+            match next_chunk_with_deadline(&mut resp, deadline).await {
+                Ok(Some(chunk)) => {
+                    if chunk.is_empty() {
+                        continue;
+                    }
+                    let remaining = preview_byte_budget - buf.len();
+                    let take = chunk.len().min(remaining);
+                    buf.extend_from_slice(&chunk[..take]);
+                    if take < chunk.len() {
+                        truncated = true;
+                        break;
+                    }
+                }
+                Ok(None) => break,
+                Err(err) => {
+                    if buf.is_empty() {
+                        return Err(err);
+                    }
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+    }
+    drop(resp);
+
+    let body = buf.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&buf);
+    let text = match std::str::from_utf8(body) {
+        Ok(valid) => valid.to_string(),
+        Err(err) if err.error_len().is_none() => {
+            if err.valid_up_to() < body.len() {
+                truncated = true;
+            }
+            String::from_utf8_lossy(&body[..err.valid_up_to()]).into_owned()
+        }
+        Err(_) => String::from_utf8_lossy(body).into_owned(),
+    };
+
+    if text.len() > ERROR_PREVIEW_BYTE_LIMIT {
+        let mut safe_cut = ERROR_PREVIEW_BYTE_LIMIT;
+        while !text.is_char_boundary(safe_cut) {
+            safe_cut = safe_cut.saturating_sub(1);
+        }
+        Ok(format!("{}...", &text[..safe_cut]))
+    } else if truncated && !text.is_empty() {
+        Ok(format!("{text}..."))
+    } else {
+        Ok(text)
+    }
 }
 
 /// 验证脚本返回值（支持单对象或数组）
@@ -1210,5 +1369,387 @@ mod tests {
             0,
             "active proxy listener must never receive usage_script requests"
         );
+    }
+
+    async fn read_raw_http_head(stream: &mut tokio::net::TcpStream) -> String {
+        use tokio::io::AsyncReadExt;
+
+        let mut buf = Vec::with_capacity(1024);
+        let mut tmp = [0u8; 512];
+        loop {
+            match tokio::time::timeout(std::time::Duration::from_secs(2), stream.read(&mut tmp))
+                .await
+            {
+                Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+                Ok(Ok(n)) => {
+                    buf.extend_from_slice(&tmp[..n]);
+                    if buf.windows(4).any(|w| w == b"\r\n\r\n") || buf.len() >= 8192 {
+                        break;
+                    }
+                }
+            }
+        }
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn assert_localized_key(err: &AppError, expected_key: &str) {
+        match err {
+            AppError::Localized { key, .. } => assert_eq!(
+                *key, expected_key,
+                "expected localized error key {expected_key}, got {err:?}"
+            ),
+            other => panic!("expected AppError::Localized({expected_key}), got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn response_content_length_exceeding_budget_fails_fast() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tokio::io::AsyncWriteExt;
+
+        const SMALL_BUDGET: usize = 512;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("addr");
+        let body_chunks_sent = Arc::new(AtomicUsize::new(0));
+        let sent_clone = body_chunks_sent.clone();
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = read_raw_http_head(&mut stream).await;
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+                let _ = stream.flush().await;
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if stream.write_all(&[b'x'; 1024]).await.is_ok() {
+                    sent_clone.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/v1/usage", method: "GET" },
+            extractor: function(data) { return { remaining: data.remaining }; }
+        })"#;
+        let base_url = format!("http://{addr}");
+        let err = execute_usage_script_with_max_bytes(
+            script,
+            "sk-test",
+            &base_url,
+            5,
+            None,
+            None,
+            None,
+            SMALL_BUDGET,
+        )
+        .await
+        .expect_err("Content-Length > budget must fail immediately");
+        assert_localized_key(&err, "usage_script.response_too_large");
+        assert_eq!(body_chunks_sent.load(Ordering::SeqCst), 0);
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn chunked_response_exceeding_budget_stops_reading_and_errors() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tokio::io::AsyncWriteExt;
+
+        const SMALL_BUDGET: usize = 512;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("addr");
+        let late_chunks_sent = Arc::new(AtomicUsize::new(0));
+        let late_sent_clone = late_chunks_sent.clone();
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = read_raw_http_head(&mut stream).await;
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+                let chunk_payload = "a".repeat(200);
+                let wire_chunk = format!("{:x}\r\n{}\r\n", chunk_payload.len(), chunk_payload);
+                // 先发 4 个分块（共 800 字节 > 512 字节预算），故意不发结束块 0\r\n\r\n：
+                // 若客户端未按分块立即截停，而是等整段流结束，这里就会一直挂起到超时。
+                for _ in 0..4 {
+                    if stream.write_all(wire_chunk.as_bytes()).await.is_err() {
+                        return;
+                    }
+                    let _ = stream.flush().await;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if stream.write_all(wire_chunk.as_bytes()).await.is_ok() {
+                    late_sent_clone.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/v1/usage", method: "GET" },
+            extractor: function(data) { return { remaining: data.remaining }; }
+        })"#;
+        let base_url = format!("http://{addr}");
+        let err = execute_usage_script_with_max_bytes(
+            script,
+            "sk-test",
+            &base_url,
+            5,
+            None,
+            None,
+            None,
+            SMALL_BUDGET,
+        )
+        .await
+        .expect_err("chunked response exceeding budget must abort immediately");
+        assert_localized_key(&err, "usage_script.response_too_large");
+        assert_eq!(
+            late_chunks_sent.load(Ordering::SeqCst),
+            0,
+            "reader must stop immediately upon exceeding budget without waiting for stream EOF"
+        );
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn non_200_error_response_with_huge_body_is_safely_bounded() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tokio::io::AsyncWriteExt;
+
+        const SMALL_BUDGET: usize = 512;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("addr");
+        let late_chunks_sent = Arc::new(AtomicUsize::new(0));
+        let late_sent_clone = late_chunks_sent.clone();
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = read_raw_http_head(&mut stream).await;
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+                let chunk_payload = "E".repeat(1024);
+                let wire_chunk = format!("{:x}\r\n{}\r\n", chunk_payload.len(), chunk_payload);
+                // 先发 2 个 1 KiB 错误分块（已超过预览上限），随后保持连接不发结束块：
+                // 受限错误读取器应在拿到前 ~200 字节预览后立即断开并返回 http_error，不等待后续海量错误体。
+                for _ in 0..2 {
+                    if stream.write_all(wire_chunk.as_bytes()).await.is_err() {
+                        return;
+                    }
+                    let _ = stream.flush().await;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                if stream.write_all(wire_chunk.as_bytes()).await.is_ok() {
+                    late_sent_clone.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/v1/usage", method: "GET" },
+            extractor: function(data) { return { remaining: data.remaining }; }
+        })"#;
+        let base_url = format!("http://{addr}");
+        let err = execute_usage_script_with_max_bytes(
+            script,
+            "sk-test",
+            &base_url,
+            5,
+            None,
+            None,
+            None,
+            SMALL_BUDGET,
+        )
+        .await
+        .expect_err("non-200 response must return http_error");
+        assert_localized_key(&err, "usage_script.http_error");
+        match &err {
+            AppError::Localized { zh, en, .. } => {
+                assert!(zh.contains("HTTP 502"), "zh={zh}");
+                assert!(en.contains("HTTP 502"), "en={en}");
+                assert!(zh.ends_with("..."), "zh={zh}");
+                assert!(en.ends_with("..."), "en={en}");
+                assert!(
+                    zh.len() < 260,
+                    "zh preview must be bounded: len={}",
+                    zh.len()
+                );
+                assert!(
+                    en.len() < 260,
+                    "en preview must be bounded: len={}",
+                    en.len()
+                );
+            }
+            other => panic!("expected Localized error, got {other:?}"),
+        }
+        assert_eq!(
+            late_chunks_sent.load(Ordering::SeqCst),
+            0,
+            "non-200 reader must stop after reading bounded preview without waiting for stream EOF"
+        );
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn normal_small_json_response_within_budget_succeeds() {
+        use tokio::io::AsyncWriteExt;
+
+        const SMALL_BUDGET: usize = 512;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("addr");
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = read_raw_http_head(&mut stream).await;
+                let body = r#"{"remaining":19.25,"total":50,"used":30.75,"unit":"USD"}"#;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/v1/usage", method: "GET" },
+            extractor: function(data) {
+                return {
+                    remaining: data.remaining,
+                    total: data.total,
+                    used: data.used,
+                    unit: data.unit
+                };
+            }
+        })"#;
+        let base_url = format!("http://{addr}");
+        let value = execute_usage_script_with_max_bytes(
+            script,
+            "sk-test",
+            &base_url,
+            5,
+            None,
+            None,
+            None,
+            SMALL_BUDGET,
+        )
+        .await
+        .expect("small JSON within budget should succeed");
+
+        assert_eq!(value["remaining"].as_f64(), Some(19.25));
+        assert_eq!(value["total"].as_f64(), Some(50.0));
+        assert_eq!(value["used"].as_f64(), Some(30.75));
+        assert_eq!(value["unit"].as_str(), Some("USD"));
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn utf8_bom_prefixed_json_response_parses_successfully() {
+        use tokio::io::AsyncWriteExt;
+
+        const SMALL_BUDGET: usize = 512;
+
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind listener");
+        let addr = listener.local_addr().expect("addr");
+
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = read_raw_http_head(&mut stream).await;
+                let body = b"\xEF\xBB\xBF{\"remaining\":7}";
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(head.as_bytes()).await;
+                let _ = stream.write_all(body).await;
+            }
+            if let Ok((mut stream, _)) = listener.accept().await {
+                let _ = read_raw_http_head(&mut stream).await;
+                let _ = stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+                let part1 = b"\xEF";
+                let part2 = b"\xBB\xBF{\"remaining\":9.5}";
+                let chunk1 = format!("{:x}\r\n", part1.len());
+                let chunk2 = format!("{:x}\r\n", part2.len());
+                let _ = stream.write_all(chunk1.as_bytes()).await;
+                let _ = stream.write_all(part1).await;
+                let _ = stream.write_all(b"\r\n").await;
+                let _ = stream.flush().await;
+                let _ = stream.write_all(chunk2.as_bytes()).await;
+                let _ = stream.write_all(part2).await;
+                let _ = stream.write_all(b"\r\n0\r\n\r\n").await;
+            }
+        });
+
+        let script = r#"({
+            request: { url: "{{baseUrl}}/v1/usage", method: "GET" },
+            extractor: function(data) {
+                return { remaining: data.remaining };
+            }
+        })"#;
+        let base_url = format!("http://{addr}");
+
+        let first = execute_usage_script_with_max_bytes(
+            script,
+            "sk-test",
+            &base_url,
+            5,
+            None,
+            None,
+            None,
+            SMALL_BUDGET,
+        )
+        .await
+        .expect("UTF-8 BOM JSON response should parse");
+        assert_eq!(first["remaining"].as_f64(), Some(7.0));
+
+        let second = execute_usage_script_with_max_bytes(
+            script,
+            "sk-test",
+            &base_url,
+            5,
+            None,
+            None,
+            None,
+            SMALL_BUDGET,
+        )
+        .await
+        .expect("chunk-split UTF-8 BOM JSON response should parse");
+        assert_eq!(second["remaining"].as_f64(), Some(9.5));
+
+        server_task.abort();
     }
 }
