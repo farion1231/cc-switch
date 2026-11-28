@@ -136,6 +136,15 @@ describe("parseRepoUrl", () => {
       "https://github.com/owner/name",
     );
   });
+
+  it("builds an http web link for an explicitly allowed self-hosted repo", () => {
+    expect(
+      repoWebUrl(
+        { host: "git.internal:3000", owner: "team", name: "skills" },
+        "http",
+      ),
+    ).toBe("http://git.internal:3000/team/skills");
+  });
 });
 
 describe("isInsecureRepoUrl", () => {
@@ -148,16 +157,38 @@ describe("isInsecureRepoUrl", () => {
     expect(isInsecureRepoUrl("http://github.com/owner/name")).toBe(false);
     expect(isInsecureRepoUrl("owner/name")).toBe(false);
   });
+
+  it("stops flagging plain-http self-hosted addresses once HTTP is opted in", () => {
+    const url = "http://10.22.36.105:3000/owner/repo";
+    expect(isInsecureRepoUrl(url, false)).toBe(true);
+    expect(isInsecureRepoUrl(url, true)).toBe(false);
+    // 开关只放开明文 http，不改其他输入的判定
+    expect(isInsecureRepoUrl("https://gitlab.com/group/project", true)).toBe(
+      false,
+    );
+    expect(isInsecureRepoUrl("http://github.com/owner/name", true)).toBe(false);
+    expect(isInsecureRepoUrl("owner/name", true)).toBe(false);
+  });
 });
 
 describe("RepoManagerPanel add form", () => {
-  const renderPanel = (onAdd = vi.fn().mockResolvedValue(undefined)) => {
+  const renderPanel = (
+    onAdd = vi.fn().mockResolvedValue(undefined),
+    insecureHttp?: {
+      enabled: boolean;
+      hosts: string[];
+      onChange: (enabled: boolean) => void | Promise<void>;
+      onAllowHost: (host: string) => Promise<void>;
+      onRemoveHost: (host: string) => void | Promise<void>;
+    },
+  ) => {
     render(
       <RepoManagerPanel
         repos={[]}
         skills={[]}
         onAdd={onAdd}
         onRemove={vi.fn()}
+        insecureHttp={insecureHttp}
         onClose={vi.fn()}
       />,
     );
@@ -203,5 +234,137 @@ describe("RepoManagerPanel add form", () => {
     submit("http://10.22.36.105:8081/me_release/SkillList");
     expect(screen.getByText("skills.repo.httpsOnly")).toBeInTheDocument();
     expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("accepts a plain-http repository and records its host only after opt-in", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    const onAllowHost = vi.fn().mockResolvedValue(undefined);
+    renderPanel(onAdd, {
+      enabled: true,
+      hosts: [],
+      onChange: vi.fn(),
+      onAllowHost,
+      onRemoveHost: vi.fn(),
+    });
+    submit("http://10.22.36.105:3000/owner/repo");
+    await waitFor(() =>
+      expect(onAdd).toHaveBeenCalledWith({
+        host: "10.22.36.105:3000",
+        owner: "owner",
+        name: "repo",
+        branch: "main",
+        enabled: true,
+      }),
+    );
+    expect(onAllowHost).toHaveBeenCalledWith("10.22.36.105:3000");
+    expect(screen.queryByText("skills.repo.httpsOnly")).not.toBeInTheDocument();
+  });
+
+  it("does not add the repo until the host allowlist has been saved", async () => {
+    const onAdd = vi.fn().mockResolvedValue(undefined);
+    let resolveAllowHost!: () => void;
+    const allowHostSaved = new Promise<void>((resolve) => {
+      resolveAllowHost = resolve;
+    });
+    const onAllowHost = vi.fn(() => allowHostSaved);
+    renderPanel(onAdd, {
+      enabled: true,
+      hosts: [],
+      onChange: vi.fn(),
+      onAllowHost,
+      onRemoveHost: vi.fn(),
+    });
+
+    submit("http://10.22.36.105:3000/owner/repo");
+    await waitFor(() =>
+      expect(onAllowHost).toHaveBeenCalledWith("10.22.36.105:3000"),
+    );
+    // 后端下载紧跟 addRepo，放行记录落盘前不能开始发现
+    expect(onAdd).not.toHaveBeenCalled();
+
+    resolveAllowHost();
+    await waitFor(() => expect(onAdd).toHaveBeenCalledTimes(1));
+    expect(onAdd).toHaveBeenCalledWith({
+      host: "10.22.36.105:3000",
+      owner: "owner",
+      name: "repo",
+      branch: "main",
+      enabled: true,
+    });
+  });
+
+  it("warns about plaintext transfer and lists hosts explicitly allowed", () => {
+    const onChange = vi.fn();
+    const onRemoveHost = vi.fn();
+    renderPanel(undefined, {
+      enabled: true,
+      hosts: ["git.internal:3000"],
+      onChange,
+      onAllowHost: vi.fn().mockResolvedValue(undefined),
+      onRemoveHost,
+    });
+    expect(screen.getByText("skills.repo.insecureHttpWarning")).toBeVisible();
+    fireEvent.click(screen.getByRole("checkbox"));
+    expect(onChange).toHaveBeenCalledWith(false);
+    // 无障碍名称说清点击是移除，可见文字仍是主机本身
+    const chip = screen.getByRole("button", {
+      name: "skills.repo.insecureHttpRemoveHost",
+    });
+    expect(chip).toHaveTextContent("git.internal:3000");
+    fireEvent.click(chip);
+    expect(onRemoveHost).toHaveBeenCalledWith("git.internal:3000");
+  });
+
+  it("allows a host typed straight into the allowlist, for repos synced from another device", async () => {
+    const onAllowHost = vi.fn().mockResolvedValue(undefined);
+    renderPanel(undefined, {
+      enabled: true,
+      hosts: [],
+      onChange: vi.fn(),
+      onAllowHost,
+      onRemoveHost: vi.fn(),
+    });
+    fireEvent.change(
+      screen.getByLabelText("skills.repo.insecureHttpHostPlaceholder"),
+      { target: { value: "  Git.Internal:3000  " } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "skills.repo.insecureHttpHostAdd" }),
+    );
+    await waitFor(() =>
+      expect(onAllowHost).toHaveBeenCalledWith("git.internal:3000"),
+    );
+  });
+
+  it("rejects allowlist entries that are not a bare host, and refuses GitHub", async () => {
+    const onAllowHost = vi.fn().mockResolvedValue(undefined);
+    renderPanel(undefined, {
+      enabled: true,
+      hosts: [],
+      onChange: vi.fn(),
+      onAllowHost,
+      onRemoveHost: vi.fn(),
+    });
+    const field = screen.getByLabelText(
+      "skills.repo.insecureHttpHostPlaceholder",
+    );
+    const allow = screen.getByRole("button", {
+      name: "skills.repo.insecureHttpHostAdd",
+    });
+
+    fireEvent.change(field, {
+      target: { value: "http://git.internal:3000/x" },
+    });
+    fireEvent.click(allow);
+    expect(
+      screen.getByText("skills.repo.insecureHttpHostInvalid"),
+    ).toBeInTheDocument();
+
+    fireEvent.change(field, { target: { value: "github.com" } });
+    fireEvent.click(allow);
+    expect(
+      screen.getByText("skills.repo.insecureHttpHostGithub"),
+    ).toBeInTheDocument();
+    expect(onAllowHost).not.toHaveBeenCalled();
   });
 });

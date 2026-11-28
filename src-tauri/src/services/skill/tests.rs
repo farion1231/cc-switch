@@ -1,3 +1,4 @@
+use super::repo::RepoUrlPolicy;
 use super::*;
 use crate::test_support::EnvVars;
 use tempfile::tempdir;
@@ -598,6 +599,77 @@ fn build_archive_url_targets_the_gitlab_api_on_the_configured_host() {
         .unwrap(),
         "https://github.com/acme/skills/archive/refs/heads/main.zip"
     );
+}
+
+#[test]
+fn insecure_http_policy_keeps_https_unless_every_condition_is_met() {
+    // 默认关闭：没开开关时，即使主机在清单里也不能降级
+    let off = RepoUrlPolicy {
+        allow_insecure_http: false,
+        insecure_http_hosts: vec!["gitea.internal:3000".into()],
+    };
+    assert_eq!(off.scheme_for("gitea.internal:3000", false), "https");
+
+    // 开关打开但没有放行清单，一样保持 https
+    let no_hosts = RepoUrlPolicy {
+        allow_insecure_http: true,
+        insecure_http_hosts: vec![],
+    };
+    assert_eq!(no_hosts.scheme_for("gitea.internal:3000", false), "https");
+
+    // 带令牌的请求永远不降级，即使主机已放行
+    let allowed = RepoUrlPolicy {
+        allow_insecure_http: true,
+        insecure_http_hosts: vec![" Gitea.Internal:3000 ".into()],
+    };
+    assert_eq!(allowed.scheme_for("gitea.internal:3000", false), "http");
+    assert_eq!(allowed.scheme_for("gitea.internal:3000", true), "https");
+    assert_eq!(allowed.scheme_for("other.internal", false), "https");
+    assert_eq!(allowed.scheme_for(GITHUB_HOST, false), "https");
+}
+
+#[test]
+fn build_archive_url_downgrades_only_an_allowed_host_without_a_token() {
+    let repo = gitlab_repo("gitea.internal:3000", "team", "skills", "main");
+    let allowed = RepoUrlPolicy {
+        allow_insecure_http: true,
+        insecure_http_hosts: vec!["gitea.internal:3000".into()],
+    };
+    let url = SkillService::build_archive_url_with_policy(
+        &repo,
+        RepoPlatform::Gitea,
+        "main",
+        false,
+        &allowed,
+    )
+    .unwrap();
+    assert_eq!(
+        url,
+        "http://gitea.internal:3000/api/v1/repos/team/skills/archive/main.zip"
+    );
+
+    // 有令牌就退回 https；未放行的主机也退回 https
+    let with_token = SkillService::build_archive_url_with_policy(
+        &repo,
+        RepoPlatform::Gitea,
+        "main",
+        true,
+        &allowed,
+    )
+    .unwrap();
+    assert!(with_token.starts_with("https://gitea.internal:3000/"));
+    let unrelated = SkillService::build_archive_url_with_policy(
+        &repo,
+        RepoPlatform::Gitea,
+        "main",
+        false,
+        &RepoUrlPolicy {
+            allow_insecure_http: true,
+            insecure_http_hosts: vec!["other.internal".into()],
+        },
+    )
+    .unwrap();
+    assert!(unrelated.starts_with("https://gitea.internal:3000/"));
 }
 
 #[test]

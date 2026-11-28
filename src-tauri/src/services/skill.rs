@@ -675,10 +675,17 @@ impl SkillService {
         // 主机才是准绳：`github.com` 不管传进来什么平台都按 GitHub 拼
         Some(if host == GITHUB_HOST {
             format!("https://github.com/{owner}/{repo}/blob/{branch}/{doc_path}")
-        } else if platform == RepoPlatform::Gitea {
-            format!("https://{host}/{owner}/{repo}/src/branch/{branch}/{doc_path}")
         } else {
-            format!("https://{host}/{owner}/{repo}/-/blob/{branch}/{doc_path}")
+            // 文档链接只是交给系统浏览器打开，不会携带仓库令牌，所以 authenticated 传 false。
+            // 放行 HTTP 的主机也要跟着换 scheme，否则链接指向一个并不存在的 https 站点。
+            // 这不与下载链路冲突：放行主机若配了令牌，download_repo 会先报错拦下；
+            // 没有令牌时两条链路都由同一策略选 scheme。
+            let scheme = repo::RepoUrlPolicy::from_settings().scheme_for(host, false);
+            if platform == RepoPlatform::Gitea {
+                format!("{scheme}://{host}/{owner}/{repo}/src/branch/{branch}/{doc_path}")
+            } else {
+                format!("{scheme}://{host}/{owner}/{repo}/-/blob/{branch}/{doc_path}")
+            }
         })
     }
 

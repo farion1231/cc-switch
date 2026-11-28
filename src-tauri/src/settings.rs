@@ -559,6 +559,12 @@ pub struct AppSettings {
     /// 自动下载 CC Switch 新版本，下好后问用户要不要安装（默认关）。设备级，不随云同步。
     #[serde(default)]
     pub auto_update_enabled: bool,
+    /// 是否允许自建技能仓库走明文 HTTP（#9947）。默认关，设备级，不随云同步。
+    #[serde(default)]
+    pub allow_insecure_skill_http: bool,
+    /// 用户明确放行的主机（含端口）；只有这些主机在开关打开时才会改用 http。
+    #[serde(default)]
+    pub insecure_skill_http_hosts: Vec<String>,
     /// 点托盘图标出原生菜单，不出托盘面板（macOS / Windows；Linux 只能出原生菜单，不看这一项）。
     /// 默认关：用托盘面板，想要原生菜单在设置里换回。
     #[serde(default)]
@@ -793,6 +799,8 @@ impl Default for AppSettings {
             show_provider_search: true,
             check_tool_updates_on_startup: false,
             auto_update_enabled: false,
+            allow_insecure_skill_http: false,
+            insecure_skill_http_hosts: Vec::new(),
             native_tray_menu: false,
             preserve_codex_official_auth_on_switch: false,
             codex_quota_protection: CodexQuotaProtection::default(),
@@ -1960,6 +1968,14 @@ mod tests {
         assert!(!visible.pi);
         assert_eq!(settings.language.as_deref(), Some("zh"));
         assert!(settings.backup_interval_hours.is_none());
+    }
+
+    #[test]
+    fn insecure_skill_http_defaults_to_off_for_existing_settings_files() {
+        // 老版本的 settings.json 没有这两个键，反序列化必须保持默认安全行为
+        let settings: AppSettings = serde_json::from_str("{}").expect("empty settings parses");
+        assert!(!settings.allow_insecure_skill_http);
+        assert!(settings.insecure_skill_http_hosts.is_empty());
     }
 
     #[test]

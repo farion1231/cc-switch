@@ -1,5 +1,6 @@
 //! 下载仓库归档并在预算内解压；在解压出的仓库里定位技能目录。
 
+use super::repo::RepoUrlPolicy;
 use super::*;
 
 impl SkillService {
@@ -222,8 +223,18 @@ impl SkillService {
             return Ok((temp_dir, repo.branch.clone()));
         }
 
+        let policy = RepoUrlPolicy::from_settings();
         let epoch = self.credential_epoch.load(Ordering::SeqCst);
         let token = self.repo_token(&repo.host).await?;
+        // 带令牌的请求一律 https（#9947）：即使这台主机被放行 http，也不能把
+        // Authorization 头发到明文连接上。让用户看到明确原因，而不是 TLS 握手失败。
+        if token.is_some() && policy.is_host_allowed(&repo.host) {
+            return Err(anyhow!(format_skill_error(
+                "INSECURE_HTTP_WITH_TOKEN",
+                &[("host", &repo.host)],
+                Some("removeHttpAllowlistOrToken")
+            )));
+        }
         let token = token.as_deref();
         let platform = self.resolve_platform(&repo.host, token, epoch).await;
         let branch = Self::try_repo_branches(

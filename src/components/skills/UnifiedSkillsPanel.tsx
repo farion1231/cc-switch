@@ -39,6 +39,7 @@ import {
   useDiscoverableSkills,
   useDiscoverableSkillsFailures,
   useImportSkillsFromApps,
+  useInsecureSkillHttpSettings,
   useInstallSkillsFromZip,
   useInstalledSkills,
   useRefreshLocalSkillMetadata,
@@ -2134,6 +2135,13 @@ function RepoManagerContainer({ onClose }: { onClose: () => void }) {
   const { addRepo, removeRepo, setRepoEnabled } = useSkillRepoActions();
   const { data: repoTokens } = useSkillRepoTokens();
   const { setToken, deleteToken } = useSkillRepoTokenActions();
+  const {
+    enabled: insecureHttpEnabled,
+    hosts: insecureHttpHosts,
+    setEnabled: setInsecureHttpEnabled,
+    allowHost: allowInsecureHttpHost,
+    removeHost: removeInsecureHttpHost,
+  } = useInsecureSkillHttpSettings();
   return (
     <RepoManagerPanel
       repos={repos}
@@ -2142,6 +2150,13 @@ function RepoManagerContainer({ onClose }: { onClose: () => void }) {
       onAdd={addRepo}
       onRemove={removeRepo}
       onToggle={setRepoEnabled}
+      insecureHttp={{
+        enabled: insecureHttpEnabled,
+        hosts: insecureHttpHosts,
+        onChange: (enabled) => void setInsecureHttpEnabled(enabled),
+        onAllowHost: allowInsecureHttpHost,
+        onRemoveHost: (host) => void removeInsecureHttpHost(host),
+      }}
       tokens={{
         hosts: repoTokens?.hosts ?? [],
         secureStorage: repoTokens?.secureStorage ?? true,

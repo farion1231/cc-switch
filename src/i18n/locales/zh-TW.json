@@ -3566,6 +3566,7 @@
       "invalidTokenHost": "站點無效：{{host}}。只填主機名稱，例如 gitlab.example.com",
       "invalidRepoToken": "權杖格式不正確：只能包含字母、數字和 - _ . ~ + / =，最長 {{limit}} 個字元",
       "repoTokenStorageFailed": "無法讀寫 {{host}} 的存取權杖，請檢查系統的憑證儲存區是否可用",
+      "insecureHttpWithToken": "無法對 {{host}} 使用明文 HTTP 傳輸存取權杖",
       "getHomeDirFailed": "無法取得使用者主目錄",
       "noSkillsInZip": "ZIP 檔案中未找到技能（需包含 SKILL.md 檔案）",
       "unknownError": "未知錯誤",
@@ -3576,7 +3577,8 @@
         "checkRepoUrl": "請檢查儲存庫位址和分支名稱",
         "checkPermission": "請檢查目錄權限",
         "uninstallFirst": "請先解除安裝已安裝的同名技能",
-        "checkZipContent": "請確認 ZIP 檔案包含有效的技能目錄（含 SKILL.md 檔案）"
+        "checkZipContent": "請確認 ZIP 檔案包含有效的技能目錄（含 SKILL.md 檔案）",
+        "removeHttpAllowlistOrToken": "請在「管理技能儲存庫」中把該主機從 HTTP 放行清單移除，或刪除該站點的存取權杖"
       }
     },
     "repo": {
@@ -3592,6 +3594,13 @@
       "empty": "暫無儲存庫",
       "invalidUrl": "無效的儲存庫 URL 格式",
       "httpsOnly": "GitLab / Gitea 儲存庫僅支援 https 位址",
+      "allowInsecureHttp": "允許不安全的 HTTP 連線（僅限可信內網／自建實例）",
+      "insecureHttpWarning": "HTTP 傳輸未加密，技能內容與憑證可能在網路上被攔截或竄改。請僅在完全可信的區域網路中啟用；附帶存取令牌的要求仍只使用 HTTPS。開關與放行清單只儲存在本機，不會隨雲端同步。",
+      "insecureHttpHostPlaceholder": "例如 192.168.1.10:3000",
+      "insecureHttpHostAdd": "放行",
+      "insecureHttpHostInvalid": "只填主機名稱和連接埠，例如 192.168.1.10:3000",
+      "insecureHttpHostGithub": "GitHub 儲存庫一律使用 HTTPS",
+      "insecureHttpRemoveHost": "移除 {{host}}",
       "token": {
         "title": "存取權杖",
         "description": "讀取私有儲存庫時使用。權杖按站點儲存在系統的憑證儲存區中（macOS 鑰匙圈、Windows 認證管理員），不隨雲端同步，只需要唯讀權限。",

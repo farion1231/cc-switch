@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { ExternalLink, Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -36,6 +36,16 @@ import {
   repoWebUrl,
 } from "./repoUrl";
 
+/** 明文 HTTP 的设备级开关与放行主机（#9947）；不传时保持原来的 https-only 行为 */
+export interface InsecureRepoHttpSettings {
+  enabled: boolean;
+  hosts: string[];
+  onChange: (enabled: boolean) => void | Promise<void>;
+  /** 必须返回 Promise：addRepo 会立刻下载，只有放行记录保存完成才能继续 */
+  onAllowHost: (host: string) => Promise<void>;
+  onRemoveHost: (host: string) => void | Promise<void>;
+}
+
 interface RepoManagerPanelProps {
   repos: SkillRepo[];
   skills: DiscoverableSkill[];
@@ -47,6 +57,7 @@ interface RepoManagerPanelProps {
   onToggle?: (repo: SkillRepo, enabled: boolean) => Promise<void>;
   /** 访问令牌区（读私有仓库用）；不传就不显示 */
   tokens?: Omit<RepoTokenSectionProps, "knownHosts">;
+  insecureHttp?: InsecureRepoHttpSettings;
   onClose: () => void;
 }
 
@@ -87,6 +98,7 @@ export function RepoManagerPanel({
   onRemove,
   onToggle,
   tokens,
+  insecureHttp,
   onClose,
 }: RepoManagerPanelProps) {
   const { t } = useTranslation();
@@ -100,10 +112,13 @@ export function RepoManagerPanel({
   const [branch, setBranch] = useState("");
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
+  const [hostDraft, setHostDraft] = useState("");
+  const [hostError, setHostError] = useState("");
+  const [allowingHost, setAllowingHost] = useState(false);
 
   const handleAdd = async () => {
     setError("");
-    if (isInsecureRepoUrl(repoUrl)) {
+    if (isInsecureRepoUrl(repoUrl, insecureHttp?.enabled)) {
       setError(t("skills.repo.httpsOnly"));
       return;
     }
@@ -114,6 +129,13 @@ export function RepoManagerPanel({
     }
     setAdding(true);
     try {
+      // 开关打开时，用户填的 http 地址本身就是对这台主机的明确放行。先记主机，
+      // 再触发发现：addRepo 会立刻按新仓库去下载，后端此刻就要能查到放行记录。
+      if (insecureHttp?.enabled && /^http:\/\//i.test(repoUrl.trim())) {
+        if (parsed.host) {
+          await insecureHttp.onAllowHost(parsed.host);
+        }
+      }
       await onAdd({
         ...(parsed.host ? { host: parsed.host } : {}),
         owner: parsed.owner,
@@ -130,9 +152,50 @@ export function RepoManagerPanel({
     }
   };
 
+  /**
+   * 手动放行一台主机。同步过来的仓库不带 scheme，本机放行清单里没有它就只能走 https，
+   * 所以这里必须能在不重新添加仓库的前提下补上放行记录。
+   */
+  const handleAllowHost = async () => {
+    if (!insecureHttp) return;
+    setHostError("");
+    const host = hostDraft.trim().toLowerCase();
+    if (!host) return;
+    if (host === GITHUB_HOST) {
+      setHostError(t("skills.repo.insecureHttpHostGithub"));
+      return;
+    }
+    if (!/^[a-z0-9.-]+(:\d{1,5})?$/.test(host)) {
+      setHostError(
+        t("skills.repo.insecureHttpHostInvalid", { host: hostDraft.trim() }),
+      );
+      return;
+    }
+    if (insecureHttp.hosts.some((known) => known.toLowerCase() === host)) {
+      setHostDraft("");
+      return;
+    }
+    setAllowingHost(true);
+    try {
+      await insecureHttp.onAllowHost(host);
+      setHostDraft("");
+    } catch (e) {
+      setHostError(e instanceof Error ? e.message : t("skills.repo.addFailed"));
+    } finally {
+      setAllowingHost(false);
+    }
+  };
+
   const handleOpenRepo = async (repo: SkillRepo) => {
     try {
-      await settingsApi.openExternal(repoWebUrl(repo));
+      const allowed = insecureHttp?.enabled
+        ? insecureHttp.hosts.some(
+            (host) => host.toLowerCase() === repo.host?.toLowerCase(),
+          )
+        : false;
+      await settingsApi.openExternal(
+        repoWebUrl(repo, allowed ? "http" : "https"),
+      );
     } catch (err) {
       console.error("Failed to open URL:", err);
     }
@@ -149,6 +212,99 @@ export function RepoManagerPanel({
           <SheetTitle>{t("skills.repo.title")}</SheetTitle>
         </SheetHeader>
         <SheetBody className="flex flex-col gap-6 px-6 pb-6 pt-5">
+          {insecureHttp && (
+            <section
+              aria-labelledby="sk-insecure-http-title"
+              className="flex flex-col gap-2"
+            >
+              <label className="flex cursor-pointer items-start gap-2 text-body text-fg-1">
+                <input
+                  type="checkbox"
+                  className={CHECKBOX_CLASS}
+                  checked={insecureHttp.enabled}
+                  onChange={(event) =>
+                    insecureHttp.onChange(event.target.checked)
+                  }
+                />
+                <span id="sk-insecure-http-title">
+                  {t("skills.repo.allowInsecureHttp")}
+                </span>
+              </label>
+              {insecureHttp.enabled && (
+                <>
+                  <p className="m-0 text-xs leading-relaxed text-warning-text">
+                    {t("skills.repo.insecureHttpWarning")}
+                  </p>
+                  {insecureHttp.hosts.length > 0 && (
+                    <ul className="m-0 flex list-none flex-wrap gap-1.5 p-0">
+                      {insecureHttp.hosts.map((host) => (
+                        <li key={host}>
+                          <button
+                            type="button"
+                            className="inline-flex items-center gap-1 rounded-control border border-border px-2 py-1 font-mono text-xs text-fg-2 hover:text-danger-text"
+                            title={t("skills.repo.insecureHttpRemoveHost", {
+                              host,
+                            })}
+                            aria-label={t(
+                              "skills.repo.insecureHttpRemoveHost",
+                              {
+                                host,
+                              },
+                            )}
+                            onClick={() => insecureHttp.onRemoveHost(host)}
+                          >
+                            {host}
+                            <X
+                              className="h-3 w-3"
+                              strokeWidth={2}
+                              aria-hidden
+                            />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="flex items-start gap-1.5">
+                    <input
+                      className={cn(MONO_FIELD_CLASS, "min-w-0 flex-1")}
+                      placeholder={t("skills.repo.insecureHttpHostPlaceholder")}
+                      value={hostDraft}
+                      aria-label={t("skills.repo.insecureHttpHostPlaceholder")}
+                      aria-invalid={Boolean(hostError)}
+                      aria-describedby={
+                        hostError ? "sk-insecure-http-host-error" : undefined
+                      }
+                      autoComplete="off"
+                      spellCheck={false}
+                      autoCorrect="off"
+                      autoCapitalize="off"
+                      onChange={(event) => {
+                        setHostDraft(event.target.value);
+                        setHostError("");
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") void handleAllowHost();
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      variant="neutral"
+                      size="regular"
+                      disabled={allowingHost || !hostDraft.trim()}
+                      onClick={() => void handleAllowHost()}
+                    >
+                      {t("skills.repo.insecureHttpHostAdd")}
+                    </Button>
+                  </div>
+                  {hostError && (
+                    <FieldError id="sk-insecure-http-host-error">
+                      {hostError}
+                    </FieldError>
+                  )}
+                </>
+              )}
+            </section>
+          )}
           <section
             aria-labelledby="sk-repo-add-title"
             className="flex flex-col gap-3"

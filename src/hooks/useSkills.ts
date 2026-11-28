@@ -19,6 +19,8 @@ import {
   type SkillUpdateInfo,
 } from "@/lib/api/skills";
 import type { AppId } from "@/lib/api/types";
+import { settingsApi } from "@/lib/api/settings";
+import { useSettingsQuery } from "@/lib/query/settings";
 import {
   mergeImportedSkills,
   replaceRepoDiscovery,
@@ -491,6 +493,54 @@ export function useSkillRepoTokenActions() {
     setToken: (host: string, token: string) =>
       setToken.mutateAsync({ host, token }),
     deleteToken: (host: string) => deleteToken.mutateAsync(host),
+  };
+}
+
+/**
+ * 明文 HTTP 的设备级开关与主机放行清单（#9947）。
+ *
+ * 保存时重新读一次完整 settings：面板里的 query 缓存可能落后于设置页的全量保存，
+ * 直接拿它回写会把别的设备级设置冲掉。放行主机只在本机保存，不随云同步。
+ */
+export function useInsecureSkillHttpSettings() {
+  const queryClient = useQueryClient();
+  const { data } = useSettingsQuery();
+  const mutation = useMutation({
+    mutationFn: async (patch: {
+      enabled?: boolean;
+      addHost?: string;
+      removeHost?: string;
+    }) => {
+      const current = await settingsApi.get();
+      const hosts = new Set(
+        (current.insecureSkillHttpHosts ?? []).map((host) =>
+          host.trim().toLowerCase(),
+        ),
+      );
+      if (patch.addHost) hosts.add(patch.addHost.trim().toLowerCase());
+      if (patch.removeHost) hosts.delete(patch.removeHost.trim().toLowerCase());
+      await settingsApi.save({
+        ...current,
+        allowInsecureSkillHttp:
+          patch.enabled ?? current.allowInsecureSkillHttp ?? false,
+        insecureSkillHttpHosts: [...hosts],
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["settings"] });
+      await queryClient.invalidateQueries({
+        queryKey: DISCOVERABLE_QUERY_KEY,
+        exact: true,
+      });
+    },
+  });
+
+  return {
+    enabled: Boolean(data?.allowInsecureSkillHttp),
+    hosts: data?.insecureSkillHttpHosts ?? [],
+    setEnabled: (enabled: boolean) => mutation.mutateAsync({ enabled }),
+    allowHost: (host: string) => mutation.mutateAsync({ addHost: host }),
+    removeHost: (host: string) => mutation.mutateAsync({ removeHost: host }),
   };
 }
 

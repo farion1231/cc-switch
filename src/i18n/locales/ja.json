@@ -3566,6 +3566,7 @@
       "invalidTokenHost": "サイトが無効です：{{host}}。gitlab.example.com のようにホスト名だけを入力してください",
       "invalidRepoToken": "トークンの形式が正しくありません。英数字と - _ . ~ + / = のみ、最大 {{limit}} 文字です",
       "repoTokenStorageFailed": "{{host}} のアクセストークンを読み書きできませんでした。システムの資格情報ストアが使えるか確認してください",
+      "insecureHttpWithToken": "{{host}} には平文 HTTP でアクセストークンを送信できません",
       "getHomeDirFailed": "ユーザーのホームディレクトリを取得できません",
       "noSkillsInZip": "ZIP ファイルにスキルが見つかりません（SKILL.md ファイルが必要です）",
       "unknownError": "不明なエラー",
@@ -3576,7 +3577,8 @@
         "checkRepoUrl": "リポジトリ URL とブランチ名を確認してください",
         "checkPermission": "ディレクトリの権限を確認してください",
         "uninstallFirst": "同名のスキルを先にアンインストールしてください",
-        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください"
+        "checkZipContent": "ZIP ファイルに有効なスキルディレクトリ（SKILL.md を含む）が含まれていることを確認してください",
+        "removeHttpAllowlistOrToken": "「スキルリポジトリを管理」でこのホストを HTTP 許可リストから削除するか、アクセストークンを削除してください"
       }
     },
     "repo": {
@@ -3592,6 +3594,13 @@
       "empty": "リポジトリがありません",
       "invalidUrl": "リポジトリ URL の形式が無効です",
       "httpsOnly": "GitLab / Gitea リポジトリは https のアドレスのみ対応しています",
+      "allowInsecureHttp": "安全でない HTTP 接続を許可する（信頼できる LAN／セルフホストのみ）",
+      "insecureHttpWarning": "HTTP は暗号化されないため、スキルやトークンがネットワーク上で傍受・改変される可能性があります。完全に信頼できるローカルネットワークでのみ有効にしてください。アクセストークン付きのリクエストは引き続き HTTPS を使用します。この設定と許可リストはこのデバイスにのみ保存され、同期されません。",
+      "insecureHttpHostPlaceholder": "例：192.168.1.10:3000",
+      "insecureHttpHostAdd": "許可",
+      "insecureHttpHostInvalid": "ホスト名とポートのみ入力してください（例：192.168.1.10:3000）",
+      "insecureHttpHostGithub": "GitHub のリポジトリは常に HTTPS を使用します",
+      "insecureHttpRemoveHost": "{{host}} を削除",
       "token": {
         "title": "アクセストークン",
         "description": "プライベートリポジトリの読み取りに使います。トークンはサイトごとにシステムの資格情報ストア（macOS のキーチェーン、Windows の資格情報マネージャー）に保存され、クラウド同期されません。読み取り権限だけで十分です。",

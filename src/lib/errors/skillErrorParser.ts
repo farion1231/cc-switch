@@ -48,6 +48,7 @@ function getErrorI18nKey(code: string): string {
     INVALID_TOKEN_HOST: "skills.error.invalidTokenHost",
     INVALID_REPO_TOKEN: "skills.error.invalidRepoToken",
     REPO_TOKEN_STORAGE_FAILED: "skills.error.repoTokenStorageFailed",
+    INSECURE_HTTP_WITH_TOKEN: "skills.error.insecureHttpWithToken",
   };
 
   return mapping[code] || "skills.error.unknownError";
@@ -72,6 +73,8 @@ function getSuggestionI18nKey(suggestion: string): string {
     http403Token: "skills.error.http403Token",
     http404Token: "skills.error.http404Token",
     httpAuthRequired: "skills.error.httpAuthRequired",
+    removeHttpAllowlistOrToken:
+      "skills.error.suggestion.removeHttpAllowlistOrToken",
   };
 
   return mapping[suggestion] || suggestion;
