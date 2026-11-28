@@ -528,7 +528,11 @@
         "mediaFallback": "不支持图片降级",
         "mediaFallbackDescription": "当供应商不支持图片输入时（已声明纯文本能力，或上游返回不支持图片的错误），自动将图片块替换为 [Unsupported Image] 标记，使对话不中断",
         "mediaHeuristic": "纯文本模型预判",
-        "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明"
+        "mediaHeuristicDescription": "发送前根据内置的已确认纯文本模型注册表剥离图片。关闭仅停用代理的注册表预判；已声明纯文本模型的处理和上游报错兜底仍保留，且不会改变 Codex 模型目录的能力声明",
+        "imageCap": "图片数量上限",
+        "imageCapDescription": "部分供应商对单个请求能携带的图片数量有限制，此功能开启时可以自动丢弃对话中最旧的图（设定的单次丢弃数量的倍数），使对话不中断",
+        "imageCapMax": "数量上限",
+        "imageCapDiscard": "单次丢弃"
       },
       "privacyFilter": {
         "title": "隐私过滤器",

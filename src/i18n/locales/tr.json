@@ -528,7 +528,11 @@
         "mediaFallback": "Desteklenmeyen Görüntü Geri Dönüşü",
         "mediaFallbackDescription": "Bir sağlayıcı görüntü girişini desteklemediğinde (yalnızca metin özelliğini bildirdiğinde veya yukarı akış desteklenmeyen bir görüntü hatası döndürdüğünde), görüşmenin kesintiye uğramaması için görüntü bloklarını otomatik olarak bir [Desteklenmeyen Görüntü] işaretçisiyle değiştirir",
         "mediaHeuristic": "Salt Metin Model Ön Kontrolü",
-        "mediaHeuristicDescription": "Göndermeden önce, yerleşik onaylanmış salt metin kayıt defterindeki modellerin resimlerini çıkarır. Bunu kapatmak yalnızca proxy'nin kayıt defteri tabanlı ön kontrolünü devre dışı bırakır; beyan edilen salt metin işleme ve yukarı akış hatası geri dönüşü kalır ve Codex model kataloğu yetenek bildirimleri değişmez"
+        "mediaHeuristicDescription": "Göndermeden önce, yerleşik onaylanmış salt metin kayıt defterindeki modellerin resimlerini çıkarır. Bunu kapatmak yalnızca proxy'nin kayıt defteri tabanlı ön kontrolünü devre dışı bırakır; beyan edilen salt metin işleme ve yukarı akış hatası geri dönüşü kalır ve Codex model kataloğu yetenek bildirimleri değişmez",
+        "imageCap": "İstek başına görsel sınırı",
+        "imageCapDescription": "Bazı sağlayıcılar tek bir istekte taşınabilecek görsel sayısını sınırlar. Bu özellik açıkken görüşmedeki en eski görseller, ayarlanan atma sayısının katları hâlinde kaldırılır; böylece görüşme devam edebilir",
+        "imageCapMax": "Üst sınır",
+        "imageCapDiscard": "Adım başına at"
       },
       "privacyFilter": {
         "title": "Gizlilik Filtresi",

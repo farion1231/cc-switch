@@ -528,7 +528,11 @@
         "mediaFallback": "不支援圖片降級",
         "mediaFallbackDescription": "當供應商不支援圖片輸入時（已宣告純文字能力，或上游回傳不支援圖片的錯誤），自動將圖片區塊替換為 [Unsupported Image] 標記，使對話不中斷",
         "mediaHeuristic": "純文字模型預判",
-        "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告"
+        "mediaHeuristicDescription": "傳送前依內建的已確認純文字模型登錄表移除圖片。關閉只會停用代理的登錄表預判；已宣告純文字模型的處理與上游錯誤兜底仍會保留，且不會改變 Codex 模型目錄的能力宣告",
+        "imageCap": "圖片數量上限",
+        "imageCapDescription": "部分供應商對單個請求能攜帶的圖片數量有限制，此功能開啟時可以自動丟棄對話中最舊的圖（設定的單次丟棄數量的倍數），使對話不中斷",
+        "imageCapMax": "數量上限",
+        "imageCapDiscard": "單次丟棄"
       },
       "privacyFilter": {
         "title": "隱私過濾器",

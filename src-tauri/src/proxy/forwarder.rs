@@ -240,6 +240,44 @@ impl RequestForwarder {
         replaced_media
     }
 
+    /// 请求整流 —— 单请求图片数量上限。
+    ///
+    /// 部分上游限制单个请求能携带的图片张数，超出时直接拒绝。历史里的图片
+    /// 每轮都会重发，压缩请求同样带着全量图片，所以一旦超限，会话无法自行
+    /// 恢复，只能弃用。
+    ///
+    /// 与 [`Self::apply_media_prevention`] 的分工：那条处理"上游不支持图片输入"，
+    /// 把图片整体降级成标记；这条处理"上游支持图片、但一次装不下这么多"，
+    /// 只丢最旧的几张，最新的图片始终保留。两者可以同时开着。
+    ///
+    /// 由整流器总开关 `enabled` 与 `image_cap_enabled` 共同管辖：它是整流器的
+    /// 一项，关闭整流器就应该一并停用。
+    fn apply_image_cap(&self, body: &mut Value) -> usize {
+        if !(self.rectifier_config.enabled && self.rectifier_config.image_cap_enabled) {
+            return 0;
+        }
+        // 0 只可能来自手改数据库：serde 缺省与 Default 都会给出 20。
+        // 这里仍兜一层，避免那种情况下功能静默失效。
+        let max_images = match self.rectifier_config.image_cap_max {
+            0 => super::types::DEFAULT_IMAGE_CAP_MAX,
+            n => n,
+        };
+        // 单次丢弃数不超过上限：按倍数取整会放大丢弃量，discard > max 时
+        // 可能一次丢掉远超所需的数量（上限 20、单次 100 会把整轮图片全丢）。
+        // 下限 1：0 会让 prune_excess_images 内部再兜一次，日志与实际不符。
+        let discard = self
+            .rectifier_config
+            .image_cap_discard
+            .clamp(1, max_images.max(1));
+        let removed = super::media_sanitizer::prune_excess_images(body, max_images, discard);
+        if removed > 0 {
+            log::info!(
+                "[ImageCap] Dropped {removed} old image block(s), cap={max_images}, per_step={discard}"
+            );
+        }
+        removed
+    }
+
     /// 反应式 media 重试判定：上游因图片输入报错后，是否应替换图片块并对同一供应商重试一次。
     ///
     /// 受 `enabled && request_media_fallback` 管辖；不涉及 `request_media_heuristic`——
@@ -2353,6 +2391,10 @@ impl RequestForwarder {
         }
         // 请求体到这里定稿；之后只读不改（日志哈希、序列化）
         let mut filtered_body = prepare_upstream_request_body(filtered_body);
+        // 图片张数整流：在协议转换定稿之后执行，所以 Anthropic / OpenAI Chat /
+        // Responses / Gemini 各家的图片块形态都由同一个遍历函数识别。客户端
+        // 传的是 Anthropic Messages，走到这里可能已经变成别家的结构。
+        self.apply_image_cap(&mut filtered_body);
         if privacy_dirty {
             self.apply_privacy_filter(app_type, &mut filtered_body, "upstream");
         }

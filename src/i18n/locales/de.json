@@ -528,7 +528,11 @@
         "mediaFallback": "Fallback bei nicht unterstützten Bildern",
         "mediaFallbackDescription": "Wenn ein Anbieter keine Bildeingabe unterstützt (er deklariert reine Textunterstützung oder der Upstream meldet einen Fehler wegen nicht unterstützter Bilder), werden Bildblöcke automatisch durch die Markierung [Unsupported Image] ersetzt, damit die Unterhaltung nicht unterbrochen wird",
         "mediaHeuristic": "Preflight für reine Textmodelle",
-        "mediaHeuristicDescription": "Entfernt vor dem Senden Bilder für Modelle aus dem integrierten Register bestätigter reiner Textmodelle. Das Ausschalten deaktiviert nur den registerbasierten Preflight des Proxys; die Behandlung deklarierter reiner Textmodelle und der Fallback bei Upstream-Fehlern bleiben bestehen, und die Fähigkeitsangaben im Codex-Modellkatalog bleiben unverändert"
+        "mediaHeuristicDescription": "Entfernt vor dem Senden Bilder für Modelle aus dem integrierten Register bestätigter reiner Textmodelle. Das Ausschalten deaktiviert nur den registerbasierten Preflight des Proxys; die Behandlung deklarierter reiner Textmodelle und der Fallback bei Upstream-Fehlern bleiben bestehen, und die Fähigkeitsangaben im Codex-Modellkatalog bleiben unverändert",
+        "imageCap": "Bildanzahl pro Anfrage",
+        "imageCapDescription": "Einige Anbieter begrenzen, wie viele Bilder eine einzelne Anfrage enthalten darf. Ist diese Funktion aktiv, werden die ältesten Bilder im Gespräch in Vielfachen der eingestellten Verwerfungsmenge entfernt, damit das Gespräch weiterläuft",
+        "imageCapMax": "Obergrenze",
+        "imageCapDiscard": "Pro Schritt verwerfen"
       },
       "privacyFilter": {
         "title": "Datenschutzfilter",
