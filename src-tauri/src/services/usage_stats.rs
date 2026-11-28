@@ -144,7 +144,8 @@ pub struct ProviderStats {
     pub est_speed_duration_ms: u64,
     /// 首字时间中位数（毫秒）：经路由服务、成功的流式明细请求；没有这样的请求时为 None。
     pub first_token_median_ms: Option<u64>,
-    /// 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的明细请求。
+    /// 估算首字中位数（毫秒）：会话日志导入、按时间戳推出了首字的明细请求；
+    /// 模型表里还可能来自 WorkBuddy 的模型级估算（见 `session_usage_workbuddy`）。
     /// 和上面分开：口径不同，界面上只在没有精确值时显示，带 ≈。
     pub est_first_token_median_ms: Option<u64>,
 }
@@ -333,6 +334,7 @@ pub struct ModelStats {
     pub est_speed_output_tokens: u64,
     pub est_speed_duration_ms: u64,
     /// 首字时间中位数，口径同 [`ProviderStats`] 的那两个字段。
+    /// 没有明细值时，WorkBuddy 的模型还会用模型级估算补位（见 `get_model_stats`）。
     pub first_token_median_ms: Option<u64>,
     pub est_first_token_median_ms: Option<u64>,
 }
@@ -2177,7 +2179,23 @@ impl Database {
             })
             .collect();
         stats.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.model.cmp(&b.0.model)));
-        let stats = stats.into_iter().map(|(stat, _)| stat).collect();
+        let mut stats: Vec<ModelStats> = stats.into_iter().map(|(stat, _)| stat).collect();
+
+        // WorkBuddy 的会话日志没有首字时间戳，明细行一律是 NULL（见
+        // `session_usage_workbuddy`）；这里在模型表里补一个模型级的耗时估算。
+        // 只在查询没限定别的 app 时做，免得把 WorkBuddy 的估算安到别的来源同名的模型上。
+        if app_type.is_none() || app_type == Some("workbuddy") {
+            for stat in &mut stats {
+                if stat.first_token_median_ms.is_none() && stat.est_first_token_median_ms.is_none()
+                {
+                    stat.est_first_token_median_ms =
+                        crate::services::session_usage_workbuddy::estimated_model_first_token_ms(
+                            &conn,
+                            &stat.model,
+                        );
+                }
+            }
+        }
 
         Ok(stats)
     }
