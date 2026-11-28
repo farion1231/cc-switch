@@ -331,13 +331,23 @@ fn shell_word(value: &str) -> String {
 
 /// 在后台跑 agy（查额度、列模型）。Windows 正式版是 GUI 子系统，控制台程序作子进程时
 /// 不带 `CREATE_NO_WINDOW` 会另弹一个黑色控制台窗口。
+///
+/// 设置里的全局代理只作用于进程内的 reqwest 客户端；agy（Go）只认 `HTTPS_PROXY` 这类环境变量、
+/// 不读系统代理，不传的话从桌面启动时 `/usage` 会直连 Google 超时（#10071）。
 pub(crate) fn background_command(bin: &Path) -> tokio::process::Command {
-    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut command = tokio::process::Command::new(bin);
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
+    }
+    if let Some(url) = crate::proxy::http_client::get_current_proxy_url() {
+        let vars = crate::services::claude_account::login::global_proxy_env(&url, true, |key| {
+            std::env::var_os(key).is_some()
+        });
+        for (key, value) in vars {
+            command.env(key, value);
+        }
     }
     command
 }

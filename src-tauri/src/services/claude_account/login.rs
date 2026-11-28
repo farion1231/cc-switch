@@ -487,19 +487,28 @@ pub fn apply_global_proxy_env(cmd: &mut std::process::Command) {
     let Some(url) = crate::proxy::http_client::get_current_proxy_url() else {
         return;
     };
-    for (key, value) in global_proxy_env(&url, |key| std::env::var_os(key).is_some()) {
+    for (key, value) in global_proxy_env(&url, false, |key| std::env::var_os(key).is_some()) {
         cmd.env(key, value);
     }
 }
 
-fn global_proxy_env(url: &str, is_set: impl Fn(&str) -> bool) -> Vec<(&'static str, String)> {
-    let is_http = url::Url::parse(url.trim())
-        .map(|parsed| matches!(parsed.scheme(), "http" | "https"))
-        .unwrap_or(false);
-    if !is_http {
-        return Vec::new();
-    }
-    let url = url.trim().to_string();
+/// 全局代理对应的子进程环境变量。`socks` 为 false 时只传 http(s)；为 true 时也传 SOCKS5
+/// （给 Go 写的 agy：Go 的 socks5 本来就把域名交给代理解析，`socks5h` 改写成 `socks5`）。
+pub(crate) fn global_proxy_env(
+    url: &str,
+    socks: bool,
+    is_set: impl Fn(&str) -> bool,
+) -> Vec<(&'static str, String)> {
+    let url = url.trim();
+    let scheme = url::Url::parse(url)
+        .map(|parsed| parsed.scheme().to_string())
+        .unwrap_or_default();
+    let url = match scheme.as_str() {
+        "http" | "https" => url.to_string(),
+        "socks5" if socks => url.to_string(),
+        "socks5h" if socks => format!("socks5{}", &url["socks5h".len()..]),
+        _ => return Vec::new(),
+    };
     let mut vars: Vec<(&'static str, String)> =
         ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"]
             .into_iter()
@@ -535,7 +544,7 @@ mod tests {
     /// EOF（Windows 上 claude.cmd → node 就是这样）。这里用 sh → sleep 模拟。
     #[test]
     fn global_proxy_env_passes_http_proxies_only() {
-        let vars = global_proxy_env("http://127.0.0.1:7890", |_| false);
+        let vars = global_proxy_env("http://127.0.0.1:7890", false, |_| false);
         for key in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"] {
             assert!(
                 vars.contains(&(key, "http://127.0.0.1:7890".to_string())),
@@ -545,15 +554,24 @@ mod tests {
         assert!(vars.contains(&("NO_PROXY", "localhost,127.0.0.1,::1".to_string())));
 
         // 用户的 NO_PROXY 不覆盖
-        let vars = global_proxy_env("https://proxy.example.com:8443", |key| key == "no_proxy");
+        let vars = global_proxy_env("https://proxy.example.com:8443", false, |key| {
+            key == "no_proxy"
+        });
         assert!(vars
             .iter()
             .all(|(key, _)| !key.eq_ignore_ascii_case("NO_PROXY")));
         assert_eq!(vars.len(), 4);
 
         // Claude Code 不支持 SOCKS，不传
-        assert!(global_proxy_env("socks5://127.0.0.1:1080", |_| false).is_empty());
-        assert!(global_proxy_env("not a url", |_| false).is_empty());
+        assert!(global_proxy_env("socks5://127.0.0.1:1080", false, |_| false).is_empty());
+        assert!(global_proxy_env("not a url", false, |_| false).is_empty());
+
+        // agy（Go）支持 SOCKS5，socks5h 改写成 Go 认的 socks5
+        let vars = global_proxy_env("socks5h://127.0.0.1:1080", true, |_| false);
+        assert!(vars.contains(&("HTTPS_PROXY", "socks5://127.0.0.1:1080".to_string())));
+        let vars = global_proxy_env("socks5://127.0.0.1:1080", true, |_| false);
+        assert!(vars.contains(&("http_proxy", "socks5://127.0.0.1:1080".to_string())));
+        assert!(global_proxy_env("not a url", true, |_| false).is_empty());
     }
 
     #[cfg(unix)]
