@@ -5285,7 +5285,8 @@
       "switchedWhileRunning": "已切换。检测到 agy 正在运行：已打开的 agy 仍用原账号，还可能把原账号写回去，请退出后重新打开。",
       "pendingNote": "已在终端打开 agy。没登录时按提示登录；已登录时先输入 /logout，再输入 /login 登录要添加的号。完成后这里会自动收录。",
       "reopenTerminal": "重新打开终端",
-      "quotaNotCurrent": "切到这个号后才能查额度"
+      "quotaNotCurrent": "切到这个号后才能查额度",
+      "quotaRefreshNotCurrent": "agy 只能查当前登着的号的额度，这里显示的是切走前最后一次查到的。切到这个号后再刷新。"
     },
     "codebuddy": {
       "mainland": "国内版",

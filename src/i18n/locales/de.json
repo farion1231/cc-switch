@@ -5285,7 +5285,8 @@
       "switchedWhileRunning": "Gewechselt. agy läuft: Geöffnete agy-Sitzungen verwenden weiter das vorherige Konto und schreiben es möglicherweise zurück. Beenden Sie agy und öffnen Sie es erneut.",
       "pendingNote": "agy ist in einem Terminal geöffnet. Ist es nicht angemeldet, folge den Hinweisen; ist es angemeldet, gib /logout und dann /login mit dem hinzuzufügenden Konto ein. Danach wird es hier automatisch hinzugefügt.",
       "reopenTerminal": "Terminal erneut öffnen",
-      "quotaNotCurrent": "Wechsle zu diesem Konto, um sein Kontingent abzufragen"
+      "quotaNotCurrent": "Wechsle zu diesem Konto, um sein Kontingent abzufragen",
+      "quotaRefreshNotCurrent": "agy kann nur das Kontingent des angemeldeten Kontos abfragen. Angezeigt wird der zuletzt vor dem Wechsel abgefragte Stand. Wechsle zu diesem Konto und aktualisiere dann."
     },
     "codebuddy": {
       "mainland": "China",

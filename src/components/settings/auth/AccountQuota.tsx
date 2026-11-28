@@ -4,6 +4,7 @@ import { RefreshCw } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { HoverTip } from "@/components/ui/hover-tip";
+import { toast } from "@/lib/toast";
 import {
   ResetSlot,
   TONE_FILL,
@@ -71,6 +72,8 @@ interface AccountQuotaColumnProps {
   onRefresh: () => void;
   /** 只手动查询、还没查过：写一句「点刷新查询额度」，留着 ↻ */
   idle?: boolean;
+  /** ↻ 的悬停提示，默认「刷新额度」；刷新查不到新结果的号（agy 非当前号）写明原因 */
+  refreshHint?: string;
 }
 
 /**
@@ -88,6 +91,7 @@ export function AccountQuotaColumn({
   loading,
   onRefresh,
   idle = false,
+  refreshHint,
 }: AccountQuotaColumnProps) {
   const { t } = useTranslation();
   const now = useNow(
@@ -173,6 +177,7 @@ export function AccountQuotaColumn({
         queriedAt={queriedAt}
         loading={loading}
         onRefresh={onRefresh}
+        hint={refreshHint}
       />
     </>
   );
@@ -184,6 +189,8 @@ interface QuotaRefreshCellProps {
   queriedAt?: number | null;
   loading: boolean;
   onRefresh: () => void;
+  /** 悬停提示，默认「刷新额度」 */
+  hint?: string;
 }
 
 /**
@@ -195,6 +202,7 @@ export function QuotaRefreshCell({
   queriedAt,
   loading,
   onRefresh,
+  hint,
 }: QuotaRefreshCellProps) {
   const { t } = useTranslation();
   const now = useNow(Boolean(queriedAt));
@@ -207,7 +215,9 @@ export function QuotaRefreshCell({
     <div className="auth-quota-refresh flex shrink-0 items-center justify-end gap-0.5 whitespace-nowrap text-caption text-fg-3">
       <span id={agoId}>{ago}</span>
       <HoverTip
-        content={t("authCenter.quota.refresh", { defaultValue: "刷新额度" })}
+        content={
+          hint ?? t("authCenter.quota.refresh", { defaultValue: "刷新额度" })
+        }
       >
         <button
           type="button"
@@ -471,7 +481,8 @@ export function KimiAccountQuota({
 
 /**
  * Antigravity 账号的剩余额度（agy_account_quota(accountId)）。只有 agy 当前登着的号查得到，
- * 别的号显示切走前最后一次查到的；从没查到过时提示切过去才能查。
+ * 别的号显示切走前最后一次查到的；从没查到过时提示切过去才能查。别的号点 ↻ 只会读回
+ * 同一份旧结果（看着只闪一下），所以悬停提示和点击后的提示都写明只能查当前登着的号。
  */
 export function AgyAccountQuota({
   accountId,
@@ -497,6 +508,12 @@ export function AgyAccountQuota({
     i18n.language,
     display,
   );
+  const notCurrentHint = isCurrent
+    ? undefined
+    : t("authCenter.agy.quotaRefreshNotCurrent", {
+        defaultValue:
+          "agy 只能查当前登着的号的额度，这里显示的是切走前最后一次查到的。切到这个号后再刷新。",
+      });
   return (
     <AccountQuotaColumn
       login={login}
@@ -512,7 +529,12 @@ export function AgyAccountQuota({
       }
       queriedAt={quota?.queriedAt ?? null}
       loading={loading}
-      onRefresh={() => void refetch()}
+      onRefresh={() => {
+        // 手动查询模式下第一次点仍要读回切走前的结果，所以照常查，只是另外说明
+        void refetch();
+        if (notCurrentHint) toast.info(notCurrentHint);
+      }}
+      refreshHint={notCurrentHint}
       idle={manualIdle}
     />
   );
