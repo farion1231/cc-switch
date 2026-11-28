@@ -68,12 +68,27 @@ function resolvableBranches(branch: string | undefined): string[] {
   return branches;
 }
 
+function isDefaultBranchSentinel(branch: string | undefined): boolean {
+  const trimmed = branch?.trim() ?? "";
+  return !trimmed || trimmed.toUpperCase() === "HEAD";
+}
+
+function sameRepoOrigin(skill: DiscoverableSkill, repo: SkillRepo): boolean {
+  return (
+    (skill.repoHost || GITHUB_HOST) === (repo.host || GITHUB_HOST) &&
+    skill.repoOwner === repo.owner &&
+    skill.repoName === repo.name
+  );
+}
+
 export function countRepoSkills(skills: DiscoverableSkill[], repo: SkillRepo) {
+  if (isDefaultBranchSentinel(repo.branch)) {
+    return skills.filter((skill) => sameRepoOrigin(skill, repo)).length;
+  }
   const branches = resolvableBranches(repo.branch);
   return skills.filter(
     (skill) =>
-      skill.repoOwner === repo.owner &&
-      skill.repoName === repo.name &&
+      sameRepoOrigin(skill, repo) &&
       branches.includes(skill.repoBranch || "main"),
   ).length;
 }
@@ -87,8 +102,7 @@ export function displayRepoBranch(
   if (configured && configured.toUpperCase() !== "HEAD") return configured;
   const resolved = skills.find(
     (skill) =>
-      skill.repoOwner === repo.owner &&
-      skill.repoName === repo.name &&
+      sameRepoOrigin(skill, repo) &&
       skill.repoBranch &&
       skill.repoBranch.toUpperCase() !== "HEAD",
   )?.repoBranch;

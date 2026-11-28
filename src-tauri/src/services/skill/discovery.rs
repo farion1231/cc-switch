@@ -70,14 +70,16 @@ impl SkillService {
             }
         });
 
-        let results: Vec<Result<(Vec<DiscoverableSkill>, String)>> =
+        let results: Vec<Result<(Vec<DiscoverableSkill>, String, bool)>> =
             futures::future::join_all(fetch_tasks).await;
 
         for (repo, result) in enabled_repos.into_iter().zip(results) {
             match result {
-                Ok((repo_skills, resolved_branch)) => {
+                Ok((repo_skills, resolved_branch, from_head_symref)) => {
                     if let Some(db) = db {
-                        Self::persist_resolved_branch(db, &repo, &resolved_branch);
+                        if from_head_symref {
+                            Self::persist_resolved_branch(db, &repo, &resolved_branch);
+                        }
                     }
                     skills.extend(repo_skills);
                 }
@@ -117,9 +119,11 @@ impl SkillService {
             return SkillDiscoveryResult::default();
         }
         match self.fetch_repo_skills_cached(repo, false).await {
-            Ok((mut skills, resolved_branch)) => {
+            Ok((mut skills, resolved_branch, from_head_symref)) => {
                 if let Some(db) = db {
-                    Self::persist_resolved_branch(db, repo, &resolved_branch);
+                    if from_head_symref {
+                        Self::persist_resolved_branch(db, repo, &resolved_branch);
+                    }
                 }
                 Self::deduplicate_discoverable_skills(&mut skills);
                 skills.sort_by_key(|skill| skill.name.to_lowercase());
@@ -138,11 +142,17 @@ impl SkillService {
         }
     }
 
-    fn persist_resolved_branch(db: &Database, repo: &SkillRepo, resolved_branch: &str) {
+    pub(super) fn persist_resolved_branch(db: &Database, repo: &SkillRepo, resolved_branch: &str) {
         if Self::is_default_branch_sentinel(&repo.branch)
             && !Self::is_default_branch_sentinel(resolved_branch)
         {
-            if let Err(e) = db.update_skill_repo_branch(&repo.owner, &repo.name, resolved_branch) {
+            if let Err(e) = db.update_skill_repo_branch(
+                &repo.host,
+                &repo.owner,
+                &repo.name,
+                &repo.branch,
+                resolved_branch,
+            ) {
                 log::warn!(
                     "回写仓库 {}/{} 真实分支 {} 失败: {}",
                     repo.owner,
@@ -192,6 +202,13 @@ impl SkillService {
         }
     }
 
+    /// 在串行落盘锁内读取内存最新快照并写入磁盘，确保旧扫描不会覆盖后发生的清理或更新。
+    pub(super) fn persist_discovery_cache(&self) {
+        let _disk_guard = self.discovery_disk_lock.lock_recover();
+        let snapshot = self.discovery_cache.lock_recover().clone();
+        Self::save_discovery_cache_to_disk(&snapshot);
+    }
+
     pub(super) fn save_discovery_cache_to_disk(cache: &HashMap<RepoCacheKey, CachedRepoDiscovery>) {
         let entries: Vec<DiskDiscoveryCacheEntry> = cache
             .iter()
@@ -218,13 +235,14 @@ impl SkillService {
 
     /// 先查缓存；需要刷新时先通过轻量 `info/refs` 比对 commit SHA，未变更直接跳过下载。
     ///
+    /// 返回 `(skills, resolved_branch, from_head_symref)`。
     /// 缓存时间记的是开始下载的时刻：前端取消请求停不掉这里的下载，较早开始、
     /// 较晚结束的旧下载不能覆盖之后（比如强制刷新）写入的结果。
     pub(super) async fn fetch_repo_skills_cached(
         &self,
         repo: &SkillRepo,
         force_refresh: bool,
-    ) -> Result<(Vec<DiscoverableSkill>, String)> {
+    ) -> Result<(Vec<DiscoverableSkill>, String, bool)> {
         #[cfg(test)]
         let use_disk_cache = self.repo_fixture.is_none();
         #[cfg(not(test))]
@@ -242,7 +260,7 @@ impl SkillService {
                     .fetched_at
                     .is_some_and(|fetched_at| fetched_at.elapsed() < DISCOVERY_CACHE_TTL)
                 {
-                    return Ok((entry.skills.clone(), entry.resolved_branch.clone()));
+                    return Ok((entry.skills.clone(), entry.resolved_branch.clone(), false));
                 }
             }
         }
@@ -271,8 +289,9 @@ impl SkillService {
                 resolved_branch.clone(),
                 skills.clone(),
                 false,
+                false,
             );
-            return Ok((skills, resolved_branch));
+            return Ok((skills, resolved_branch, false));
         }
 
         Self::validate_repo(repo)?;
@@ -301,14 +320,16 @@ impl SkillService {
                 if let Some(mut entry) = found {
                     if self.credential_epoch.load(Ordering::SeqCst) == epoch {
                         entry.fetched_at = Some(started_at);
-                        let target_key = if Self::is_default_branch_sentinel(&repo.branch) {
+                        let target_key = if Self::is_default_branch_sentinel(&repo.branch)
+                            && probed.from_head_symref
+                        {
                             probed_key
                         } else {
                             key.clone()
                         };
                         cache.insert(target_key, entry.clone());
                     }
-                    Some((entry.skills, entry.resolved_branch))
+                    Some((entry.skills, entry.resolved_branch, probed.from_head_symref))
                 } else {
                     None
                 }
@@ -318,17 +339,38 @@ impl SkillService {
             }
         }
 
-        let download_repo = match &probed {
-            Some(probed) => {
-                let mut target = repo.clone();
-                target.branch = probed.branch.clone();
-                target
+        // 优先按探测到的不可变 commit SHA 下载归档，确保扫描结果与缓存 SHA 严格对应；
+        // 仅当 commit 归档 404（如探测与下载间隙被 force-push）或未探测到时才回退分支下载，
+        // 且分支回退结果不绑定未校验的 SHA。
+        let (archive_file, resolved_branch, verified_sha, from_head_symref) = match &probed {
+            Some(probed) => match self
+                .download_commit_archive_bounded(repo, platform, &probed.commit_sha, token_ref)
+                .await
+            {
+                Ok(file) => (
+                    file,
+                    probed.branch.clone(),
+                    Some(probed.commit_sha.clone()),
+                    probed.from_head_symref,
+                ),
+                Err(e) if Self::is_branch_not_found(&e) => {
+                    let mut fallback_repo = repo.clone();
+                    fallback_repo.branch = probed.branch.clone();
+                    let (file, branch) = self
+                        .download_repo_archive_bounded(&fallback_repo, platform, token_ref)
+                        .await?;
+                    let trusted_symref = probed.from_head_symref && branch == probed.branch;
+                    (file, branch, None, trusted_symref)
+                }
+                Err(e) => return Err(e),
+            },
+            None => {
+                let (file, branch) = self
+                    .download_repo_archive_bounded(repo, platform, token_ref)
+                    .await?;
+                (file, branch, None, false)
             }
-            None => repo.clone(),
         };
-        let (archive_file, resolved_branch) = self
-            .download_repo_archive_bounded(&download_repo, platform, token_ref)
-            .await?;
 
         let mut resolved_repo = repo.clone();
         resolved_repo.branch = resolved_branch.clone();
@@ -338,20 +380,18 @@ impl SkillService {
         .await
         .map_err(|e| anyhow!("扫描仓库归档任务异常中止: {e}"))??;
 
-        let commit_sha = probed
-            .filter(|p| p.branch == resolved_branch)
-            .map(|p| p.commit_sha);
         self.store_discovery_cache(
             repo,
             started_at,
             epoch,
-            commit_sha,
+            verified_sha,
             resolved_branch.clone(),
             skills.clone(),
             use_disk_cache,
+            from_head_symref,
         );
 
-        Ok((skills, resolved_branch))
+        Ok((skills, resolved_branch, from_head_symref))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -364,8 +404,9 @@ impl SkillService {
         resolved_branch: String,
         skills: Vec<DiscoverableSkill>,
         persist_disk: bool,
+        from_head_symref: bool,
     ) {
-        let store_branch = if Self::is_default_branch_sentinel(&repo.branch) {
+        let store_branch = if Self::is_default_branch_sentinel(&repo.branch) && from_head_symref {
             resolved_branch.clone()
         } else {
             repo.branch.clone()
@@ -376,7 +417,7 @@ impl SkillService {
             repo.name.clone(),
             store_branch,
         );
-        let snapshot = {
+        let updated = {
             let mut cache = self.discovery_cache.lock_recover();
             if self.credential_epoch.load(Ordering::SeqCst) != epoch {
                 return;
@@ -396,14 +437,16 @@ impl SkillService {
                     skills,
                 },
             );
-            persist_disk.then(|| cache.clone())
+            true
         };
-        if let Some(snapshot) = snapshot {
-            Self::save_discovery_cache_to_disk(&snapshot);
+        if updated && persist_disk {
+            self.persist_discovery_cache();
         }
     }
 
     /// 仅从 ZIP 归档中读取 `SKILL.md` 条目解析元数据，避免发现阶段把整个仓库解压落盘。
+    ///
+    /// 同时解析文件级与目录级符号链接，并对累计解压字节与保留元数据总量施加独立预算。
     pub(super) fn scan_skills_from_archive<R: std::io::Read + std::io::Seek>(
         reader: R,
         repo: &SkillRepo,
@@ -432,9 +475,10 @@ impl SkillService {
             first.name().split('/').next().unwrap_or("").to_string()
         };
 
-        let mut candidates: Vec<(String, String, SkillMetadata)> = Vec::new();
-        let mut symlink_skill_mds: Vec<(String, String, String)> = Vec::new();
-        let mut symlink_budget: u64 = 0;
+        let mut regular_candidates: Vec<(String, String, SkillMetadata)> = Vec::new();
+        let mut symlinks: Vec<(String, String)> = Vec::new();
+        let mut scan_bytes: u64 = 0;
+        let mut metadata_bytes: usize = 0;
 
         for i in 0..archive.len() {
             let mut file = archive.by_index(i)?;
@@ -453,6 +497,26 @@ impl SkillService {
             {
                 continue;
             }
+
+            if file.is_symlink() {
+                let Some(target) = Self::read_symlink_target_within(&mut file, &mut scan_bytes)?
+                else {
+                    continue;
+                };
+                if let Some(resolved_target) =
+                    Self::resolve_archive_symlink_target(relative_path, &target)
+                {
+                    let link_rel = relative_path.to_string_lossy().replace('\\', "/");
+                    // 防止目标包含链接自身（如 `dir/link -> ..`）造成递归膨胀
+                    if link_rel != resolved_target
+                        && !link_rel.starts_with(&format!("{resolved_target}/"))
+                    {
+                        symlinks.push((link_rel, resolved_target));
+                    }
+                }
+                continue;
+            }
+
             if relative_path.file_name() != Some(OsStr::new("SKILL.md")) {
                 continue;
             }
@@ -462,40 +526,51 @@ impl SkillService {
                 .map(|p| p.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_default();
             let doc_path = relative_path.to_string_lossy().replace('\\', "/");
-
-            if file.is_symlink() {
-                if let Some(target) = Self::read_symlink_target(&mut file, &mut symlink_budget)? {
-                    if let Some(resolved_target) =
-                        Self::resolve_archive_symlink_target(relative_path, &target)
-                    {
-                        symlink_skill_mds.push((parent_rel, doc_path, resolved_target));
-                    }
-                }
-                continue;
-            }
-
-            let content = Self::read_limited_utf8(&mut file, MAX_SKILL_MD_BYTES)?;
-            candidates.push((
-                parent_rel,
-                doc_path,
-                Self::parse_skill_metadata_str(&content),
-            ));
+            let content = Self::read_limited_utf8(&mut file, MAX_SKILL_MD_BYTES, &mut scan_bytes)?;
+            let meta = Self::parse_skill_metadata_str(&content);
+            Self::charge_metadata_budget(&mut metadata_bytes, &meta, &parent_rel)?;
+            regular_candidates.push((parent_rel, doc_path, meta));
         }
 
-        for (parent_rel, doc_path, resolved_target) in symlink_skill_mds {
-            let full_name = format!("{root_name}/{resolved_target}");
-            let Ok(mut target_file) = archive.by_name(&full_name) else {
-                continue;
-            };
-            if target_file.is_dir() || target_file.is_symlink() {
+        let mut candidates = regular_candidates.clone();
+
+        for (link_rel, resolved_target) in symlinks {
+            let is_skill_md_link = link_rel == "SKILL.md" || link_rel.ends_with("/SKILL.md");
+            if is_skill_md_link {
+                let full_name = format!("{root_name}/{resolved_target}");
+                let Ok(mut target_file) = archive.by_name(&full_name) else {
+                    continue;
+                };
+                if target_file.is_dir() || target_file.is_symlink() {
+                    continue;
+                }
+                let parent_rel = link_rel
+                    .rsplit_once('/')
+                    .map(|(head, _)| head.to_string())
+                    .unwrap_or_default();
+                let content =
+                    Self::read_limited_utf8(&mut target_file, MAX_SKILL_MD_BYTES, &mut scan_bytes)?;
+                let meta = Self::parse_skill_metadata_str(&content);
+                Self::charge_metadata_budget(&mut metadata_bytes, &meta, &parent_rel)?;
+                candidates.push((parent_rel, link_rel, meta));
                 continue;
             }
-            let content = Self::read_limited_utf8(&mut target_file, MAX_SKILL_MD_BYTES)?;
-            candidates.push((
-                parent_rel,
-                doc_path,
-                Self::parse_skill_metadata_str(&content),
-            ));
+
+            // 目录符号链接（如 `skills/alias -> ../real-skill`）：把目标目录及其子树下的
+            // SKILL.md 投影到链接路径下，与全量解压时的 `resolve_symlinks_in_dir` 一致。
+            let target_prefix = format!("{resolved_target}/");
+            for (parent_rel, _, meta) in &regular_candidates {
+                let mapped_parent = if parent_rel == &resolved_target {
+                    link_rel.clone()
+                } else if let Some(rest) = parent_rel.strip_prefix(&target_prefix) {
+                    format!("{link_rel}/{rest}")
+                } else {
+                    continue;
+                };
+                Self::charge_metadata_budget(&mut metadata_bytes, meta, &mapped_parent)?;
+                let mapped_doc = format!("{mapped_parent}/SKILL.md");
+                candidates.push((mapped_parent, mapped_doc, meta.clone()));
+            }
         }
 
         // 与 scan_dir_recursive 保持一致：父目录已有 SKILL.md 时不再收入其子目录。
@@ -531,10 +606,73 @@ impl SkillService {
         Ok(skills)
     }
 
-    fn read_limited_utf8<R: std::io::Read>(reader: &mut R, limit: u64) -> Result<String> {
+    fn charge_discovery_scan_budget(total_bytes: &mut u64, amount: u64) -> Result<()> {
+        if total_bytes.saturating_add(amount) > MAX_DISCOVERY_SCAN_BYTES {
+            let limit_mb = (MAX_DISCOVERY_SCAN_BYTES / 1024 / 1024).to_string();
+            return Err(anyhow!(format_skill_error(
+                "ARCHIVE_TOO_LARGE",
+                &[("limit_mb", &limit_mb)],
+                Some("checkZipContent"),
+            )));
+        }
+        *total_bytes += amount;
+        Ok(())
+    }
+
+    fn charge_metadata_budget(
+        total_bytes: &mut usize,
+        meta: &SkillMetadata,
+        parent_rel: &str,
+    ) -> Result<()> {
+        let entry_bytes = meta.name.as_deref().map_or(0, str::len)
+            + meta.description.as_deref().map_or(0, str::len)
+            + parent_rel.len();
+        if total_bytes.saturating_add(entry_bytes) > MAX_DISCOVERY_METADATA_BYTES {
+            let limit_mb = (MAX_DISCOVERY_METADATA_BYTES / 1024 / 1024).to_string();
+            return Err(anyhow!(format_skill_error(
+                "ARCHIVE_TOO_LARGE",
+                &[("limit_mb", &limit_mb)],
+                Some("checkZipContent"),
+            )));
+        }
+        *total_bytes += entry_bytes;
+        Ok(())
+    }
+
+    fn read_symlink_target_within<R: std::io::Read>(
+        reader: &mut R,
+        total_bytes: &mut u64,
+    ) -> Result<Option<String>> {
         let mut raw = Vec::new();
-        let mut limited = std::io::Read::take(reader, limit);
+        let mut limited = std::io::Read::take(reader, MAX_SYMLINK_TARGET_BYTES + 1);
         std::io::Read::read_to_end(&mut limited, &mut raw)?;
+        Self::charge_discovery_scan_budget(total_bytes, raw.len() as u64)?;
+        if raw.len() as u64 > MAX_SYMLINK_TARGET_BYTES {
+            return Ok(None);
+        }
+        Ok(String::from_utf8(raw)
+            .ok()
+            .map(|target| target.trim().to_string()))
+    }
+
+    fn read_limited_utf8<R: std::io::Read>(
+        reader: &mut R,
+        limit: u64,
+        total_bytes: &mut u64,
+    ) -> Result<String> {
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 8 * 1024];
+        let mut remaining = limit;
+        while remaining > 0 {
+            let to_read = (remaining as usize).min(buf.len());
+            let read = reader.read(&mut buf[..to_read])?;
+            if read == 0 {
+                break;
+            }
+            Self::charge_discovery_scan_budget(total_bytes, read as u64)?;
+            raw.extend_from_slice(&buf[..read]);
+            remaining -= read as u64;
+        }
         Ok(String::from_utf8_lossy(&raw).into_owned())
     }
 

@@ -93,7 +93,7 @@ export function useSkillRepoActions() {
       t("skills.repo.addSuccess", {
         owner: repo.owner,
         name: repo.name,
-        count: countRepoSkills(discovery?.skills ?? [], repo),
+        count: discovery?.skills.length ?? 0,
       }),
       { closeButton: true },
     );

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  countRepoSkills,
   displayRepoBranch,
   RepoManagerPanel,
 } from "@/components/skills/RepoManagerPanel";
@@ -246,5 +247,48 @@ describe("displayRepoBranch", () => {
         enabled: true,
       }),
     ).toBe("release");
+  });
+
+  it("counts HEAD repos resolved to non-main/master branches and respects host", () => {
+    const skills = [
+      {
+        key: "team/skills:a",
+        name: "a",
+        description: "",
+        directory: "a",
+        repoHost: "gitlab.example.com",
+        repoOwner: "team",
+        repoName: "skills",
+        repoBranch: "develop",
+      },
+      {
+        key: "team/skills:b",
+        name: "b",
+        description: "",
+        directory: "b",
+        repoHost: "github.com",
+        repoOwner: "team",
+        repoName: "skills",
+        repoBranch: "main",
+      },
+    ];
+    expect(
+      countRepoSkills(skills, {
+        host: "gitlab.example.com",
+        owner: "team",
+        name: "skills",
+        branch: "HEAD",
+        enabled: true,
+      }),
+    ).toBe(1);
+    expect(
+      displayRepoBranch(skills, {
+        host: "gitlab.example.com",
+        owner: "team",
+        name: "skills",
+        branch: "HEAD",
+        enabled: true,
+      }),
+    ).toBe("develop");
   });
 });

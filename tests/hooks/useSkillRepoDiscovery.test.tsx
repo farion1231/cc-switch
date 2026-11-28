@@ -8,6 +8,7 @@ import {
   useDiscoverableSkills,
   useRefreshDiscoverableSkills,
   useRemoveSkillRepo,
+  useSkillRepoTokenActions,
 } from "@/hooks/useSkills";
 import type {
   DiscoverableSkill,
@@ -20,6 +21,8 @@ const apiMocks = vi.hoisted(() => ({
   removeRepo: vi.fn(),
   discoverRepo: vi.fn(),
   discoverAvailable: vi.fn(),
+  setRepoToken: vi.fn(),
+  deleteRepoToken: vi.fn(),
 }));
 
 vi.mock("@/lib/api/skills", () => ({
@@ -321,6 +324,57 @@ describe("useRefreshDiscoverableSkills", () => {
         queryKey: ["skills", "repos"],
       }),
     );
+    queryClient.clear();
+  });
+
+  it("drops stale in-flight discovery and scrubs localStorage when a token is deleted", async () => {
+    let resolveStale!: (value: SkillDiscoveryResult) => void;
+    apiMocks.discoverAvailable
+      .mockReturnValueOnce(
+        new Promise<SkillDiscoveryResult>((resolve) => {
+          resolveStale = resolve;
+        }),
+      )
+      .mockResolvedValue({
+        skills: [skill("pub", "repo", "public-skill")],
+        failures: [],
+      });
+    apiMocks.deleteRepoToken.mockResolvedValue("git.example.com");
+
+    const { queryClient, wrapper } = setup();
+    renderHook(() => useDiscoverableSkills(), { wrapper });
+    await vi.waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(1),
+    );
+
+    const { result: tokenActions } = renderHook(
+      () => useSkillRepoTokenActions(),
+      { wrapper },
+    );
+    await act(async () => {
+      await tokenActions.current.deleteToken("git.example.com");
+    });
+
+    // 删令牌前发出的旧请求晚到：不得写回 localStorage
+    await act(async () => {
+      resolveStale({
+        skills: [
+          {
+            ...skill("priv", "repo", "secret-skill"),
+            repoHost: "git.example.com",
+          },
+        ],
+        failures: [],
+      });
+    });
+
+    await vi.waitFor(() =>
+      expect(apiMocks.discoverAvailable).toHaveBeenCalledTimes(2),
+    );
+    const persisted = JSON.parse(
+      localStorage.getItem("cc-switch-cache:skills.discoverable.v1") ?? "{}",
+    ) as SkillDiscoveryResult;
+    expect(persisted.skills?.map((s) => s.name)).toEqual(["public-skill"]);
     queryClient.clear();
   });
 });

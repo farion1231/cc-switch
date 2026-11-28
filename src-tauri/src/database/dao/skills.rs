@@ -260,18 +260,20 @@ impl Database {
         Ok(())
     }
 
-    /// 当仓库配置分支为哨兵值（空串或 HEAD）时，回写已解析出的真实分支。
+    /// 当仓库配置分支仍为发现启动时的哨兵值（空串或 HEAD）且同主机/仍启用时，回写解析出的真实分支。
     pub fn update_skill_repo_branch(
         &self,
+        host: &str,
         owner: &str,
         name: &str,
-        branch: &str,
+        expected_branch: &str,
+        resolved_branch: &str,
     ) -> Result<bool, AppError> {
         let conn = lock_conn!(self.conn);
         let affected = conn
             .execute(
-                "UPDATE skill_repos SET branch = ?1 WHERE owner = ?2 AND name = ?3 AND (branch = '' OR UPPER(branch) = 'HEAD')",
-                params![branch, owner, name],
+                "UPDATE skill_repos SET branch = ?1 WHERE host = ?2 AND owner = ?3 AND name = ?4 AND branch = ?5 AND enabled = 1",
+                params![resolved_branch, host, owner, name, expected_branch],
             )
             .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(affected > 0)

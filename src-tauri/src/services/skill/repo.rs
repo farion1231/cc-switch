@@ -570,6 +570,73 @@ impl SkillService {
         Ok(request.header(reqwest::header::AUTHORIZATION, value))
     }
 
+    /// 按不可变 commit SHA 构造归档下载地址（避免探测与下载之间分支移动导致缓存错配）。
+    pub(super) fn build_commit_archive_url(
+        repo: &SkillRepo,
+        platform: RepoPlatform,
+        commit_sha: &str,
+        authenticated: bool,
+    ) -> Result<String> {
+        Self::validate_repo(repo)?;
+        let valid_sha = (commit_sha.len() == 40 || commit_sha.len() == 64)
+            && commit_sha.bytes().all(|b| b.is_ascii_hexdigit())
+            && !commit_sha.bytes().all(|b| b == b'0');
+        if !valid_sha {
+            return Err(anyhow!(format_skill_error(
+                "INVALID_REPO_REF",
+                &[("owner", &repo.owner), ("name", &repo.name)],
+                Some("checkRepoUrl"),
+            )));
+        }
+
+        if repo.is_github() && authenticated {
+            let url = format!(
+                "https://api.github.com/repos/{}/{}/zipball/{}",
+                repo.owner, repo.name, commit_sha
+            );
+            let parsed = url::Url::parse(&url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
+            let expected = format!("/repos/{}/{}/zipball/{commit_sha}", repo.owner, repo.name);
+            if parsed.scheme() != "https"
+                || parsed.host_str() != Some("api.github.com")
+                || parsed.port().is_some()
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || parsed.path() != expected
+            {
+                return Err(anyhow!(format_skill_error(
+                    "INVALID_REPO_REF",
+                    &[("owner", &repo.owner), ("name", &repo.name)],
+                    Some("checkRepoUrl"),
+                )));
+            }
+            return Ok(url);
+        }
+        if repo.is_github() {
+            let url = format!(
+                "https://github.com/{}/{}/archive/{}.zip",
+                repo.owner, repo.name, commit_sha
+            );
+            let parsed = url::Url::parse(&url).map_err(|e| anyhow!("Invalid archive URL: {e}"))?;
+            let expected = format!("/{}/{}/archive/{commit_sha}.zip", repo.owner, repo.name);
+            if parsed.scheme() != "https"
+                || parsed.host_str() != Some("github.com")
+                || parsed.path() != expected
+            {
+                return Err(anyhow!(format_skill_error(
+                    "INVALID_REPO_REF",
+                    &[("owner", &repo.owner), ("name", &repo.name)],
+                    Some("checkRepoUrl"),
+                )));
+            }
+            return Ok(url);
+        }
+
+        // GitLab (?sha=<commit>) 与 Gitea (/archive/<commit>.zip) 复用同一套接口和出口断言。
+        Self::build_archive_url(repo, platform, commit_sha, authenticated)
+    }
+
     /// 构造 Git Smart HTTP `info/refs?service=git-upload-pack` 地址并做出口断言。
     pub(super) fn build_git_info_refs_url(repo: &SkillRepo) -> Result<String> {
         Self::validate_repo(repo)?;
@@ -689,6 +756,7 @@ impl SkillService {
                                     return GitRefParseOutcome::Complete(Some(ProbedGitRef {
                                         branch: branch.to_string(),
                                         commit_sha: oid.to_string(),
+                                        from_head_symref: true,
                                     }));
                                 }
                                 head_symref = Some((branch.to_string(), oid.to_string()));
@@ -702,6 +770,7 @@ impl SkillService {
                     return GitRefParseOutcome::Complete(Some(ProbedGitRef {
                         branch: branch.to_string(),
                         commit_sha: oid.to_string(),
+                        from_head_symref: false,
                     }));
                 }
                 if branch == "main" {
@@ -725,12 +794,18 @@ impl SkillService {
         let main = main_oid.map(|commit_sha| ProbedGitRef {
             branch: "main".to_string(),
             commit_sha,
+            from_head_symref: false,
         });
         let master = master_oid.map(|commit_sha| ProbedGitRef {
             branch: "master".to_string(),
             commit_sha,
+            from_head_symref: false,
         });
-        let default = head_symref.map(|(branch, commit_sha)| ProbedGitRef { branch, commit_sha });
+        let default = head_symref.map(|(branch, commit_sha)| ProbedGitRef {
+            branch,
+            commit_sha,
+            from_head_symref: true,
+        });
 
         let resolved = if want_default {
             default.or(main).or(master)

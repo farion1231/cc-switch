@@ -632,6 +632,8 @@ pub(super) struct CachedRepoDiscovery {
 pub(super) struct ProbedGitRef {
     pub(super) branch: String,
     pub(super) commit_sha: String,
+    /// 分支名是否由远端 `symref=HEAD:refs/heads/<branch>` 明确给出（非 main/master 猜测）。
+    pub(super) from_head_symref: bool,
 }
 
 pub struct SkillService {
@@ -640,6 +642,9 @@ pub struct SkillService {
     /// 发现结果按仓库缓存，只存读成功的仓库；跨重启持久化在本地缓存文件，
     /// 手动刷新时先比对远端分支 commit SHA，未变化直接跳过归档下载。
     discovery_cache: Mutex<HashMap<RepoCacheKey, CachedRepoDiscovery>>,
+    /// 串行化发现缓存落盘，确保旧快照无法覆盖后发生的写盘或令牌清理。
+    /// 锁序严格为 `discovery_disk_lock -> discovery_cache`，且永不跨 `.await` 持有。
+    discovery_disk_lock: Mutex<()>,
     /// 本地发现缓存文件是否已载入内存（每进程懒加载一次）。
     discovery_cache_loaded: AtomicBool,
     /// 主机 → 平台的探测结果，进程内有效。只记探明的，见 `resolve_platform`。
@@ -662,6 +667,10 @@ const DISCOVERY_MAX_CONCURRENCY: usize = 3;
 const GIT_INFO_REFS_MAX_BYTES: usize = 512 * 1024;
 /// 发现阶段单个 `SKILL.md` 的读取上限：frontmatter 在文件开头，限制体积防止压缩炸弹占满内存
 const MAX_SKILL_MD_BYTES: u64 = 256 * 1024;
+/// 单仓库发现扫描的累计解压预算（所有 SKILL.md 与 symlink 目标共用）
+const MAX_DISCOVERY_SCAN_BYTES: u64 = 32 * 1024 * 1024;
+/// 单仓库发现扫描保留的元数据内存上限（名称 + 描述累计字节）
+const MAX_DISCOVERY_METADATA_BYTES: usize = 8 * 1024 * 1024;
 /// 本地发现缓存文件名（仅存本机，不进数据库和云同步）
 const DISCOVERY_CACHE_FILENAME: &str = "skill-discovery-cache.json";
 
@@ -677,6 +686,7 @@ impl SkillService {
             #[cfg(test)]
             repo_fixture: None,
             discovery_cache: Mutex::new(HashMap::new()),
+            discovery_disk_lock: Mutex::new(()),
             discovery_cache_loaded: AtomicBool::new(false),
             platform_cache: Mutex::new(HashMap::new()),
             credential_epoch: AtomicU64::new(0),

@@ -209,16 +209,11 @@ impl SkillService {
     ) -> Result<(tempfile::TempDir, String)> {
         Self::validate_repo(repo)?;
 
-        // 守卫全程持有，成功后连同目录一起交给调用方（见 `extract_local_zip` 的说明）。
-        // 原来这里立刻 keep()，任何一步失败——下载超时、ARCHIVE_TOO_LARGE、解压出错
-        // ——都会把半个解压目录永久留在磁盘上，反复触发即可持续填盘。
-        let temp_dir = tempfile::tempdir()?;
-        let temp_path = temp_dir.path();
-
         // Exercise the real install/update flow without network access in unit tests.
         #[cfg(test)]
         if let Some(fixture) = &self.repo_fixture {
-            Self::copy_dir_recursive(fixture, temp_path)?;
+            let temp_dir = tempfile::tempdir()?;
+            Self::copy_dir_recursive(fixture, temp_dir.path())?;
             return Ok((temp_dir, repo.branch.clone()));
         }
 
@@ -226,15 +221,10 @@ impl SkillService {
         let token = self.repo_token(&repo.host).await?;
         let token = token.as_deref();
         let platform = self.resolve_platform(&repo.host, token, epoch).await;
-        let branch = Self::try_repo_branches(
-            repo,
-            platform,
-            token.is_some(),
-            temp_path,
-            |url| async move { self.download_and_extract(&url, temp_path, token).await },
-        )
-        .await?;
-        Ok((temp_dir, branch))
+        Self::try_repo_branches(repo, platform, token.is_some(), |url| async move {
+            self.download_and_extract_temp(&url, token).await
+        })
+        .await
     }
 
     /// 这台主机的访问令牌。读钥匙串在 macOS 上会起子进程，放到阻塞线程里做。
@@ -276,14 +266,14 @@ impl SkillService {
         if had_disk_cache {
             self.ensure_discovery_cache_loaded();
         }
-        let snapshot = {
+        let removed = {
             let mut cache = self.discovery_cache.lock_recover();
             let before = cache.len();
             cache.retain(|key, _| key.0 != host);
-            (had_disk_cache && cache.len() != before).then(|| cache.clone())
+            cache.len() != before
         };
-        if let Some(snapshot) = snapshot {
-            Self::save_discovery_cache_to_disk(&snapshot);
+        if had_disk_cache && removed {
+            self.persist_discovery_cache();
         }
     }
 
@@ -293,33 +283,15 @@ impl SkillService {
         self
     }
 
-    /// 依次尝试「配置分支 → main → master」，返回第一个下载成功的分支。
+    /// 依次尝试「配置分支 → main → master」，返回第一个下载成功的结果及真实分支。
     ///
     /// 只有「分支不存在」（HTTP 404）才换下一个分支：超时、超过体积上限、解压失败、
     /// 网络错误换个分支也不会好，继续试只会让 master 的 404 盖掉真实原因，界面变成
     /// 「仓库或分支不存在」。抽成接收 `attempt` 的函数是为了不联网也能单测这条规则。
-    pub(super) async fn try_repo_branches<F, Fut>(
+    pub(super) async fn try_repo_branches<T, F, Fut>(
         repo: &SkillRepo,
         platform: RepoPlatform,
         authenticated: bool,
-        temp_path: &Path,
-        attempt: F,
-    ) -> Result<String>
-    where
-        F: FnMut(String) -> Fut,
-        Fut: std::future::Future<Output = Result<()>>,
-    {
-        let ((), branch) =
-            Self::try_repo_branches_with(repo, platform, authenticated, Some(temp_path), attempt)
-                .await?;
-        Ok(branch)
-    }
-
-    pub(super) async fn try_repo_branches_with<T, F, Fut>(
-        repo: &SkillRepo,
-        platform: RepoPlatform,
-        authenticated: bool,
-        cleanup_dir: Option<&Path>,
         mut attempt: F,
     ) -> Result<(T, String)>
     where
@@ -344,12 +316,6 @@ impl SkillService {
             match attempt(url).await {
                 Ok(value) => return Ok((value, branch.to_string())),
                 Err(e) if Self::is_branch_not_found(&e) => {
-                    // 每个分支各自重算预算，所以失败后必须把上一轮的残留清掉——
-                    // 否则 N 个候选分支等于 N 倍的落盘量堆在同一个目录里。
-                    if let Some(dir) = cleanup_dir {
-                        let _ = fs::remove_dir_all(dir);
-                        let _ = fs::create_dir_all(dir);
-                    }
                     last_error = Some(e);
                 }
                 Err(e) => return Err(Self::with_repo_context(e, repo)),
@@ -363,6 +329,7 @@ impl SkillService {
 
     /// 探测仓库目标分支及最新 commit SHA（Git Smart HTTP `info/refs`）。
     ///
+    /// 请求头与整段响应共用同一个 `PLATFORM_PROBE_TIMEOUT` 截止时间，防止慢速代理滴流阻塞。
     /// 失败、非 200、超时或超过上限一律返回 `None`，由调用方无感回退到归档下载。
     pub(super) async fn probe_repo_ref(
         &self,
@@ -382,40 +349,60 @@ impl SkillService {
             };
             request = Self::with_basic_auth(request, username, token).ok()?;
         }
-        let mut response = timeout(PLATFORM_PROBE_TIMEOUT, request.send())
-            .await
-            .ok()?
-            .ok()?;
-        if !response.status().is_success() {
-            return None;
-        }
 
-        let mut buf = Vec::new();
-        loop {
-            match timeout(PLATFORM_PROBE_TIMEOUT, response.chunk()).await {
-                Ok(Ok(Some(chunk))) => {
-                    let remaining = GIT_INFO_REFS_MAX_BYTES.saturating_sub(buf.len());
-                    let take = chunk.len().min(remaining);
-                    buf.extend_from_slice(&chunk[..take]);
-                    let hit_cap = buf.len() >= GIT_INFO_REFS_MAX_BYTES;
-                    match Self::parse_git_info_refs(&buf, &repo.branch, hit_cap) {
-                        repo::GitRefParseOutcome::Complete(res) => return res,
-                        repo::GitRefParseOutcome::Invalid => return None,
-                        repo::GitRefParseOutcome::NeedMore if hit_cap => return None,
-                        repo::GitRefParseOutcome::NeedMore => {}
-                    }
-                }
-                Ok(Ok(None)) => {
-                    return match Self::parse_git_info_refs(&buf, &repo.branch, true) {
-                        repo::GitRefParseOutcome::Complete(res) => res,
-                        repo::GitRefParseOutcome::Invalid | repo::GitRefParseOutcome::NeedMore => {
-                            None
-                        }
-                    };
-                }
-                _ => return None,
+        timeout(PLATFORM_PROBE_TIMEOUT, async {
+            let mut response = request.send().await.ok()?;
+            if !response.status().is_success() {
+                return None;
             }
-        }
+
+            let mut buf = Vec::new();
+            loop {
+                match response.chunk().await {
+                    Ok(Some(chunk)) => {
+                        let remaining = GIT_INFO_REFS_MAX_BYTES.saturating_sub(buf.len());
+                        let take = chunk.len().min(remaining);
+                        buf.extend_from_slice(&chunk[..take]);
+                        let hit_cap = buf.len() >= GIT_INFO_REFS_MAX_BYTES;
+                        match Self::parse_git_info_refs(&buf, &repo.branch, hit_cap) {
+                            repo::GitRefParseOutcome::Complete(res) => return res,
+                            repo::GitRefParseOutcome::Invalid => return None,
+                            repo::GitRefParseOutcome::NeedMore if hit_cap => return None,
+                            repo::GitRefParseOutcome::NeedMore => {}
+                        }
+                    }
+                    Ok(None) => {
+                        return match Self::parse_git_info_refs(&buf, &repo.branch, true) {
+                            repo::GitRefParseOutcome::Complete(res) => res,
+                            repo::GitRefParseOutcome::Invalid
+                            | repo::GitRefParseOutcome::NeedMore => None,
+                        };
+                    }
+                    Err(_) => return None,
+                }
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    /// 按不可变 commit SHA 下载仓库归档到匿名临时文件，保证内容与缓存 SHA 严格一致。
+    pub(super) async fn download_commit_archive_bounded(
+        &self,
+        repo: &SkillRepo,
+        platform: RepoPlatform,
+        commit_sha: &str,
+        token: Option<&str>,
+    ) -> Result<fs::File> {
+        let url = Self::build_commit_archive_url(repo, platform, commit_sha, token.is_some())?;
+        timeout(
+            DOWNLOAD_TOTAL_TIMEOUT,
+            self.download_archive_file(&url, token),
+        )
+        .await
+        .map_err(|_| anyhow!(Self::download_timeout_error(repo)))?
+        .map_err(|e| Self::with_repo_context(e, repo))
     }
 
     /// 仅下载仓库归档到匿名临时文件（不解压落盘），供发现阶段在内存中只读 `SKILL.md`。
@@ -428,7 +415,7 @@ impl SkillService {
         Self::validate_repo(repo)?;
         timeout(
             DOWNLOAD_TOTAL_TIMEOUT,
-            Self::try_repo_branches_with(repo, platform, token.is_some(), None, |url| async move {
+            Self::try_repo_branches(repo, platform, token.is_some(), |url| async move {
                 self.download_archive_file(&url, token).await
             }),
         )
@@ -525,22 +512,22 @@ impl SkillService {
             .map_err(|e| anyhow::Error::from(e.into_error()))
     }
 
-    /// 下载并解压 ZIP。`token` 是这台主机的访问令牌，没设置为 `None`。
-    pub(super) async fn download_and_extract(
+    /// 下载并解压到独占临时目录。`TempDir` 守卫由阻塞任务全程持有，超时取消时由任务结束自动清理，
+    /// 避免外层先 drop 守卫后阻塞解压继续重建目录留下残留。
+    pub(super) async fn download_and_extract_temp(
         &self,
         url: &str,
-        dest: &Path,
         token: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<tempfile::TempDir> {
         let file = self.download_archive_file(url, token).await?;
-        let dest = dest.to_path_buf();
-        tokio::task::spawn_blocking(move || {
+        tokio::task::spawn_blocking(move || -> Result<tempfile::TempDir> {
+            let temp_dir = tempfile::tempdir()?;
             let archive = Self::open_downloaded_archive(file)?;
-            Self::extract_repo_archive(archive, &dest)
+            Self::extract_repo_archive(archive, temp_dir.path())?;
+            Ok(temp_dir)
         })
         .await
-        .map_err(|e| anyhow!("解压归档任务异常中止: {e}"))??;
-        Ok(())
+        .map_err(|e| anyhow!("解压归档任务异常中止: {e}"))?
     }
 
     /// 打开下载到的归档。不兼容 GitHub / GitLab / Gitea 接口的站点（如 cnb.cool，#9812）
