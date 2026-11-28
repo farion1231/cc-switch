@@ -46,13 +46,13 @@ use super::operation;
 use super::stack::{self, StackModel, StackView};
 use super::state::{op, Contract, Mode, ModeState, PendingTarget, StackState};
 
-/// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)）：本地路由的
-/// 在前，Claude Desktop 在最后（它经同一个路由服务转发，只是没有故障转移）。
+/// 有路由模式的应用（[`AppSpec::route_mode`](crate::app_config::AppSpec::route_mode)）：
+/// Claude Desktop 在最后（它只在启动时读配置，接上、重写都排在命令行客户端之后）。
 fn route_mode_apps() -> impl Iterator<Item = AppType> {
     let apps = || AppType::all().filter(|app| app.spec().route_mode);
     apps()
-        .filter(|app| app.spec().local_proxy)
-        .chain(apps().filter(|app| !app.spec().local_proxy))
+        .filter(|app| *app != AppType::ClaudeDesktop)
+        .chain(apps().filter(|app| *app == AppType::ClaudeDesktop))
 }
 
 fn err(error: impl std::fmt::Display) -> String {
@@ -495,14 +495,15 @@ async fn write_proxy(
         }
         AppType::ClaudeDesktop => {
             let members = published_members(state, app, &stack, route)?;
-            let profile = claude_desktop_config::route_profile(
-                &state.db,
-                route,
-                &proxy_url,
-                &stack::desktop_published(&members),
-            )
-            .map_err(err)?;
-            let contract = contract::claude_desktop(&profile);
+            let claude_desktop_config::RoutePublication { profile, models } =
+                claude_desktop_config::route_publication(
+                    &state.db,
+                    route,
+                    &proxy_url,
+                    &stack::desktop_published(&members),
+                )
+                .map_err(err)?;
+            let contract = contract::claude_desktop(&profile, models);
             let unchanged = !force && live_now.has_contract(&contract.key);
             target.contract = Some(contract);
             claude_desktop_config::run(

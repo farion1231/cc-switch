@@ -22,6 +22,9 @@ impl Database {
                 | "optimizer_config"
                 | "copilot_optimizer_config"
                 | "privacy_filter_config"
+                // Claude Desktop 的应用级配置和计费来源（见 dao/proxy.rs），每个请求都读
+                | super::proxy::DESKTOP_PROXY_CONFIG_KEY
+                | super::proxy::DESKTOP_PRICING_SOURCE_KEY
         ) {
             return self
                 .read_cache

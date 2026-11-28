@@ -343,6 +343,8 @@
     "statusMissingRouteMappings": "Geçerli sağlayıcının model eşlemesi etkin ancak geçerli rota yok. Sağlayıcıyı düzenleyin ve en az bir eşleme ekleyin.",
     "statusGatewayTokenMissing": "Yerel yönlendirme belirteci henüz oluşturulmadı. Bu sağlayıcıya tekrar geçiş yapmak yeni bir yerel token yazacaktır.",
     "statusBaseUrlMismatch": "Claude Desktop profili mevcut sağlayıcıdan farklı bir URL'ye işaret ediyor. Güncel: {{actual}}; beklenen: {{expected}}. Onarmak için tekrar mevcut sağlayıcıya geçin.",
+    "failoverTitle": "Yedek sağlayıcıya geçiş açık",
+    "failoverNote": "Otomatik sağlayıcı değişiminden sonra Claude Desktop yayımlanmış model listesini göstermeye devam eder. İsteklerde yeni sağlayıcının model eşlemesi kullanılır. Eşleşen modeli olmayan sağlayıcılar atlanır.",
     "route": {
       "tooltip": {
         "active": "Claude Desktop yerel yönlendirme çalışıyor - {{address}}:{{port}}",

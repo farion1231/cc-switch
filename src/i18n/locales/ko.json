@@ -343,6 +343,8 @@
     "statusMissingRouteMappings": "라우팅 대상 공급자에 유효한 모델 매핑이 없습니다. 공급자 설정을 편집하여 모델 매핑을 하나 이상 추가하세요.",
     "statusGatewayTokenMissing": "현재 로컬 라우팅 토큰이 아직 생성되지 않았습니다. 이 공급자로 다시 전환하면 새 로컬 토큰이 저장됩니다.",
     "statusBaseUrlMismatch": "Claude Desktop 프로필의 URL이 현재 공급자와 다릅니다. 현재: {{actual}}, 예상: {{expected}}. 현재 공급자로 다시 전환하여 복구하세요.",
+    "failoverTitle": "장애 조치가 켜져 있습니다",
+    "failoverNote": "자동 장애 조치 후에도 Claude Desktop은 이미 게시된 모델 목록을 표시합니다. 요청에는 전환된 공급자의 모델 매핑이 적용되며, 일치하는 모델이 없는 공급자는 건너뜁니다.",
     "route": {
       "tooltip": {
         "active": "Claude Desktop 로컬 라우팅이 실행 중입니다 - {{address}}:{{port}}",

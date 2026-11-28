@@ -139,7 +139,6 @@ export function SwitchModePanel({
   const serviceRunning = proxyStatus?.running ?? false;
   const { data: settings } = useSettingsQuery();
   const pauseOfficialLogin = useCodexPauseOfficialLogin();
-  // Claude Desktop 没有故障转移和路由设置（没有 proxy_config 行）
   const hasFailover = appHas(app, "localProxy");
   const { data: failoverOn = false } = useAutoFailoverEnabled(app, hasFailover);
   const { data: queue } = useFailoverQueue(app, hasFailover);
@@ -403,6 +402,18 @@ export function SwitchModePanel({
           </>
         }
       />,
+    );
+  }
+  // Desktop 只在启动时读模型列表：转移到别家后界面上还是原来那家的名字，先说清楚。
+  if (app === "claude-desktop" && active === "route" && failoverOn) {
+    notices.push(
+      <Notice
+        key="desktopFailover"
+        tone="neutral"
+        title={t("claudeDesktop.failoverTitle")}
+      >
+        {t("claudeDesktop.failoverNote")}
+      </Notice>,
     );
   }
   if (desktopMessages.length > 0) {

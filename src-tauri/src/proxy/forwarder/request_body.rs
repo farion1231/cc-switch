@@ -26,6 +26,11 @@ impl ForwardBody {
         }
     }
 
+    /// 请求的模型名（Stack 解析之后的那个），不用解析或拷贝请求体。
+    pub(super) fn model(&self) -> Option<&str> {
+        self.model.as_ref().and_then(Value::as_str)
+    }
+
     pub(super) fn initial(&self) -> &Value {
         self.first.as_ref().expect("initial body has not been sent")
     }

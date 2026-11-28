@@ -316,15 +316,12 @@ impl<'a> UsageLogger<'a> {
 
     /// 获取计费模式来源（按请求模型 / 按返回模型），只读应用级全局配置
     pub fn resolve_pricing_model_source(&self, app_type: &str) -> String {
-        // Claude Desktop 网关没有独立的全局计费配置（proxy_config 的 CHECK 不含
-        // claude-desktop），继承 claude 的设置。
-        let default_app_type = match app_type.parse::<AppType>() {
-            Ok(AppType::ClaudeDesktop) => AppType::Claude,
+        let app = match app_type.parse::<AppType>() {
             Ok(app) => app,
             // 不认识的应用没有 proxy_config 行，和查不到行一样按返回模型计费。
             Err(_) => return PRICING_SOURCE_RESPONSE.to_string(),
         };
-        match self.db.get_pricing_model_source_sync(&default_app_type) {
+        match self.db.get_pricing_model_source_sync(&app) {
             Ok(value) if value == PRICING_SOURCE_RESPONSE || value == PRICING_SOURCE_REQUEST => {
                 value
             }

@@ -67,6 +67,9 @@ pub struct Contract {
     /// 被编辑过，不能到时再按行重新计算。
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub exclusive: Map<String, Value>,
+    /// 上次写入 Claude Desktop profile 时发布的模型发现数据。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop_models: Option<Value>,
 }
 
 /// 一个应用的模式状态。

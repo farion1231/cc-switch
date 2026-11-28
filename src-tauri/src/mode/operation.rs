@@ -454,7 +454,7 @@ pub fn mirror_proxy_flag(
     app: &str,
     proxy: bool,
 ) -> Result<(), AppError> {
-    // Claude Desktop 没有 `proxy_config` 行（表的 CHECK 也不允许），旧版不认它的模式。
+    // 没有本地路由的应用没有应用级配置，不用镜像。
     let Some(app) = app
         .parse::<crate::app_config::AppType>()
         .ok()
