@@ -1,0 +1,42 @@
+{
+  "name": "antigravity-plugins-official",
+  "description": "Antigravity plugins marketplace catalog.",
+  "plugins": [
+    {
+      "name": "gcalendar",
+      "displayName": "Google Calendar",
+      "version": "0.0.8",
+      "description": "Check availability, schedule events, and RSVP.",
+      "logo": "https://www.gstatic.com/images/branding/productlogos/calendar_2026/v2/web/192px.svg",
+      "suggestedPrompts": [
+        "Book 30 minutes with Priya and Sam next week",
+        "What's on my calendar today? Flag any conflicts",
+        "Block focus time before Friday's launch review"
+      ],
+      "source": {
+        "type": "archive",
+        "url": "https://www.gstatic.com/antigravity/plugins/gcalendar/gcalendar.zip?v=d084b32234dc",
+        "sha256": "d084b32234dc3592df42b1257efaaaa01a1f569e9d2b3864c7bedb15496f11f1"
+      }
+    },
+    {
+      "name": "firebase",
+      "displayName": "Firebase",
+      "version": "1.0.3",
+      "description": "Prototype, build & run modern apps that users love with Firebase's backend, AI, and operational infrastructure.",
+      "logo": "https://www.gstatic.com/images/branding/productlogos/firebase/v9/192px.svg",
+      "author": {
+        "name": "Firebase",
+        "url": "https://firebase.google.com"
+      },
+      "homepage": "https://firebase.google.com",
+      "repository": "https://github.com/firebase/agent-skills",
+      "license": "Apache-2.0",
+      "source": {
+        "type": "archive",
+        "url": "https://www.gstatic.com/antigravity/plugins/firebase/firebase.zip?v=f963859c6778",
+        "sha256": "f963859c67781a59de295d55374bb26b48957cc660e1f7394b5a81469d0d24eb"
+      }
+    }
+  ]
+}

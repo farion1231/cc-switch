@@ -1,5 +1,3 @@
-#![allow(non_snake_case)]
-
 use crate::error::AppError;
 use indexmap::IndexMap;
 use std::str::FromStr;

@@ -110,7 +110,43 @@ describe("useImportExport Hook", () => {
     expect(result.current.status).toBe("success");
     expect(result.current.backupId).toBe("backup-123");
     expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
     expect(onImportSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("should surface backend post-sync warning as partial-success without overwriting it", async () => {
+    const warning =
+      "后置同步状态失败: 部分导入后同步失败: prompts: Permission denied";
+    openFileDialogMock.mockResolvedValue("/config.sql");
+    importConfigMock.mockResolvedValue({
+      success: true,
+      message: "SQL imported successfully",
+      backupId: "backup-warn-1",
+      warning,
+    });
+    const onImportSuccess = vi.fn();
+
+    const { result } = renderHook(() => useImportExport({ onImportSuccess }));
+
+    await act(async () => {
+      await result.current.selectImportFile();
+    });
+
+    await act(async () => {
+      await result.current.importConfig();
+    });
+
+    expect(importConfigMock).toHaveBeenCalledWith("/config.sql");
+    expect(result.current.status).toBe("partial-success");
+    expect(result.current.backupId).toBe("backup-warn-1");
+    expect(result.current.errorMessage).toBe(warning);
+    expect(onImportSuccess).toHaveBeenCalledTimes(1);
+    expect(syncCurrentProvidersLiveMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+    expect(toastWarningMock).toHaveBeenCalledWith(
+      expect.stringContaining(warning),
+      expect.objectContaining({ closeButton: true }),
+    );
   });
 
   it("should show error message and keep selected file when import result fails", async () => {

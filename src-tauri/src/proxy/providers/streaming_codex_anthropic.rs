@@ -17,8 +17,8 @@ use super::transform_codex_anthropic::{
     decode_anthropic_thinking_block, ANTHROPIC_THINKING_ENCRYPTED_PREFIX,
 };
 use super::transform_codex_chat::{
-    response_tool_call_item_from_chat_name, response_tool_call_item_id_from_chat_name,
-    CodexToolContext,
+    response_message_item_id_indexed, response_tool_call_item_from_chat_name,
+    response_tool_call_item_id_from_chat_name, CodexToolContext,
 };
 use super::transform_responses::sanitize_anthropic_tool_use_input_json;
 use crate::proxy::json_canonical::canonicalize_tool_arguments_str;
@@ -177,7 +177,7 @@ impl AnthropicToResponsesState {
         match block_type {
             "text" => {
                 let output_index = self.next_output_index();
-                let item_id = format!("{}_msg_{output_index}", self.response_id);
+                let item_id = response_message_item_id_indexed(&self.response_id, output_index);
                 events.push(sse::message_item_added(output_index, &item_id));
                 events.push(sse::message_content_part_added(output_index, &item_id));
                 self.blocks.insert(
@@ -729,7 +729,19 @@ pub(crate) fn create_responses_sse_stream_from_anthropic_with_context<
         while let Some(chunk) = stream.next().await {
             match chunk {
                 Ok(bytes) => {
-                    sse.push_bytes(&bytes);
+                    let result = sse.try_push_bytes(&bytes).and_then(|()| {
+                        if json_document_candidate(sse.pending()).is_some() {
+                            sse.check_pending_document_size()
+                        } else {
+                            Ok(())
+                        }
+                    });
+                    if let Err(error) = result {
+                        if let Some(event) = state.failed_event(error.to_string(), Some("stream_error".to_string())) {
+                            yield Ok(event);
+                        }
+                        return;
+                    }
 
                     // A few compatible gateways ignore stream:true and return one
                     // JSON document. Hold that body intact (including pretty-printed

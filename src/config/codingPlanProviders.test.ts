@@ -61,6 +61,22 @@ describe("detectCodingPlanProvider (Ollama Cloud)", () => {
   });
 });
 
+describe("detectCodingPlanProvider (Xiaomi MiMo)", () => {
+  it.each([
+    "https://token-plan-cn.xiaomimimo.com/anthropic",
+    "https://token-plan-cn.xiaomimimo.com/v1",
+  ])("recognizes the MiMo Token Plan for %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBe("mimo");
+  });
+
+  it.each([
+    "https://api.xiaomimimo.com/anthropic",
+    "https://relay.example.com/token-plan-cn.xiaomimimo.com/v1",
+  ])("ignores pay-as-you-go and relay URLs such as %s", (baseUrl) => {
+    expect(detectCodingPlanProvider(baseUrl)).toBeNull();
+  });
+});
+
 describe("detectCodingPlanProvider (MiniMax)", () => {
   it.each([
     "https://api.minimax.cn/v1",
@@ -155,6 +171,30 @@ type TestProvider = {
   settingsConfig?: Record<string, any>;
   meta?: Record<string, any>;
 };
+
+describe("options.baseURL apps", () => {
+  it("reads DeepSeek Harness and ZCode cards like OpenCode", () => {
+    for (const appId of ["dsh", "zcode"]) {
+      expect(
+        extractBaseUrlForUsageDetection(appId, {
+          options: { baseURL: "https://open.bigmodel.cn/api/anthropic" },
+        }),
+      ).toBe("https://open.bigmodel.cn/api/anthropic");
+    }
+    // ZCode 是智谱的客户端：GLM Coding Plan 卡新建时就要自动开额度
+    const zcode = injectCodingPlanUsageScript("zcode", {
+      settingsConfig: {
+        kind: "anthropic",
+        options: { baseURL: "https://open.bigmodel.cn/api/anthropic" },
+      },
+    }) as TestProvider;
+    expect(zcode.meta?.usage_script).toMatchObject({
+      enabled: true,
+      templateType: "token_plan",
+      codingPlanProvider: "zhipu",
+    });
+  });
+});
 
 describe("injectCodingPlanUsageScript", () => {
   const inject = (appId: string, provider: TestProvider) =>

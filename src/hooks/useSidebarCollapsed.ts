@@ -6,6 +6,11 @@ import {
   useState,
   type RefObject,
 } from "react";
+import {
+  DEFAULT_DENSITY,
+  useInterfacePrefs,
+  type Density,
+} from "@/lib/interfacePrefs";
 import { isMac } from "@/lib/platform";
 
 /** 窗口窄于这个宽度时侧栏自动收成图标轨（用户手动选过就按手动的来）。 */
@@ -14,8 +19,24 @@ export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 960;
 const STORAGE_KEY = "cc-switch-sidebar-collapsed";
 
 export const SIDEBAR_EXPANDED_WIDTH = 200;
-/** 收起时的图标轨宽度：macOS 的红绿灯（新版更大）要约 74px，Mac 上放宽到 84 */
-export const sidebarRailWidth = () => (isMac() ? 84 : 72);
+
+/**
+ * 收起时的图标轨宽度（紧凑 / 舒适）：
+ * - 非 macOS：紧凑 52px，舒适 60px（均窄于原 72px）
+ * - macOS：红绿灯占顶条左边约 74px，紧凑 76px，舒适 80px（均窄于原 84px 且不压红绿灯）
+ */
+export const SIDEBAR_RAIL_WIDTH: Record<
+  Density,
+  { mac: number; default: number }
+> = {
+  compact: { mac: 76, default: 52 },
+  comfortable: { mac: 80, default: 60 },
+};
+
+export const sidebarRailWidth = (density: Density = DEFAULT_DENSITY) => {
+  const pair = SIDEBAR_RAIL_WIDTH[density];
+  return isMac() ? pair.mac : pair.default;
+};
 
 const TOGGLE_DURATION_MS = 200;
 const TOGGLE_EASING = "cubic-bezier(0.2, 0, 0, 1)";
@@ -100,8 +121,10 @@ function animateToggle(nav: HTMLElement, fromWidth: number, toWidth: number) {
   animation.oncancel = cleanup;
 }
 
-export const sidebarWidth = (collapsed: boolean) =>
-  collapsed ? sidebarRailWidth() : SIDEBAR_EXPANDED_WIDTH;
+export const sidebarWidth = (
+  collapsed: boolean,
+  density: Density = DEFAULT_DENSITY,
+) => (collapsed ? sidebarRailWidth(density) : SIDEBAR_EXPANDED_WIDTH);
 
 function readManualPreference(): boolean | null {
   try {
@@ -126,6 +149,7 @@ function isNarrowWindow(): boolean {
  * 只在 Sidebar 里用：状态放在 App 的话，每次切换都会把整页重渲染一遍，动画第一帧就掉帧。
  */
 export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
+  const { density } = useInterfacePrefs();
   const [manual, setManual] = useState<boolean | null>(readManualPreference);
   const [narrow, setNarrow] = useState(isNarrowWindow);
 
@@ -136,27 +160,28 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
   }, []);
 
   const collapsed = manual ?? narrow;
-  // 只有手动切换才滑；拖窗口自动收起时直接到位
+  const width = sidebarWidth(collapsed, density);
+  // 只有手动切换才滑；拖窗口自动收起或切换密度时直接到位
   const animateFrom = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     const from = animateFrom.current;
     animateFrom.current = null;
     if (from !== null && navRef.current) {
-      animateToggle(navRef.current, from, sidebarWidth(collapsed));
+      animateToggle(navRef.current, from, width);
     }
-  }, [collapsed, navRef]);
+  }, [collapsed, navRef, width]);
 
   const toggle = useCallback(() => {
     const next = !collapsed;
-    animateFrom.current = sidebarWidth(collapsed);
+    animateFrom.current = width;
     setManual(next);
     try {
       localStorage.setItem(STORAGE_KEY, String(next));
     } catch {
       // 记不住也不影响这次切换
     }
-  }, [collapsed]);
+  }, [collapsed, width]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -169,5 +194,5 @@ export function useSidebarCollapsed(navRef: RefObject<HTMLElement | null>) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [toggle]);
 
-  return { collapsed, toggle };
+  return { collapsed, toggle, width };
 }

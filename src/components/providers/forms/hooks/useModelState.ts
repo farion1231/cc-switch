@@ -23,7 +23,7 @@ export type ClaudeModelEnvField =
   | "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"
   | "CLAUDE_CODE_SUBAGENT_MODEL";
 
-export const CLAUDE_ONE_M_MARKER = "[1M]";
+export const CLAUDE_ONE_M_MARKER = "[1m]";
 
 export function hasClaudeOneMMarker(model: string): boolean {
   return model.trimEnd().toLowerCase().endsWith("[1m]");

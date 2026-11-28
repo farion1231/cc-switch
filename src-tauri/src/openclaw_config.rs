@@ -5,6 +5,7 @@
 
 use crate::config::{atomic_write, get_app_config_dir};
 use crate::error::AppError;
+use crate::jsonc_document::parse_round_trip;
 use crate::settings::{effective_backup_retain_count, get_override_dir};
 use chrono::Local;
 use indexmap::IndexMap;
@@ -235,10 +236,11 @@ impl OpenClawConfigDocument {
         let source = original_source
             .clone()
             .unwrap_or_else(|| OPENCLAW_DEFAULT_SOURCE.to_string());
-        let text = rt_from_str(&source).map_err(|e| {
+        // `parse_round_trip` repairs the comment spans json-five 0.3.1 reports;
+        // `rt_from_str` alone drops the `/` that closes every block comment.
+        let text = parse_round_trip(&source).map_err(|e| {
             AppError::Config(format!(
-                "Failed to parse OpenClaw config as round-trip JSON5 document: {}",
-                e.message
+                "Failed to parse OpenClaw config as round-trip JSON5 document: {e}"
             ))
         })?;
 
@@ -1065,6 +1067,53 @@ mod tests {
 
             let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
             assert!(written.contains("\"providers\": {}"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_write_keeps_block_comments_closed() {
+        let source = r#"{
+  /* my gateway */
+  gateway: { port: 18789 /* default */ },
+  /**
+   * Model providers.
+   */
+  models: {
+    mode: 'merge',
+    providers: {},
+  },
+}
+"#;
+
+        with_test_paths(source, |_| {
+            set_provider("demo", json!({ "api": "openai-completions" })).unwrap();
+
+            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            assert!(written.contains("  /* my gateway */\n"));
+            assert!(written.contains("{ port: 18789 /* default */ },"));
+            assert!(written.contains("  /**\n   * Model providers.\n   */\n"));
+
+            let config = read_openclaw_config().unwrap();
+            assert_eq!(config["gateway"]["port"], json!(18789));
+            assert_eq!(
+                config["models"]["providers"]["demo"]["api"],
+                json!("openai-completions")
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn provider_write_accepts_non_ascii_comment_at_end_of_file() {
+        let source = "{\n  models: {\n    mode: 'merge',\n    providers: {},\n  },\n}\n// 手动维护";
+
+        with_test_paths(source, |_| {
+            set_provider("demo", json!({ "api": "openai-completions" })).unwrap();
+
+            let written = fs::read_to_string(get_openclaw_config_path()).unwrap();
+            assert!(written.ends_with("}\n// 手动维护"));
+            assert!(read_openclaw_config().is_ok());
         });
     }
 }

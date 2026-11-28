@@ -16,6 +16,22 @@ impl Database {
 
     /// 获取设置值
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
+        if matches!(
+            key,
+            "rectifier_config"
+                | "optimizer_config"
+                | "copilot_optimizer_config"
+                | "privacy_filter_config"
+        ) {
+            return self
+                .read_cache
+                .settings
+                .get_or_load(key, || self.get_setting_uncached(key));
+        }
+        self.get_setting_uncached(key)
+    }
+
+    fn get_setting_uncached(&self, key: &str) -> Result<Option<String>, AppError> {
         let conn = lock_conn!(self.conn);
         let mut stmt = conn
             .prepare_cached("SELECT value FROM settings WHERE key = ?1")

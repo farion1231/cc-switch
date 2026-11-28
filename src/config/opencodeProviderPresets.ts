@@ -369,6 +369,11 @@ const aiCodeMirrorModels = (): OpenCodeProviderConfig["models"] => ({
   "claude-opus-5-5": { name: "Claude Opus 5.5", reasoning: true },
 });
 
+const stringAiModels = (): OpenCodeProviderConfig["models"] => ({
+  "gpt-6-astra": { name: "GPT-6 Astra", reasoning: true },
+  "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
+});
+
 const fennoAiModels = (): OpenCodeProviderConfig["models"] => ({
   "gpt-6.1-sol": { name: "GPT-6.1 Sol", reasoning: true },
 });
@@ -937,6 +942,32 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "StringAI",
+      options: {
+        baseURL: "https://www.string.ink/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: stringAiModels(),
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -1196,6 +1227,85 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "fluxa",
     icon: "fluxa",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "SudoCode.chat",
+      options: {
+        baseURL: "https://api.sudocode.chat/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-sol": {
+          name: "GPT-6 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-luna": {
+          name: "GPT-6 Luna",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+        "gpt-6-astra": {
+          name: "GPT-6 Astra",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "SudoCode.us",
+      options: {
+        baseURL: "https://sudocode.us/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: sudoCodeUsModels(),
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
     templateValues: {
       apiKey: {
         label: "API Key",
@@ -2100,85 +2210,6 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      npm: "@ai-sdk/openai",
-      name: "SudoCode.chat",
-      options: {
-        baseURL: "https://api.sudocode.chat/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: {
-        "gpt-6.1-sol": {
-          name: "GPT-6.1 Sol",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "gpt-6-sol": {
-          name: "GPT-6 Sol",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "gpt-6-luna": {
-          name: "GPT-6 Luna",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-        "gpt-6-astra": {
-          name: "GPT-6 Astra",
-          reasoning: true,
-          limit: { context: 272000, output: 128000 },
-          modalities: { input: ["text", "image"], output: ["text"] },
-        },
-      },
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      npm: "@ai-sdk/openai",
-      name: "SudoCode.us",
-      options: {
-        baseURL: "https://sudocode.us/v1",
-        apiKey: "",
-        setCacheKey: true,
-      },
-      models: sudoCodeUsModels(),
-    },
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-    templateValues: {
-      apiKey: {
-        label: "API Key",
-        placeholder: "",
-        editorValue: "",
-      },
-    },
-  },
-  {
     name: "XycAi",
     websiteUrl: "https://xycai.us",
     apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
@@ -2308,6 +2339,41 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
+  },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    // Sub2API 网关：Key 绑定分组，GPT 要用 OpenAI 分组的 Key（docs.fastaitoken.com/docs/api-manual）；
+    // 模型列表要登录才能看，模型 ID 取自官方文档示例 gpt-6.1-sol，未用真 Key 验证
+    settingsConfig: {
+      npm: "@ai-sdk/openai",
+      name: "FastAIToken",
+      options: {
+        baseURL: "https://www.fastaitoken.com/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "gpt-6.1-sol": {
+          name: "GPT-6.1 Sol",
+          reasoning: true,
+          limit: { context: 272000, output: 128000 },
+          modalities: { input: ["text", "image"], output: ["text"] },
+        },
+      },
+    },
+    category: "aggregator",
+    templateValues: {
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -3245,6 +3311,42 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
     },
   },
   {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "TeleAI",
+      options: {
+        baseURL: "https://api-maas.teleai.com.cn/v1",
+        apiKey: "",
+        setCacheKey: true,
+      },
+      models: {
+        "Xing4.1-Preview": {
+          name: "Xing4.1-Preview",
+          limit: { context: 1024000, output: 128000 },
+        },
+      },
+    },
+    category: "cn_official",
+    icon: "teleai",
+    templateValues: {
+      baseURL: {
+        label: "Base URL",
+        placeholder: "https://api-maas.teleai.com.cn/v1",
+        defaultValue: "https://api-maas.teleai.com.cn/v1",
+        editorValue: "",
+      },
+      apiKey: {
+        label: "API Key",
+        placeholder: "",
+        editorValue: "",
+      },
+    },
+  },
+  {
     name: "MiniMax",
     family: "minimax",
     regionKey: "cn",
@@ -3436,7 +3538,19 @@ export const opencodeProviderPresets: OpenCodeProviderPreset[] = [
         "glm-5.3": { name: "GLM 5.3", reasoning: true },
         "glm-5.3-flash": { name: "GLM 5.3 Flash", reasoning: true },
         "kimi-k3.1-pro": { name: "Kimi K3.1 Pro", reasoning: true },
-        "deepseek-v4.1-flash": { name: "DeepSeek V4.1 Flash", reasoning: true },
+        // OpenCode Go 的 DeepSeek V4.1 Flash 只收 low / high / max（models.dev
+        // opencode-go 的 reasoning_options）；OpenCode 给 openai-compatible 默认生成
+        // low / medium / high，故禁用 medium、补上 max
+        "deepseek-v4.1-flash": {
+          name: "DeepSeek V4.1 Flash",
+          reasoning: true,
+          variants: {
+            low: { reasoningEffort: "low" },
+            medium: { disabled: true },
+            high: { reasoningEffort: "high" },
+            max: { reasoningEffort: "max" },
+          },
+        },
         "mimo-v2.6-pro": { name: "MiMo V2.6 Pro", reasoning: true },
       },
     },

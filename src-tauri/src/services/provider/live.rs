@@ -39,10 +39,52 @@ pub(crate) fn provider_exists_in_live_config(
         AppType::Mcode => crate::mcode_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
         AppType::Omp => Ok(crate::omp_config::get_providers()?.contains_key(provider_id)),
+        AppType::Codebuddy => crate::codebuddy_config::provider_key_exists(provider_id),
         AppType::Copilot => crate::copilot_config::provider_key_exists(provider_id),
         AppType::WorkBuddy => crate::workbuddy_config::get_providers()
             .map(|providers| providers.contains_key(provider_id)),
-        _ => Ok(false),
+        AppType::ZCode => crate::zcode_config::get_providers()
+            .map(|providers| providers.contains_key(provider_id)),
+        // 切换式应用的 live 只有当前那一家，没有按标识存的条目。
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::Agy => Ok(false),
+    }
+}
+
+/// 只从累加式应用的 live 配置里删掉这家供应商的条目，不动 DB。
+///
+/// Pi、Omp、Kimi、DSH、Copilot 的条目和 DB 由各自的服务在同一个操作里提交，调用方在走到
+/// 这里之前就分流了；切换式应用没有按标识存的条目。这些应用都报错，不静默跳过。
+pub(crate) fn remove_provider_from_live(
+    app_type: &AppType,
+    provider_id: &str,
+) -> Result<(), AppError> {
+    match app_type {
+        AppType::OpenCode => remove_opencode_provider_from_live(provider_id),
+        AppType::OpenClaw => remove_openclaw_provider_from_live(provider_id),
+        AppType::Hermes => remove_hermes_provider_from_live(provider_id),
+        AppType::Mcode => crate::mcode_config::remove_provider(provider_id),
+        AppType::Codebuddy => crate::codebuddy_config::remove_provider(provider_id),
+        AppType::WorkBuddy => crate::workbuddy_config::remove_provider(provider_id),
+        AppType::ZCode => crate::zcode_config::remove_provider(provider_id),
+        AppType::Claude
+        | AppType::ClaudeDesktop
+        | AppType::Codex
+        | AppType::Gemini
+        | AppType::GrokBuild
+        | AppType::Pi
+        | AppType::Kimi
+        | AppType::Dsh
+        | AppType::Agy
+        | AppType::Omp
+        | AppType::Copilot => Err(AppError::Message(format!(
+            "App {} does not support remove from live config",
+            app_type.as_str()
+        ))),
     }
 }
 
@@ -317,6 +359,8 @@ fn settings_contain_common_config(app_type: &AppType, settings: &Value, snippet:
         | AppType::Omp
         | AppType::Copilot
         | AppType::WorkBuddy
+        | AppType::Codebuddy
+        | AppType::ZCode
         | AppType::ClaudeDesktop => false,
     }
 }
@@ -399,7 +443,9 @@ pub(crate) fn remove_common_config_from_settings(
         | AppType::Agy
         | AppType::Omp
         | AppType::Copilot
-        | AppType::WorkBuddy => Ok(settings.clone()),
+        | AppType::WorkBuddy
+        | AppType::Codebuddy
+        | AppType::ZCode => Ok(settings.clone()),
     }
 }
 
@@ -435,13 +481,21 @@ pub(crate) fn write_live_for_state(
         return Ok(());
     }
     if matches!(app_type, AppType::GrokBuild) {
-        super::grok_direct::reapply(db, Some(provider), provider)?;
+        super::grok_direct::reapply(state, Some(provider), provider)?;
         return Ok(());
     }
     if matches!(app_type, AppType::Agy | AppType::Copilot) {
         // Antigravity 的卡只作用于它打开的终端，全量同步不写真实 settings.json。Copilot 自带
         // 模型卡只经「添加 / 编辑」写进 providers.json（文件里的条目归 Copilot，列表从文件读回），
         // 全量同步不重写它；官方卡从不写文件。
+        return Ok(());
+    }
+
+    if matches!(app_type, AppType::OpenCode)
+        && matches!(provider.category.as_deref(), Some("omo") | Some("omo-slim"))
+    {
+        // OMO / OMO Slim 预设不是 opencode.json 里的供应商：OmoService 把正在用的那份写进
+        // 它自己的文件（切换、编辑各自处理），全量同步这里没有要写的。
         return Ok(());
     }
 
@@ -725,12 +779,40 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
         AppType::Mcode => {
             crate::mcode_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
+        AppType::ZCode => {
+            use crate::provider::ZCodeProviderConfig;
+            match serde_json::from_value::<ZCodeProviderConfig>(provider.settings_config.clone()) {
+                Ok(config) => crate::zcode_config::set_typed_provider(&provider.id, &config)?,
+                Err(e) => {
+                    log::warn!(
+                        "Failed to parse ZCode provider config for '{}': {}",
+                        provider.id,
+                        e
+                    );
+                    // 结构不完整时按原样写入：ZCode 侧仍是合法的个人规则片段，
+                    // 用户可以在原生界面里继续编辑。
+                    crate::zcode_config::set_provider(
+                        &provider.id,
+                        provider.settings_config.clone(),
+                    )?;
+                }
+            }
+        }
         AppType::WorkBuddy => {
             // 官方登录卡只绑定账号，没有模型条目：任何写 live 的路径（全量同步等）都跳过它
             if crate::workbuddy_config::is_official_provider(provider) {
                 return Ok(());
             }
             crate::workbuddy_config::set_provider(&provider.id, &provider.settings_config)?
+        }
+        AppType::Codebuddy => {
+            // 官方登录卡只绑定账号，不是 models.json 里的模型
+            if crate::codebuddy_config::is_official_provider(provider) {
+                return Err(AppError::InvalidInput(
+                    "CodeBuddy official sign-in cards are not written to models.json".into(),
+                ));
+            }
+            crate::codebuddy_config::set_provider(&provider.id, provider.settings_config.clone())?
         }
         AppType::Pi => {
             return Err(AppError::InvalidInput(
@@ -764,6 +846,8 @@ pub(crate) fn write_live_snapshot(app_type: &AppType, provider: &Provider) -> Re
 fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<(), AppError> {
     let providers = state.db.get_all_providers(app_type)?;
     let mut synced_count = 0usize;
+    // 一家写失败不拦其余各家（逐家写入是幂等的），但失败要报给调用方，不能当成功。
+    let mut failures = Vec::new();
 
     for provider in providers.values() {
         if provider
@@ -781,13 +865,18 @@ fn sync_all_providers_to_live(state: &AppState, app_type: &AppType) -> Result<()
                 app_type,
                 provider.id
             );
+            failures.push(format!("{}: {e}", provider.id));
             continue;
         }
         synced_count += 1;
     }
 
     log::info!("Synced {synced_count} {app_type:?} providers to live config");
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::Message(failures.join("; ")))
+    }
 }
 
 /// 把累加式应用的全部供应商同步到 live，再重投影它的 MCP。
@@ -795,14 +884,19 @@ pub(crate) fn sync_additive_app_to_live(
     state: &AppState,
     app_type: &AppType,
 ) -> Result<(), AppError> {
-    sync_all_providers_to_live(state, app_type)?;
+    let providers = sync_all_providers_to_live(state, app_type);
 
     // 本函数语义是"把这个应用同步到 live"，MCP 重投影也只针对该应用；
     // 全量 sync_all_enabled 会把无关应用的 live 损坏牵连进来。投影失败
     // 上抛（不降级）：这里没有已变更的 DB 状态需要保护，调用方重试即可。
-    McpService::sync_enabled_for_app(state, app_type)?;
+    // 某家供应商写失败也照常重投影 MCP，两边的失败一起上抛。
+    let mcp = McpService::sync_enabled_for_app(state, app_type);
 
-    Ok(())
+    match (providers, mcp) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(providers), Err(mcp)) => Err(AppError::Message(format!("{providers}; mcp: {mcp}"))),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -840,7 +934,7 @@ pub(crate) fn sync_live_for_provider_respecting_mode(
         super::claude_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
     } else if matches!(app_type, AppType::GrokBuild) {
         // 编辑前的行用来推断旧版写的表（还没有写入记录时），改了表名也能删掉旧表。
-        super::grok_direct::reapply(state.db.as_ref(), prev.or(Some(provider)), provider)?;
+        super::grok_direct::reapply(state, prev.or(Some(provider)), provider)?;
     } else {
         write_live_for_state(state, app_type, provider)?;
     }
@@ -873,10 +967,31 @@ pub(crate) fn sync_current_provider_for_app_respecting_mode(
 
 /// Populate newly encountered DSH profiles with managed providers and enabled MCP servers.
 /// The native writer records completion locally so later native deletions remain intentional.
+///
+/// An unreadable MCP row of another application is ignored. An unreadable DSH provider, or an
+/// unreadable MCP row enabled for DSH, defers seeding without writing the receipt: seeding is
+/// one-time, so skipping the row would leave it out of the new profile for good, and dropping its
+/// id would hide a managed node the profile may already carry. It only fails while some profile
+/// is actually waiting, so it can't break every later sync.
 pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> {
-    let providers = state
-        .db
-        .get_all_providers(&AppType::Dsh)?
+    let provider_rows = state.db.get_provider_rows(&AppType::Dsh)?;
+    let server_rows = state.db.get_mcp_server_rows()?;
+    let dsh_server_ids = state.db.mcp_server_ids_enabled_for(&AppType::Dsh)?;
+    let blocking = provider_rows.unreadable.iter().chain(
+        server_rows
+            .unreadable
+            .iter()
+            .filter(|entry| dsh_server_ids.contains(&entry.id)),
+    );
+    if let Some(entry) = blocking.into_iter().next() {
+        if crate::dsh_config::has_uninitialized_profiles()? {
+            return Err(AppError::Database(entry.error.clone()));
+        }
+        return Ok(());
+    }
+
+    let providers = provider_rows
+        .readable
         .into_iter()
         .filter(|(_, provider)| {
             provider
@@ -887,9 +1002,8 @@ pub(crate) fn initialize_dsh_profiles(state: &AppState) -> Result<(), AppError> 
         })
         .map(|(id, provider)| (id, provider.settings_config))
         .collect();
-    let servers = state
-        .db
-        .get_all_mcp_servers()?
+    let servers = server_rows
+        .readable
         .into_iter()
         .filter(|(_, server)| server.apps.dsh)
         .map(|(id, server)| (id, server.server))
@@ -919,6 +1033,7 @@ pub fn sync_current_to_live(state: &AppState) -> Result<(), AppError> {
                 | AppType::Kimi
                 | AppType::Dsh
                 | AppType::Omp
+                | AppType::Codebuddy
                 | AppType::Copilot
         ) {
             continue;
@@ -1076,9 +1191,11 @@ pub fn read_live_settings(app_type: AppType) -> Result<Value, AppError> {
             Ok(config)
         }
         AppType::Mcode => Ok(json!(crate::mcode_config::get_providers()?)),
+        AppType::ZCode => Ok(json!(crate::zcode_config::get_providers()?)),
         AppType::Kimi => Ok(json!(crate::kimi_config::get_providers()?)),
         AppType::Dsh => Ok(json!(crate::dsh_config::get_providers()?)),
         AppType::WorkBuddy => Ok(json!(crate::workbuddy_config::get_providers()?)),
+        AppType::Codebuddy => Ok(json!(crate::codebuddy_config::get_providers()?)),
         AppType::Pi => Err(AppError::InvalidInput(
             "Pi providers are read from Pi's native models file".to_string(),
         )),
@@ -1223,7 +1340,9 @@ pub fn import_default_config(state: &AppState, app_type: AppType) -> Result<bool
         | AppType::Kimi
         | AppType::Dsh
         | AppType::Omp
-        | AppType::WorkBuddy => {
+        | AppType::WorkBuddy
+        | AppType::Codebuddy
+        | AppType::ZCode => {
             unreachable!("additive mode apps are handled by early return")
         }
     };
@@ -1321,7 +1440,7 @@ pub fn should_import_default_config_on_startup(
 ///
 /// This is specific to OpenCode's additive mode - removing a provider
 /// from the opencode.json file.
-pub(crate) fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_opencode_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::opencode_config;
 
     // Check if OpenCode config directory exists
@@ -1430,6 +1549,131 @@ pub fn import_opencode_providers_from_live(state: &AppState) -> Result<usize, Ap
     }
 
     Ok(imported + updated)
+}
+
+/// 从 ZCode 的个人规则文件导入供应商到数据库。
+///
+/// 用户在 ZCode 里自己建的规则（内置 / 账号连接、从模板新建的、新建空白的）归 ZCode 管，
+/// 导入时跳过（见 [`crate::zcode_config::is_zcode_user_owned_rule`]）：CC Switch 表达不全
+/// 它们的模板和端点，导入后一回写就会丢字段。
+pub fn import_zcode_providers_from_live(state: &AppState) -> Result<usize, AppError> {
+    let providers = crate::zcode_config::get_providers()?;
+    if providers.is_empty() {
+        return Ok(0);
+    }
+
+    let mut imported = 0;
+    let mut updated = 0;
+    let existing_ids = state.db.get_provider_ids(&AppType::ZCode)?;
+    let zcode_owned = crate::zcode_config::zcode_user_owned_provider_ids()?;
+
+    for (id, settings_config) in providers {
+        if zcode_owned.contains(&id) {
+            continue;
+        }
+
+        let name = settings_config
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| id.clone());
+
+        if existing_ids.contains(&id) {
+            match state.db.get_provider_by_id(&id, &AppType::ZCode) {
+                Ok(Some(existing)) => {
+                    // 字段级合并：只覆盖 ZCode 原生配置里真正存在的字段，
+                    // 保留用户在 CC Switch 里改过的其余内容（如 notes、category）。
+                    let merged = merge_zcode_settings(&existing.settings_config, &settings_config);
+                    if existing.settings_config != merged || existing.name != name {
+                        let mut provider = existing;
+                        provider.name = name;
+                        provider.settings_config = merged;
+                        if let Err(e) = state.db.save_provider(&AppType::ZCode, &provider) {
+                            log::warn!(
+                                "Failed to update ZCode provider '{id}' from live config: {e}"
+                            );
+                        } else {
+                            updated += 1;
+                            log::info!("Updated ZCode provider '{id}' from live config");
+                        }
+                    }
+                }
+                Ok(None) => {
+                    log::warn!("ZCode provider '{id}' disappeared while importing live config")
+                }
+                Err(e) => log::warn!("Failed to look up ZCode provider '{id}': {e}"),
+            }
+            continue;
+        }
+
+        let mut provider = Provider::with_id(id.clone(), name, settings_config, None);
+        provider.meta = Some(crate::provider::ProviderMeta {
+            live_config_managed: Some(true),
+            ..Default::default()
+        });
+
+        if let Err(e) = state.db.save_provider(&AppType::ZCode, &provider) {
+            log::warn!("Failed to import ZCode provider '{id}': {e}");
+            continue;
+        }
+
+        imported += 1;
+        log::info!("Imported ZCode provider '{id}' from live config");
+    }
+
+    Ok(imported + updated)
+}
+
+/// 把 live 里的字段合并进已有配置：live 有的一律以 live 为准，
+/// live 没有的保留数据库里的原值。顶层做浅合并即可——ZCode 的
+/// 一条规则就是一层已知字段加一层 `extra`。
+fn merge_zcode_settings(current: &Value, live: &Value) -> Value {
+    let (Some(current_obj), Some(live_obj)) = (current.as_object(), live.as_object()) else {
+        return live.clone();
+    };
+    let mut merged = current_obj.clone();
+    for (key, value) in live_obj {
+        let merged_value = match (key.as_str(), current_obj.get(key)) {
+            // options：live 只还原得出 baseURL / apiKey，其余键（请求头、超时等）留 DB 的
+            ("options", Some(Value::Object(db_options))) => match value.as_object() {
+                Some(live_options) => {
+                    let mut options = db_options.clone();
+                    for (k, v) in live_options {
+                        options.insert(k.clone(), v.clone());
+                    }
+                    Value::Object(options)
+                }
+                None => value.clone(),
+            },
+            // models：哪些模型、什么顺序以 live 为准；同 id 的模型逐键合并，live 带的键
+            // （上下文 / 输出上限 `limit`，读回时总会带上）以 live 为准，名称等 live 表达不了的留 DB 的
+            ("models", Some(Value::Object(db_models))) => match value.as_object() {
+                Some(live_models) => Value::Object(
+                    live_models
+                        .iter()
+                        .map(|(id, live_model)| {
+                            let model = match (db_models.get(id), live_model) {
+                                (Some(Value::Object(db_model)), Value::Object(lm)) => {
+                                    let mut m = db_model.clone();
+                                    for (k, v) in lm {
+                                        m.insert(k.clone(), v.clone());
+                                    }
+                                    Value::Object(m)
+                                }
+                                (Some(db_model), _) => db_model.clone(),
+                                (None, _) => live_model.clone(),
+                            };
+                            (id.clone(), model)
+                        })
+                        .collect(),
+                ),
+                None => value.clone(),
+            },
+            _ => value.clone(),
+        };
+        merged.insert(key.clone(), merged_value);
+    }
+    Value::Object(merged)
 }
 
 /// Import all providers from OpenClaw live config to database
@@ -1592,7 +1836,7 @@ pub fn import_hermes_providers_from_live(state: &AppState) -> Result<usize, AppE
 ///
 /// This removes a specific provider from ~/.hermes/config.yaml
 /// without affecting other providers in the file.
-pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::hermes_config;
 
     // Check if Hermes config directory exists
@@ -1611,7 +1855,7 @@ pub fn remove_hermes_provider_from_live(provider_id: &str) -> Result<(), AppErro
 ///
 /// This removes a specific provider from ~/.openclaw/openclaw.json
 /// without affecting other providers in the file.
-pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
+fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppError> {
     use crate::openclaw_config;
 
     // Check if OpenClaw config directory exists
@@ -1630,6 +1874,57 @@ pub fn remove_openclaw_provider_from_live(provider_id: &str) -> Result<(), AppEr
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn zcode_import_merge_keeps_what_live_cannot_express() {
+        let db = json!({
+            "kind": "anthropic",
+            "options": {"baseURL": "https://old", "apiKey": "old", "timeout": 30},
+            "models": {
+                "glm-5.2": {"name": "GLM 5.2", "limit": {"context": 200000}},
+                "dropped": {"name": "Dropped"}
+            },
+            "notes": "mine"
+        });
+        let live = json!({
+            "kind": "anthropic",
+            "options": {"baseURL": "https://new", "apiKey": "new"},
+            "models": {"glm-5.2": {}, "glm-5.2-air": {}}
+        });
+        let merged = merge_zcode_settings(&db, &live);
+        assert_eq!(merged["options"]["baseURL"], json!("https://new"));
+        assert_eq!(merged["options"]["timeout"], json!(30));
+        assert_eq!(merged["models"]["glm-5.2"]["name"], json!("GLM 5.2"));
+        assert_eq!(
+            merged["models"]["glm-5.2"]["limit"]["context"],
+            json!(200000)
+        );
+        assert!(merged["models"].get("dropped").is_none());
+        assert_eq!(merged["models"]["glm-5.2-air"], json!({}));
+        assert_eq!(merged["notes"], json!("mine"));
+        // 再合并一次结果不变：启动导入不会每次都重存
+        assert_eq!(merge_zcode_settings(&merged, &live), merged);
+    }
+
+    #[test]
+    fn zcode_import_merge_takes_limits_from_live() {
+        let db = json!({
+            "models": {
+                "a": {"name": "A", "limit": {"context": 200000, "output": 8000}},
+                "b": {"limit": {"context": 1000}}
+            }
+        });
+        // ZCode 里改过 a 的上限、删了 b 的上限：读回器给每个模型都带 limit
+        let live = json!({
+            "models": {"a": {"limit": {"context": 60000}}, "b": {"limit": {}}}
+        });
+        let merged = merge_zcode_settings(&db, &live);
+        assert_eq!(
+            merged["models"]["a"],
+            json!({"name": "A", "limit": {"context": 60000}})
+        );
+        assert_eq!(merged["models"]["b"], json!({"limit": {}}));
+    }
 
     #[test]
     fn claude_common_config_remove_strips_what_old_versions_merged() {

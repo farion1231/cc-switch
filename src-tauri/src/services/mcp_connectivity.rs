@@ -40,17 +40,6 @@ static CHECK_PERMITS: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(MAX_CONCURRENT_CHECKS);
 static BATCHES: LazyLock<std::sync::Mutex<HashMap<String, AbortHandle>>> =
     LazyLock::new(Default::default);
-// GUI launches can inherit only launchd's minimal PATH. Resolve the user's shell
-// once, off the async executor, and share it across all page visits and probes.
-// Bound it so a hanging shell profile cannot keep every later probe waiting.
-#[cfg(not(target_os = "windows"))]
-const LOGIN_SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(10);
-#[cfg(not(target_os = "windows"))]
-static LOGIN_SHELL_PATH: LazyLock<Option<String>> = LazyLock::new(|| {
-    crate::commands::login_shell_path(crate::commands::CommandDeadline::from_timeout(Some(
-        LOGIN_SHELL_PATH_TIMEOUT,
-    )))
-});
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -157,10 +146,13 @@ async fn connect(
             let mut command = Command::new(resolve_windows_command(program, &spec));
             #[cfg(not(target_os = "windows"))]
             if !spec.env.contains_key("PATH") {
-                let login_path = tokio::task::spawn_blocking(|| LOGIN_SHELL_PATH.clone())
-                    .await
-                    .ok()
-                    .flatten();
+                // GUI launches can inherit only launchd's minimal PATH. The
+                // login-shell PATH is resolved once per process, off the executor.
+                let login_path =
+                    tokio::task::spawn_blocking(crate::commands::cached_login_shell_path)
+                        .await
+                        .ok()
+                        .flatten();
                 let inherited = std::env::var("PATH").unwrap_or_default();
                 apply_login_shell_path(&mut command, login_path.as_deref(), &inherited);
             }

@@ -1,0 +1,33 @@
+{
+  "version": "4.0.44",
+  "items": [
+    {
+      "type": "new",
+      "zh": "新增 ZCode 支持：供应商、MCP、Skills、提示词、会话和用量",
+      "zh-TW": "新增 ZCode 支援：供應商、MCP、Skills、提示詞、對話和用量",
+      "en": "Added ZCode support: providers, MCP, Skills, prompts, sessions and usage",
+      "ja": "ZCode に対応：プロバイダー、MCP、Skills、プロンプト、セッション、使用量"
+    },
+    {
+      "type": "improve",
+      "zh": "Antigravity 账号改在 agy 里登录，额度由 agy 查询",
+      "zh-TW": "Antigravity 帳號改在 agy 裡登入，額度由 agy 查詢",
+      "en": "Antigravity accounts now sign in inside agy, and quota comes from agy's /usage",
+      "ja": "Antigravity アカウントは agy 内でログインし、残量も agy で取得"
+    },
+    {
+      "type": "fix",
+      "zh": "修复 Codex 经 Chat 中转调用 Gemini 时工具调用报 400",
+      "zh-TW": "修正 Codex 經 Chat 中轉呼叫 Gemini 時工具呼叫報 400",
+      "en": "Fixed Codex tool calls rejected with 400 by Gemini behind Chat Completions gateways",
+      "ja": "Chat 中継経由の Gemini で Codex のツール呼び出しが 400 になる問題を修正"
+    },
+    {
+      "type": "fix",
+      "zh": "账号文件读不出时不再覆盖已保存的账号",
+      "zh-TW": "帳號檔案讀不出時不再覆蓋已儲存的帳號",
+      "en": "An unreadable account file is set aside instead of overwriting your saved accounts",
+      "ja": "アカウントファイルが読めないとき保存済みアカウントを上書きしないよう修正"
+    }
+  ]
+}

@@ -108,17 +108,10 @@ pub fn set_app_config_dir_to_store(
 /// 解析路径，支持 ~ 开头的相对路径
 fn resolve_path(raw: &str) -> PathBuf {
     if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home;
-        }
-    } else if let Some(stripped) = raw.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
-    } else if let Some(stripped) = raw.strip_prefix("~\\") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
+        return crate::config::get_home_dir();
+    }
+    if let Some(stripped) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
+        return crate::config::get_home_dir().join(stripped);
     }
 
     PathBuf::from(raw)
@@ -132,4 +125,24 @@ pub fn migrate_app_config_dir_from_settings(app: &tauri::AppHandle) -> Result<()
 
     let _ = refresh_app_config_dir_override(app);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_path;
+    use crate::test_support::EnvVars;
+
+    #[test]
+    #[serial_test::serial]
+    fn resolve_path_honors_test_home_override() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _guard = EnvVars::new().set("CC_SWITCH_TEST_HOME", temp.path());
+
+        assert_eq!(resolve_path("~"), temp.path());
+        assert_eq!(resolve_path("~/custom/dir"), temp.path().join("custom/dir"));
+        assert_eq!(
+            resolve_path(r"~\custom\dir"),
+            temp.path().join(r"custom\dir")
+        );
+    }
 }

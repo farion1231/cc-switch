@@ -36,6 +36,32 @@ struct ModelsResponse {
 struct ModelEntry {
     id: String,
     owned_by: Option<String>,
+    /// new-api 系中转站给每个模型标的接口类型，主类型排第一位，如
+    /// `["image-generation", "gemini", "openai"]`。收成 `Value`：形状对不上时
+    /// 只当没有这个字段，不连累整个响应解析失败（同 #7593）。
+    #[serde(default)]
+    supported_endpoint_types: Option<serde_json::Value>,
+}
+
+/// new-api 的非对话接口类型：图片、视频、向量、重排。
+const NON_CHAT_ENDPOINT_TYPES: &[&str] = &[
+    "image-generation",
+    "openai-video",
+    "embeddings",
+    "jina-rerank",
+];
+
+/// 主接口类型（第一位）是图片 / 视频 / 向量 / 重排的模型选进编程客户端只会
+/// 每条消息都失败（#10026），获取模型列表时直接滤掉。没有这个字段、形状不对、
+/// 或主类型不认识的一律保留，不改变其他供应商的行为。
+fn is_non_chat_model(entry: &ModelEntry) -> bool {
+    let Some(serde_json::Value::Array(types)) = &entry.supported_endpoint_types else {
+        return false;
+    };
+    types
+        .first()
+        .and_then(|t| t.as_str())
+        .is_some_and(|t| NON_CHAT_ENDPOINT_TYPES.contains(&t))
 }
 
 /// `models[]` 条目对应的模型 id：`slug` 优先，回退 OpenAI 风格的 `id`；
@@ -144,6 +170,7 @@ pub async fn fetch_models(
 
             let mut models: Vec<FetchedModel> = if let Some(data) = resp.data {
                 data.into_iter()
+                    .filter(|m| !is_non_chat_model(m))
                     .map(|m| FetchedModel {
                         id: m.id,
                         owned_by: m.owned_by,
@@ -715,6 +742,39 @@ mod tests {
         let data = resp.data.unwrap();
         assert_eq!(data[0].id, "my-model");
         assert!(data[0].owned_by.is_none());
+    }
+
+    #[test]
+    fn test_non_chat_models_filtered_by_endpoint_types() {
+        // #10026：new-api 系中转站用 supported_endpoint_types 标主接口类型。
+        let json = r#"{"data":[
+            {"id":"deepseek-flash","supported_endpoint_types":["openai"]},
+            {"id":"gemini-nano-banana-2.1","supported_endpoint_types":["image-generation","gemini","openai"]},
+            {"id":"dreamina-seedance-2-5-260628","supported_endpoint_types":["openai-video"]},
+            {"id":"text-embedding-3-small","supported_endpoint_types":["embeddings"]},
+            {"id":"claude-sonnet","supported_endpoint_types":["anthropic","openai"]},
+            {"id":"plain-model"},
+            {"id":"empty-types","supported_endpoint_types":[]},
+            {"id":"odd-shape","supported_endpoint_types":"image-generation"}
+        ]}"#;
+        let resp: ModelsResponse = serde_json::from_str(json).unwrap();
+        let kept: Vec<String> = resp
+            .data
+            .unwrap()
+            .into_iter()
+            .filter(|m| !is_non_chat_model(m))
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                "deepseek-flash",
+                "claude-sonnet",
+                "plain-model",
+                "empty-types",
+                "odd-shape"
+            ]
+        );
     }
 
     #[test]

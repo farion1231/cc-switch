@@ -1,4 +1,5 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { generateUUID } from "@/utils/uuid";
 import type {
   ContentRef,
   ImageRef,
@@ -50,8 +51,28 @@ export const sessionsApi = {
   async searchContent(
     query: string,
     providerIds?: string[],
+    signal?: AbortSignal,
   ): Promise<SessionContentSearchResult> {
-    return await invoke("search_session_content", { query, providerIds });
+    if (signal?.aborted)
+      throw new DOMException("Search cancelled", "AbortError");
+    const requestId = generateUUID();
+    const cancel = () => {
+      void invoke("cancel_session_content_search", { requestId }).catch(
+        (error) => console.warn("取消会话正文搜索失败", error),
+      );
+    };
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const result = await invoke<SessionContentSearchResult>(
+        "search_session_content",
+        { query, providerIds, requestId },
+      );
+      if (signal?.aborted)
+        throw new DOMException("Search cancelled", "AbortError");
+      return result;
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+    }
   },
 
   /** 删除正文索引文件（关闭「搜索消息正文」时） */
@@ -111,11 +132,6 @@ export const sessionsApi = {
       sourcePath,
       image,
     });
-  },
-
-  /** 在 Finder / 文件管理器中显示本地路径（绝对路径或 file://，决策 D3） */
-  async revealPath(path: string): Promise<boolean> {
-    return await invoke("reveal_session_path", { path });
   },
 
   /** 弹出保存对话框把会话存成 Markdown 文件；取消时返回 null，成功返回保存路径 */

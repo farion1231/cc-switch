@@ -336,6 +336,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "pateway",
   },
   {
+    name: "Modelflare",
+    websiteUrl: "https://modelflare.dev",
+    apiKeyUrl:
+      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
+    category: "aggregator",
+    baseUrl: "https://modelflare.dev",
+    // 网关直接提供 claude-sonnet-5 / claude-opus-5 / claude-haiku-4-5 三个
+    // 路由 ID（modelflare.dev/api/pricing，2026-10-15），直连透传即可
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    endpointCandidates: [
+      "https://modelflare.dev",
+      "https://origin.modelflare.dev",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "modelflare",
+    icon: "modelflare",
+  },
+  {
     name: "hao.ai",
     websiteUrl: "https://hao.ai",
     apiKeyUrl: "https://hao.ai/invite/DTBZS3OR",
@@ -353,6 +373,19 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "haoai",
     icon: "haoai",
+  },
+  {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    category: "aggregator",
+    baseUrl: "https://www.string.ink",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(),
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
   },
   {
     name: "FennoAI",
@@ -518,6 +551,39 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "fluxa",
     icon: "fluxa",
+  },
+  {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    category: "third_party",
+    baseUrl: "https://api.sudocode.chat",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    endpointCandidates: [
+      "https://api.sudocode.chat",
+      "https://api.sudorelay.com",
+    ],
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    category: "third_party",
+    baseUrl: "https://sudocode.us",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
+    isPartner: true,
+    icon: "sudocode-us",
   },
   {
     name: "AIGoCode",
@@ -1056,39 +1122,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    category: "third_party",
-    baseUrl: "https://api.sudocode.chat",
-    mode: "direct",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(true),
-    endpointCandidates: [
-      "https://api.sudocode.chat",
-      "https://api.sudorelay.com",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    category: "third_party",
-    baseUrl: "https://sudocode.us",
-    mode: "direct",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(true),
-    endpointCandidates: ["https://sudocode.us", "https://sudocode.run"],
-    isPartner: true,
-    icon: "sudocode-us",
-  },
-  {
     name: "XycAi",
     websiteUrl: "https://xycai.us",
     apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
@@ -1101,26 +1134,6 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "xycai",
     icon: "xycai",
-  },
-  {
-    name: "Modelflare",
-    websiteUrl: "https://modelflare.dev",
-    apiKeyUrl:
-      "https://modelflare.dev/sign-up?utm_medium=referral&utm_source=ccswitch",
-    category: "aggregator",
-    baseUrl: "https://modelflare.dev",
-    // 网关直接提供 claude-sonnet-5 / claude-opus-5 / claude-haiku-4-5 三个
-    // 路由 ID（modelflare.dev/api/pricing，2026-10-15），直连透传即可
-    mode: "direct",
-    apiFormat: "anthropic",
-    modelRoutes: passthroughRoutes(true),
-    endpointCandidates: [
-      "https://modelflare.dev",
-      "https://origin.modelflare.dev",
-    ],
-    isPartner: true,
-    partnerPromotionKey: "modelflare",
-    icon: "modelflare",
   },
   {
     name: "AllTokens",
@@ -1158,6 +1171,20 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
+  },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    category: "aggregator",
+    // 需 Claude 分组的 Key，按官方模型名透传（docs.fastaitoken.com/docs/cc-switch）
+    baseUrl: "https://www.fastaitoken.com",
+    mode: "direct",
+    apiFormat: "anthropic",
+    modelRoutes: passthroughRoutes(true),
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -1764,6 +1791,23 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     ),
     icon: "longcat",
     iconColor: "#29E154",
+  },
+  {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    category: "cn_official",
+    icon: "teleai",
+    baseUrl: "https://api-maas.teleai.com.cn",
+    mode: "proxy",
+    apiFormat: "anthropic",
+    modelRoutes: brandedRoutes(
+      "Xing4.1-Preview",
+      "Xing4.1-Preview",
+      "Xing4.1-Preview",
+      true,
+    ),
   },
   {
     name: "MiniMax",
@@ -2465,6 +2509,26 @@ export const claudeDesktopProviderPresets: ClaudeDesktopProviderPreset[] = [
     endpointCandidates: ["https://api.aicodewith.ai"],
     icon: "aicodewith",
     iconColor: "#3A3B40",
+  },
+  {
+    name: "Command Code",
+    websiteUrl: "https://commandcode.ai",
+    apiKeyUrl: "https://commandcode.ai/settings/keys",
+    category: "third_party",
+    // 同 Claude Code 预设：非 Claude 模型只在 /chat/completions（/messages
+    // 还拒消息数组中途的 system 角色），走 openai_chat 路由；
+    // deepseek-v4.1-flash 窗口 1M（公开 /provider/v1/models，2026-11-27）
+    baseUrl: "https://api.commandcode.ai/provider",
+    mode: "proxy",
+    apiFormat: "openai_chat",
+    modelRoutes: brandedRoutes(
+      "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash",
+      true,
+    ),
+    endpointCandidates: ["https://api.commandcode.ai/provider"],
+    icon: "commandcode",
   },
   {
     name: "SoruxGPT",

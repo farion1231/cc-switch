@@ -128,7 +128,7 @@ where
 
         while let Some(chunk) = stream.next().await {
             let bytes = chunk.map_err(|error| io::Error::other(error.to_string()))?;
-            sse.push_bytes(&bytes);
+            sse.try_push_bytes(&bytes)?;
             while let Some(block) = sse.next_block() {
                 if !block.trim().is_empty() {
                     yield ids.rewrite_block(block)?;

@@ -7,30 +7,6 @@ import type { PresetTheme, TemplateValueConfig } from "./claudeProviderPresets";
 import type { PresetFamilyFields } from "./presetFamilies";
 
 /**
- * Marker field and source values that `hermes_config.rs::get_providers`
- * injects onto each settings payload. Same values as the Rust constants
- * `PROVIDER_SOURCE_FIELD` / `PROVIDER_SOURCE_CUSTOM_LIST` / `PROVIDER_SOURCE_DICT`;
- * tests/config/backendConstants.test.ts checks both.
- */
-export const HERMES_PROVIDER_SOURCE_FIELD = "_cc_source";
-export const HERMES_PROVIDER_SOURCE_CUSTOM_LIST = "custom_providers";
-export const HERMES_PROVIDER_SOURCE_DICT = "providers_dict";
-
-/**
- * True when the provider was sourced from Hermes' v12+ `providers:` dict —
- * CC Switch renders those read-only and routes edits to Hermes Web UI.
- */
-export function isHermesReadOnlyProvider(settingsConfig: unknown): boolean {
-  if (!settingsConfig || typeof settingsConfig !== "object") {
-    return false;
-  }
-  const marker = (settingsConfig as Record<string, unknown>)[
-    HERMES_PROVIDER_SOURCE_FIELD
-  ];
-  return marker === HERMES_PROVIDER_SOURCE_DICT;
-}
-
-/**
  * A model entry under a Hermes custom_provider.
  *
  * Serialized to YAML as a dict keyed by `id`:
@@ -492,6 +468,28 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      name: "stringai",
+      base_url: "https://www.string.ink/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        { id: "gpt-6-astra", name: "GPT-6 Astra" },
+        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+      ],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+    suggestedDefaults: {
+      model: { default: "gpt-6-astra", provider: "stringai" },
+    },
+  },
+  {
     name: "FennoAI",
     websiteUrl: "https://api.fenno.ai",
     apiKeyUrl:
@@ -683,6 +681,51 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "fluxa",
     suggestedDefaults: {
       model: { default: "deepseek-v4.1-flash", provider: "fluxa_tokenplan" },
+    },
+  },
+  {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      name: "sudocode",
+      base_url: "https://api.sudocode.chat/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [
+        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
+        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
+        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
+        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+    suggestedDefaults: {
+      model: { default: "gpt-6.1-sol", provider: "sudocode" },
+    },
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      name: "sudocode_us",
+      base_url: "https://sudocode.us/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: sudoCodeUsModels(),
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
+    suggestedDefaults: {
+      model: { default: "gpt-6.1-sol", provider: "sudocode_us" },
     },
   },
   {
@@ -1421,51 +1464,6 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      name: "sudocode",
-      base_url: "https://api.sudocode.chat/v1",
-      api_key: "",
-      api_mode: "codex_responses",
-      models: [
-        { id: "gpt-6.1-sol", name: "GPT-6.1 Sol" },
-        { id: "gpt-6-sol", name: "GPT-6 Sol", context_length: 272000 },
-        { id: "gpt-6-luna", name: "GPT-6 Luna", context_length: 272000 },
-        { id: "gpt-6-astra", name: "GPT-6 Astra", context_length: 272000 },
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-    suggestedDefaults: {
-      model: { default: "gpt-6.1-sol", provider: "sudocode" },
-    },
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      name: "sudocode_us",
-      base_url: "https://sudocode.us/v1",
-      api_key: "",
-      api_mode: "codex_responses",
-      models: sudoCodeUsModels(),
-    },
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-    suggestedDefaults: {
-      model: { default: "gpt-6.1-sol", provider: "sudocode_us" },
-    },
-  },
-  {
     name: "XycAi",
     websiteUrl: "https://xycai.us",
     apiKeyUrl: "https://xycai.us/register?aff=Uhu9",
@@ -1552,6 +1550,27 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
+  },
+  {
+    name: "FastAIToken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    settingsConfig: {
+      name: "fastaitoken",
+      // Sub2API 网关：Key 绑定分组，GPT 要用 OpenAI 分组的 Key（docs.fastaitoken.com/docs/api-manual）；
+      // 模型列表要登录才能看，模型 ID 取自官方文档示例 gpt-6.1-sol，未用真 Key 验证
+      base_url: "https://www.fastaitoken.com/v1",
+      api_key: "",
+      api_mode: "codex_responses",
+      models: [{ id: "gpt-6.1-sol", name: "GPT-6.1 Sol" }],
+    },
+    category: "aggregator",
+    suggestedDefaults: {
+      model: { default: "gpt-6.1-sol", provider: "fastaitoken" },
+    },
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
   },
   // ===== 非赞助商预设：应用内展示按显示名排序，此处文件顺序不影响展示 =====
   {
@@ -2334,6 +2353,30 @@ export const hermesProviderPresets: HermesProviderPreset[] = [
     iconColor: "#29E154",
     suggestedDefaults: {
       model: { default: "LongCat-2.0", provider: "longcat" },
+    },
+  },
+  {
+    name: "TeleAI",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      name: "teleai",
+      base_url: "https://api-maas.teleai.com.cn/v1",
+      api_key: "",
+      api_mode: "chat_completions",
+      models: [
+        {
+          id: "Xing4.1-Preview",
+          name: "Xing4.1-Preview",
+          context_length: 1024000,
+        },
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
+    suggestedDefaults: {
+      model: { default: "Xing4.1-Preview", provider: "teleai" },
     },
   },
   {

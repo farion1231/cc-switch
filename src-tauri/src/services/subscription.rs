@@ -78,7 +78,7 @@ pub struct SubscriptionQuota {
     /// ChatGPT 订阅买的 Codex Credits 余额（额度用完后才扣）；没有、不限量或为 0 时为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits_balance: Option<f64>,
-    /// 套餐显示名（「Pro 200」「Google AI Pro」「SuperGrok Heavy」…），授权中心的账号行显示；
+    /// 套餐显示名（「Pro 200」「AI Pro」「SuperGrok Heavy」…），授权中心的账号行显示；
     /// 只有能顺带查到套餐的服务填，认不出或查不到时为 None
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_name: Option<String>,
@@ -1625,7 +1625,7 @@ async fn query_gemini_quota(access_token: &str) -> Result<SubscriptionQuota, Str
         extra_usage: None,
         reset_credits: None,
         credits_balance: None,
-        plan_name: crate::services::agy_account::quota::code_assist_plan(&load_raw),
+        plan_name: crate::services::code_assist_plan::code_assist_plan(&load_raw),
         error: None,
         queried_at: Some(now_millis()),
     })

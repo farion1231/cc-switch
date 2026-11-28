@@ -554,36 +554,6 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
-    // ── Crypto helpers ──
-
-    #[test]
-    fn sha256_hex_empty_body() {
-        assert_eq!(
-            sha256_hex(b""),
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-        );
-    }
-
-    #[test]
-    fn sha256_hex_known_value() {
-        // From the AWS S3 documentation PUT Object example body.
-        assert_eq!(
-            sha256_hex(b"Welcome to Amazon S3."),
-            "44ce7dd67c959e0d3524ffac1771dfbba87d2b6b4b4e99e42034a8b803f8b072"
-        );
-    }
-
-    #[test]
-    fn hmac_sha256_rfc2104_test_vector() {
-        // HMAC-SHA256("key", "The quick brown fox jumps over the lazy dog")
-        let result = hmac_sha256(b"key", b"The quick brown fox jumps over the lazy dog");
-        let hex: String = result.iter().map(|b| format!("{:02x}", b)).collect();
-        assert_eq!(
-            hex,
-            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
-        );
-    }
-
     // ── URL construction: virtual-hosted vs path-style ──
 
     #[test]

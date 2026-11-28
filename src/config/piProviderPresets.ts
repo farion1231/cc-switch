@@ -165,6 +165,15 @@ const aiCodeMirrorModels = (): PiPresetModel[] => [
   }),
 ];
 
+const stringAiModels = (): PiPresetModel[] => [
+  piModel("openai/gpt-6-astra", {
+    id: "gpt-6-astra",
+  }),
+  piModel("openai/gpt-6.1-sol", {
+    id: "gpt-6.1-sol",
+  }),
+];
+
 const fennoAiModels = (): PiPresetModel[] => [
   piModel("openai/gpt-6.1-sol", {
     id: "gpt-6.1-sol",
@@ -498,6 +507,23 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "haoai",
   },
   {
+    name: "StringAI",
+    providerKey: "cc-switch-string-ai",
+    websiteUrl: "https://www.string.ink",
+    apiKeyUrl: "https://www.string.ink/register?ref=661AE533A60AF110",
+    settingsConfig: {
+      name: "StringAI",
+      baseUrl: "https://www.string.ink/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: stringAiModels(),
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "stringai",
+    icon: "stringai",
+  },
+  {
     name: "FennoAI",
     providerKey: "cc-switch-fenno-ai",
     websiteUrl: "https://api.fenno.ai",
@@ -680,6 +706,55 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "fluxa",
     icon: "fluxa",
+  },
+  {
+    name: "SudoCode.chat",
+    family: "sudocode",
+    providerKey: "cc-switch-sudo-code-chat",
+    websiteUrl: "https://sudocode.chat",
+    apiKeyUrl:
+      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
+    settingsConfig: {
+      name: "SudoCode.chat",
+      baseUrl: "https://api.sudocode.chat/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
+        }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    partnerPromotionKey: "sudocode",
+    icon: "sudocode",
+  },
+  {
+    name: "SudoCode.us",
+    family: "sudocode",
+    providerKey: "cc-switch-sudo-code-us",
+    websiteUrl: "https://sudocode.us",
+    apiKeyUrl: "https://sudocode.us",
+    settingsConfig: {
+      name: "SudoCode.us",
+      baseUrl: "https://sudocode.us/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [
+        piModel("openai/gpt-6.1-sol", {
+          id: "gpt-6.1-sol",
+        }),
+        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
+        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
+      ],
+    },
+    category: "third_party",
+    isPartner: true,
+    icon: "sudocode-us",
   },
   {
     name: "AIGoCode",
@@ -1215,55 +1290,6 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     icon: "dmxapi",
   },
   {
-    name: "SudoCode.chat",
-    family: "sudocode",
-    providerKey: "cc-switch-sudo-code-chat",
-    websiteUrl: "https://sudocode.chat",
-    apiKeyUrl:
-      "https://sudocode.chat/sign-up?aff=CC-SWITCH&utm_source=cc-switch&utm_medium=sponsor&utm_campaign=ccswitch",
-    settingsConfig: {
-      name: "SudoCode.chat",
-      baseUrl: "https://api.sudocode.chat/v1",
-      api: "openai-responses",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-6.1-sol", {
-          id: "gpt-6.1-sol",
-        }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-        piModel("openai/gpt-6-luna", { id: "gpt-6-luna" }),
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    partnerPromotionKey: "sudocode",
-    icon: "sudocode",
-  },
-  {
-    name: "SudoCode.us",
-    family: "sudocode",
-    providerKey: "cc-switch-sudo-code-us",
-    websiteUrl: "https://sudocode.us",
-    apiKeyUrl: "https://sudocode.us",
-    settingsConfig: {
-      name: "SudoCode.us",
-      baseUrl: "https://sudocode.us/v1",
-      api: "openai-responses",
-      apiKey: "",
-      models: [
-        piModel("openai/gpt-6.1-sol", {
-          id: "gpt-6.1-sol",
-        }),
-        piModel("openai/gpt-6-sol", { id: "gpt-6-sol" }),
-        piModel("openai/gpt-6-astra", { id: "gpt-6-astra" }),
-      ],
-    },
-    category: "third_party",
-    isPartner: true,
-    icon: "sudocode-us",
-  },
-  {
     name: "Modelflare",
     providerKey: "cc-switch-modelflare",
     websiteUrl: "https://modelflare.dev",
@@ -1324,6 +1350,25 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     isPartner: true,
     partnerPromotionKey: "alltokens_si",
     icon: "alltokens-si",
+  },
+  {
+    name: "FastAIToken",
+    providerKey: "cc-switch-fastaitoken",
+    websiteUrl: "https://www.fastaitoken.com",
+    apiKeyUrl: "https://www.fastaitoken.com",
+    // Sub2API 网关：Key 绑定分组，GPT 要用 OpenAI 分组的 Key（docs.fastaitoken.com/docs/api-manual）；
+    // 模型列表要登录才能看，模型 ID 取自官方文档示例 gpt-6.1-sol，未用真 Key 验证
+    settingsConfig: {
+      name: "FastAIToken",
+      baseUrl: "https://www.fastaitoken.com/v1",
+      api: "openai-responses",
+      apiKey: "",
+      models: [piModel("openai/gpt-6.1-sol", { id: "gpt-6.1-sol" })],
+    },
+    category: "aggregator",
+    isPartner: true,
+    partnerPromotionKey: "fastaitoken",
+    icon: "fastaitoken",
   },
   {
     name: "Amux",
@@ -1690,6 +1735,26 @@ const piProviderPresetDefinitions: PiProviderPreset[] = [
     category: "cn_official",
     icon: "longcat",
     iconColor: "#29E154",
+  },
+  {
+    name: "TeleAI",
+    providerKey: "cc-switch-teleai",
+    websiteUrl: "https://www.teleai.com.cn",
+    apiKeyUrl:
+      "https://console.teleai.com.cn/model-service-web/system-management/api-key",
+    settingsConfig: {
+      name: "TeleAI",
+      baseUrl: "https://api-maas.teleai.com.cn/v1",
+      api: "openai-completions",
+      apiKey: "",
+      models: [
+        piModel("teleai/xing4.1-preview", {
+          id: "Xing4.1-Preview",
+        }),
+      ],
+    },
+    category: "cn_official",
+    icon: "teleai",
   },
   {
     name: "MiniMax",

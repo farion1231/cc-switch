@@ -14,7 +14,7 @@ import {
 import { Loader2 } from "lucide-react";
 import { usageApi } from "@/lib/api";
 import { useMoneyFormat } from "@/hooks/useMoneyFormat";
-import { useSettingsQuery } from "@/lib/query";
+import { useSettingsQuery } from "@/lib/query/settings";
 import { resolveUsageRange, getUsageRangePresetLabel } from "@/lib/usageRange";
 import {
   fmtInt,

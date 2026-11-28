@@ -238,39 +238,66 @@ impl ChildScope {
 
 /// Import usage from every Pi session file under the session browser's current
 /// root and layout rules, including nested subagent sessions.
+#[cfg(test)]
 pub fn sync_pi_usage(db: &Database) -> Result<SessionSyncResult, AppError> {
     sync_flavor(db, &PI)
 }
 
+pub(crate) fn sync_pi_usage_with_cursors(
+    db: &Database,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    sync_flavor_with_cursors(db, &PI, cursors)
+}
+
+#[cfg(test)]
 pub(crate) fn sync_flavor(
     db: &Database,
     flavor: &'static Flavor,
 ) -> Result<SessionSyncResult, AppError> {
-    let files = (flavor.session_files)()
-        .map_err(|error| AppError::Config(format!("无法发现 {} 会话: {error}", flavor.label)))?;
-    Ok(sync_pi_files(db, flavor, &files))
+    sync_flavor_with_cursors(
+        db,
+        flavor,
+        &crate::services::session_usage::load_sync_cursors(db)?,
+    )
 }
 
+pub(crate) fn sync_flavor_with_cursors(
+    db: &Database,
+    flavor: &'static Flavor,
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> Result<SessionSyncResult, AppError> {
+    let files = (flavor.session_files)()
+        .map_err(|error| AppError::Config(format!("无法发现 {} 会话: {error}", flavor.label)))?;
+    Ok(sync_pi_files_with_cursors(db, flavor, &files, cursors))
+}
+
+#[cfg(test)]
 pub(crate) fn sync_pi_files(
     db: &Database,
     flavor: &'static Flavor,
     files: &[PathBuf],
 ) -> SessionSyncResult {
+    match crate::services::session_usage::load_sync_cursors(db) {
+        Ok(cursors) => sync_pi_files_with_cursors(db, flavor, files, &cursors),
+        Err(error) => SessionSyncResult {
+            errors: vec![format!("预取同步游标失败: {error}")],
+            ..Default::default()
+        },
+    }
+}
+
+fn sync_pi_files_with_cursors(
+    db: &Database,
+    flavor: &'static Flavor,
+    files: &[PathBuf],
+    cursors: &crate::services::session_usage::SyncCursors,
+) -> SessionSyncResult {
     let mut result = SessionSyncResult {
         files_scanned: files.len().min(u32::MAX as usize) as u32,
         ..Default::default()
     };
-
-    // 游标预取失败必须中止本轮（不能当空表全量重导，见 load_sync_cursors 文档）
-    let cursors = match crate::services::session_usage::load_sync_cursors(db) {
-        Ok(cursors) => cursors,
-        Err(error) => {
-            result.errors.push(format!("预取同步游标失败: {error}"));
-            return result;
-        }
-    };
-
-    let cutoff = match child_cutoff(db, flavor, &cursors) {
+    let cutoff = match child_cutoff(db, flavor, cursors) {
         Ok(cutoff) => cutoff,
         Err(error) => {
             result
@@ -281,7 +308,7 @@ pub(crate) fn sync_pi_files(
     };
     let scope = ChildScope::new(files, cutoff);
     for file_path in files {
-        match sync_single_pi_file(db, flavor, file_path, &cursors, &scope) {
+        match sync_single_pi_file(db, flavor, file_path, cursors, &scope) {
             Ok(file_result) => result.merge(file_result),
             Err(error) => {
                 let message = format!("{}: {error}", file_path.display());
