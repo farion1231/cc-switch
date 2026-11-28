@@ -194,290 +194,225 @@ mod tests {
         }
     }
 
-    fn budget_disabled_config() -> RectifierConfig {
-        RectifierConfig {
-            enabled: true,
-            request_thinking_signature: true,
-            request_thinking_budget: false,
-            request_media_fallback: true,
-            request_media_heuristic: true,
+    #[test]
+    fn should_rectify_thinking_budget_rules() {
+        let cfg = enabled_config();
+        for (case, msg, expected) in [
+            (
+                "budget_tokens_gte_1024",
+                Some("thinking.budget_tokens: Input should be greater than or equal to 1024"),
+                true,
+            ),
+            (
+                "thinking_budget_tokens_symbol_1024",
+                Some("thinking budget_tokens must be >= 1024"),
+                true,
+            ),
+            (
+                "max_tokens_constraint_ignored",
+                Some("budget_tokens must be less than max_tokens"),
+                false,
+            ),
+            (
+                "missing_thinking_keyword_ignored",
+                Some("budget_tokens: value must be at least 1024"),
+                false,
+            ),
+            ("unrelated_error", Some("Request timeout"), false),
+            ("none_message", None, false),
+        ] {
+            assert_eq!(
+                should_rectify_thinking_budget(msg, &cfg),
+                expected,
+                "{case}"
+            );
+        }
+
+        let trigger = Some("thinking.budget_tokens: Input should be greater than or equal to 1024");
+        assert!(!should_rectify_thinking_budget(
+            trigger,
+            &RectifierConfig {
+                request_thinking_budget: false,
+                ..cfg.clone()
+            }
+        ));
+        assert!(!should_rectify_thinking_budget(
+            trigger,
+            &RectifierConfig {
+                enabled: false,
+                ..cfg
+            }
+        ));
+    }
+
+    #[test]
+    fn rectify_thinking_budget_cases() {
+        for (case, mut body, expected_applied, expected_type, expected_budget, expected_max) in [
+            (
+                "basic_raise_budget_and_max_tokens",
+                json!({
+                    "model": "claude-test",
+                    "thinking": { "type": "enabled", "budget_tokens": 512 },
+                    "max_tokens": 1024
+                }),
+                true,
+                "enabled",
+                MAX_THINKING_BUDGET,
+                MAX_TOKENS_VALUE,
+            ),
+            (
+                "skips_adaptive",
+                json!({
+                    "model": "claude-test",
+                    "thinking": { "type": "adaptive", "budget_tokens": 512 },
+                    "max_tokens": 1024
+                }),
+                false,
+                "adaptive",
+                512,
+                1024,
+            ),
+            (
+                "preserves_large_max_tokens",
+                json!({
+                    "model": "claude-test",
+                    "thinking": { "type": "enabled", "budget_tokens": 512 },
+                    "max_tokens": 100000
+                }),
+                true,
+                "enabled",
+                MAX_THINKING_BUDGET,
+                100000,
+            ),
+            (
+                "creates_missing_thinking_object",
+                json!({ "model": "claude-test", "max_tokens": 1024 }),
+                true,
+                "enabled",
+                MAX_THINKING_BUDGET,
+                MAX_TOKENS_VALUE,
+            ),
+            (
+                "fills_missing_max_tokens",
+                json!({
+                    "model": "claude-test",
+                    "thinking": { "type": "enabled", "budget_tokens": 512 }
+                }),
+                true,
+                "enabled",
+                MAX_THINKING_BUDGET,
+                MAX_TOKENS_VALUE,
+            ),
+            (
+                "normalizes_disabled_type_to_enabled",
+                json!({
+                    "model": "claude-test",
+                    "thinking": { "type": "disabled", "budget_tokens": 512 },
+                    "max_tokens": 1024
+                }),
+                true,
+                "enabled",
+                MAX_THINKING_BUDGET,
+                MAX_TOKENS_VALUE,
+            ),
+            (
+                "noop_when_already_valid",
+                json!({
+                    "model": "claude-test",
+                    "thinking": { "type": "enabled", "budget_tokens": 32000 },
+                    "max_tokens": 64001
+                }),
+                false,
+                "enabled",
+                32000,
+                64001,
+            ),
+        ] {
+            let result = rectify_thinking_budget(&mut body);
+            assert_eq!(result.applied, expected_applied, "{case}");
+            assert_eq!(result.before == result.after, !expected_applied, "{case}");
+            assert_eq!(
+                result.after.thinking_type.as_deref(),
+                Some(expected_type),
+                "{case}"
+            );
+            assert_eq!(
+                result.after.thinking_budget_tokens,
+                Some(expected_budget),
+                "{case}"
+            );
+            assert_eq!(result.after.max_tokens, Some(expected_max), "{case}");
+            assert_eq!(body["thinking"]["type"], expected_type, "{case}");
+            assert_eq!(body["thinking"]["budget_tokens"], expected_budget, "{case}");
+            assert_eq!(body["max_tokens"], expected_max, "{case}");
         }
     }
 
-    fn master_disabled_config() -> RectifierConfig {
-        RectifierConfig {
-            enabled: false,
-            request_thinking_signature: true,
-            request_thinking_budget: true,
-            request_media_fallback: true,
-            request_media_heuristic: true,
-        }
-    }
-
-    // ==================== should_rectify_thinking_budget 测试 ====================
-
-    #[test]
-    fn test_detect_budget_tokens_thinking_error() {
-        assert!(should_rectify_thinking_budget(
-            Some("thinking.budget_tokens: Input should be greater than or equal to 1024"),
-            &enabled_config()
-        ));
-    }
-
-    #[test]
-    fn test_detect_budget_tokens_max_tokens_error() {
-        assert!(!should_rectify_thinking_budget(
-            Some("budget_tokens must be less than max_tokens"),
-            &enabled_config()
-        ));
-    }
-
-    #[test]
-    fn test_detect_budget_tokens_1024_error() {
-        assert!(!should_rectify_thinking_budget(
-            Some("budget_tokens: value must be at least 1024"),
-            &enabled_config()
-        ));
-    }
-
-    #[test]
-    fn test_detect_budget_tokens_with_thinking_and_1024_error() {
-        assert!(should_rectify_thinking_budget(
-            Some("thinking budget_tokens must be >= 1024"),
-            &enabled_config()
-        ));
-    }
-
-    #[test]
-    fn test_no_trigger_for_unrelated_error() {
-        assert!(!should_rectify_thinking_budget(
-            Some("Request timeout"),
-            &enabled_config()
-        ));
-        assert!(!should_rectify_thinking_budget(None, &enabled_config()));
-    }
-
-    #[test]
-    fn test_disabled_budget_config() {
-        assert!(!should_rectify_thinking_budget(
-            Some("thinking.budget_tokens: Input should be greater than or equal to 1024"),
-            &budget_disabled_config()
-        ));
-    }
-
-    #[test]
-    fn test_master_disabled() {
-        assert!(!should_rectify_thinking_budget(
-            Some("thinking.budget_tokens: Input should be greater than or equal to 1024"),
-            &master_disabled_config()
-        ));
-    }
-
-    // ==================== rectify_thinking_budget 测试 ====================
-
-    #[test]
-    fn test_rectify_budget_basic() {
-        let mut body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "enabled", "budget_tokens": 512 },
-            "max_tokens": 1024
-        });
-
-        let result = rectify_thinking_budget(&mut body);
-
-        assert!(result.applied);
-        assert_eq!(result.before.thinking_type.as_deref(), Some("enabled"));
-        assert_eq!(result.after.thinking_type.as_deref(), Some("enabled"));
-        assert_eq!(result.before.thinking_budget_tokens, Some(512));
-        assert_eq!(
-            result.after.thinking_budget_tokens,
-            Some(MAX_THINKING_BUDGET)
-        );
-        assert_eq!(result.before.max_tokens, Some(1024));
-        assert_eq!(result.after.max_tokens, Some(MAX_TOKENS_VALUE));
-        assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["thinking"]["budget_tokens"], MAX_THINKING_BUDGET);
-        assert_eq!(body["max_tokens"], MAX_TOKENS_VALUE);
-    }
-
-    #[test]
-    fn test_rectify_budget_skips_adaptive() {
-        let mut body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "adaptive", "budget_tokens": 512 },
-            "max_tokens": 1024
-        });
-
-        let result = rectify_thinking_budget(&mut body);
-
-        assert!(!result.applied);
-        assert_eq!(result.before, result.after);
-        assert_eq!(body["thinking"]["type"], "adaptive");
-        assert_eq!(body["thinking"]["budget_tokens"], 512);
-        assert_eq!(body["max_tokens"], 1024);
-    }
-
-    #[test]
-    fn test_rectify_budget_preserves_large_max_tokens() {
-        let mut body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "enabled", "budget_tokens": 512 },
-            "max_tokens": 100000
-        });
-
-        let result = rectify_thinking_budget(&mut body);
-
-        assert!(result.applied);
-        assert_eq!(result.before.max_tokens, Some(100000));
-        assert_eq!(result.after.max_tokens, Some(100000));
-        assert_eq!(body["max_tokens"], 100000);
-    }
-
-    #[test]
-    fn test_rectify_budget_creates_thinking_object_when_missing() {
-        let mut body = json!({
-            "model": "claude-test",
-            "max_tokens": 1024
-        });
-
-        let result = rectify_thinking_budget(&mut body);
-
-        assert!(result.applied);
-        assert_eq!(result.before.thinking_type, None);
-        assert_eq!(result.after.thinking_type.as_deref(), Some("enabled"));
-        assert_eq!(
-            result.after.thinking_budget_tokens,
-            Some(MAX_THINKING_BUDGET)
-        );
-        assert_eq!(result.after.max_tokens, Some(MAX_TOKENS_VALUE));
-        assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["thinking"]["budget_tokens"], MAX_THINKING_BUDGET);
-        assert_eq!(body["max_tokens"], MAX_TOKENS_VALUE);
-    }
-
-    #[test]
-    fn test_rectify_budget_no_max_tokens() {
-        let mut body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "enabled", "budget_tokens": 512 }
-        });
-
-        let result = rectify_thinking_budget(&mut body);
-
-        assert!(result.applied);
-        assert_eq!(result.before.max_tokens, None);
-        assert_eq!(result.after.max_tokens, Some(MAX_TOKENS_VALUE));
-        assert_eq!(body["max_tokens"], MAX_TOKENS_VALUE);
-    }
-
-    #[test]
-    fn test_rectify_budget_normalizes_non_enabled_type() {
-        let mut body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "disabled", "budget_tokens": 512 },
-            "max_tokens": 1024
-        });
-
-        let result = rectify_thinking_budget(&mut body);
-
-        assert!(result.applied);
-        assert_eq!(result.before.thinking_type.as_deref(), Some("disabled"));
-        assert_eq!(result.after.thinking_type.as_deref(), Some("enabled"));
-        assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["thinking"]["budget_tokens"], MAX_THINKING_BUDGET);
-        assert_eq!(body["max_tokens"], MAX_TOKENS_VALUE);
-    }
-
-    #[test]
-    fn test_rectify_budget_no_change_when_already_valid() {
-        let mut body = json!({
-            "model": "claude-test",
-            "thinking": { "type": "enabled", "budget_tokens": 32000 },
-            "max_tokens": 64001
-        });
-
-        let result = rectify_thinking_budget(&mut body);
-
-        assert!(!result.applied);
-        assert_eq!(result.before, result.after);
-        assert_eq!(body["thinking"]["budget_tokens"], 32000);
-        assert_eq!(body["max_tokens"], 64001);
-    }
-
-    // ==================== 关思考整流（Issue #8887）====================
-
-    /// MiniMax-M3.1-Flash 的原始错误响应体（10-26 实测）
+    // Issue #8887: MiniMax-M3.1-Flash 等常开思考模型拒绝 thinking.type="disabled"
     const MINIMAX_DISABLED_ERROR: &str = r#"{"type":"error","error":{"type":"invalid_request_error","message":"invalid params, model \"MiniMax-M3.1-Flash\" requires adaptive thinking; thinking.type=\"disabled\" (including reasoning.effort=none) is not allowed (2013)"},"request_id":"072e005c15d09825a8667dba1a975010"}"#;
 
     #[test]
-    fn test_detect_thinking_disabled_not_allowed() {
+    fn should_rectify_thinking_disabled_rules() {
+        let cfg = enabled_config();
         assert!(should_rectify_thinking_disabled(
             Some(MINIMAX_DISABLED_ERROR),
-            &enabled_config()
+            &cfg
         ));
-        // 不该被 budget 整流或签名整流认领
+        // 不该被 budget 整流误领
         assert!(!should_rectify_thinking_budget(
             Some(MINIMAX_DISABLED_ERROR),
-            &enabled_config()
+            &cfg
         ));
-    }
 
-    #[test]
-    fn test_detect_thinking_disabled_respects_switches() {
-        assert!(!should_rectify_thinking_disabled(
-            Some(MINIMAX_DISABLED_ERROR),
-            &budget_disabled_config()
-        ));
-        assert!(!should_rectify_thinking_disabled(
-            Some(MINIMAX_DISABLED_ERROR),
-            &master_disabled_config()
-        ));
-    }
-
-    #[test]
-    fn test_no_detect_thinking_disabled_for_unrelated_error() {
-        assert!(!should_rectify_thinking_disabled(
+        for msg in [
             Some("Invalid `signature` in `thinking` block"),
-            &enabled_config()
+            Some("thinking is disabled for this account"),
+            None,
+        ] {
+            assert!(!should_rectify_thinking_disabled(msg, &cfg), "{msg:?}");
+        }
+
+        assert!(!should_rectify_thinking_disabled(
+            Some(MINIMAX_DISABLED_ERROR),
+            &RectifierConfig {
+                request_thinking_budget: false,
+                ..cfg.clone()
+            }
         ));
         assert!(!should_rectify_thinking_disabled(
-            Some("thinking is disabled for this account"),
-            &enabled_config()
+            Some(MINIMAX_DISABLED_ERROR),
+            &RectifierConfig {
+                enabled: false,
+                ..cfg
+            }
         ));
-        assert!(!should_rectify_thinking_disabled(None, &enabled_config()));
     }
 
     #[test]
-    fn test_rectify_thinking_disabled_removes_field() {
-        // auto mode 分类器第 1 步的请求形状
-        let mut body = json!({
+    fn rectify_thinking_disabled_removes_only_disabled_type() {
+        // Issue #8887: 删掉 disabled 保留其他字段
+        let mut disabled_body = json!({
             "model": "MiniMax-M3.1-Flash",
             "max_tokens": 64,
             "thinking": { "type": "disabled" },
             "stop_sequences": ["</block>"]
         });
-
-        let result = rectify_thinking_disabled(&mut body);
-
+        let result = rectify_thinking_disabled(&mut disabled_body);
         assert!(result.applied);
         assert_eq!(result.before.thinking_type.as_deref(), Some("disabled"));
         assert_eq!(result.after.thinking_type, None);
-        assert!(body.get("thinking").is_none());
-        assert_eq!(body["max_tokens"], 64);
-        assert_eq!(body["stop_sequences"], json!(["</block>"]));
-    }
+        assert!(disabled_body.get("thinking").is_none());
+        assert_eq!(disabled_body["max_tokens"], 64);
+        assert_eq!(disabled_body["stop_sequences"], json!(["</block>"]));
 
-    #[test]
-    fn test_rectify_thinking_disabled_leaves_other_types() {
-        let mut body = json!({
+        // 非 disabled 类型不动
+        let mut adaptive_body = json!({
             "model": "MiniMax-M3.1-Flash",
             "max_tokens": 64,
             "thinking": { "type": "adaptive" }
         });
-
-        let result = rectify_thinking_disabled(&mut body);
-
+        let result = rectify_thinking_disabled(&mut adaptive_body);
         assert!(!result.applied);
-        assert_eq!(body["thinking"]["type"], "adaptive");
+        assert_eq!(adaptive_body["thinking"]["type"], "adaptive");
     }
 }

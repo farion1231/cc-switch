@@ -160,32 +160,6 @@ mod tests {
         }
     }
 
-    fn disabled_config() -> OptimizerConfig {
-        OptimizerConfig {
-            enabled: true,
-            thinking_optimizer: false,
-            cache_injection: true,
-        }
-    }
-
-    #[test]
-    fn test_adaptive_opus_4_8() {
-        let mut body = json!({
-            "model": "anthropic/claude-opus-4.8",
-            "max_tokens": 16384,
-            "thinking": {"type": "enabled", "budget_tokens": 8000},
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        optimize(&mut body, &enabled_config());
-
-        assert_eq!(body["thinking"]["type"], "adaptive");
-        assert!(body["thinking"].get("budget_tokens").is_none());
-        assert_eq!(body["output_config"]["effort"], "max");
-        let betas = body["anthropic_beta"].as_array().unwrap();
-        assert!(betas.iter().any(|v| v == "context-1m-2025-08-07"));
-    }
-
     #[test]
     fn current_generation_models_use_adaptive_thinking() {
         for model in [
@@ -229,157 +203,141 @@ mod tests {
     }
 
     #[test]
-    fn test_adaptive_opus_4_6() {
-        let mut body = json!({
-            "model": "anthropic.claude-opus-4-6-20250514-v1:0",
-            "max_tokens": 16384,
-            "thinking": {"type": "enabled", "budget_tokens": 8000},
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        optimize(&mut body, &enabled_config());
-
-        assert_eq!(body["thinking"]["type"], "adaptive");
-        assert!(body["thinking"].get("budget_tokens").is_none());
-        assert_eq!(body["output_config"]["effort"], "max");
-        let betas = body["anthropic_beta"].as_array().unwrap();
-        assert!(betas.iter().any(|v| v == "context-1m-2025-08-07"));
+    fn optimize_adaptive_and_beta_handling() {
+        let cfg = enabled_config();
+        for (case, mut body) in [
+            (
+                "opus_4_8_replaces_enabled_thinking",
+                json!({
+                    "model": "anthropic/claude-opus-4.8",
+                    "max_tokens": 16384,
+                    "thinking": {"type": "enabled", "budget_tokens": 8000},
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+            ),
+            (
+                "opus_4_6_replaces_enabled_thinking",
+                json!({
+                    "model": "anthropic.claude-opus-4-6-20250514-v1:0",
+                    "max_tokens": 16384,
+                    "thinking": {"type": "enabled", "budget_tokens": 8000},
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+            ),
+            (
+                "sonnet_4_6_without_thinking",
+                json!({
+                    "model": "anthropic.claude-sonnet-4-6-20250514-v1:0",
+                    "max_tokens": 16384,
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+            ),
+            (
+                "dedups_existing_beta",
+                json!({
+                    "model": "anthropic.claude-opus-4-6-20250514-v1:0",
+                    "max_tokens": 16384,
+                    "anthropic_beta": ["context-1m-2025-08-07"],
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+            ),
+            (
+                "replaces_null_beta_field",
+                json!({
+                    "model": "anthropic.claude-opus-4-6-20250514-v1:0",
+                    "anthropic_beta": null,
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+            ),
+        ] {
+            optimize(&mut body, &cfg);
+            assert_eq!(body["thinking"]["type"], "adaptive", "{case}");
+            assert!(body["thinking"].get("budget_tokens").is_none(), "{case}");
+            assert_eq!(body["output_config"]["effort"], "max", "{case}");
+            let betas = body["anthropic_beta"].as_array().unwrap();
+            let count = betas
+                .iter()
+                .filter(|v| *v == &json!("context-1m-2025-08-07"))
+                .count();
+            assert_eq!(count, 1, "{case}");
+        }
     }
 
     #[test]
-    fn test_adaptive_sonnet_4_6() {
-        let mut body = json!({
-            "model": "anthropic.claude-sonnet-4-6-20250514-v1:0",
-            "max_tokens": 16384,
-            "messages": [{"role": "user", "content": "hello"}]
-        });
+    fn optimize_legacy_budget_and_skip_paths() {
+        let cfg = enabled_config();
+        for (case, mut body, expected_budget) in [
+            (
+                "missing_thinking",
+                json!({
+                    "model": "anthropic.claude-sonnet-4-5-20250514-v1:0",
+                    "max_tokens": 16384,
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+                16383,
+            ),
+            (
+                "small_enabled_budget_upgraded",
+                json!({
+                    "model": "anthropic.claude-sonnet-4-5-20250514-v1:0",
+                    "max_tokens": 16384,
+                    "thinking": {"type": "enabled", "budget_tokens": 1024},
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+                16383,
+            ),
+            (
+                "disabled_thinking_injected",
+                json!({
+                    "model": "anthropic.claude-sonnet-4-5-20250514-v1:0",
+                    "max_tokens": 8192,
+                    "thinking": {"type": "disabled"},
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+                8191,
+            ),
+            (
+                "default_max_tokens_when_omitted",
+                json!({
+                    "model": "anthropic.claude-sonnet-4-5-20250514-v1:0",
+                    "messages": [{"role": "user", "content": "hello"}]
+                }),
+                16383,
+            ),
+        ] {
+            optimize(&mut body, &cfg);
+            assert_eq!(body["thinking"]["type"], "enabled", "{case}");
+            assert_eq!(body["thinking"]["budget_tokens"], expected_budget, "{case}");
+            let betas = body["anthropic_beta"].as_array().unwrap();
+            assert!(
+                betas.iter().any(|v| v == "interleaved-thinking-2025-05-14"),
+                "{case}"
+            );
+        }
 
-        optimize(&mut body, &enabled_config());
-
-        assert_eq!(body["thinking"]["type"], "adaptive");
-        assert!(body["thinking"].get("budget_tokens").is_none());
-        assert_eq!(body["output_config"]["effort"], "max");
-        let betas = body["anthropic_beta"].as_array().unwrap();
-        assert!(betas.iter().any(|v| v == "context-1m-2025-08-07"));
-    }
-
-    #[test]
-    fn test_legacy_sonnet_4_5_thinking_null() {
-        let mut body = json!({
-            "model": "anthropic.claude-sonnet-4-5-20250514-v1:0",
-            "max_tokens": 16384,
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        optimize(&mut body, &enabled_config());
-
-        assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["thinking"]["budget_tokens"], 16383);
-        let betas = body["anthropic_beta"].as_array().unwrap();
-        assert!(betas.iter().any(|v| v == "interleaved-thinking-2025-05-14"));
-    }
-
-    #[test]
-    fn test_legacy_budget_too_small_upgraded() {
-        let mut body = json!({
-            "model": "anthropic.claude-sonnet-4-5-20250514-v1:0",
-            "max_tokens": 16384,
-            "thinking": {"type": "enabled", "budget_tokens": 1024},
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        optimize(&mut body, &enabled_config());
-
-        assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["thinking"]["budget_tokens"], 16383);
-    }
-
-    #[test]
-    fn test_skip_haiku() {
-        let mut body = json!({
+        // haiku 模型与开关关闭均保持原样
+        let mut haiku = json!({
             "model": "anthropic.claude-haiku-4-5-20250514-v1:0",
             "max_tokens": 8192,
             "messages": [{"role": "user", "content": "hello"}]
         });
-        let original = body.clone();
+        let haiku_orig = haiku.clone();
+        optimize(&mut haiku, &cfg);
+        assert_eq!(haiku, haiku_orig);
 
-        optimize(&mut body, &enabled_config());
-
-        assert_eq!(body, original);
-    }
-
-    #[test]
-    fn test_thinking_optimizer_disabled() {
-        let mut body = json!({
+        let mut disabled_body = json!({
             "model": "anthropic.claude-opus-4-6-20250514-v1:0",
             "max_tokens": 16384,
             "messages": [{"role": "user", "content": "hello"}]
         });
-        let original = body.clone();
-
-        optimize(&mut body, &disabled_config());
-
-        assert_eq!(body, original);
-    }
-
-    #[test]
-    fn test_adaptive_dedup_beta() {
-        let mut body = json!({
-            "model": "anthropic.claude-opus-4-6-20250514-v1:0",
-            "max_tokens": 16384,
-            "anthropic_beta": ["context-1m-2025-08-07"],
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        optimize(&mut body, &enabled_config());
-
-        let betas = body["anthropic_beta"].as_array().unwrap();
-        let count = betas
-            .iter()
-            .filter(|v| v == &&json!("context-1m-2025-08-07"))
-            .count();
-        assert_eq!(count, 1);
-    }
-
-    #[test]
-    fn test_legacy_disabled_thinking_injected() {
-        let mut body = json!({
-            "model": "anthropic.claude-sonnet-4-5-20250514-v1:0",
-            "max_tokens": 8192,
-            "thinking": {"type": "disabled"},
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        optimize(&mut body, &enabled_config());
-
-        assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["thinking"]["budget_tokens"], 8191);
-    }
-
-    #[test]
-    fn test_legacy_default_max_tokens() {
-        let mut body = json!({
-            "model": "anthropic.claude-sonnet-4-5-20250514-v1:0",
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        optimize(&mut body, &enabled_config());
-
-        assert_eq!(body["thinking"]["type"], "enabled");
-        assert_eq!(body["thinking"]["budget_tokens"], 16383);
-    }
-
-    #[test]
-    fn test_append_beta_null_field() {
-        let mut body = json!({
-            "model": "anthropic.claude-opus-4-6-20250514-v1:0",
-            "anthropic_beta": null,
-            "messages": [{"role": "user", "content": "hello"}]
-        });
-
-        optimize(&mut body, &enabled_config());
-
-        let betas = body["anthropic_beta"].as_array().unwrap();
-        assert!(betas.iter().any(|v| v == "context-1m-2025-08-07"));
+        let disabled_orig = disabled_body.clone();
+        optimize(
+            &mut disabled_body,
+            &OptimizerConfig {
+                thinking_optimizer: false,
+                ..cfg
+            },
+        );
+        assert_eq!(disabled_body, disabled_orig);
     }
 }
