@@ -104,15 +104,27 @@ impl SkillService {
         }
 
         let started_at = Instant::now();
+        let credential_epoch = self.credential_epoch.load(Ordering::SeqCst);
         let skills = self.fetch_repo_skills(repo).await?;
-        let mut cache = self.discovery_cache.lock_recover();
-        if cache
-            .get(&key)
-            .is_none_or(|(fetched_at, _)| *fetched_at <= started_at)
-        {
-            cache.insert(key, (started_at, skills.clone()));
-        }
+        self.cache_repo_skills(key, started_at, credential_epoch, &skills);
         Ok(skills)
+    }
+
+    pub(super) fn cache_repo_skills(
+        &self,
+        key: RepoCacheKey,
+        started_at: Instant,
+        credential_epoch: u64,
+        skills: &[DiscoverableSkill],
+    ) {
+        let mut cache = self.discovery_cache.lock_recover();
+        if self.credential_epoch.load(Ordering::SeqCst) == credential_epoch
+            && cache
+                .get(&key)
+                .is_none_or(|(fetched_at, _)| *fetched_at <= started_at)
+        {
+            cache.insert(key, (started_at, skills.to_vec()));
+        }
     }
 
     /// 从仓库获取技能列表
@@ -120,13 +132,14 @@ impl SkillService {
         &self,
         repo: &SkillRepo,
     ) -> Result<Vec<DiscoverableSkill>> {
-        let (temp_guard, resolved_branch) = self.download_repo_bounded(repo).await?;
+        let (temp_guard, resolved_branch, mounts) = self.download_repo_bounded(repo).await?;
 
         let mut skills = Vec::new();
         let scan_dir = temp_guard.path();
         let mut resolved_repo = repo.clone();
         resolved_repo.branch = resolved_branch;
         self.scan_dir_recursive(scan_dir, scan_dir, &resolved_repo, &mut skills)?;
+        Self::apply_submodule_doc_urls(scan_dir, &mut skills, &mounts);
         Self::keep_one_per_install_name(&mut skills);
 
         Ok(skills)

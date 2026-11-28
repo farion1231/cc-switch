@@ -224,7 +224,7 @@ impl SkillService {
             };
 
             // 下载仓库 ZIP
-            let (temp_guard, _used_branch) = match self.download_repo_bounded(&repo).await {
+            let (temp_guard, _used_branch, mounts) = match self.download_repo_bounded(&repo).await {
                 Ok(result) => result,
                 Err(e) => {
                     log::warn!("检查更新时下载 {}/{} 失败: {e}", owner, name);
@@ -241,6 +241,7 @@ impl SkillService {
                 log::warn!("检查更新时扫描 {}/{} 失败: {e}", owner, name);
                 failures.push(Self::repo_failure(&repo, e.to_string()));
             }
+            Self::apply_submodule_doc_urls(temp_dir, &mut remote_skills, &mounts);
 
             // Remote I/O is complete. Stabilize the local DB + SSOT while hashes
             // are read and any missing hash metadata is backfilled.
@@ -253,7 +254,7 @@ impl SkillService {
                     skill.readme_url.as_deref(),
                 );
                 let remote_skill_dir = match remote_match {
-                    Some(rs) => match Self::resolve_skill_source_dir(temp_dir, &rs.directory) {
+                    Some(rs) => match Self::resolve_discoverable_skill_source_dir(temp_dir, rs) {
                         Some(path) => path,
                         None => continue,
                     },
@@ -333,7 +334,11 @@ impl SkillService {
     pub(super) async fn download_repo_bounded(
         &self,
         repo: &SkillRepo,
-    ) -> Result<(tempfile::TempDir, String)> {
+    ) -> Result<(
+        tempfile::TempDir,
+        String,
+        Vec<super::submodules::SubmoduleMount>,
+    )> {
         timeout(DOWNLOAD_TOTAL_TIMEOUT, self.download_repo(repo))
             .await
             .map_err(|_| anyhow!(Self::download_timeout_error(repo)))?
@@ -399,12 +404,13 @@ impl SkillService {
         }
 
         // 下载仓库
-        let (temp_guard, used_branch) = self.download_repo_bounded(&repo).await?;
+        let (temp_guard, used_branch, mounts) = self.download_repo_bounded(&repo).await?;
         let temp_dir = temp_guard.path();
 
         // 在解压的仓库中查找 Skill 源目录
         let mut remote_skills: Vec<DiscoverableSkill> = Vec::new();
         let _ = self.scan_dir_recursive(temp_dir, temp_dir, &repo, &mut remote_skills);
+        Self::apply_submodule_doc_urls(temp_dir, &mut remote_skills, &mounts);
 
         let remote_match = Self::find_remote_skill_for_install(
             &remote_skills,
@@ -419,8 +425,8 @@ impl SkillService {
             ))
         })?;
 
-        let source =
-            Self::resolve_skill_source_dir(temp_dir, &remote_match.directory).ok_or_else(|| {
+        let source = Self::resolve_discoverable_skill_source_dir(temp_dir, remote_match)
+            .ok_or_else(|| {
                 let missing = temp_dir.join(&remote_match.directory).display().to_string();
                 anyhow!(format_skill_error(
                     "SKILL_DIR_NOT_FOUND",
@@ -524,14 +530,16 @@ impl SkillService {
             skill.readme_url.as_deref(),
             &skill.directory,
         );
-        let readme_url = Self::build_skill_doc_url(
-            self.known_platform(&host),
-            &host,
-            &owner,
-            &name,
-            &used_branch,
-            &doc_path,
-        );
+        let readme_url = Self::submodule_doc_url(&source, &mounts).or_else(|| {
+            Self::build_skill_doc_url(
+                self.known_platform(&host),
+                &host,
+                &owner,
+                &name,
+                &used_branch,
+                &doc_path,
+            )
+        });
 
         let updated_metadata = InstalledSkill {
             id: skill.id.clone(),

@@ -39,35 +39,56 @@ impl SkillService {
         walk(root, target_name, 0, false).or_else(|| walk(root, target_name, 0, true))
     }
 
-    /// 在仓库扫描结果中定位已安装的技能：已保存的源路径优先，其次目录名，
-    /// metadata name 仅作唯一兜底。
+    /// Prefer the saved source, but disambiguate repeated mounts by install name.
+    /// Fall back to the directory name, then to a unique metadata name.
     pub(super) fn find_remote_skill_for_install<'a>(
         remote_skills: &'a [DiscoverableSkill],
         install_name: &str,
         stored_readme_url: Option<&str>,
     ) -> Option<&'a DiscoverableSkill> {
         let stored_doc_path = stored_readme_url.and_then(Self::extract_doc_path_from_url);
-        stored_doc_path
-            .as_deref()
-            .and_then(|doc_path| {
-                remote_skills.iter().find(|skill| {
-                    skill
-                        .readme_url
-                        .as_deref()
+        let stored_repo = stored_readme_url.and_then(Self::doc_url_repository);
+        if let Some(doc_path) = stored_doc_path.as_deref() {
+            let matches: Vec<_> = remote_skills
+                .iter()
+                .filter(|skill| {
+                    let candidate = skill.readme_url.as_deref();
+                    candidate
                         .and_then(Self::extract_doc_path_from_url)
                         .as_deref()
                         == Some(doc_path)
+                        && stored_repo.as_ref().is_none_or(|repository| {
+                            candidate.and_then(Self::doc_url_repository).as_ref()
+                                == Some(repository)
+                        })
                 })
-            })
-            .or_else(|| {
-                remote_skills.iter().find(|skill| {
-                    skill
-                        .directory
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&skill.directory)
-                        .eq_ignore_ascii_case(install_name)
-                })
+                .collect();
+            match matches.as_slice() {
+                [only] => return Some(only),
+                [] => {}
+                _ => {
+                    let mut named = matches.into_iter().filter(|skill| {
+                        skill
+                            .directory
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&skill.directory)
+                            .eq_ignore_ascii_case(install_name)
+                    });
+                    let found = named.next()?;
+                    return named.next().is_none().then_some(found);
+                }
+            }
+        }
+        remote_skills
+            .iter()
+            .find(|skill| {
+                skill
+                    .directory
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&skill.directory)
+                    .eq_ignore_ascii_case(install_name)
             })
             .or_else(|| {
                 let mut matches = remote_skills
@@ -76,6 +97,42 @@ impl SkillService {
                 let found = matches.next()?;
                 matches.next().is_none().then_some(found)
             })
+    }
+
+    /// A root skill uses the repository name as its install alias, not its source path.
+    pub(super) fn is_repo_root_skill(skill: &DiscoverableSkill) -> bool {
+        let Some(readme_url) = skill.readme_url.as_deref() else {
+            return false;
+        };
+        skill.directory == skill.repo_name
+            && [
+                RepoPlatform::GitHub,
+                RepoPlatform::GitLab,
+                RepoPlatform::Gitea,
+            ]
+            .into_iter()
+            .any(|platform| {
+                Self::build_skill_doc_url(
+                    platform,
+                    &skill.repo_host,
+                    &skill.repo_owner,
+                    &skill.repo_name,
+                    &skill.repo_branch,
+                    "SKILL.md",
+                )
+                .as_deref()
+                    == Some(readme_url)
+            })
+    }
+
+    pub(super) fn resolve_discoverable_skill_source_dir(
+        root: &Path,
+        skill: &DiscoverableSkill,
+    ) -> Option<PathBuf> {
+        if Self::is_repo_root_skill(skill) && root.join("SKILL.md").is_file() {
+            return Some(root.to_path_buf());
+        }
+        Self::resolve_skill_source_dir(root, &skill.directory)
     }
 
     /// 将 discoverable skill 的目录信息重新解析为解压目录中的真实源目录。
@@ -206,7 +263,11 @@ impl SkillService {
     pub(super) async fn download_repo(
         &self,
         repo: &SkillRepo,
-    ) -> Result<(tempfile::TempDir, String)> {
+    ) -> Result<(
+        tempfile::TempDir,
+        String,
+        Vec<super::submodules::SubmoduleMount>,
+    )> {
         Self::validate_repo(repo)?;
 
         // 守卫全程持有，成功后连同目录一起交给调用方（见 `extract_local_zip` 的说明）。
@@ -219,7 +280,7 @@ impl SkillService {
         #[cfg(test)]
         if let Some(fixture) = &self.repo_fixture {
             Self::copy_dir_recursive(fixture, temp_path)?;
-            return Ok((temp_dir, repo.branch.clone()));
+            return Ok((temp_dir, repo.branch.clone(), Vec::new()));
         }
 
         let epoch = self.credential_epoch.load(Ordering::SeqCst);
@@ -234,7 +295,18 @@ impl SkillService {
             |url| async move { self.download_and_extract(&url, temp_path, token).await },
         )
         .await?;
-        Ok((temp_dir, branch))
+        if temp_path.join(".gitmodules").is_file() {
+            // The probe is no longer needed; do not hold two parent checkouts
+            // while the pinned snapshot and its submodules are extracted.
+            temp_dir
+                .close()
+                .context("Failed to remove temporary repository probe")?;
+            let (snapshot, mounts) = self
+                .download_with_submodules(repo, &branch, platform, token)
+                .await?;
+            return Ok((snapshot, branch, mounts));
+        }
+        Ok((temp_dir, branch, Vec::new()))
     }
 
     /// 这台主机的访问令牌。读钥匙串在 macOS 上会起子进程，放到阻塞线程里做。
@@ -264,16 +336,16 @@ impl SkillService {
     }
 
     /// 令牌变了，平台要按新身份重新探测：没令牌时强制登录的 Gitea 会被认成 GitLab。
-    /// 这台主机的发现缓存也作废：删了令牌，私有仓库的技能列表不该再显示 10 分钟。
+    /// 发现缓存也作废：删了令牌，私有仓库的技能列表不该再显示 10 分钟。
     pub(super) fn forget_platform(&self, host: &str) {
         {
             let mut cache = self.platform_cache.lock_recover();
             self.credential_epoch.fetch_add(1, Ordering::SeqCst);
             cache.remove(host);
         }
-        self.discovery_cache
-            .lock_recover()
-            .retain(|key, _| key.0 != host);
+        // A catalog may contain submodules on another host. Any credential
+        // change can therefore affect discovery results cached for any host.
+        self.discovery_cache.lock_recover().clear();
     }
 
     #[cfg(test)]
@@ -367,6 +439,38 @@ impl SkillService {
         dest: &Path,
         token: Option<&str>,
     ) -> Result<()> {
+        self.download_and_extract_with_budget(url, dest, token, None)
+            .await
+    }
+
+    pub(super) async fn download_and_extract_with_budget(
+        &self,
+        url: &str,
+        dest: &Path,
+        token: Option<&str>,
+        budget: Option<&super::submodules::SubmoduleBudget>,
+    ) -> Result<()> {
+        #[cfg(test)]
+        if let Some(responses) = &self.submodule_http_fixture {
+            if let Some(observer) = &self.submodule_fixture_observer {
+                observer(url, dest);
+            }
+            let bytes = responses
+                .get(url)
+                .ok_or_else(|| anyhow!("Missing archive fixture: {url}"))?;
+            if let Some(budget) = budget {
+                if !budget.charge_download(bytes.len() as u64) {
+                    return Err(anyhow!("Archive download budget exceeded"));
+                }
+            }
+            let archive = Self::open_downloaded_archive(std::io::Cursor::new(bytes))?;
+            return if let Some(budget) = budget {
+                let mut expanded = budget.expanded.lock_recover();
+                Self::extract_repo_archive_with_budget(archive, dest, &mut expanded)
+            } else {
+                Self::extract_repo_archive(archive, dest)
+            };
+        }
         let client = Self::http_client(token.is_some())?;
         // 共享客户端不带默认 User-Agent；GitHub 归档下载对无 UA 请求更容易被限流成 429（#8813）
         let mut request = client
@@ -406,7 +510,9 @@ impl SkillService {
             .map_err(|_| Self::download_stalled_error())??
         {
             received = received.saturating_add(chunk.len() as u64);
-            if received > MAX_ARCHIVE_DOWNLOAD_BYTES {
+            if received > MAX_ARCHIVE_DOWNLOAD_BYTES
+                || budget.is_some_and(|budget| !budget.charge_download(chunk.len() as u64))
+            {
                 let limit_mb = (MAX_ARCHIVE_DOWNLOAD_BYTES / 1024 / 1024).to_string();
                 return Err(anyhow::anyhow!(format_skill_error(
                     "ARCHIVE_DOWNLOAD_TOO_LARGE",
@@ -419,7 +525,12 @@ impl SkillService {
 
         let file = body.into_inner().map_err(|e| e.into_error())?;
         let archive = Self::open_downloaded_archive(file)?;
-        Self::extract_repo_archive(archive, dest)
+        if let Some(budget) = budget {
+            let mut expanded = budget.expanded.lock_recover();
+            Self::extract_repo_archive_with_budget(archive, dest, &mut expanded)
+        } else {
+            Self::extract_repo_archive(archive, dest)
+        }
     }
 
     /// 打开下载到的归档。不兼容 GitHub / GitLab / Gitea 接口的站点（如 cnb.cool，#9812）
@@ -572,8 +683,16 @@ impl SkillService {
     ///
     /// 与 `download_and_extract` 分离，使 zip-slip 防护可在不联网的情况下被单测覆盖。
     pub(super) fn extract_repo_archive<R: std::io::Read + std::io::Seek>(
+        archive: zip::ZipArchive<R>,
+        dest: &Path,
+    ) -> Result<()> {
+        Self::extract_repo_archive_with_budget(archive, dest, &mut 0)
+    }
+
+    pub(super) fn extract_repo_archive_with_budget<R: std::io::Read + std::io::Seek>(
         mut archive: zip::ZipArchive<R>,
         dest: &Path,
+        total_bytes: &mut u64,
     ) -> Result<()> {
         let root_name = if !archive.is_empty() {
             let first_file = archive.by_index(0)?;
@@ -599,8 +718,6 @@ impl SkillService {
                 Some("checkZipContent"),
             )));
         }
-        let mut total_bytes: u64 = 0;
-
         // 第一遍：解压普通文件和目录，收集 symlink 条目
         let mut symlinks: Vec<(PathBuf, String)> = Vec::new();
 
@@ -639,25 +756,25 @@ impl SkillService {
             let outpath = dest.join(relative_path);
 
             if file.is_symlink() {
-                let Some(target) = Self::read_symlink_target(&mut file, &mut total_bytes)? else {
+                let Some(target) = Self::read_symlink_target(&mut file, total_bytes)? else {
                     log::warn!("跳过目标不合法的 symlink 条目: {}", file.name());
                     continue;
                 };
                 symlinks.push((outpath, target));
             } else if file.is_dir() {
-                Self::create_dir_all_within_budget(&outpath, &mut total_bytes)?;
+                Self::create_dir_all_within_budget(&outpath, total_bytes)?;
             } else {
                 if let Some(parent) = outpath.parent() {
-                    Self::create_dir_all_within_budget(parent, &mut total_bytes)?;
+                    Self::create_dir_all_within_budget(parent, total_bytes)?;
                 }
                 // 按实际写入的字节累计，而不是信任归档头里声明的 size——
                 // 压缩炸弹的声明值可以是假的。
-                Self::write_file_within_budget(&mut file, &outpath, &mut total_bytes)?;
+                Self::write_file_within_budget(&mut file, &outpath, total_bytes)?;
             }
         }
 
         // 第二遍：解析 symlink，将目标内容复制到 symlink 位置
-        Self::resolve_symlinks_in_dir(dest, &symlinks, &mut total_bytes)?;
+        Self::resolve_symlinks_in_dir(dest, &symlinks, total_bytes)?;
 
         Ok(())
     }

@@ -81,6 +81,7 @@ zip = "2.2"
 serde_yaml = "0.9"
 tempfile = "3"
 url = "2.5"
+gix-config = { version = "0.60", features = ["sha1"] }
 auto-launch = "0.5"
 base64 = "0.22"
 # 校验自定义供应商图标；tauri 经 image 已依赖同一版本，不增加编译量
