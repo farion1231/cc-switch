@@ -72,8 +72,7 @@ pub fn classify_responses_request(body: &Value) -> CopilotClassification {
 ///    - 匹配 compact 模式 → "agent"
 /// 3. 最后消息 role 非 user → "user"（安全默认）
 ///
-/// Warmup 检测（与参考实现对齐）：
-/// - 请求头中有 `anthropic-beta` + 无 tools + 非 compact → warmup
+/// Warmup 检测要求匹配 Claude Code 的单 token 探针。
 ///
 /// `compact_detection`：是否启用 compact 检测。为 false 时跳过，
 /// 确保 `CopilotOptimizerConfig.compact_detection` 开关真正生效。
@@ -94,7 +93,7 @@ pub fn classify_request(
         _ => {
             return CopilotClassification {
                 initiator: "user",
-                is_warmup: is_warmup_request(body, has_anthropic_beta, false),
+                is_warmup: false,
                 is_compact: false,
                 is_subagent,
             }
@@ -148,18 +147,28 @@ pub fn classify_request(
 
 /// 检测是否为 warmup/探针请求（适合降级到小模型）。
 ///
-/// 与参考实现对齐，三个条件同时满足：
-/// 1. 请求头有 `anthropic-beta`（Claude Code warmup 探针的标志）
-/// 2. 无 tools 定义
-/// 3. 非 compact 请求
 fn is_warmup_request(body: &Value, has_anthropic_beta: bool, is_compact: bool) -> bool {
-    if !has_anthropic_beta || is_compact {
+    if !has_anthropic_beta || is_compact || body["max_tokens"].as_u64() != Some(1) {
         return false;
     }
-    // 无工具定义
-    body.get("tools")
+    if body
+        .get("tools")
         .and_then(|tools| tools.as_array())
-        .is_none_or(|tools| tools.is_empty())
+        .is_some_and(|tools| !tools.is_empty())
+    {
+        return false;
+    }
+    let Some([message]) = body["messages"].as_array().map(Vec::as_slice) else {
+        return false;
+    };
+    // Claude Code 启动检查发送 "."，模型校验发送带临时缓存标记的 "Hi"。
+    match &message["content"] {
+        Value::String(text) => text == ".",
+        Value::Array(blocks) => matches!(blocks.as_slice(), [block]
+            if block["type"] == "text" && block["text"] == "Hi"
+                && block["cache_control"]["type"] == "ephemeral"),
+        _ => false,
+    }
 }
 
 /// 检测是否为 Claude Code 上下文压缩/compact 请求。
@@ -880,41 +889,52 @@ mod tests {
         assert!(!result.is_compact);
     }
 
-    // === warmup 测试（与参考实现对齐） ===
-
     #[test]
-    fn test_warmup_with_anthropic_beta_no_tools() {
+    fn test_warmup_probe_requires_beta_header() {
         let body = json!({
             "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1,
             "messages": [
-                {"role": "user", "content": "Hello"}
+                {"role": "user", "content": "."}
             ]
         });
-        // has_anthropic_beta=true, 无 tools → warmup
-        let result = classify_request(&body, true, true, false);
-        assert!(result.is_warmup);
+        assert!(classify_request(&body, true, true, false).is_warmup);
+        assert!(!classify_request(&body, false, true, false).is_warmup);
     }
 
     #[test]
-    fn test_not_warmup_without_anthropic_beta() {
+    fn test_model_validation_probe_is_warmup() {
         let body = json!({
-            "model": "claude-sonnet-4-20250514",
-            "messages": [
-                {"role": "user", "content": "Hello"}
-            ]
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Hi", "cache_control": {"type": "ephemeral"}}
+            ]}]
         });
-        // has_anthropic_beta=false → 不是 warmup
-        let result = classify_request(&body, false, true, false);
-        assert!(!result.is_warmup);
+        assert!(classify_request(&body, true, true, false).is_warmup);
+    }
+
+    #[test]
+    fn test_not_warmup_for_normal_requests_without_tools() {
+        for (max_tokens, content) in [(32_000, "."), (1, "Reply with YES.")] {
+            let body = json!({
+                "max_tokens": max_tokens,
+                "tools": [],
+                "messages": [{"role": "user", "content": content}]
+            });
+            let result = classify_request(&body, true, true, false);
+            assert_eq!(result.initiator, "user");
+            assert!(!result.is_warmup);
+        }
     }
 
     #[test]
     fn test_not_warmup_with_tools() {
         let body = json!({
             "model": "claude-sonnet-4-20250514",
+            "max_tokens": 1,
             "tools": [{"name": "Read", "description": "Read a file", "input_schema": {}}],
             "messages": [
-                {"role": "user", "content": "Hello"}
+                {"role": "user", "content": "."}
             ]
         });
         // 有 tools → 不是 warmup（即使有 anthropic-beta）
